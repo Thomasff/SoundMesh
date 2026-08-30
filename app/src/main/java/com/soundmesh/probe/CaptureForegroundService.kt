@@ -81,32 +81,67 @@ class CaptureForegroundService : Service() {
             stopRequested.set(true)
         }
         val sink = CaptureFileSink(runStore.captureWavFile(probeCase.caseId), reader)
-        val summary = CaptureRunner.run(
-            CaptureRunConfig(
-                reader = reader,
-                sink = sink,
-                durationNanos = probeCase.durationSeconds * NANOS_PER_SECOND,
-                clock = MonotonicClock { System.nanoTime() },
-                stopRequested = { stopRequested.get() }
+        var summary: CaptureRunSummary? = null
+        var failure: Throwable? = null
+        try {
+            summary = CaptureRunner.run(
+                CaptureRunConfig(
+                    reader = reader,
+                    sink = sink,
+                    durationNanos = probeCase.durationSeconds * NANOS_PER_SECOND,
+                    clock = MonotonicClock { System.nanoTime() },
+                    stopRequested = { stopRequested.get() }
+                )
             )
-        )
-        val result = CaptureResult(
+            val result = resultFor(probeCase, reader, sink, summary, null)
+            runStore.writeCaptureJson(probeCase.caseId, result.toJson())
+            val status = if (summary.state == CaptureState.COMPLETE) STATUS_COMPLETE else STATUS_FAILED
+            runStore.writeStatus(probeCase.caseId, statusJson(status, summary.failureCode))
+            publish(status, summary.failureCode)
+        } catch (error: Throwable) {
+            failure = error
+            Log.e(LOG_TAG, "capture worker failed for ${probeCase.caseId}", error)
+            val failureCode = error.javaClass.simpleName.ifEmpty { "CAPTURE_EXCEPTION" }
+            runCatching {
+                runStore.writeCaptureJson(
+                    probeCase.caseId,
+                    resultFor(probeCase, reader, sink, summary, failureCode).toJson()
+                )
+            }.onFailure { Log.e(LOG_TAG, "could not write failure result", it) }
+            runCatching { runStore.writeStatus(probeCase.caseId, statusJson(STATUS_FAILED, failureCode)) }
+                .onFailure { Log.e(LOG_TAG, "could not write failure status", it) }
+            publish(STATUS_FAILED, failureCode)
+        } finally {
+            activeCaseId = null
+            if (failure != null) {
+                // CaptureRunner owns normal reader/sink cleanup; this covers failures before it starts.
+                runCatching { reader.stop() }
+                runCatching { reader.close() }
+                runCatching { sink.close() }
+            }
+        }
+    }
+
+    private fun resultFor(
+        probeCase: ProbeCase,
+        reader: PcmReader,
+        sink: CaptureFileSink,
+        summary: CaptureRunSummary?,
+        thrownFailureCode: String?
+    ): CaptureResult {
+        val completed = summary?.state == CaptureState.COMPLETE && thrownFailureCode == null
+        return CaptureResult(
             schemaVersion = 1,
             caseId = probeCase.caseId,
-            state = if (summary.state == CaptureState.COMPLETE) STATUS_COMPLETE else STATUS_FAILED,
+            state = if (completed) STATUS_COMPLETE else STATUS_FAILED,
             requestedFormat = PcmFormat(48_000, 2),
-            actualFormat = if (summary.state == CaptureState.COMPLETE) PcmFormat(reader.sampleRate, reader.channelCount) else null,
+            actualFormat = if (completed) PcmFormat(reader.sampleRate, reader.channelCount) else null,
             expectedBytes = probeCase.durationSeconds * 48_000L * reader.channelCount * PCM16_BYTES,
-            capturedBytes = summary.capturedBytes,
+            capturedBytes = summary?.capturedBytes ?: 0,
             metrics = sink.metrics(),
-            failureCode = summary.failureCode,
+            failureCode = thrownFailureCode ?: summary?.failureCode,
             artifactFiles = listOf("status.json", "capture.wav", "capture.json")
         )
-        runStore.writeCaptureJson(probeCase.caseId, result.toJson())
-        val status = if (summary.state == CaptureState.COMPLETE) STATUS_COMPLETE else STATUS_FAILED
-        runStore.writeStatus(probeCase.caseId, statusJson(status, summary.failureCode))
-        activeCaseId = null
-        publish(status, summary.failureCode)
     }
 
     private fun finishSession(intent: Intent) {

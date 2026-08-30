@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.TextView
 
@@ -28,7 +29,13 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         statusView = TextView(this)
         setContentView(statusView)
-        registerReceiver(statusReceiver, IntentFilter(CaptureForegroundService.ACTION_STATUS), Context.RECEIVER_NOT_EXPORTED)
+        val statusFilter = IntentFilter(CaptureForegroundService.ACTION_STATUS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(statusReceiver, statusFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(statusReceiver, statusFilter)
+        }
         handleLauncherIntent(intent)
     }
 
