@@ -77,13 +77,15 @@ class CaptureForegroundService : Service() {
     }
 
     private fun runCase(probeCase: ProbeCase, projection: MediaProjection) {
-        val reader = AndroidPlaybackReader(this, projection, probeCase.expectedPackage) {
-            stopRequested.set(true)
-        }
-        val sink = CaptureFileSink(runStore.captureWavFile(probeCase.caseId), reader)
+        var reader: AndroidPlaybackReader? = null
+        var sink: CaptureFileSink? = null
         var summary: CaptureRunSummary? = null
         var failure: Throwable? = null
         try {
+            reader = AndroidPlaybackReader(this, projection, probeCase.expectedPackage) {
+                stopRequested.set(true)
+            }
+            sink = CaptureFileSink(runStore.captureWavFile(probeCase.caseId), reader)
             summary = CaptureRunner.run(
                 CaptureRunConfig(
                     reader = reader,
@@ -115,17 +117,17 @@ class CaptureForegroundService : Service() {
             activeCaseId = null
             if (failure != null) {
                 // CaptureRunner owns normal reader/sink cleanup; this covers failures before it starts.
-                runCatching { reader.stop() }
-                runCatching { reader.close() }
-                runCatching { sink.close() }
+                runCatching { reader?.stop() }
+                runCatching { reader?.close() }
+                runCatching { sink?.close() }
             }
         }
     }
 
     private fun resultFor(
         probeCase: ProbeCase,
-        reader: PcmReader,
-        sink: CaptureFileSink,
+        reader: PcmReader?,
+        sink: CaptureFileSink?,
         summary: CaptureRunSummary?,
         thrownFailureCode: String?
     ): CaptureResult {
@@ -135,10 +137,10 @@ class CaptureForegroundService : Service() {
             caseId = probeCase.caseId,
             state = if (completed) STATUS_COMPLETE else STATUS_FAILED,
             requestedFormat = PcmFormat(48_000, 2),
-            actualFormat = if (completed) PcmFormat(reader.sampleRate, reader.channelCount) else null,
-            expectedBytes = probeCase.durationSeconds * 48_000L * reader.channelCount * PCM16_BYTES,
+            actualFormat = if (completed && reader != null) PcmFormat(reader.sampleRate, reader.channelCount) else null,
+            expectedBytes = probeCase.durationSeconds * 48_000L * (reader?.channelCount ?: 2) * PCM16_BYTES,
             capturedBytes = summary?.capturedBytes ?: 0,
-            metrics = sink.metrics(),
+            metrics = sink?.metrics(),
             failureCode = thrownFailureCode ?: summary?.failureCode,
             artifactFiles = listOf("status.json", "capture.wav", "capture.json")
         )
