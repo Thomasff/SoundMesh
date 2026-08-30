@@ -136,7 +136,7 @@ class CaptureForegroundService : Service() {
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.capture_channel_name), NotificationManager.IMPORTANCE_LOW))
         }
         return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_record)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.capture_notification))
             .build()

@@ -62,7 +62,8 @@ class AndroidPlaybackReader(
         }
     }
 
-    private fun createRecord(channels: Int): AudioRecord? = try {
+    private fun createRecord(channels: Int): AudioRecord? {
+        return try {
         val channelMask = if (channels == STEREO_CHANNEL_COUNT) {
             AudioFormat.CHANNEL_IN_STEREO
         } else {
@@ -91,10 +92,11 @@ class AndroidPlaybackReader(
             channelCount = channels
             candidate
         }
-    } catch (_: IllegalArgumentException) {
-        null
-    } catch (_: IllegalStateException) {
-        null
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: IllegalStateException) {
+            null
+        }
     }
 
     companion object {

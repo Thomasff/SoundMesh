@@ -36,7 +36,7 @@ class ProbeCaseTest {
     @Test
     fun rejectsCaseIdsOutsideUppercaseLetterAndDigits() {
         listOf("c1", "C", "C-1", "C/1", "C1/../C2", "1C").forEach { caseId ->
-            assertThrows(IllegalArgumentException::class.java, caseId) {
+            assertThrows(caseId, IllegalArgumentException::class.java) {
                 ProbeCase(caseId, 20, "com.netease.cloudmusic", ProbeMode.CAPTURE_ONLY)
             }
         }
