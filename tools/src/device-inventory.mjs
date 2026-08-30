@@ -52,7 +52,7 @@ export function buildInventory({ serial, properties, packages, mediaVolume }) {
 
 function requireSuccessful(result, description) {
   if (result.exitCode !== 0) {
-    throw new Error(`${description} failed with exit code ${result.exitCode}: ${result.stderr}`);
+    throw new Error(`${description} command failed`);
   }
   return result.stdout;
 }

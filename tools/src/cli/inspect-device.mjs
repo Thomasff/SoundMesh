@@ -6,6 +6,7 @@ import { collectInventory, redactInventory } from '../device-inventory.mjs';
 
 const artifactsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifacts');
 const selectedDevicePath = resolve(artifactsDirectory, 'session', 'selected-device.json');
+const pendingInspectionPath = resolve(artifactsDirectory, 'session', 'pending-inspection.json');
 
 export function assertApi29(inventory) {
   if (!Number.isInteger(inventory.apiLevel) || inventory.apiLevel < 29) {
@@ -34,18 +35,51 @@ export async function saveConfirmedSelection(inventory) {
   return selectedDevicePath;
 }
 
+async function savePendingInspection(inventory) {
+  await mkdir(dirname(pendingInspectionPath), { recursive: true });
+  await writeFile(pendingInspectionPath, `${JSON.stringify({
+    fingerprintHash: inventory.fingerprintHash
+  }, null, 2)}\n`, 'utf8');
+}
+
+async function loadPendingInspection() {
+  try {
+    return JSON.parse(await readFile(pendingInspectionPath, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export function assertPendingInspection(pendingInspection, inventory) {
+  if (!pendingInspection) {
+    throw new Error('Run an ordinary inspection and review its preview before confirming selection');
+  }
+  if (pendingInspection.fingerprintHash !== inventory.fingerprintHash) {
+    throw new Error('Inspected device changed before confirmation');
+  }
+}
+
+export function requireConfirmedSerial(entries, selectedSerial) {
+  if (entries.some(({ state }) => state !== 'device')) {
+    throw new Error('Confirmed device validation found an unavailable attached device');
+  }
+  if (entries.length !== 1) {
+    throw new Error('Confirmed device is no longer the sole authorized target');
+  }
+  return requireAuthorizedSerial(entries, selectedSerial);
+}
+
 export async function loadConfirmedSerial({ runAdbHost = createAdbHostRunner() } = {}) {
   const selection = JSON.parse(await readFile(selectedDevicePath, 'utf8'));
   const result = await runAdbHost({ args: ['devices', '-l'] });
   if (result.exitCode !== 0) {
-    throw new Error(`adb devices failed with exit code ${result.exitCode}: ${result.stderr}`);
+    throw new Error('ADB device discovery failed');
   }
   const entries = parseAdbDevices(result.stdout);
-  const authorized = entries.filter(({ state }) => state === 'device');
-  if (authorized.length !== 1) {
-    throw new Error('Confirmed device is no longer the sole authorized target');
-  }
-  return requireAuthorizedSerial(entries, selection.serial);
+  return requireConfirmedSerial(entries, selection.serial);
 }
 
 function requestedSerialFrom(argumentsList) {
@@ -53,31 +87,41 @@ function requestedSerialFrom(argumentsList) {
   return index === -1 ? undefined : argumentsList[index + 1];
 }
 
-export async function inspectDevice({
+async function readCurrentInventory({
   requestedSerial,
-  confirmSelection = false,
   runAdbHost = createAdbHostRunner(),
   collect = collectInventory
 } = {}) {
   const result = await runAdbHost({ args: ['devices', '-l'] });
   if (result.exitCode !== 0) {
-    throw new Error(`adb devices failed with exit code ${result.exitCode}: ${result.stderr}`);
+    throw new Error('ADB device discovery failed');
   }
   const serial = requireAuthorizedSerial(parseAdbDevices(result.stdout), requestedSerial);
-  const inventory = await collect({ serial });
+  return collect({ serial });
+}
+
+export async function inspectDevice(options = {}) {
+  const inventory = await readCurrentInventory(options);
   await saveInventory(inventory);
-  if (confirmSelection) {
-    await saveConfirmedSelection(inventory);
-  }
+  await savePendingInspection(inventory);
+  return inventory;
+}
+
+export async function confirmDeviceSelection(options = {}) {
+  const pendingInspection = await loadPendingInspection();
+  const inventory = await readCurrentInventory(options);
+  assertPendingInspection(pendingInspection, inventory);
+  await saveInventory(inventory);
+  await saveConfirmedSelection(inventory);
   return inventory;
 }
 
 export async function main(argumentsList = process.argv.slice(2)) {
   try {
-    const inventory = await inspectDevice({
-      requestedSerial: requestedSerialFrom(argumentsList),
-      confirmSelection: argumentsList.includes('--confirm-selection')
-    });
+    const options = { requestedSerial: requestedSerialFrom(argumentsList) };
+    const inventory = argumentsList.includes('--confirm-selection')
+      ? await confirmDeviceSelection(options)
+      : await inspectDevice(options);
     console.log(JSON.stringify(redactInventory(inventory), null, 2));
     assertApi29(inventory);
   } catch (error) {

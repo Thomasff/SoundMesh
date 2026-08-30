@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertApi29 } from '../src/cli/inspect-device.mjs';
+import {
+  assertApi29,
+  assertPendingInspection,
+  requireConfirmedSerial
+} from '../src/cli/inspect-device.mjs';
 import { buildInventory, collectInventory } from '../src/device-inventory.mjs';
 
 test('builds a normalized device inventory', () => {
@@ -56,5 +60,40 @@ test('marks below-API-29 inventory with the required gate exit code', () => {
   assert.throws(
     () => assertApi29({ apiLevel: 28 }),
     (error) => error.code === 'DEVICE_BELOW_API_29' && error.exitCode === 29
+  );
+});
+
+test('requires a prior ordinary inspection before selection can be confirmed', () => {
+  assert.throws(
+    () => assertPendingInspection(undefined, { fingerprintHash: 'current-hash' }),
+    /ordinary inspection/i
+  );
+  assert.throws(
+    () => assertPendingInspection({ fingerprintHash: 'old-hash' }, { fingerprintHash: 'current-hash' }),
+    /changed/i
+  );
+  assert.doesNotThrow(() => assertPendingInspection(
+    { fingerprintHash: 'current-hash' },
+    { fingerprintHash: 'current-hash' }
+  ));
+});
+
+test('rejects confirmed selection when any attached device is unavailable', () => {
+  assert.throws(
+    () => requireConfirmedSerial([
+      { serial: 'A', state: 'device' },
+      { serial: 'B', state: 'unauthorized' }
+    ], 'A'),
+    /unavailable/i
+  );
+});
+
+test('keeps failed command stderr out of public inventory errors', async () => {
+  await assert.rejects(
+    collectInventory({
+      serial: 'ABC123',
+      runAdb: async () => ({ exitCode: 1, stdout: '', stderr: 'PRIVATE_DEVICE_DIAGNOSTIC' })
+    }),
+    (error) => error.message === 'getprop command failed' && !error.message.includes('PRIVATE_DEVICE_DIAGNOSTIC')
   );
 });
