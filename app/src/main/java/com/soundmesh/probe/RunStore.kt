@@ -1,0 +1,73 @@
+package com.soundmesh.probe
+
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
+/** Owns private per-case status and capture artifacts under Context.filesDir. */
+class RunStore(private val filesDir: File) {
+    init {
+        require(filesDir.isDirectory || filesDir.mkdirs()) {
+            "filesDir is not a writable directory"
+        }
+    }
+
+    @Synchronized
+    fun prepareRun(caseId: String): File {
+        requireSafeCaseId(caseId)
+        val directory = File(filesDir, "runs/$caseId")
+        require(directory.isDirectory || directory.mkdirs()) {
+            "unable to create private run directory"
+        }
+        return directory
+    }
+
+    fun statusFile(caseId: String): File = artifactFile(caseId, "status.json")
+
+    fun captureWavFile(caseId: String): File = artifactFile(caseId, "capture.wav")
+
+    fun captureJsonFile(caseId: String): File = artifactFile(caseId, "capture.json")
+
+    @Synchronized
+    fun writeStatus(caseId: String, statusJson: String) {
+        writeAtomically(caseId, "status.json", statusJson)
+    }
+
+    @Synchronized
+    fun writeCaptureJson(caseId: String, captureJson: String) {
+        writeAtomically(caseId, "capture.json", captureJson)
+    }
+
+    private fun writeAtomically(caseId: String, fileName: String, content: String) {
+        val directory = prepareRun(caseId)
+        val target = File(directory, fileName)
+        val temporary = File.createTempFile("$fileName.", ".tmp", directory)
+        try {
+            FileOutputStream(temporary).use { output ->
+                output.write(content.toByteArray(Charsets.UTF_8))
+                output.flush()
+                output.fd.sync()
+            }
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING
+            )
+        } finally {
+            if (temporary.exists()) temporary.delete()
+        }
+    }
+
+    private fun artifactFile(caseId: String, fileName: String): File {
+        val directory = prepareRun(caseId)
+        return File(directory, fileName)
+    }
+
+    private fun requireSafeCaseId(caseId: String) {
+        require(ProbeCase.isSafeCaseId(caseId)) {
+            "unsafe caseId"
+        }
+    }
+}
