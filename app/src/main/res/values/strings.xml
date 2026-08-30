@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">SoundMesh Probe</string>
+    <string name="probe_ready">SoundMesh Probe ready</string>
+</resources>
