@@ -39,6 +39,16 @@ class PcmMetricsAccumulatorTest {
     }
 
     @Test
+    fun serializesExactDigitalSilenceDbfsAsNull() {
+        val metrics = PcmMetricsAccumulator(48_000, 2).apply {
+            accept(ByteArray(8), 8, 10L)
+        }.finish()
+
+        assertTrue(metrics.toJson().contains("\"peakDbfs\":null"))
+        assertTrue(metrics.toJson().contains("\"rmsDbfs\":null"))
+    }
+
+    @Test
     fun countsBothSignedPcm16EndpointsAsClipping() {
         val bytes = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
             .putShort(Short.MIN_VALUE)

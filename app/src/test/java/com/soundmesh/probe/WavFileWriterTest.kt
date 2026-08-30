@@ -60,6 +60,22 @@ class WavFileWriterTest {
         }
     }
 
+    @Test
+    fun rejectsDataThatWouldOverflowTheRiffSizeField() {
+        withTemporaryFile { file ->
+            WavFileWriter(file, 48_000, 1).use { writer ->
+                WavFileWriter::class.java.getDeclaredField("dataBytes").apply {
+                    isAccessible = true
+                    setLong(writer, 0xffff_ffffL - 36L)
+                }
+
+                assertThrows(IllegalArgumentException::class.java) {
+                    writer.writePcm(byteArrayOf(0, 0), 2)
+                }
+            }
+        }
+    }
+
     private fun withTemporaryFile(block: (File) -> Unit) {
         val path = Files.createTempFile("soundmesh-wav-", ".wav")
         try {

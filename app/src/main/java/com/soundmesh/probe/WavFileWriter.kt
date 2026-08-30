@@ -29,7 +29,7 @@ class WavFileWriter(
         check(!closed) { "WavFileWriter is closed" }
         require(length in 0..bytes.size) { "length must be between 0 and bytes.size" }
         require(length % PCM16_BYTES_PER_SAMPLE == 0) { "PCM16 data must have an even byte count" }
-        require(dataBytes + length <= UInt32_MAX) { "WAV data exceeds 4 GiB" }
+        require(dataBytes + length <= MAX_WAV_DATA_BYTES) { "WAV data exceeds RIFF's 4 GiB size field" }
         output.write(bytes, 0, length)
         dataBytes += length
     }
@@ -79,5 +79,6 @@ class WavFileWriter(
         const val WAV_HEADER_SIZE = 44L
         const val UInt16_MAX = 0xffffL
         const val UInt32_MAX = 0xffff_ffffL
+        const val MAX_WAV_DATA_BYTES = UInt32_MAX - (WAV_HEADER_SIZE - 8L)
     }
 }
