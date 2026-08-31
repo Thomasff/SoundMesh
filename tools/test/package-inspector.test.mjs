@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inspectInstalledPackage, parseManifestFacts } from '../src/package-inspector.mjs';
+import { createManifestAnalyzerRequest, inspectInstalledPackage, parseManifestFacts } from '../src/package-inspector.mjs';
 
 const manifestXml = `<?xml version="1.0" encoding="utf-8"?>
 <manifest package="com.example.music">
@@ -24,6 +24,17 @@ test('keeps an omitted playback capture policy indeterminate', () => {
     packageName: 'com.example.music',
     targetSdk: 29,
     allowAudioPlaybackCapture: null
+  });
+});
+
+test('invokes Windows apkanalyzer bat through Java when JAVA_HOME contains spaces and parentheses', () => {
+  assert.deepEqual(createManifestAnalyzerRequest(
+    'C:\\Android SDK (x86)\\cmdline-tools\\latest\\bin\\apkanalyzer.bat',
+    'C:\\temp\\base.apk',
+    { platform: 'win32', javaHome: 'C:\\Program Files (x86)\\Android\\openjdk\\jdk-17.0.14' }
+  ), {
+    command: 'C:\\Program Files (x86)\\Android\\openjdk\\jdk-17.0.14\\bin\\java.exe',
+    args: ['-Dcom.android.sdklib.toolsdir=C:\\Android SDK (x86)\\cmdline-tools\\latest', '-classpath', 'C:\\Android SDK (x86)\\cmdline-tools\\latest\\lib\\apkanalyzer-classpath.jar', 'com.android.tools.apk.analyzer.ApkAnalyzerCli', 'manifest', 'print', 'C:\\temp\\base.apk']
   });
 });
 

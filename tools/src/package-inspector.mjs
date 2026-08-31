@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, win32 as winPath } from 'node:path';
 import { spawn } from 'node:child_process';
 import { runAdb as defaultRunAdb } from './adb.mjs';
 
@@ -32,6 +32,21 @@ function createProcessRunner() {
     child.once('error', reject);
     child.once('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
   });
+}
+
+export function createManifestAnalyzerRequest(apkanalyzerPath, apkPath, {
+  platform = process.platform,
+  javaHome = process.env.JAVA_HOME
+} = {}) {
+  const args = ['manifest', 'print', apkPath];
+  if (platform !== 'win32' || !apkanalyzerPath.toLowerCase().endsWith('.bat') || !javaHome) {
+    return { command: apkanalyzerPath, args };
+  }
+  const analyzerRoot = winPath.dirname(winPath.dirname(apkanalyzerPath));
+  return {
+    command: winPath.join(javaHome, 'bin', 'java.exe'),
+    args: [`-Dcom.android.sdklib.toolsdir=${analyzerRoot}`, '-classpath', winPath.join(analyzerRoot, 'lib', 'apkanalyzer-classpath.jar'), 'com.android.tools.apk.analyzer.ApkAnalyzerCli', ...args]
+  };
 }
 
 function requireSuccess(result, description) {
@@ -89,7 +104,7 @@ export async function inspectInstalledPackage({
     );
     const xml = await runSafely(
       runProcess,
-      { command: apkanalyzerPath, args: ['manifest', 'print', localApkPath] },
+      createManifestAnalyzerRequest(apkanalyzerPath, localApkPath),
       'Manifest analysis'
     );
     const facts = parseManifestFacts(xml);
