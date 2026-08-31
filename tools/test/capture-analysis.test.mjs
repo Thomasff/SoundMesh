@@ -33,3 +33,19 @@ test('passes a complete audible PCM16 capture at the exact format', () => {
   assert.equal(result.outcome, 'PASS');
   assert.deepEqual(result.reasons, []);
 });
+
+test('enforces exact byte, signal, and silence thresholds', () => {
+  const samples = new Array(48_000 * 2).fill(4_096); const file = wav(samples); const bytes = file.length - 44;
+  const base = { capturedBytes: bytes, actualFormat: { sampleRate: 48_000, channelCount: 2, encoding: 'PCM16' } };
+  assert.equal(analyzeCapture({ wav: file, capture: { ...base, expectedBytes: bytes / 0.98 } }).outcome, 'PASS');
+  assert.ok(analyzeCapture({ wav: file, capture: { ...base, expectedBytes: bytes / 0.98 + 1 } }).reasons.includes('INSUFFICIENT_CAPTURE_BYTES'));
+  const onePercent = wav([...new Array(960).fill(4_096), ...new Array(95_040).fill(0)]);
+  assert.ok(analyzeCapture({ wav: onePercent, capture: { ...base, expectedBytes: bytes } }).reasons.includes('LOW_NONZERO_RATIO'));
+  const lowPeak = wav(new Array(96_000).fill(103));
+  assert.ok(analyzeCapture({ wav: lowPeak, capture: { ...base, expectedBytes: bytes } }).reasons.includes('LOW_PEAK'));
+  const lowRms = wav(new Array(96_000).fill(32));
+  assert.ok(analyzeCapture({ wav: lowRms, capture: { ...base, expectedBytes: bytes } }).reasons.includes('LOW_RMS'));
+  const longSilence = wav([...new Array(48_000).fill(4_096), ...new Array(48_002).fill(0)]);
+  const silentResult = analyzeCapture({ wav: longSilence, capture: { ...base, expectedBytes: bytes }, audibleSource: true });
+  assert.ok(silentResult.reasons.includes('DIGITAL_SILENCE_WINDOW')); assert.equal(silentResult.outcome, 'FAIL_DIGITAL_SILENCE');
+});
