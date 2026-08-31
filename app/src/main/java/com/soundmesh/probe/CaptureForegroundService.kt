@@ -70,7 +70,7 @@ class CaptureForegroundService : Service() {
         val probeCase = ProbeCase.fromIntent(intent)
         activeCaseId = probeCase.caseId
         stopRequested = AtomicBoolean(false)
-        runStore.writeStatus(probeCase.caseId, statusJson(STATUS_CAPTURING))
+        runStore.writeStatus(probeCase.caseId, RunStatus.json(STATUS_CAPTURING))
         publish(STATUS_CAPTURING)
 
         Thread({ runCase(probeCase, mediaProjection!!) }, "SoundMeshCapture-${probeCase.caseId}").start()
@@ -98,7 +98,7 @@ class CaptureForegroundService : Service() {
             val result = resultFor(probeCase, reader, sink, summary, null)
             runStore.writeCaptureJson(probeCase.caseId, result.toJson())
             val status = if (summary.state == CaptureState.COMPLETE) STATUS_COMPLETE else STATUS_FAILED
-            runStore.writeStatus(probeCase.caseId, statusJson(status, summary.failureCode))
+            runStore.writeStatus(probeCase.caseId, RunStatus.json(status, summary.failureCode))
             publish(status, summary.failureCode)
         } catch (error: Throwable) {
             failure = error
@@ -110,7 +110,7 @@ class CaptureForegroundService : Service() {
                     resultFor(probeCase, reader, sink, summary, failureCode).toJson()
                 )
             }.onFailure { Log.e(LOG_TAG, "could not write failure result", it) }
-            runCatching { runStore.writeStatus(probeCase.caseId, statusJson(STATUS_FAILED, failureCode)) }
+            runCatching { runStore.writeStatus(probeCase.caseId, RunStatus.json(STATUS_FAILED, failureCode)) }
                 .onFailure { Log.e(LOG_TAG, "could not write failure status", it) }
             publish(STATUS_FAILED, failureCode)
         } finally {

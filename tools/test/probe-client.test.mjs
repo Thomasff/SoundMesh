@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createProbeClient } from '../src/probe-client.mjs';
+import { createProbeClient, ProbeStatusNotReadyError } from '../src/probe-client.mjs';
+
+test('classifies missing status as NOT_READY but malformed status as fatal', async () => {
+  const client = createProbeClient({ runAdb: async () => ({ exitCode: 1, stdout: Buffer.alloc(0), stderr: Buffer.from('No such file or directory') }) });
+  await assert.rejects(() => client.readStatus({ serial: 's', caseId: 'C1' }), error => error instanceof ProbeStatusNotReadyError && error.code === 'NOT_READY');
+  const malformed = createProbeClient({ runAdb: async () => ({ exitCode: 0, stdout: Buffer.from('{bad'), stderr: Buffer.alloc(0) }) });
+  await assert.rejects(() => malformed.readStatus({ serial: 's', caseId: 'C1' }), /invalid status/);
+});
+
+test('classifies run-as missing-file text emitted on stdout as NOT_READY', async () => {
+  const client = createProbeClient({ runAdb: async () => ({ exitCode: 0, stdout: Buffer.from('cat: files/runs/C1/status.json: No such file or directory\n'), stderr: Buffer.alloc(0) }) });
+  await assert.rejects(() => client.readStatus({ serial: 's', caseId: 'C1' }), error => error instanceof ProbeStatusNotReadyError && error.code === 'NOT_READY');
+});
 
 test('uses explicit argument arrays for install, start, and private JSON export', async () => {
   const calls = [];

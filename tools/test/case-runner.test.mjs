@@ -25,6 +25,12 @@ test('runs playback checkpoint one action at a time and returns redacted outcome
   assert.equal(prompts.length, 2); assert.match(prompts[0], /^HUMAN ACTION: Approve/); assert.match(prompts[1], /^HUMAN ACTION: On Honor/); assert.deepEqual(outcome, { caseId: 'C1', appId: 'com.netease.cloudmusic', outcome: 'PASS', expectedBytes: 4, capturedBytes: 4, reasons: [], format: { sampleRate: 48_000 }, dataBytes: 4, nonZeroRatio: 1, maxOneSecondPeakDbfs: -12, maxOneSecondRmsDbfs: -20, longestZeroWindowFrames: 0 });
 });
 
+test('polls through missing status and capturing without delaying tests', async () => {
+  const statuses = [new (class extends Error { constructor() { super(); this.code = 'NOT_READY'; } })(), { state: 'AWAITING_PERMISSION' }, { state: 'CAPTURING' }, { state: 'CAPTURING' }, { state: 'COMPLETE' }];
+  const prompts = []; const result = await runCaptureCase({ serial: 's', apkPath: 'p', probe: { install: async () => {}, start: async () => {}, readStatus: async () => { const value = statuses.shift(); if (value instanceof Error) throw value; return value; }, readCapture: async () => ({ expectedBytes: 1, capturedBytes: 1 }), exportWav: async () => {} }, acknowledge: async p => prompts.push(p), pollDelay: async () => {}, analyze: () => ({ outcome: 'PASS' }), wavPath: 'x', readWav: async () => Buffer.alloc(0), probeCase: { caseId: 'C1', expectedPackage: 'pkg' } });
+  assert.equal(prompts.length, 1); assert.equal(result.outcome, 'PASS');
+});
+
 test('CLI revalidates its confirmed serial and writes only a redacted outcome artifact', async () => {
   const root = await mkdtemp(join(tmpdir(), 'soundmesh-case-')); const selectionPath = join(root, 'selected-device.json'); await writeFile(selectionPath, JSON.stringify({ serial: 'secret', fingerprintHash: 'device-hash' }));
   let calls = 0;

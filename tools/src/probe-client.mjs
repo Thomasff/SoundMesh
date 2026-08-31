@@ -4,6 +4,7 @@ import { runAdb as defaultRunAdb } from './adb.mjs';
 
 const PROBE_PACKAGE = 'com.soundmesh.probe';
 const ACTIVITY = `${PROBE_PACKAGE}/.MainActivity`;
+export class ProbeStatusNotReadyError extends Error { constructor() { super('Probe status is not ready'); this.code = 'NOT_READY'; } }
 
 function requireSuccess(result, action) {
   if (result.exitCode !== 0) throw new Error(`${action} failed`);
@@ -30,7 +31,11 @@ export function createBinaryAdbRunner({ adbPath = process.env.SOUNDMESH_ADB || '
 
 export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = createBinaryAdbRunner(), writeBinary = writeFile } = {}) {
   const json = async ({ serial, caseId, fileName }) => {
-    const result = requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, fileName)] }), `Export ${fileName}`);
+    const result = await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, fileName)] });
+    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString('utf8') : String(result.stderr ?? '');
+    const stdoutText = Buffer.isBuffer(result.stdout) ? result.stdout.toString('utf8') : String(result.stdout ?? '');
+    if (fileName === 'status.json' && (result.stdout?.length === 0 || /no such file or directory/i.test(`${stdoutText}\n${stderr}`))) throw new ProbeStatusNotReadyError();
+    requireSuccess(result, `Export ${fileName}`);
     try { return JSON.parse(result.stdout); } catch { throw new Error(`Probe returned invalid ${fileName}`); }
   };
   return Object.freeze({

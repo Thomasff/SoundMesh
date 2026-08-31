@@ -71,3 +71,8 @@ class RunStore(private val filesDir: File) {
         }
     }
 }
+
+object RunStatus {
+    fun json(state: String, failureCode: String? = null): String =
+        "{\"state\":\"$state\",\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
+}

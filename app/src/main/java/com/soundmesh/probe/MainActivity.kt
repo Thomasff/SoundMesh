@@ -18,6 +18,8 @@ object ProbeIdentity { const val APPLICATION_ID = "com.soundmesh.probe" }
 class MainActivity : Activity() {
     private lateinit var statusView: TextView
     private var pendingIntent: Intent? = null
+    private lateinit var runStore: RunStore
+    private var pendingCaseId: String? = null
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             statusView.text = intent.getStringExtra(CaptureForegroundService.EXTRA_STATUS)
@@ -29,6 +31,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         statusView = TextView(this)
         setContentView(statusView)
+        runStore = RunStore(filesDir)
         val statusFilter = IntentFilter(CaptureForegroundService.ACTION_STATUS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(statusReceiver, statusFilter, Context.RECEIVER_NOT_EXPORTED)
@@ -69,7 +72,9 @@ class MainActivity : Activity() {
             return
         }
         pendingIntent = Intent(intent)
+        pendingCaseId = intent.getStringExtra(ProbeCase.EXTRA_CASE_ID)
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            runStore.writeStatus(pendingCaseId!!, RunStatus.json(CaptureForegroundService.STATUS_AWAITING_PERMISSION))
             statusView.text = CaptureForegroundService.STATUS_AWAITING_PERMISSION
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_RECORD_AUDIO)
         } else requestProjectionConsent()
@@ -78,10 +83,11 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_RECORD_AUDIO && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) requestProjectionConsent()
-        else if (requestCode == REQUEST_RECORD_AUDIO) statusView.text = CaptureForegroundService.STATUS_FAILED
+        else if (requestCode == REQUEST_RECORD_AUDIO) failPendingRun()
     }
 
     private fun requestProjectionConsent() {
+        runStore.writeStatus(pendingCaseId!!, RunStatus.json(CaptureForegroundService.STATUS_AWAITING_PERMISSION))
         statusView.text = CaptureForegroundService.STATUS_AWAITING_PERMISSION
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
@@ -94,13 +100,18 @@ class MainActivity : Activity() {
         val original = pendingIntent
         pendingIntent = null
         if (resultCode != RESULT_OK || data == null || original == null) {
-            statusView.text = CaptureForegroundService.STATUS_FAILED
+            failPendingRun()
             return
         }
         startCaptureService(original.setClass(this, CaptureForegroundService::class.java)
             .setAction(CaptureForegroundService.ACTION_START_SESSION)
             .putExtra(ProbeCase.EXTRA_RESULT_CODE, resultCode)
             .putExtra(ProbeCase.EXTRA_RESULT_DATA, data))
+    }
+
+    private fun failPendingRun() {
+        pendingCaseId?.let { runStore.writeStatus(it, RunStatus.json(CaptureForegroundService.STATUS_FAILED)) }
+        statusView.text = CaptureForegroundService.STATUS_FAILED
     }
 
     private fun startCaptureService(intent: Intent) = startForegroundService(intent)
