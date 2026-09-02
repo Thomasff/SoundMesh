@@ -33,6 +33,8 @@ class RunStore(private val filesDir: File) {
 
     fun clockFile(caseId: String): File = artifactFile(caseId, "clock.json")
 
+    fun syncFile(caseId: String): File = artifactFile(caseId, "sync.json")
+
     @Synchronized
     fun writeStatus(caseId: String, statusJson: String) {
         writeAtomically(caseId, "status.json", statusJson)
@@ -51,6 +53,11 @@ class RunStore(private val filesDir: File) {
     @Synchronized
     fun writeClockJson(caseId: String, clockJson: String) {
         writeAtomically(caseId, "clock.json", clockJson)
+    }
+
+    @Synchronized
+    fun writeSyncJson(caseId: String, syncJson: String) {
+        writeAtomically(caseId, "sync.json", syncJson)
     }
 
     private fun writeAtomically(caseId: String, fileName: String, content: String) {
