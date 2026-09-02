@@ -45,7 +45,7 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     readStatus: options => json({ ...options, fileName: 'status.json' }),
     readCapture: options => json({ ...options, fileName: 'capture.json' }),
     readReplay: options => json({ ...options, fileName: 'replay.json' }),
-    clearCaseArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'status.json'), privatePath(caseId, 'capture.json'), privatePath(caseId, 'capture.wav')] }), 'Clear case artifacts'),
+    clearCaseArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'status.json'), privatePath(caseId, 'capture.json'), privatePath(caseId, 'capture.wav'), privatePath(caseId, 'replay.json')] }), 'Clear case artifacts'),
     exportWav: async ({ serial, caseId, path }) => {
       const result = requireSuccess(await runAdbBinary({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, 'capture.wav')] }), 'WAV export');
       await writeBinary(path, result.stdout);

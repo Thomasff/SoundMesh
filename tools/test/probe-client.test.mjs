@@ -36,12 +36,12 @@ test('exports WAV bytes without decoding stdout as text', async () => {
   assert.deepEqual(written, bytes);
 });
 
-test('clears only the three private artifacts of one case with an explicit serial', async () => {
+test('clears only the four private artifacts of one case with an explicit serial', async () => {
   const calls = [];
   const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '', stderr: '' }; } });
   await client.clearCaseArtifacts({ serial: 'serial;bad', caseId: 'C1' });
   assert.deepEqual(calls.map(({ args }) => args), [
-    ['exec-out', 'run-as', 'com.soundmesh.probe', 'rm', '-f', 'files/runs/C1/status.json', 'files/runs/C1/capture.json', 'files/runs/C1/capture.wav']
+    ['exec-out', 'run-as', 'com.soundmesh.probe', 'rm', '-f', 'files/runs/C1/status.json', 'files/runs/C1/capture.json', 'files/runs/C1/capture.wav', 'files/runs/C1/replay.json']
   ]);
   assert.deepEqual(calls.map(({ serial }) => serial), ['serial;bad']);
 });
