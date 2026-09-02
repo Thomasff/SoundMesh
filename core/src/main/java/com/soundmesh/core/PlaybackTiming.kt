@@ -21,3 +21,33 @@ fun playbackErrorFrames(nowHostNanos: Long, pendingFrames: Long, targetHostNanos
     val heardNanos = nowHostNanos + pendingFrames * 1_000_000_000L / sampleRate
     return ((targetHostNanos - heardNanos) * sampleRate / 1_000_000_000L).toInt()
 }
+
+/**
+ * Frames written to the output but not yet heard, with the playback position extrapolated from
+ * the instant it was true up to [nowNanos].
+ *
+ * AudioTrack.getTimestamp reports a pair - [framePosition] and the monotonic instant
+ * [timestampNanos] that position was true - and the HAL refreshes it far less often than the
+ * ACQUIRING cadence samples it. Reading framePosition as the position right now is therefore late
+ * by however long ago that refresh happened - the always-late-never-early stale-reading behaviour
+ * design section 9.1 records as measured. That staleness does not cancel out: the error signal is a
+ * difference between two readings taken one chunk apart, so a timestamp frozen across a 20ms
+ * iteration enters as a whole chunk of phantom error, twenty times DriftController's deadband and
+ * of the wrong sign. Advancing the position at the nominal rate over the elapsed duration removes
+ * it.
+ *
+ * [timestampNanos] and [nowNanos] must share one time base (TIMEBASE_MONOTONIC, i.e.
+ * System.nanoTime()) - the elapsed value is a duration, so this holds on the sink too, where host
+ * time has a different origin. A negative elapsed is clamped to zero so a clock quirk cannot
+ * inflate the pending count.
+ */
+fun pendingPlaybackFrames(
+    writtenFrames: Long,
+    framePosition: Long,
+    timestampNanos: Long,
+    nowNanos: Long,
+    sampleRate: Int
+): Long {
+    val elapsedNanos = (nowNanos - timestampNanos).coerceAtLeast(0L)
+    return writtenFrames - (framePosition + elapsedNanos * sampleRate / 1_000_000_000L)
+}

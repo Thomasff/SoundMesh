@@ -46,3 +46,18 @@ fun nextPhaseState(
     val phase = if (consecutive >= requiredConsecutive) RendererPhase.TRACKING else RendererPhase.ACQUIRING
     return PhaseState(phase, consecutive)
 }
+
+/**
+ * How long to wait between drift samples in [phase].
+ *
+ * ACQUIRING samples once per chunk ([chunkNanos], ~50Hz) so the startup release-phase error is
+ * worked off in seconds; TRACKING drops to [trackingNanos], the 1Hz cadence sections 9.1 and 12
+ * of the design call for, which is all steady-state crystal drift needs. The direction is the
+ * point: at one frame of correction per sample, sampling a one-chunk error at 1Hz takes about
+ * sixteen minutes, so an inverted mapping silently reinstates exactly what the split removes.
+ *
+ * Lives here rather than in the renderer so it can be pinned by a test - the renderer itself sits
+ * behind android.media and has no JVM seam.
+ */
+fun driftIntervalNanos(phase: RendererPhase, chunkNanos: Long, trackingNanos: Long): Long =
+    if (phase == RendererPhase.ACQUIRING) chunkNanos else trackingNanos

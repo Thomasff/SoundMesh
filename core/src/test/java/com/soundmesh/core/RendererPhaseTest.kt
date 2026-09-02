@@ -1,6 +1,7 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RendererPhaseTest {
@@ -66,5 +67,20 @@ class RendererPhaseTest {
         state = nextPhaseState(state, inDeadband = true, requiredConsecutive = 2)
 
         assertEquals(RendererPhase.TRACKING, state.phase)
+    }
+
+    @Test
+    fun acquiringSamplesOncePerChunkAndTrackingAtTheSlowerCadence() {
+        val chunkNanos = 20_000_000L
+        val trackingNanos = 1_000_000_000L
+
+        val acquiringInterval = driftIntervalNanos(RendererPhase.ACQUIRING, chunkNanos, trackingNanos)
+        val trackingInterval = driftIntervalNanos(RendererPhase.TRACKING, chunkNanos, trackingNanos)
+
+        assertEquals(chunkNanos, acquiringInterval)
+        assertEquals(trackingNanos, trackingInterval)
+        // The direction is the whole point of the split: inverted, one frame of correction per
+        // second puts convergence of a one-chunk release-phase error back at ~16 minutes.
+        assertTrue(acquiringInterval < trackingInterval)
     }
 }
