@@ -37,6 +37,10 @@ class SyncRenderer(
     @Volatile private var chirpStartStats: SchedulerStats? = null
     @Volatile private var chirpEndStats: SchedulerStats? = null
     @Volatile private var streamingEndStats: SchedulerStats? = null
+    /** What the AudioTrack actually granted, and how deep the output really ran. Diagnostics only. */
+    @Volatile private var trackBufferFrames = 0
+    @Volatile private var minPendingFrames = Long.MAX_VALUE
+    @Volatile private var maxPendingFrames = Long.MIN_VALUE
     /** Frames the drift controller asked for, waiting for the next chunk to carry them. */
     private var pendingAdjustFrames = 0
 
@@ -100,7 +104,18 @@ class SyncRenderer(
                 .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build())
                 .setBufferSizeInBytes(maxOf(minimum, silence.size * 2))
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                // Asks for the framework's fast mixer path instead of the deep normal-mixer one.
+                // M2 measured a reproducible 34.7ms residual between two handsets that the shared
+                // timeline cannot see, which means at least one device's getTimestamp does not
+                // account for everything between the write and the speaker. A shallower output
+                // path has less room to hide such a delay, so this is the cheap half of that
+                // experiment: if the residual moves, the delay lives in the mixer layers and AAudio
+                // can go further; if it does not, the delay is downstream of anything either API
+                // reports. [trackBufferFrames] and the pending-frame range below record what the
+                // request actually bought, since the framework may decline the fast path.
+                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                 .build()
+            trackBufferFrames = track.bufferSizeInFrames
             track.play()
             val timestamp = AudioTimestamp()
             var writtenFrames = 0L
@@ -207,6 +222,8 @@ class SyncRenderer(
      */
     private fun sampleDrift(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long, timelineNextHostNanos: Long) {
         val pendingFrames = pendingFrames(track, timestamp, writtenFrames) ?: return
+        if (pendingFrames < minPendingFrames) minPendingFrames = pendingFrames
+        if (pendingFrames > maxPendingFrames) maxPendingFrames = pendingFrames
         val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, timelineNextHostNanos, SAMPLE_RATE)
         val decision = drift.observe(errorFrames)
         lastFilteredError = decision.filteredErrorFrames
@@ -262,6 +279,9 @@ class SyncRenderer(
             "\"streamingSilenceFrames\":${streamingSilenceFrames ?: "null"}," +
             "\"adjustments\":$adjustments,\"driftSamples\":$driftSamples," +
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
+            "\"trackBufferFrames\":$trackBufferFrames," +
+            "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
+            "\"maxPendingFrames\":${if (maxPendingFrames == Long.MIN_VALUE) "null" else maxPendingFrames}," +
             "\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
     }
 

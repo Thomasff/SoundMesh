@@ -6,3 +6,4 @@
 /local.properties
 /artifacts/
 *.iml
+.gradle-task6/
