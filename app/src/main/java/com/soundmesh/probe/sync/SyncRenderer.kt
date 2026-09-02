@@ -16,6 +16,7 @@ import com.soundmesh.core.extrapolatedPlaybackFrames
 import com.soundmesh.core.nextPhaseState
 import com.soundmesh.core.pendingPlaybackFrames
 import com.soundmesh.core.playbackErrorFrames
+import com.soundmesh.core.releaseTrimFrames
 
 /**
  * Feeds the scheduler's decisions to an AudioTrack and keeps playback on the shared timeline.
@@ -60,6 +61,15 @@ class SyncRenderer(
      * alone reads TRACKING in both cases. Emitted by [report].
      */
     @Volatile private var reacquisitions = 0
+    /**
+     * How often a released chunk had to be trimmed, and by how much at worst. This is the release
+     * phase made directly observable: before the trim existed the same quantity was silently
+     * carried into the audio and left for the drift controller, and the only place it ever showed
+     * up was the microphone. [maxTrimFrames] approaching one chunk means the loop is polling a
+     * whole chunk period late; near zero means playback is contiguous. Emitted by [report].
+     */
+    @Volatile private var releaseTrims = 0
+    @Volatile private var maxTrimFrames = 0
     @Volatile private var chirpStartStats: SchedulerStats? = null
     @Volatile private var chirpEndStats: SchedulerStats? = null
     @Volatile private var streamingEndStats: SchedulerStats? = null
@@ -189,7 +199,11 @@ class SyncRenderer(
                 // this is the only reading that excludes the chirp's own first chunk.
                 val statsBeforePoll = scheduler.stats()
                 val depthNanos = outputDepthNanos(track, timestamp, writtenFrames)
-                when (val decision = scheduler.poll(hostNanosNow() + depthNanos)) {
+                // The instant the next frame written will be heard. Both poll's release test and
+                // the trim below are asked about the same instant on purpose: poll decides whether
+                // the chunk is due, the trim decides how much of it already is not.
+                val heardAtHostNanos = hostNanosNow() + depthNanos
+                when (val decision = scheduler.poll(heardAtHostNanos)) {
                     is PlaybackDecision.Play -> {
                         if (timelineNextHostNanos == UNDEFINED) {
                             // First chunk pins the timeline: acquisition starts now, sampling
@@ -198,8 +212,21 @@ class SyncRenderer(
                             nextDriftCheckHostNanos = hostNanosNow()
                         }
                         val payload = applyPendingAdjust(decision.chunk.pcm)
-                        track.write(payload, 0, payload.size)
-                        writtenFrames += payload.size / (CHANNELS * 2)
+                        // Whatever of this chunk is already in the past is dropped rather than
+                        // written late (see releaseTrimFrames). Zero in contiguous playback, so
+                        // this only bites at a start or after a gap - which is exactly where the
+                        // release phase was being re-drawn. Clamped against the payload because
+                        // applyPendingAdjust may have shortened it by a frame.
+                        val trimFrames = releaseTrimFrames(
+                            decision.chunk.playAtHostNanos, heardAtHostNanos, SAMPLE_RATE, FRAMES_PER_CHUNK
+                        )
+                        val offset = minOf(trimFrames * CHANNELS * 2, payload.size)
+                        if (trimFrames > 0) {
+                            releaseTrims++
+                            if (trimFrames > maxTrimFrames) maxTrimFrames = trimFrames
+                        }
+                        track.write(payload, offset, payload.size - offset)
+                        writtenFrames += (payload.size - offset) / (CHANNELS * 2)
                         // A dropped or duplicated frame deliberately does not move the timeline:
                         // shifting the frame-to-instant mapping by one frame is the correction.
                         timelineNextHostNanos = decision.chunk.playAtHostNanos + CHUNK_NANOS
@@ -388,6 +415,7 @@ class SyncRenderer(
             "\"adjustments\":$adjustments,\"driftSamples\":$driftSamples," +
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
             "\"reacquisitions\":$reacquisitions," +
+            "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +

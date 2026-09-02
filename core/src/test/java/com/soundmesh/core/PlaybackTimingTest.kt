@@ -175,4 +175,73 @@ class PlaybackTimingTest {
 
         assertEquals(10_000L, pending)
     }
+
+    @Test
+    fun aChunkReleasedOnTimeIsNotTrimmed() {
+        // Contiguous playback: the previous chunk ended exactly where this one begins, so the
+        // instant the next written frame will be heard is already this chunk's own instant.
+        val trim = releaseTrimFrames(
+            playAtHostNanos = 5_000_000_000L,
+            heardAtHostNanos = 5_000_000_000L,
+            sampleRate = 48000,
+            chunkFrames = 960
+        )
+
+        assertEquals(0, trim)
+    }
+
+    @Test
+    fun aChunkReleasedLateIsTrimmedByExactlyHowLateItIs() {
+        // 5ms late at 48kHz. Dropping the first 240 frames makes frame 240 - the frame that was
+        // always meant to be heard 5ms into the chunk - land on the instant it is actually heard.
+        val trim = releaseTrimFrames(
+            playAtHostNanos = 5_000_000_000L,
+            heardAtHostNanos = 5_005_000_000L,
+            sampleRate = 48000,
+            chunkFrames = 960
+        )
+
+        assertEquals(240, trim)
+    }
+
+    @Test
+    fun aChunkReleasedEarlyIsNotTrimmed() {
+        // Trimming here would throw away audio that has not come due yet, moving the content
+        // earlier rather than aligning it. Silence ahead of the chunk is the caller's business.
+        val trim = releaseTrimFrames(
+            playAtHostNanos = 5_000_000_000L,
+            heardAtHostNanos = 4_990_000_000L,
+            sampleRate = 48000,
+            chunkFrames = 960
+        )
+
+        assertEquals(0, trim)
+    }
+
+    @Test
+    fun latenessBeyondAWholeChunkTrimsTheWholeChunkAndNoMore() {
+        // PlaybackScheduler.poll drops anything this late, so this is a guard rather than a path
+        // taken in practice - but an unclamped count would index past the end of the payload.
+        val trim = releaseTrimFrames(
+            playAtHostNanos = 5_000_000_000L,
+            heardAtHostNanos = 5_050_000_000L,
+            sampleRate = 48000,
+            chunkFrames = 960
+        )
+
+        assertEquals(960, trim)
+    }
+
+    @Test
+    fun subFrameLatenessKeepsTheFrameRatherThanRoundingItAway() {
+        // A quarter of a frame at 48kHz. Rounding up would drop a frame still in the future.
+        val trim = releaseTrimFrames(
+            playAtHostNanos = 0L,
+            heardAtHostNanos = 5_208L,
+            sampleRate = 48000,
+            chunkFrames = 960
+        )
+
+        assertEquals(0, trim)
+    }
 }

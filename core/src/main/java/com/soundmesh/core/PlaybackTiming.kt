@@ -79,3 +79,36 @@ fun extrapolatedPlaybackFrames(framePosition: Long, timestampNanos: Long, nowNan
     val elapsedNanos = (nowNanos - timestampNanos).coerceAtLeast(0L)
     return framePosition + elapsedNanos * sampleRate / 1_000_000_000L
 }
+
+/**
+ * How many frames to drop from the front of a chunk that was released late, so that what is
+ * actually written lands on the instant it was scheduled for.
+ *
+ * This is the fix for the release-phase error. PlaybackScheduler.poll releases a chunk once
+ * `now + outputDepth` has reached its instant, and the render loop only polls once per chunk write
+ * - the write blocks until the AudioTrack has room, which paces the loop at a whole chunk period.
+ * So the release lands anywhere in [playAt, playAt + one chunk), and writing the chunk whole put
+ * every frame in it that far late. The error was left for the drift controller to work off one
+ * frame at a time, which takes about nineteen seconds for a full chunk - fine for a long stream,
+ * useless for the calibration chirp, which is six chunks long and follows a two second gap that
+ * re-draws the phase. Two clusters of role-swapped measurements 19.88ms apart against a 20.00ms
+ * chunk are what that looks like from the microphone.
+ *
+ * [heardAtHostNanos] is the instant the next frame written will be heard - `now + outputDepth`,
+ * the same value poll was asked with. Dropping the returned count makes frame N of the chunk, which
+ * was always meant to be heard N frames into it, land exactly where it is actually heard; the
+ * chunk still ends on its own boundary, so the timeline needs no adjustment. In contiguous
+ * playback the previous chunk ended precisely here and this returns zero, so the trim only ever
+ * bites at a start or after a gap.
+ *
+ * Never trims a chunk released early: that would move content earlier rather than align it.
+ * Clamped to [chunkFrames] because an unclamped count would index past the payload; poll already
+ * drops anything that late, so the clamp is a guard rather than a path taken.
+ */
+fun releaseTrimFrames(playAtHostNanos: Long, heardAtHostNanos: Long, sampleRate: Int, chunkFrames: Int): Int {
+    val lateNanos = heardAtHostNanos - playAtHostNanos
+    if (lateNanos <= 0L) return 0
+    // Truncating division: a fraction of a frame late still leaves that frame in the future.
+    val lateFrames = lateNanos * sampleRate / 1_000_000_000L
+    return lateFrames.coerceAtMost(chunkFrames.toLong()).toInt()
+}
