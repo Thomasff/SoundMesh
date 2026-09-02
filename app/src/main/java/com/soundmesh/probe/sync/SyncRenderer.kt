@@ -70,6 +70,18 @@ class SyncRenderer(
      */
     @Volatile private var releaseTrims = 0
     @Volatile private var maxTrimFrames = 0
+    /**
+     * The trim applied to the chirp's own first chunk, or null if no chirp chunk was ever played.
+     *
+     * The whole-run counters above cannot answer the one question that decides where the residual
+     * error lives, because they are dominated by the streaming segment. The calibration chirp is
+     * the only thing the alignment number is actually measured from, and the claim that its release
+     * carries no quantisation - the scheduler fills silence exactly up to the queued chirp's
+     * instant, so the trim should be zero by the time it is released - has so far only been
+     * reasoned, never measured. Zero here puts the remaining 1.5ms role-dependent term and the
+     * doubled run-to-run scatter outside the playback layer; anything else puts them back in it.
+     */
+    @Volatile private var chirpTrimFrames: Int? = null
     @Volatile private var chirpStartStats: SchedulerStats? = null
     @Volatile private var chirpEndStats: SchedulerStats? = null
     @Volatile private var streamingEndStats: SchedulerStats? = null
@@ -230,7 +242,7 @@ class SyncRenderer(
                         // A dropped or duplicated frame deliberately does not move the timeline:
                         // shifting the frame-to-instant mapping by one frame is the correction.
                         timelineNextHostNanos = decision.chunk.playAtHostNanos + CHUNK_NANOS
-                        recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll)
+                        recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll, trimFrames)
                     }
                     is PlaybackDecision.Silence -> {
                         // Honours the frame count rather than always writing a whole chunk: the
@@ -264,9 +276,12 @@ class SyncRenderer(
      * last; [streamingEndStats] keeps the streaming segment's real end, which is up to the whole
      * output lead later than the instant the caller stopped submitting.
      */
-    private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats) {
+    private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats, trimFrames: Int) {
         if (sequence >= CHIRP_SEQUENCE_BASE) {
-            if (chirpStartStats == null) chirpStartStats = statsBeforePoll
+            if (chirpStartStats == null) {
+                chirpStartStats = statsBeforePoll
+                chirpTrimFrames = trimFrames
+            }
             chirpEndStats = scheduler.stats()
         } else {
             streamingEndStats = scheduler.stats()
@@ -422,6 +437,7 @@ class SyncRenderer(
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
             "\"reacquisitions\":$reacquisitions," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
+            "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
