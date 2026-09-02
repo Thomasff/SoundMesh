@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "SoundMesh"
 include(":app")
+include(":core")

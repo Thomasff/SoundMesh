@@ -1,17 +1,13 @@
 plugins {
-    id("com.android.application")
+    id("com.android.library")
 }
 
 android {
-    namespace = "com.soundmesh.probe"
+    namespace = "com.soundmesh.core"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.soundmesh.probe"
         minSdk = 29
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
     }
 
     compileOptions {
@@ -21,6 +17,5 @@ android {
 }
 
 dependencies {
-    implementation(project(":core"))
     testImplementation("junit:junit:4.13.2")
 }
