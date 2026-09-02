@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
-const SENSITIVE_KEY = /token|auth|authorization|signature|sign|key|cookie|session|credential/i;
+// Secrets, plus the account and device identifiers a music app attaches to a cast URI.
+const SENSITIVE_KEY = /token|auth|authorization|signature|sign|key|cookie|session|credential|uin|uid|openid|qq|imei|mac|phone|mobile|email|nick|account|device/i;
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 

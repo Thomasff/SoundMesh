@@ -30,3 +30,13 @@ test('reports header names only and never the values of secret headers', () => {
   assert.deepEqual(names, ['authorization', 'content-type', 'cookie', 'set-cookie']);
   assert.equal(JSON.stringify(names).includes('Bearer'), false);
 });
+
+test('redacts the account and device identifiers a cast uri carries', () => {
+  const uri = 'http://ws.stream.example.com/track.mp3?guid=abc123&vkey=secret&uin=1234567890&openid=zz&deviceId=dd&src=other.mp3&redirect=1&fromtag=111042';
+  const { displayUri } = redactMediaUri(uri);
+  for (const leaked of ['1234567890', 'abc123', 'secret', 'zz', 'dd']) {
+    assert.equal(displayUri.includes(leaked), false, `${leaked} must not survive redaction`);
+  }
+  assert.match(displayUri, /fromtag=111042/);
+  assert.match(displayUri, /redirect=1/);
+});
