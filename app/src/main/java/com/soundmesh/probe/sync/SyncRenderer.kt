@@ -7,6 +7,7 @@ import android.media.AudioTrack
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackDecision
 import com.soundmesh.core.PlaybackScheduler
+import com.soundmesh.core.playbackErrorFrames
 
 /**
  * Feeds the scheduler's decisions to an AudioTrack and keeps playback on the shared timeline.
@@ -75,8 +76,8 @@ class SyncRenderer(
      */
     private fun applyDrift(pcm: ByteArray, track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long, playAtHostNanos: Long): ByteArray {
         if (!track.getTimestamp(timestamp)) return pcm
-        val heardNanos = hostNanosNow() - (writtenFrames - timestamp.framePosition) * 1_000_000_000L / SAMPLE_RATE
-        val errorFrames = ((heardNanos - playAtHostNanos) * SAMPLE_RATE / 1_000_000_000L).toInt()
+        val pendingFrames = writtenFrames - timestamp.framePosition
+        val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, playAtHostNanos, SAMPLE_RATE)
         val decision = drift.observe(errorFrames)
         lastFilteredError = decision.filteredErrorFrames
         if (decision.adjustFrames == 0) return pcm

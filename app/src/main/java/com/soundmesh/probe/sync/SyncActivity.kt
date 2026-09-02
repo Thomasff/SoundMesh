@@ -147,12 +147,14 @@ class SyncActivity : Activity() {
             val hostChirpAt = lastPlayAtHostNanos + CALIBRATION_GAP_NANOS + STAGGER_NANOS
             val recordThread = Thread { calibration.record(recordSecondsFor(hostChirpAt)) }
             recordThread.start()
-            calibration.playChirpAt(hostChirpAt) { System.nanoTime() }
+            val chirpMissedByNanos = calibration.playChirpAt(hostChirpAt) { System.nanoTime() }
             recordThread.join()
 
             runStore.writeSyncJson(
                 caseId,
-                "{\"schemaVersion\":1,\"role\":\"HOST\",\"mode\":\"FULL\",\"failureCode\":null,\"renderer\":${renderer.report()}}"
+                "{\"schemaVersion\":1,\"role\":\"HOST\",\"mode\":\"FULL\"," +
+                    "\"failureCode\":${chirpFailureCodeJson(chirpMissedByNanos)}," +
+                    "\"chirpMissedByNanos\":$chirpMissedByNanos,\"renderer\":${renderer.report()}}"
             )
         } finally {
             chunkServer.stop()
@@ -182,7 +184,13 @@ class SyncActivity : Activity() {
         }
 
         var history: List<ClockEstimate> = emptyList()
-        val clockThread = Thread { history = clockClient.runFor(seconds) }
+        // runFor stops sending exchanges once its own duration elapses, so bounding it by
+        // `seconds` alone would starve the convergence wait below of the very exchanges it is
+        // waiting on whenever `seconds` is shorter than convergence can possibly take (the
+        // estimator needs 8 samples at a 2s cadence, about 16s) - every such run would then
+        // burn the full CONVERGENCE_TIMEOUT_SECONDS regardless of network quality. Running for
+        // at least that long keeps convergence possible no matter how short `seconds` is.
+        val clockThread = Thread { history = clockClient.runFor(maxOf(seconds, CONVERGENCE_TIMEOUT_SECONDS)) }
         try {
             clockThread.start()
             chunkClient.start()
@@ -236,19 +244,24 @@ class SyncActivity : Activity() {
             val calibration = CalibrationRunner(runStore, caseId)
             val observed = lastPlayAt.get()
             val chirpAt = (if (observed > 0) observed else hostNanosNow()) + CALIBRATION_GAP_NANOS
-            calibration.playChirpAt(chirpAt, hostNanosNow)
+            val chirpMissedByNanos = calibration.playChirpAt(chirpAt, hostNanosNow)
 
             clockThread.join()
             runStore.writeSyncJson(
                 caseId,
-                "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\",\"failureCode\":null," +
-                    "\"convergenceWaitNanos\":$convergenceWaitNanos," +
+                "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\"," +
+                    "\"failureCode\":${chirpFailureCodeJson(chirpMissedByNanos)}," +
+                    "\"convergenceWaitNanos\":$convergenceWaitNanos,\"chirpMissedByNanos\":$chirpMissedByNanos," +
                     "\"estimates\":${estimatesJson(history)},\"renderer\":${renderer.report()}}"
             )
         } finally {
             chunkClient.stop()
         }
     }
+
+    /** The JSON literal for sync.json's failureCode field, given how late a chirp started. */
+    private fun chirpFailureCodeJson(chirpMissedByNanos: Long): String =
+        if (chirpMissedByNanos > 0) "\"CHIRP_DEADLINE_MISSED\"" else "null"
 
     /** How long CalibrationRunner.record() must run, from now, to outlast the host's own chirp. */
     private fun recordSecondsFor(chirpStartHostNanos: Long): Int {
