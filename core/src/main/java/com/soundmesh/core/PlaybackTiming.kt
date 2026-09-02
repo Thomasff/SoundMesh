@@ -41,12 +41,19 @@ fun playbackErrorFrames(nowHostNanos: Long, pendingFrames: Long, targetHostNanos
  * time has a different origin. A negative elapsed is clamped to zero so a clock quirk cannot
  * inflate the pending count.
  *
- * The result is bounded below at zero, i.e. the extrapolated position is never allowed past
- * [writtenFrames]: playback cannot have consumed frames that were never handed over. The
- * extrapolation itself has no upper bound, so an underrun - or a stale pair the HAL never
- * refreshed - carries the position past the whole write stream and produced -17798 frames
- * (-371ms) of "pending" on a measured two handset run. Left unbounded that feeds
- * [playbackErrorFrames], and hence DriftController, a lead that never existed.
+ * Null when the extrapolated position runs past [writtenFrames]: playback cannot have consumed
+ * frames that were never handed over, so such a reading is unusable and is rejected - exactly like
+ * getTimestamp returning false. The extrapolation itself has no upper bound, so an underrun - or a
+ * stale pair the HAL never refreshed - carries the position past the whole write stream and
+ * produced -17798 frames (-371ms) of "pending" on a measured two handset run.
+ *
+ * Flooring that at zero instead was tried and was wrong. Zero is not a neutral value: it asserts
+ * that the output buffer is completely empty, a specific claim the caller has no reason to believe,
+ * and it reaches [playbackErrorFrames] and hence DriftController as if it were a measurement. On a
+ * measured sink about 5% of readings arrived that way, which pushed the median-filtered error back
+ * and forth across the deadband edge and stopped the phase machine ever completing its run of
+ * consecutive in-deadband samples - acquisition never converged. An unusable reading has to be
+ * discarded, not substituted.
  */
 fun pendingPlaybackFrames(
     writtenFrames: Long,
@@ -54,16 +61,19 @@ fun pendingPlaybackFrames(
     timestampNanos: Long,
     nowNanos: Long,
     sampleRate: Int
-): Long = (writtenFrames - extrapolatedPlaybackFrames(framePosition, timestampNanos, nowNanos, sampleRate))
-    .coerceAtLeast(0L)
+): Long? {
+    val playbackFrames = extrapolatedPlaybackFrames(framePosition, timestampNanos, nowNanos, sampleRate)
+    if (playbackFrames > writtenFrames) return null
+    return writtenFrames - playbackFrames
+}
 
 /**
  * Where playback has reached at [nowNanos]: the position [framePosition] that was true at
  * [timestampNanos], advanced at the nominal rate over the elapsed duration.
  *
- * Exposed on its own only so a caller can tell whether [pendingPlaybackFrames]' lower bound
- * actually fired - the position running past the write stream - without repeating the
- * extrapolation and without this function having to count anything itself.
+ * Exposed on its own only so a caller can tell whether [pendingPlaybackFrames] rejected a reading
+ * - the position running past the write stream - without repeating the extrapolation and without
+ * this function having to count anything itself.
  */
 fun extrapolatedPlaybackFrames(framePosition: Long, timestampNanos: Long, nowNanos: Long, sampleRate: Int): Long {
     val elapsedNanos = (nowNanos - timestampNanos).coerceAtLeast(0L)

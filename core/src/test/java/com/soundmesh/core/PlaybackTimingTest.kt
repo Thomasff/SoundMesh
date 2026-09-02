@@ -1,6 +1,7 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PlaybackTimingTest {
@@ -83,9 +84,9 @@ class PlaybackTimingTest {
     }
 
     @Test
-    fun anOrdinaryReadingIsNotTouchedByTheLowerBound() {
+    fun anOrdinaryReadingIsNotRejected() {
         // ~210ms of real output depth with a timestamp refreshed 5ms ago: the everyday case the
-        // bound must leave exactly as it was, pinned to a value the clamp cannot quietly absorb.
+        // rejection must leave exactly as it was, pinned to a value it cannot quietly absorb.
         val pending = pendingPlaybackFrames(
             writtenFrames = 100_000L,
             framePosition = 89_680L,
@@ -98,10 +99,11 @@ class PlaybackTimingTest {
     }
 
     @Test
-    fun anExtrapolationPastEverythingWrittenReportsNothingPendingRatherThanANegativeCount() {
+    fun anExtrapolationPastEverythingWrittenIsRejectedRatherThanFlooredAtZero() {
         // An underrun, or a getTimestamp pair the HAL never refreshed, carries the extrapolated
         // position far past every frame ever written. A physical run reported -17798 frames
-        // (-371ms) this way, and playback cannot have consumed frames that were never handed over.
+        // (-371ms) this way. Zero is not the answer: it asserts a completely empty output buffer,
+        // which is a specific and wrong measurement the drift controller would act on.
         val pending = pendingPlaybackFrames(
             writtenFrames = 20_000L,
             framePosition = 19_000L,
@@ -110,12 +112,12 @@ class PlaybackTimingTest {
             sampleRate = 48000
         )
 
-        assertEquals(0L, pending)
+        assertNull(pending)
     }
 
     @Test
-    fun aPositionAlreadyPastTheWrittenCountReportsNothingPending() {
-        // The same bound with no extrapolation at all: the reported position alone is already
+    fun aPositionAlreadyPastTheWrittenCountIsRejected() {
+        // The same rejection with no extrapolation at all: the reported position alone is already
         // ahead of the write stream.
         val pending = pendingPlaybackFrames(
             writtenFrames = 20_000L,
@@ -125,13 +127,30 @@ class PlaybackTimingTest {
             sampleRate = 48000
         )
 
+        assertNull(pending)
+    }
+
+    @Test
+    fun aPositionExactlyAtTheWrittenCountIsAGenuineZeroNotARejection() {
+        // The boundary: the extrapolated position lands exactly on writtenFrames. Everything
+        // handed over has been heard and nothing more - a drained output is an ordinary reading,
+        // not an impossible one, so it must come back as 0 rather than as a rejected sample.
+        // 20ms of extrapolation at 48kHz is exactly one 960-frame chunk.
+        val pending = pendingPlaybackFrames(
+            writtenFrames = 20_000L,
+            framePosition = 19_040L,
+            timestampNanos = 0L,
+            nowNanos = 20_000_000L,
+            sampleRate = 48000
+        )
+
         assertEquals(0L, pending)
     }
 
     @Test
-    fun theExtrapolatedPositionIsExposedSoCallersCanSeeTheBoundFire() {
-        // What the renderer counts pendingClamped on: the unbounded position, so it can tell a
-        // clamped reading from a genuinely empty output without repeating the extrapolation.
+    fun theExtrapolatedPositionIsExposedSoCallersCanSeeAReadingRejected() {
+        // What the renderer counts pendingRejected on: the unbounded position, so it can tell a
+        // rejected reading from a genuinely empty output without repeating the extrapolation.
         val position = extrapolatedPlaybackFrames(
             framePosition = 19_000L,
             timestampNanos = 0L,
