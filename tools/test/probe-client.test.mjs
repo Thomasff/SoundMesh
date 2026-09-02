@@ -35,3 +35,20 @@ test('exports WAV bytes without decoding stdout as text', async () => {
   await client.exportWav({ serial: 'device-1', caseId: 'C1', path: 'capture.wav' });
   assert.deepEqual(written, bytes);
 });
+
+test('clears only the three private artifacts of one case with an explicit serial', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '', stderr: '' }; } });
+  await client.clearCaseArtifacts({ serial: 'serial;bad', caseId: 'C1' });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['exec-out', 'run-as', 'com.soundmesh.probe', 'rm', '-f', 'files/runs/C1/status.json', 'files/runs/C1/capture.json', 'files/runs/C1/capture.wav']
+  ]);
+  assert.deepEqual(calls.map(({ serial }) => serial), ['serial;bad']);
+});
+
+test('rejects an invalid case ID and a failed clear instead of continuing', async () => {
+  const client = createProbeClient({ runAdb: async () => ({ exitCode: 0, stdout: '', stderr: '' }) });
+  await assert.rejects(() => client.clearCaseArtifacts({ serial: 's', caseId: '../..' }), /Invalid Probe case ID/);
+  const failing = createProbeClient({ runAdb: async () => ({ exitCode: 1, stdout: '', stderr: 'run-as: package not debuggable' }) });
+  await assert.rejects(() => failing.clearCaseArtifacts({ serial: 's', caseId: 'C1' }), /Clear case artifacts failed/);
+});

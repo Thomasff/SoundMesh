@@ -22,6 +22,7 @@ export async function runCaptureCase({ serial, apkPath, probe, acknowledge, devi
   if (!serial) fail('A confirmed serial is required');
   if (!probe || !probeCase || !acknowledge) fail('Probe, case, and acknowledgement dependencies are required');
   await probe.install({ serial, apkPath });
+  await probe.clearCaseArtifacts({ serial, caseId: probeCase.caseId }); // Prevents a previous run of the same case from being read as this session's result.
   await probe.start({ serial, sessionId, ...probeCase });
   const checkpoints = {}; let playbackPrompted = false; let terminal;
   for (let index = 0; index < maxPolls; index++) {
