@@ -40,6 +40,13 @@ fun playbackErrorFrames(nowHostNanos: Long, pendingFrames: Long, targetHostNanos
  * System.nanoTime()) - the elapsed value is a duration, so this holds on the sink too, where host
  * time has a different origin. A negative elapsed is clamped to zero so a clock quirk cannot
  * inflate the pending count.
+ *
+ * The result is bounded below at zero, i.e. the extrapolated position is never allowed past
+ * [writtenFrames]: playback cannot have consumed frames that were never handed over. The
+ * extrapolation itself has no upper bound, so an underrun - or a stale pair the HAL never
+ * refreshed - carries the position past the whole write stream and produced -17798 frames
+ * (-371ms) of "pending" on a measured two handset run. Left unbounded that feeds
+ * [playbackErrorFrames], and hence DriftController, a lead that never existed.
  */
 fun pendingPlaybackFrames(
     writtenFrames: Long,
@@ -47,7 +54,18 @@ fun pendingPlaybackFrames(
     timestampNanos: Long,
     nowNanos: Long,
     sampleRate: Int
-): Long {
+): Long = (writtenFrames - extrapolatedPlaybackFrames(framePosition, timestampNanos, nowNanos, sampleRate))
+    .coerceAtLeast(0L)
+
+/**
+ * Where playback has reached at [nowNanos]: the position [framePosition] that was true at
+ * [timestampNanos], advanced at the nominal rate over the elapsed duration.
+ *
+ * Exposed on its own only so a caller can tell whether [pendingPlaybackFrames]' lower bound
+ * actually fired - the position running past the write stream - without repeating the
+ * extrapolation and without this function having to count anything itself.
+ */
+fun extrapolatedPlaybackFrames(framePosition: Long, timestampNanos: Long, nowNanos: Long, sampleRate: Int): Long {
     val elapsedNanos = (nowNanos - timestampNanos).coerceAtLeast(0L)
-    return writtenFrames - (framePosition + elapsedNanos * sampleRate / 1_000_000_000L)
+    return framePosition + elapsedNanos * sampleRate / 1_000_000_000L
 }

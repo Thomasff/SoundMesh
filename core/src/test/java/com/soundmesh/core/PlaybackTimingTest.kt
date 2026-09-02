@@ -83,6 +83,66 @@ class PlaybackTimingTest {
     }
 
     @Test
+    fun anOrdinaryReadingIsNotTouchedByTheLowerBound() {
+        // ~210ms of real output depth with a timestamp refreshed 5ms ago: the everyday case the
+        // bound must leave exactly as it was, pinned to a value the clamp cannot quietly absorb.
+        val pending = pendingPlaybackFrames(
+            writtenFrames = 100_000L,
+            framePosition = 89_680L,
+            timestampNanos = 0L,
+            nowNanos = 5_000_000L,
+            sampleRate = 48000
+        )
+
+        assertEquals(10_080L, pending)
+    }
+
+    @Test
+    fun anExtrapolationPastEverythingWrittenReportsNothingPendingRatherThanANegativeCount() {
+        // An underrun, or a getTimestamp pair the HAL never refreshed, carries the extrapolated
+        // position far past every frame ever written. A physical run reported -17798 frames
+        // (-371ms) this way, and playback cannot have consumed frames that were never handed over.
+        val pending = pendingPlaybackFrames(
+            writtenFrames = 20_000L,
+            framePosition = 19_000L,
+            timestampNanos = 0L,
+            nowNanos = 1_000_000_000L,
+            sampleRate = 48000
+        )
+
+        assertEquals(0L, pending)
+    }
+
+    @Test
+    fun aPositionAlreadyPastTheWrittenCountReportsNothingPending() {
+        // The same bound with no extrapolation at all: the reported position alone is already
+        // ahead of the write stream.
+        val pending = pendingPlaybackFrames(
+            writtenFrames = 20_000L,
+            framePosition = 25_000L,
+            timestampNanos = 0L,
+            nowNanos = 0L,
+            sampleRate = 48000
+        )
+
+        assertEquals(0L, pending)
+    }
+
+    @Test
+    fun theExtrapolatedPositionIsExposedSoCallersCanSeeTheBoundFire() {
+        // What the renderer counts pendingClamped on: the unbounded position, so it can tell a
+        // clamped reading from a genuinely empty output without repeating the extrapolation.
+        val position = extrapolatedPlaybackFrames(
+            framePosition = 19_000L,
+            timestampNanos = 0L,
+            nowNanos = 1_000_000_000L,
+            sampleRate = 48000
+        )
+
+        assertEquals(67_000L, position)
+    }
+
+    @Test
     fun aTimestampFromTheFutureCannotWindThePositionBackwards() {
         // A clock quirk that reports the position as true after now must not be extrapolated
         // negatively: that would inflate the pending count instead of leaving it alone.
