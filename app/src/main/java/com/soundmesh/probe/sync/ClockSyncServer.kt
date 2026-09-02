@@ -28,12 +28,24 @@ object ClockPacket {
         return ClockExchange(t1 = readLong(bytes, 4), t2 = readLong(bytes, 12), t3 = readLong(bytes, 20), t4 = t4)
     }
 
+    /** The seq a request was sent with, echoed back unchanged in its reply. Lets a caller match a reply to its request. */
+    fun sequenceOf(bytes: ByteArray): Int {
+        require(bytes.size == BYTES) { "clock packet must be $BYTES bytes" }
+        return readInt(bytes, 0)
+    }
+
     private fun writeInt(target: ByteArray, at: Int, value: Int) {
         for (index in 0 until 4) target[at + index] = (value ushr (24 - index * 8)).toByte()
     }
 
     private fun writeLong(target: ByteArray, at: Int, value: Long) {
         for (index in 0 until 8) target[at + index] = (value ushr (56 - index * 8)).toByte()
+    }
+
+    private fun readInt(source: ByteArray, at: Int): Int {
+        var value = 0
+        for (index in 0 until 4) value = (value shl 8) or (source[at + index].toInt() and 0xFF)
+        return value
     }
 
     private fun readLong(source: ByteArray, at: Int): Long {

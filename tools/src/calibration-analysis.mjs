@@ -52,6 +52,14 @@ export function findArrival(recorded, reference, { searchFrom, searchTo }) {
  * ordered by time.
  */
 export function analyzeAlignment({ recorded, reference, sampleRate, staggerFrames, searchRadiusFrames }) {
+  // The ordering below trusts that a window centred on best.index + staggerFrames cannot reach
+  // back to best.index itself (and the mirror window can't reach forward past it). Once the
+  // radius reaches the stagger that stops holding, and the two chirps can be told apart from
+  // each other only by which one happens to correlate louder - silently swapping first/second
+  // and negating the reported error.
+  if (searchRadiusFrames >= staggerFrames) {
+    throw new Error('searchRadiusFrames must be smaller than staggerFrames, or the two chirps can be mistaken for each other');
+  }
   const best = findArrival(recorded, reference, { searchFrom: 0, searchTo: recorded.length });
   const window = centre => findArrival(recorded, reference, {
     searchFrom: centre - searchRadiusFrames,

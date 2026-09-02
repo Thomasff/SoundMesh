@@ -13,6 +13,7 @@ import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.ProbeCase
 import com.soundmesh.probe.RunStore
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -167,9 +168,17 @@ class SyncActivity : Activity() {
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
         val renderer = SyncRenderer(scheduler, DriftController(), hostNanosNow)
         val lastPlayAt = AtomicLong(0L)
+        // The spec requires playback not start before the offset estimate has converged, so
+        // nothing is submitted to the scheduler until `converged` is set true below. Anything
+        // that arrives before that is not schedulable and must not be counted as a drop, which
+        // ruled out just letting the scheduler's own capacity/lateness logic handle it - that
+        // would show up as droppedLate/droppedOverflow on an otherwise healthy run.
+        val converged = AtomicBoolean(false)
         val chunkClient = ChunkClient(address, CHUNK_PORT) { chunk ->
-            lastPlayAt.set(chunk.playAtHostNanos)
-            scheduler.submit(chunk)
+            if (converged.get()) {
+                lastPlayAt.set(chunk.playAtHostNanos)
+                scheduler.submit(chunk)
+            }
         }
 
         var history: List<ClockEstimate> = emptyList()
@@ -180,14 +189,26 @@ class SyncActivity : Activity() {
 
             // hostNanosNow() is meaningless before the estimator has its first fit: it falls
             // back to a raw, uncorrected nanoTime() that can be off by however long the two
-            // devices have been powered on. Starting the renderer's bound from that reading
-            // risks a discontinuous jump the moment a real offset lands. Nothing arriving in
-            // this window survives to be heard anyway (its 1.5s lead is smaller than the time
-            // this can take), so waiting here does not cost anything that was not already lost.
-            val warmupDeadline = System.nanoTime() + seconds * 1_000_000_000L
-            while (clockClient.currentEstimate() == null && System.nanoTime() < warmupDeadline) {
+            // devices have been powered on. Clustering exchanges to fill the window faster would
+            // make the least-squares fit ill-conditioned (the estimator rejects that as implying
+            // impossible drift), so the only correct fix is to wait for a real fit, bounded so a
+            // broken link fails loudly rather than hanging or proceeding on a fabricated offset.
+            val convergenceStartNanos = System.nanoTime()
+            val convergenceDeadline = convergenceStartNanos + CONVERGENCE_TIMEOUT_SECONDS * 1_000_000_000L
+            while (clockClient.currentEstimate() == null && System.nanoTime() < convergenceDeadline) {
                 Thread.sleep(50)
             }
+            val convergenceWaitNanos = System.nanoTime() - convergenceStartNanos
+
+            if (clockClient.currentEstimate() == null) {
+                runStore.writeSyncJson(
+                    caseId,
+                    "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\",\"failureCode\":\"CLOCK_SYNC_TIMEOUT\"," +
+                        "\"convergenceWaitNanos\":$convergenceWaitNanos}"
+                )
+                return
+            }
+            converged.set(true)
 
             val until = hostNanosNow() + (seconds + RENDERER_MARGIN_SECONDS) * 1_000_000_000L
             val rendererThread = Thread { renderer.run(until) }
@@ -221,6 +242,7 @@ class SyncActivity : Activity() {
             runStore.writeSyncJson(
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\",\"failureCode\":null," +
+                    "\"convergenceWaitNanos\":$convergenceWaitNanos," +
                     "\"estimates\":${estimatesJson(history)},\"renderer\":${renderer.report()}}"
             )
         } finally {
@@ -265,6 +287,9 @@ class SyncActivity : Activity() {
 
         /** How much longer than the nominal segment the sink's renderer/idle-wait stay alive. */
         private const val RENDERER_MARGIN_SECONDS = 10
+
+        /** How long the sink waits for its first clock estimate before giving up as a failure. */
+        private const val CONVERGENCE_TIMEOUT_SECONDS = 40
 
         /** No new chunk for this long means the host has stopped broadcasting audio. */
         private const val IDLE_THRESHOLD_NANOS = 800_000_000L

@@ -82,6 +82,15 @@ test('reports a perfectly aligned pair as zero error', () => {
   assert.equal(result.alignmentErrorMs, 0);
 });
 
+test('rejects a search radius that could let the two chirps be mistaken for each other', () => {
+  const stagger = SAMPLE_RATE / 2;
+
+  assert.throws(() => analyzeAlignment({
+    recorded: recording([8000, 8000 + stagger]), reference: reference(),
+    sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: stagger
+  }));
+});
+
 test('refuses to report a number when no chirp stands out of the noise', () => {
   const result = analyzeAlignment({
     recorded: recording([], { noise: 3000 }), reference: reference(),

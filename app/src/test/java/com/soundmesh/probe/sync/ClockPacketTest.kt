@@ -31,4 +31,12 @@ class ClockPacketTest {
             ClockPacket.decodeReply(ByteArray(20), t4 = 0)
         }
     }
+
+    @Test
+    fun carriesTheSequenceNumberThroughToTheReply() {
+        val request = ClockPacket.encodeRequest(seq = 7, t1 = 1_000)
+        val reply = ClockPacket.encodeReply(request, t2 = 2_000, t3 = 2_100)
+
+        assertEquals(7, ClockPacket.sequenceOf(reply))
+    }
 }

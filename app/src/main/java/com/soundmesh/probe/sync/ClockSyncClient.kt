@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.core.ClockEstimate
+import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -25,19 +26,34 @@ class ClockSyncClient(
             var seq = 0
             while (System.nanoTime() < deadline) {
                 val t1 = System.nanoTime()
-                val request = ClockPacket.encodeRequest(seq++, t1)
+                val sent = seq++
+                val request = ClockPacket.encodeRequest(sent, t1)
                 runCatching {
                     socket.send(DatagramPacket(request, request.size, address, port))
-                    val buffer = ByteArray(ClockPacket.BYTES)
-                    val incoming = DatagramPacket(buffer, buffer.size)
-                    socket.receive(incoming)
-                    estimator.record(ClockPacket.decodeReply(buffer, System.nanoTime()))
-                }
+                    receiveMatchingReply(socket, sent)
+                }.getOrNull()?.let { estimator.record(it) }
                 estimator.estimate(System.nanoTime())?.let { history.add(it) }
                 Thread.sleep(intervalMillis)
             }
         }
         return history
+    }
+
+    /**
+     * Reads replies until one answers [sent]. The socket is not connected to the host address
+     * and carries no other correlation, so a stale reply to an earlier, timed-out request can
+     * otherwise be accepted as the answer to this one - stale t1/t2/t3 against a fresh t4, which
+     * is a wrong offset and an inflated round trip that only the estimator's best-of-window
+     * filtering happens to hide.
+     */
+    private fun receiveMatchingReply(socket: DatagramSocket, sent: Int): ClockExchange {
+        val buffer = ByteArray(ClockPacket.BYTES)
+        while (true) {
+            val incoming = DatagramPacket(buffer, buffer.size)
+            socket.receive(incoming)
+            if (incoming.length != ClockPacket.BYTES || ClockPacket.sequenceOf(buffer) != sent) continue
+            return ClockPacket.decodeReply(buffer, System.nanoTime())
+        }
     }
 
     /** Estimate valid right now, or null while the window is still filling. */

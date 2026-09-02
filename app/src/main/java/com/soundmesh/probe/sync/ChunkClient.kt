@@ -35,12 +35,17 @@ class ChunkClient(
     @Volatile private var running = false
 
     fun start() {
+        // Connect on the caller's thread before handing off to the worker: stop() reads
+        // `socket`, and a stop() landing before an async connect completed used to find it null
+        // and miss the close, leaking the thread. Connecting here means start() never returns
+        // without it set.
+        val connected = Socket(hostAddress, port)
+        connected.tcpNoDelay = true
+        socket = connected
         running = true
         Thread {
             runCatching {
-                Socket(hostAddress, port).use { connected ->
-                    socket = connected
-                    connected.tcpNoDelay = true
+                connected.use {
                     val reader = FrameReader(connected.getInputStream().buffered())
                     while (running) onChunk(reader.readChunk() ?: break)
                 }

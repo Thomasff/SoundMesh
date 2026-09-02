@@ -14,11 +14,15 @@ class ChunkServer(private val port: Int) {
     @Volatile private var running = false
 
     fun start() {
+        // Bind on the caller's thread before handing off to the worker: stop() reads `server`,
+        // and a stop() landing before an async bind completed used to find it null and miss the
+        // close, leaking the thread. Binding here means start() never returns without it set.
+        val bound = ServerSocket(port)
+        server = bound
         running = true
         Thread {
             runCatching {
-                ServerSocket(port).use { bound ->
-                    server = bound
+                bound.use {
                     while (running) {
                         val socket = bound.accept()
                         socket.tcpNoDelay = true
