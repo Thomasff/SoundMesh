@@ -50,16 +50,25 @@ class SyncRenderer(
     @Volatile private var minPendingFrames = Long.MAX_VALUE
     @Volatile private var maxPendingFrames = Long.MIN_VALUE
     /**
-     * How the timestamp path itself is holding up. Every getTimestamp that returns false sends
-     * [outputDepthNanos] to [DEFAULT_DEPTH_NANOS], a hardcoded 200ms guess, so on a handset that
-     * fails often that assumption is itself a large fixed error source - and until these counters
-     * existed nothing recorded how often it was being used. [pendingClamped] counts how often
-     * pendingPlaybackFrames' lower bound had to fire, i.e. how often the extrapolated position ran
-     * past everything written (underrun, or a pair the HAL never refreshed).
+     * How the timestamp path itself is holding up. [pendingRejected] counts how often
+     * pendingPlaybackFrames refused to return a reading, i.e. how often the extrapolated position
+     * ran past everything written (underrun, or a pair the HAL never refreshed); together with
+     * [timestampFailures] that is every occasion [outputDepthNanos] had no fresh depth to work
+     * from, counted by [depthFallbacks]. A measured sink rejected ~5% of its readings, so how often
+     * this path is taken decides how much of the run's output lead is a remembered value rather
+     * than a measured one.
      */
     @Volatile private var timestampQueries = 0
     @Volatile private var timestampFailures = 0
-    @Volatile private var pendingClamped = 0
+    @Volatile private var pendingRejected = 0
+    @Volatile private var depthFallbacks = 0
+    /**
+     * The last depth an actual reading produced, reused whenever the current reading is
+     * unavailable. [DEFAULT_DEPTH_NANOS]' 200ms is a guess, and on a measured sink the real depth
+     * was about 104ms - falling back to nearly double the truth on every unavailable reading is
+     * itself a noise source, so the guess is only used before any reading has ever succeeded.
+     */
+    @Volatile private var lastDepthNanos = DEFAULT_DEPTH_NANOS
     /** Frames the drift controller asked for, waiting for the next chunk to carry them. */
     private var pendingAdjustFrames = 0
 
@@ -209,13 +218,15 @@ class SyncRenderer(
     }
 
     /**
-     * Frames handed over but not yet heard, or null when the device has no timestamp to give.
+     * Frames handed over but not yet heard, or null when no usable reading is available - either
+     * the device had no timestamp to give, or the extrapolated position ran past everything
+     * written and pendingPlaybackFrames rejected it.
      *
-     * Every call is counted, and so is every refusal, because a refusal is not free: the caller
-     * falls back to [DEFAULT_DEPTH_NANOS]. The clamp is detected against the unbounded position
-     * rather than guessed from the sign of a later value - a pending count of zero is a perfectly
-     * ordinary reading on a drained output, so only the extrapolated position overrunning
-     * [writtenFrames] says the bound was what produced it.
+     * Every call is counted, and so is every refusal of either kind, because a refusal is not free:
+     * the caller has to fall back to a depth it did not measure. The rejection is detected against
+     * the unbounded position rather than guessed from the sign of a later value - a pending count
+     * of zero is a perfectly ordinary reading on a drained output, so only the extrapolated
+     * position overrunning [writtenFrames] says the reading was impossible.
      */
     private fun pendingFrames(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long): Long? {
         timestampQueries++
@@ -224,11 +235,11 @@ class SyncRenderer(
             return null
         }
         // Deliberately not hostNanosNow(): timestamp.nanoTime is on TIMEBASE_MONOTONIC, the same
-        // origin as System.nanoTime(), and only their difference is used. Read once so the clamp
-        // check and the returned value share an instant.
+        // origin as System.nanoTime(), and only their difference is used. Read once so the
+        // rejection check and the returned value share an instant.
         val nowNanos = System.nanoTime()
         if (extrapolatedPlaybackFrames(timestamp.framePosition, timestamp.nanoTime, nowNanos, SAMPLE_RATE) > writtenFrames) {
-            pendingClamped++
+            pendingRejected++
         }
         return pendingPlaybackFrames(
             writtenFrames = writtenFrames,
@@ -239,10 +250,23 @@ class SyncRenderer(
         )
     }
 
-    /** Frames handed over but not yet heard, as nanoseconds of lead the scheduler must account for. */
+    /**
+     * Frames handed over but not yet heard, as nanoseconds of lead the scheduler must account for.
+     *
+     * When no usable reading is available the last measured depth is reused. The output buffer's
+     * depth moves slowly - it is a property of the device and the mixer path, not of this
+     * iteration - so a reading taken a chunk or two ago is far closer to the truth than
+     * [DEFAULT_DEPTH_NANOS], which is only used until a first reading has ever succeeded.
+     */
     private fun outputDepthNanos(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long): Long {
-        val pending = pendingFrames(track, timestamp, writtenFrames) ?: return DEFAULT_DEPTH_NANOS
-        return pending.coerceAtLeast(0) * 1_000_000_000L / SAMPLE_RATE
+        val pending = pendingFrames(track, timestamp, writtenFrames)
+        if (pending == null) {
+            depthFallbacks++
+            return lastDepthNanos
+        }
+        val depthNanos = pending * 1_000_000_000L / SAMPLE_RATE
+        lastDepthNanos = depthNanos
+        return depthNanos
     }
 
     /**
@@ -324,7 +348,8 @@ class SyncRenderer(
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
             "\"maxPendingFrames\":${if (maxPendingFrames == Long.MIN_VALUE) "null" else maxPendingFrames}," +
             "\"timestampQueries\":$timestampQueries,\"timestampFailures\":$timestampFailures," +
-            "\"pendingClamped\":$pendingClamped,\"lowLatency\":$lowLatency," +
+            "\"pendingRejected\":$pendingRejected,\"depthFallbacks\":$depthFallbacks," +
+            "\"lowLatency\":$lowLatency," +
             "\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
     }
 
