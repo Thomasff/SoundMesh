@@ -3,12 +3,34 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProbeClient } from '../probe-client.mjs';
 import { analyzeAlignment } from '../calibration-analysis.mjs';
+import { createAdbHostRunner, parseAdbDevices } from '../adb.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifacts');
 const value = (args, key) => { const index = args.indexOf(key); return index === -1 ? undefined : args[index + 1]; };
 const wait = ms => new Promise(done => setTimeout(done, ms));
 const SAMPLE_RATE = 48000;
 const STAGGER_FRAMES = SAMPLE_RATE / 2;
+
+/**
+ * Checks both roles against what ADB actually reports, without ever putting a full serial into
+ * an error message: only the failing role and the reason are said aloud. Two devices are attached
+ * at once here (the only task in this plan where that is true), so a mistyped or swapped serial
+ * would otherwise silently target the wrong phone instead of failing loudly.
+ */
+export function assertAuthorizedPair(entries, { hostSerial, sinkSerial }) {
+  if (hostSerial === sinkSerial) throw new Error('--host-serial and --sink-serial must refer to different devices');
+  for (const [role, serial] of [['Host', hostSerial], ['Sink', sinkSerial]]) {
+    const entry = entries.find(candidate => candidate.serial === serial);
+    if (!entry) throw new Error(`${role} serial is not among the attached, authorised devices`);
+    if (entry.state !== 'device') throw new Error(`${role} serial is attached but not authorised (state: ${entry.state})`);
+  }
+}
+
+export async function requireBothSerialsAuthorized({ hostSerial, sinkSerial, runAdbHost }) {
+  const result = await runAdbHost({ args: ['devices', '-l'] });
+  if (result.exitCode !== 0) throw new Error('ADB device discovery failed');
+  assertAuthorizedPair(parseAdbDevices(result.stdout), { hostSerial, sinkSerial });
+}
 
 /** Reads a mono PCM16 WAV written by the probe into an Int16Array. */
 function readPcm16(buffer) {
@@ -26,7 +48,7 @@ function readPcm16(buffer) {
   throw new Error('WAV has no data chunk');
 }
 
-export async function main(args = process.argv.slice(2), { client = createProbeClient(), log = text => process.stdout.write(`${text}\n`) } = {}) {
+export async function main(args = process.argv.slice(2), { client = createProbeClient(), log = text => process.stdout.write(`${text}\n`), runAdbHost = createAdbHostRunner() } = {}) {
   const caseId = value(args, '--case') || 'S2';
   const seconds = Number(value(args, '--seconds') || 90);
   const mode = value(args, '--mode') || 'FULL';
@@ -35,6 +57,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   const hostAddress = value(args, '--host-address');
   if (!hostSerial || !sinkSerial || !hostAddress) throw new Error('Use --host-serial, --sink-serial and --host-address');
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S2');
+  // Revalidates both confirmed serials immediately before any device action: with two phones
+  // attached at once, a mistyped or swapped serial would otherwise silently target the wrong one.
+  await requireBothSerialsAuthorized({ hostSerial, sinkSerial, runAdbHost });
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
   await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode });
