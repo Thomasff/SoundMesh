@@ -108,4 +108,62 @@ class ClockOffsetEstimatorTest {
 
         assertTrue("stale offset survived: ${estimate.offsetNanos}", abs(estimate.offsetNanos - 5 * second) < 1_000_000)
     }
+
+    @Test
+    fun neverReportsNegativeUncertaintyEvenWithOutOfOrderTimestamps() {
+        val estimator = ClockOffsetEstimator()
+        // Mix out-of-order exchanges (negative roundTripNanos) with valid ones
+        repeat(8) { index ->
+            // Valid exchanges
+            estimator.record(exchange(index * 4L * second, 5 * second, 2_000_000, 2_000_000))
+        }
+        repeat(8) { index ->
+            // Out-of-order: t4 < t1, producing negative roundTripNanos
+            val t1 = (8 + index) * 4L * second
+            val t2 = t1 + 5 * second + 1_000_000
+            val t3 = t2
+            val t4 = t3 - 5 * second - 100_000_000  // Makes roundTripNanos negative
+            estimator.record(ClockExchange(t1, t2, t3, t4))
+        }
+
+        val estimate = estimator.estimate(32L * second)
+
+        assertNotNull(estimate)
+        assertTrue("uncertainty must never be negative: ${estimate!!.uncertaintyNanos}", estimate.uncertaintyNanos >= 0)
+    }
+
+    @Test
+    fun refusesToEstimateWhenAllExchangesHaveNegativeRoundTrips() {
+        val estimator = ClockOffsetEstimator()
+        repeat(ClockOffsetEstimator.MIN_SAMPLES) { index ->
+            val t1 = index * 2L * second
+            val t2 = t1 + 1_000_000
+            val t3 = t2
+            val t4 = t1 - 50_000_000  // Makes roundTripNanos definitely negative
+            estimator.record(ClockExchange(t1, t2, t3, t4))
+        }
+
+        val estimate = estimator.estimate(30L * second)
+
+        assertNull("should refuse to estimate with only negative round trips", estimate)
+    }
+
+    @Test
+    fun handlesIdenticalT1ValuesWithoutProducingNonFiniteResults() {
+        val estimator = ClockOffsetEstimator()
+        val baseT1 = 10L * second
+        repeat(ClockOffsetEstimator.MIN_SAMPLES) { index ->
+            // All exchanges have the same t1, causing denominator to be zero
+            estimator.record(exchange(baseT1, 5 * second, 2_000_000L + index * 100, 2_000_000L + index * 100))
+        }
+
+        val estimate = estimator.estimate(baseT1)
+
+        // Should either return a valid estimate or null, never saturated values or NaN drift
+        if (estimate != null) {
+            assertTrue("offset must not be saturated", estimate.offsetNanos != Long.MAX_VALUE && estimate.offsetNanos != Long.MIN_VALUE)
+            assertTrue("uncertainty must be non-negative", estimate.uncertaintyNanos >= 0)
+            assertTrue("drift must be finite", !estimate.driftPpm.isNaN() && !estimate.driftPpm.isInfinite())
+        }
+    }
 }

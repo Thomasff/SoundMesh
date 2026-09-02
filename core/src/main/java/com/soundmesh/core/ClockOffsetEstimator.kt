@@ -22,7 +22,10 @@ class ClockOffsetEstimator(
     @Synchronized
     fun estimate(atLocalNanos: Long): ClockEstimate? {
         if (window.size < MIN_SAMPLES) return null
-        val best = window.sortedBy { it.roundTripNanos }.take(bestCount)
+        // Filter out exchanges with negative round trips (out-of-order timestamps)
+        val validExchanges = window.filter { it.roundTripNanos >= 0 }
+        if (validExchanges.size < MIN_SAMPLES) return null
+        val best = validExchanges.sortedBy { it.roundTripNanos }.take(bestCount)
         val baseNanos = best.minOf { it.t1 }
         var sumX = 0.0; var sumY = 0.0; var sumXX = 0.0; var sumXY = 0.0
         for (exchange in best) {
@@ -36,8 +39,15 @@ class ClockOffsetEstimator(
         val slope = if (denominator == 0.0) 0.0 else (count * sumXY - sumX * sumY) / denominator
         val intercept = (sumY - slope * sumX) / count
         val offset = intercept + slope * ((atLocalNanos - baseNanos) / 1e9)
+
+        // Guard against non-finite results from the linear fit
+        if (!offset.isFinite() || !slope.isFinite() || !intercept.isFinite()) return null
+        val offsetNanos = offset.toLong()
+        // Detect saturation: if the result is an extreme value, the fit went wrong
+        if (offsetNanos == Long.MAX_VALUE || offsetNanos == Long.MIN_VALUE) return null
+
         return ClockEstimate(
-            offsetNanos = offset.toLong(),
+            offsetNanos = offsetNanos,
             uncertaintyNanos = best.minOf { it.roundTripNanos } / 2,
             driftPpm = slope / 1000.0,
             sampleCount = count
