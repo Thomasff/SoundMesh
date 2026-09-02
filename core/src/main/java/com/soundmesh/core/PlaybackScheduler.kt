@@ -21,6 +21,30 @@ data class SchedulerStats(
 )
 
 /**
+ * The change in the session-wide counters between two [SchedulerStats] snapshots.
+ *
+ * SchedulerStats accumulates for the whole run, so on its own it cannot say whether a drop or a
+ * silence-filled gap happened during a specific window - the calibration chirp, for one. Taking
+ * two snapshots (before the window, after it) and diffing them attributes the counters to that
+ * window instead of the whole session. `queued` is a point-in-time depth, not a counter, so it is
+ * deliberately left out.
+ */
+data class SchedulerStatsWindow(
+    val played: Int,
+    val droppedLate: Int,
+    val droppedOverflow: Int,
+    val silenceFrames: Int
+)
+
+fun schedulerStatsWindow(before: SchedulerStats, after: SchedulerStats): SchedulerStatsWindow =
+    SchedulerStatsWindow(
+        played = after.played - before.played,
+        droppedLate = after.droppedLate - before.droppedLate,
+        droppedOverflow = after.droppedOverflow - before.droppedOverflow,
+        silenceFrames = after.silenceFrames - before.silenceFrames
+    )
+
+/**
  * Holds chunks until the instant they must be heard, then releases them in order.
  *
  * The caller passes the host instant at which the data it is about to write will actually

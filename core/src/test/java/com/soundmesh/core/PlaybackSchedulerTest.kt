@@ -82,4 +82,29 @@ class PlaybackSchedulerTest {
 
         assertEquals(0, first.chunk.sequence)
     }
+
+    @Test
+    fun statsWindowIsZeroWhenNothingHappenedBetweenTwoSnapshots() {
+        val snapshot = SchedulerStats(queued = 3, played = 5, droppedLate = 1, droppedOverflow = 0, silenceFrames = 20)
+
+        val window = schedulerStatsWindow(snapshot, snapshot)
+
+        assertEquals(0, window.played)
+        assertEquals(0, window.droppedLate)
+        assertEquals(0, window.droppedOverflow)
+        assertEquals(0, window.silenceFrames)
+    }
+
+    @Test
+    fun statsWindowAttributesOnlyWhatChangedBetweenTheTwoSnapshots() {
+        val before = SchedulerStats(queued = 10, played = 100, droppedLate = 2, droppedOverflow = 1, silenceFrames = 180)
+        val after = SchedulerStats(queued = 4, played = 106, droppedLate = 3, droppedOverflow = 1, silenceFrames = 220)
+
+        val window = schedulerStatsWindow(before, after)
+
+        assertEquals(6, window.played)
+        assertEquals(1, window.droppedLate)
+        assertEquals(0, window.droppedOverflow)
+        assertEquals(40, window.silenceFrames)
+    }
 }

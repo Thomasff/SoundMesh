@@ -10,7 +10,10 @@ import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
+import com.soundmesh.core.RendererPhase
+import com.soundmesh.core.SchedulerStatsWindow
 import com.soundmesh.core.TonePcmSource
+import com.soundmesh.core.schedulerStatsWindow
 import com.soundmesh.probe.ProbeCase
 import com.soundmesh.probe.RunStore
 import java.util.concurrent.atomic.AtomicBoolean
@@ -158,23 +161,31 @@ class SyncActivity : Activity() {
             // chunk's playAtHostNanos - so they agree on it without another message.
             val sinkChirpAt = lastPlayAtHostNanos + CALIBRATION_GAP_NANOS
             val hostChirpAt = sinkChirpAt + STAGGER_NANOS
-            val hostChirpEnd = submitChirp(scheduler, hostChirpAt)
+            // Snapshotted here, at the exact instant the chirp chunks are handed to the
+            // scheduler, so silenceFrames/drops can later be attributed to the chirp window
+            // rather than read only as session-wide totals.
+            val preChirpStats = scheduler.stats()
+            val chirpSubmission = submitChirp(scheduler, renderer, hostChirpAt)
             // The renderer started on a provisional bound; only now is the chirp's end known.
-            renderer.endAt(hostChirpEnd + CHIRP_DRAIN_NANOS)
+            renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
 
             val calibration = CalibrationRunner(runStore, caseId)
             awaitHostInstant(sinkChirpAt - RECORD_LEAD_NANOS, hostNanosNow)
-            val recordThread = Thread { calibration.record(secondsUntil(hostChirpEnd + RECORD_TAIL_NANOS)) }
+            val recordThread = Thread { calibration.record(secondsUntil(chirpSubmission.endHostNanos + RECORD_TAIL_NANOS)) }
             recordThread.start()
             val chirpTiming = awaitChirpStart(hostChirpAt, hostNanosNow)
             rendererThread.join()
             recordThread.join()
+            val chirpWindow = schedulerStatsWindow(preChirpStats, scheduler.stats())
 
             runStore.writeSyncJson(
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"HOST\",\"mode\":\"FULL\"," +
-                    "\"failureCode\":${chirpFailureCodeJson(chirpTiming)}," +
-                    "${chirpTimingJson(chirpTiming)},\"renderer\":${renderer.report()}}"
+                    "\"failureCode\":${topLevelFailureCodeJson(renderer, chirpSubmission, chirpTiming)}," +
+                    "${chirpTimingJson(chirpTiming)}," +
+                    "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
+                    "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
+                    "\"renderer\":${renderer.report(preChirpStats.silenceFrames)}}"
             )
         } finally {
             chunkServer.stop()
@@ -279,18 +290,25 @@ class SyncActivity : Activity() {
             // than left idling on the generous bound it started with.
             val observed = lastPlayAt.get()
             val chirpAt = (if (observed > 0) observed else hostNanosNow()) + CALIBRATION_GAP_NANOS
-            val chirpEnd = submitChirp(scheduler, chirpAt)
-            renderer.endAt(chirpEnd + CHIRP_DRAIN_NANOS)
+            // Snapshotted here, at the exact instant the chirp chunks are handed to the
+            // scheduler, so silenceFrames/drops can later be attributed to the chirp window
+            // rather than read only as session-wide totals.
+            val preChirpStats = scheduler.stats()
+            val chirpSubmission = submitChirp(scheduler, renderer, chirpAt)
+            renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
             val chirpTiming = awaitChirpStart(chirpAt, hostNanosNow)
             rendererThread.join()
+            val chirpWindow = schedulerStatsWindow(preChirpStats, scheduler.stats())
 
             clockThread.join()
             runStore.writeSyncJson(
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\"," +
-                    "\"failureCode\":${chirpFailureCodeJson(chirpTiming)}," +
+                    "\"failureCode\":${topLevelFailureCodeJson(renderer, chirpSubmission, chirpTiming)}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
-                    "\"estimates\":${estimatesJson(history)},\"renderer\":${renderer.report()}}"
+                    "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
+                    "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
+                    "\"estimates\":${estimatesJson(history)},\"renderer\":${renderer.report(preChirpStats.silenceFrames)}}"
             )
         } finally {
             chunkClient.stop()
@@ -299,20 +317,38 @@ class SyncActivity : Activity() {
 
     /**
      * Queues the calibration chirp on this device's own scheduler starting at [startHostNanos],
-     * and returns the instant its last frame must be heard.
+     * and captures the renderer's acquisition/tracking state at that exact instant.
      *
      * Nothing goes on the wire: both devices generate the identical sweep locally and only agree
      * on the instant, so the chunk format and the TCP stream are untouched. What the chirp does
      * pick up on the way out is everything the milestone exists to measure - the scheduler, the
      * getTimestamp based output depth compensation and the drift correction.
+     *
+     * The renderer state has to be read right here, not later from `renderer.report()` after the
+     * chirp has played: TRACKING is sticky, so a snapshot taken after the chirp could show
+     * TRACKING even though the renderer was still ACQUIRING - correcting on every chunk, not yet
+     * converged - at the moment the chirp was actually queued, which is the number that matters.
      */
-    private fun submitChirp(scheduler: PlaybackScheduler, startHostNanos: Long): Long {
+    private fun submitChirp(scheduler: PlaybackScheduler, renderer: SyncRenderer, startHostNanos: Long): ChirpSubmission {
         val chunks = ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK)
         chunks.forEachIndexed { index, pcm ->
             scheduler.submit(AudioChunk(CHIRP_SEQUENCE_BASE + index, startHostNanos + index * SyncRenderer.CHUNK_NANOS, pcm))
         }
-        return startHostNanos + chunks.size * SyncRenderer.CHUNK_NANOS
+        return ChirpSubmission(
+            endHostNanos = startHostNanos + chunks.size * SyncRenderer.CHUNK_NANOS,
+            phase = renderer.phase(),
+            filteredErrorFrames = renderer.filteredErrorFrames(),
+            acquisitionDurationNanos = renderer.acquisitionDurationNanos()
+        )
     }
+
+    /** The renderer's acquisition/tracking state at the instant the chirp chunks were submitted. */
+    private class ChirpSubmission(
+        val endHostNanos: Long,
+        val phase: RendererPhase,
+        val filteredErrorFrames: Int,
+        val acquisitionDurationNanos: Long?
+    )
 
     /** How late the chirp's scheduled start was, measured before the wait for it and again after. */
     private class ChirpTiming(val missedByNanos: Long, val wakeOvershootNanos: Long)
@@ -353,25 +389,44 @@ class SyncActivity : Activity() {
     }
 
     /**
-     * The JSON literal for sync.json's failureCode field, given how the chirp's deadline went.
+     * The JSON literal for sync.json's top-level failureCode field, combining every source that
+     * can invalidate the calibration measurement. Checked in order of severity, first match wins;
+     * the nested detail (`renderer`, `chirpAcquisition`, the timing fields) is always written
+     * regardless, so nothing is lost by picking one name for the top level.
      *
-     * Being late before the wait is unconditionally a failure: everything that runs ahead of it
-     * is milliseconds coarse, so a genuine miss can never look like measurement noise. The
-     * overshoot after the wait needs a tolerance instead, because the spin above exits a fraction
-     * past the instant by construction and the sink's host clock is re-fitted continuously. A
-     * fifth of the five millisecond budget sits far above both and far below anything that
-     * would matter.
+     * 1. The renderer having thrown ([SyncRenderer.currentFailureCode]) - it is now the only
+     *    source of the chirp, so a dead renderer means no chirp reached the recording at all, and
+     *    that used to surface as a null failureCode because the renderer's own code was nested
+     *    under "renderer" and run-sync.mjs reads only the top level.
+     * 2. The chirp having been submitted while the renderer was still ACQUIRING - the
+     *    median-filtered error had not yet settled into DriftController's deadband when the chirp
+     *    was queued, so the measurement rides an unconverged release phase (see
+     *    [ChirpSubmission], [submitChirp]).
+     * 3. The chirp's own deadline timing, as before: being late before the wait is unconditionally
+     *    a failure (everything ahead of it is milliseconds coarse, so a genuine miss can never
+     *    look like noise); the overshoot after the wait needs a tolerance instead, because the
+     *    spin exits a fraction past the instant by construction and the sink's host clock is
+     *    re-fitted continuously. A fifth of the five millisecond budget sits far above both and
+     *    far below anything that would matter.
      */
-    private fun chirpFailureCodeJson(timing: ChirpTiming): String =
-        if (timing.missedByNanos > 0 || timing.wakeOvershootNanos > CHIRP_WAKE_TOLERANCE_NANOS) {
-            "\"CHIRP_DEADLINE_MISSED\""
-        } else {
-            "null"
-        }
+    private fun topLevelFailureCodeJson(renderer: SyncRenderer, chirp: ChirpSubmission, timing: ChirpTiming): String {
+        val code = renderer.currentFailureCode()
+            ?: if (chirp.phase == RendererPhase.ACQUIRING) "CHIRP_SUBMITTED_DURING_ACQUISITION" else null
+            ?: if (timing.missedByNanos > 0 || timing.wakeOvershootNanos > CHIRP_WAKE_TOLERANCE_NANOS) "CHIRP_DEADLINE_MISSED" else null
+        return code?.let { "\"$it\"" } ?: "null"
+    }
 
     private fun chirpTimingJson(timing: ChirpTiming): String =
         "\"chirpMissedByNanos\":${timing.missedByNanos}," +
             "\"chirpWakeOvershootNanos\":${timing.wakeOvershootNanos}"
+
+    private fun chirpAcquisitionJson(chirp: ChirpSubmission): String =
+        "{\"phase\":\"${chirp.phase}\",\"filteredErrorFrames\":${chirp.filteredErrorFrames}," +
+            "\"acquisitionDurationNanos\":${chirp.acquisitionDurationNanos ?: "null"}}"
+
+    private fun chirpWindowJson(window: SchedulerStatsWindow): String =
+        "{\"played\":${window.played},\"droppedLate\":${window.droppedLate}," +
+            "\"droppedOverflow\":${window.droppedOverflow},\"silenceFrames\":${window.silenceFrames}}"
 
     /** Whole seconds from now to [hostNanos] on the host's own clock, never less than one. */
     private fun secondsUntil(hostNanos: Long): Int {
