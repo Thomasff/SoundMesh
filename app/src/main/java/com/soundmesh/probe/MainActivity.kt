@@ -62,7 +62,9 @@ class MainActivity : Activity() {
         try {
             ProbeCase.fromIntent(intent)
             require(!intent.getStringExtra(ProbeCase.EXTRA_SESSION_ID).isNullOrBlank()) { "missing session_id" }
-        } catch (_: IllegalArgumentException) {
+        } catch (error: IllegalArgumentException) {
+            // Without this the PC sees no status at all and can only time out.
+            runCatching { ServiceRejection.record(runStore, intent.getStringExtra(ProbeCase.EXTRA_CASE_ID), error) }
             statusView.text = CaptureForegroundService.STATUS_FAILED
             return
         }
