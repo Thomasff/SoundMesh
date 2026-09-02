@@ -40,10 +40,11 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
   };
   return Object.freeze({
     install: async ({ serial, apkPath }) => requireSuccess(await runAdb({ serial, args: ['install', '-r', apkPath] }), 'Probe install'),
-    start: async ({ serial, sessionId, caseId, durationSeconds, expectedPackage }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', ACTIVITY, '--es', 'session_id', sessionId, '--es', 'case_id', caseId, '--ei', 'duration_seconds', String(durationSeconds), '--es', 'expected_package', expectedPackage] }), 'Probe start'),
+    start: async ({ serial, sessionId, caseId, durationSeconds, expectedPackage, mode, playbackUsage }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', ACTIVITY, '--es', 'session_id', sessionId, '--es', 'case_id', caseId, '--ei', 'duration_seconds', String(durationSeconds), '--es', 'expected_package', expectedPackage, ...(mode ? ['--es', 'mode', mode] : []), ...(playbackUsage ? ['--es', 'playback_usage', playbackUsage] : [])] }), 'Probe start'),
     finishSession: async ({ serial, sessionId }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', ACTIVITY, '--es', 'session_id', sessionId, '--ez', 'finish_session', 'true'] }), 'Probe finish session'),
     readStatus: options => json({ ...options, fileName: 'status.json' }),
     readCapture: options => json({ ...options, fileName: 'capture.json' }),
+    readReplay: options => json({ ...options, fileName: 'replay.json' }),
     clearCaseArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'status.json'), privatePath(caseId, 'capture.json'), privatePath(caseId, 'capture.wav')] }), 'Clear case artifacts'),
     exportWav: async ({ serial, caseId, path }) => {
       const result = requireSuccess(await runAdbBinary({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, 'capture.wav')] }), 'WAV export');

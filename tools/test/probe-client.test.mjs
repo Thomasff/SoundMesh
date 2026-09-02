@@ -62,3 +62,20 @@ test('finishes a projection session through the launcher with an explicit serial
   ]);
   assert.deepEqual(calls.map(({ serial }) => serial), ['device-1']);
 });
+
+test('passes replay mode and playback usage only when the case asks for them', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '', stderr: '' }; } });
+  await client.start({ serial: 's', sessionId: 'x', caseId: 'C1', durationSeconds: 20, expectedPackage: 'com.tencent.qqmusic' });
+  await client.start({ serial: 's', sessionId: 'x', caseId: 'R2', durationSeconds: 20, expectedPackage: 'com.tencent.qqmusic', mode: 'DELAYED_LOCAL_PLAYBACK', playbackUsage: 'ACCESSIBILITY' });
+  assert.equal(calls[0].args.includes('mode'), false);
+  assert.equal(calls[0].args.includes('playback_usage'), false);
+  assert.deepEqual(calls[1].args.slice(-6), ['--es', 'mode', 'DELAYED_LOCAL_PLAYBACK', '--es', 'playback_usage', 'ACCESSIBILITY']);
+});
+
+test('reads the private replay report of a case', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '{"startedPlayback":true}', stderr: '' }; } });
+  assert.deepEqual(await client.readReplay({ serial: 's', caseId: 'R2' }), { startedPlayback: true });
+  assert.deepEqual(calls[0].args, ['exec-out', 'run-as', 'com.soundmesh.probe', 'cat', 'files/runs/R2/replay.json']);
+});

@@ -150,3 +150,56 @@ test('installs the probe only for the first case so a reinstall cannot kill the 
   await runCaptureMatrix({ ...options, sessionId: 'session-1' });
   assert.deepEqual(runs.map(({ installProbe }) => installProbe), [true, false]);
 });
+
+test('asks each listening question with fixed answers and records them on the case', async () => {
+  const asked = [];
+  const cases = [{ caseId: 'R2', durationSeconds: 20, volumeMode: 'ZERO', instruction: 'Keep it playing.', prerequisite: 'C3', mode: 'DELAYED_LOCAL_PLAYBACK', playbackUsage: 'ACCESSIBILITY', observations: [
+    { key: 'soundmeshAudible', question: 'Did you hear SoundMesh replay the music?', answers: ['YES', 'NO', 'UNCLEAR'] },
+    { key: 'feedbackHeard', question: 'Did any echo or feedback build up?', answers: ['YES', 'NO', 'UNCLEAR'] }
+  ] }];
+  const runs = [];
+  const result = await runCaptureMatrix({
+    serial: 'confirmed', apkPath: 'p', appId: 'com.tencent.qqmusic', appName: 'QQ Music', cases, sessionId: 'session-1',
+    outcomes: { C3: 'PASS' }, baselineVolume: { current: 5, min: 0, max: 15 },
+    probe: { finishSession: async () => {}, readReplay: async () => ({ startedPlayback: true }) }, acknowledge: async () => {},
+    readVolume: async () => ({ current: 0, min: 0, max: 15 }), wavPathFor: id => `${id}.wav`,
+    runCase: async options => { runs.push(options); return { caseId: 'R2', outcome: 'PASS' }; },
+    ask: async question => { asked.push(question); return question.answers[0]; }
+  });
+  assert.deepEqual(asked.map(({ key }) => key), ['soundmeshAudible', 'feedbackHeard']);
+  assert.deepEqual(asked.map(({ caseId }) => caseId), ['R2', 'R2']);
+  assert.deepEqual(result.cases[0].observations, { soundmeshAudible: 'YES', feedbackHeard: 'YES' });
+  assert.equal(runs[0].probeCase.mode, 'DELAYED_LOCAL_PLAYBACK');
+  assert.equal(runs[0].probeCase.playbackUsage, 'ACCESSIBILITY');
+});
+
+test('refuses an answer outside the fixed set instead of recording free text', async () => {
+  const cases = [{ caseId: 'R1', durationSeconds: 20, volumeMode: 'ZERO', instruction: 'Keep it playing.', prerequisite: null, observations: [
+    { key: 'soundmeshMuted', question: 'Was SoundMesh muted too?', answers: ['YES', 'NO', 'UNCLEAR'] }
+  ] }];
+  await assert.rejects(() => runCaptureMatrix({
+    serial: 'confirmed', apkPath: 'p', appId: 'com.tencent.qqmusic', appName: 'QQ Music', cases, sessionId: 'session-1',
+    baselineVolume: { current: 5, min: 0, max: 15 }, probe: { finishSession: async () => {} }, acknowledge: async () => {},
+    readVolume: async () => ({ current: 0, min: 0, max: 15 }), wavPathFor: id => `${id}.wav`,
+    runCase: async () => ({ caseId: 'R1', outcome: 'PASS' }),
+    ask: async () => 'it sounded a bit like the song from my playlist'
+  }), /not one of the allowed answers/);
+});
+
+test('attaches the private replay report only to delayed playback cases', async () => {
+  const replayCalls = [];
+  const base = {
+    serial: 'confirmed', apkPath: 'p', appId: 'com.tencent.qqmusic', appName: 'QQ Music', sessionId: 'session-1',
+    baselineVolume: { current: 5, min: 0, max: 15 }, acknowledge: async () => {},
+    readVolume: async () => ({ current: 0, min: 0, max: 15 }), wavPathFor: id => `${id}.wav`,
+    probe: { finishSession: async () => {}, readReplay: async call => { replayCalls.push(call.caseId); return { startedPlayback: false, failureCode: 'IllegalStateException' }; } },
+    runCase: async options => ({ caseId: options.probeCase.caseId, outcome: 'PASS' })
+  };
+  const replayed = await runCaptureMatrix({ ...base, cases: [{ caseId: 'R2', durationSeconds: 20, volumeMode: 'ZERO', instruction: 'x', prerequisite: null, mode: 'DELAYED_LOCAL_PLAYBACK', playbackUsage: 'ACCESSIBILITY' }] });
+  assert.deepEqual(replayed.cases[0].replay, { startedPlayback: false, failureCode: 'IllegalStateException' });
+  assert.deepEqual(replayCalls, ['R2']);
+
+  const captured = await runCaptureMatrix({ ...base, cases: [{ caseId: 'C3', durationSeconds: 20, volumeMode: 'ZERO', instruction: 'x', prerequisite: null }] });
+  assert.equal(captured.cases[0].replay, undefined);
+  assert.deepEqual(replayCalls, ['R2']);
+});

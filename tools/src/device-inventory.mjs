@@ -24,11 +24,11 @@ export function parsePackageInfo(text, packageName) {
 }
 
 export function parseMediaVolume(text) {
-  const match = text.match(/volume is (\d+) in range \[0\.\.(\d+)\]/i);
+  const match = text.match(/volume is (\d+) in range \[(\d+)\.\.(\d+)\]/i);
   if (!match) {
     throw new Error('Unable to parse media volume');
   }
-  return Object.freeze({ current: Number.parseInt(match[1], 10), max: Number.parseInt(match[2], 10) });
+  return Object.freeze({ current: Number.parseInt(match[1], 10), min: Number.parseInt(match[2], 10), max: Number.parseInt(match[3], 10) });
 }
 
 export function buildInventory({ serial, properties, packages, mediaVolume }) {
@@ -74,7 +74,13 @@ export function redactInventory(inventory) {
   return Object.freeze(preview);
 }
 
-export async function readMediaVolume({ serial, runAdb = defaultRunAdb }) {
-  const result = await runAdb({ serial, args: ['shell', 'media', 'volume', '--stream', '3', '--get'] });
+export const MUSIC_STREAM = 3;
+
+export async function readStreamVolume({ serial, stream, runAdb = defaultRunAdb }) {
+  const result = await runAdb({ serial, args: ['shell', 'media', 'volume', '--stream', String(stream), '--get'] });
   return parseMediaVolume(requireSuccessful(result, 'media volume'));
+}
+
+export async function readMediaVolume({ serial, runAdb = defaultRunAdb }) {
+  return readStreamVolume({ serial, stream: MUSIC_STREAM, runAdb });
 }

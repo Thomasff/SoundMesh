@@ -87,16 +87,23 @@ class CaptureForegroundService : Service() {
         var reader: AndroidPlaybackReader? = null
         var sink: CaptureFileSink? = null
         var summary: CaptureRunSummary? = null
+        var replay: DelayedReplaySink? = null
         var failure: Throwable? = null
         try {
             reader = AndroidPlaybackReader(this, projection, probeCase.expectedPackage) {
                 stopRequested.set(true)
             }
-            sink = CaptureFileSink(runStore.captureWavFile(probeCase.caseId), reader)
+            val fileSink = CaptureFileSink(runStore.captureWavFile(probeCase.caseId), reader)
+            sink = fileSink
+            replay = if (probeCase.mode == ProbeMode.DELAYED_LOCAL_PLAYBACK) {
+                DelayedReplaySink(fileSink, reader, probeCase.playbackUsage)
+            } else {
+                null
+            }
             summary = CaptureRunner.run(
                 CaptureRunConfig(
                     reader = reader,
-                    sink = sink,
+                    sink = replay ?: fileSink,
                     durationNanos = probeCase.durationSeconds * NANOS_PER_SECOND,
                     clock = MonotonicClock { System.nanoTime() },
                     stopRequested = { stopRequested.get() }
@@ -104,6 +111,7 @@ class CaptureForegroundService : Service() {
             )
             val result = resultFor(probeCase, reader, sink, summary, null)
             runStore.writeCaptureJson(probeCase.caseId, result.toJson())
+            writeReplayReport(probeCase, replay)
             val status = if (summary.state == CaptureState.COMPLETE) STATUS_COMPLETE else STATUS_FAILED
             runStore.writeStatus(probeCase.caseId, RunStatus.json(status, summary.failureCode))
             publish(status, summary.failureCode)
@@ -126,9 +134,17 @@ class CaptureForegroundService : Service() {
                 // CaptureRunner owns normal reader/sink cleanup; this covers failures before it starts.
                 runCatching { reader?.stop() }
                 runCatching { reader?.close() }
+                runCatching { replay?.close() }
                 runCatching { sink?.close() }
+                runCatching { writeReplayReport(probeCase, replay) }
             }
         }
+    }
+
+    private fun writeReplayReport(probeCase: ProbeCase, replay: DelayedReplaySink?) {
+        val report = replay?.report() ?: return
+        runCatching { runStore.writeReplayJson(probeCase.caseId, report.toJson()) }
+            .onFailure { Log.e(LOG_TAG, "could not write replay report", it) }
     }
 
     private fun resultFor(
@@ -213,6 +229,55 @@ class CaptureForegroundService : Service() {
             writer!!.close()
         }
         fun metrics(): PcmMetrics? = accumulator?.finish()
+    }
+
+    /** Tees captured PCM into a delayed local player without changing what is written to disk. */
+    private class DelayedReplaySink(
+        private val delegate: CaptureFileSink,
+        private val reader: PcmReader,
+        private val usage: PlaybackUsage
+    ) : PcmSink {
+        private var buffer: DelayedPcmBuffer? = null
+        private var player: DelayedLocalPlayer? = null
+        private var worker: Thread? = null
+
+        override fun write(bytes: ByteArray, length: Int, timestampNanos: Long) {
+            delegate.write(bytes, length, timestampNanos)
+            val active = buffer ?: startReplay()
+            val bytesPerFrame = reader.channelCount * PCM16_BYTES.toInt()
+            val aligned = length - length % bytesPerFrame
+            if (aligned > 0) active.write(bytes, aligned)
+        }
+
+        private fun startReplay(): DelayedPcmBuffer {
+            // The reader only reports its real format once capture has started.
+            val bytesPerFrame = reader.channelCount * PCM16_BYTES.toInt()
+            val bytesPerSecond = reader.sampleRate * bytesPerFrame
+            val created = DelayedPcmBuffer(
+                bytesPerFrame,
+                bytesPerSecond * DELAY_SECONDS,
+                bytesPerSecond * CAPACITY_SECONDS
+            )
+            val createdPlayer = DelayedLocalPlayer(created, reader.sampleRate, reader.channelCount, usage)
+            buffer = created
+            player = createdPlayer
+            worker = Thread({ createdPlayer.run() }, "SoundMeshReplay").also { it.start() }
+            return created
+        }
+
+        override fun close() {
+            buffer?.close()
+            runCatching { worker?.join(JOIN_TIMEOUT_MILLIS) }
+            delegate.close()
+        }
+
+        fun report(): DelayedPlaybackReport? = player?.report()
+
+        private companion object {
+            const val DELAY_SECONDS = 3
+            const val CAPACITY_SECONDS = 5
+            const val JOIN_TIMEOUT_MILLIS = 3_000L
+        }
     }
 
     companion object {

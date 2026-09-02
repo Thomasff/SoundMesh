@@ -29,6 +29,8 @@ class RunStore(private val filesDir: File) {
 
     fun captureJsonFile(caseId: String): File = artifactFile(caseId, "capture.json")
 
+    fun replayFile(caseId: String): File = artifactFile(caseId, "replay.json")
+
     @Synchronized
     fun writeStatus(caseId: String, statusJson: String) {
         writeAtomically(caseId, "status.json", statusJson)
@@ -37,6 +39,11 @@ class RunStore(private val filesDir: File) {
     @Synchronized
     fun writeCaptureJson(caseId: String, captureJson: String) {
         writeAtomically(caseId, "capture.json", captureJson)
+    }
+
+    @Synchronized
+    fun writeReplayJson(caseId: String, replayJson: String) {
+        writeAtomically(caseId, "replay.json", replayJson)
     }
 
     private fun writeAtomically(caseId: String, fileName: String, content: String) {

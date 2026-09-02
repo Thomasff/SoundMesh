@@ -38,7 +38,12 @@ export async function main(args = process.argv.slice(2), {
   readVolume = readMediaVolume,
   paths = { root, selectionPath },
   matrix,
-  acknowledge = async text => { process.stdout.write(`${text}\n`); await new Promise(resolveInput => process.stdin.once('data', resolveInput)); }
+  acknowledge = async text => { process.stdout.write(`${text}\n`); await new Promise(resolveInput => process.stdin.once('data', resolveInput)); },
+  ask = async ({ caseId, key, question, answers }) => {
+    process.stdout.write(`OBSERVATION [${caseId}] ${key}: ${question} (${answers.join(' / ')})\n`);
+    const reply = await new Promise(resolveInput => process.stdin.once('data', resolveInput));
+    return String(reply).trim().toUpperCase();
+  }
 } = {}) {
   const appId = value(args, '--app');
   if (!APP_NAMES[appId]) throw new Error('Use a supported --app');
@@ -61,7 +66,7 @@ export async function main(args = process.argv.slice(2), {
 
   const apkPath = value(args, '--apk') || resolve(here, '../../../app/build/outputs/apk/debug/app-debug.apk');
   const result = await runMatrix({
-    serial, apkPath, probe: client, acknowledge, appId, appName: APP_NAMES[appId], cases, unavailable, outcomes,
+    serial, apkPath, probe: client, acknowledge, ask, appId, appName: APP_NAMES[appId], cases, unavailable, outcomes,
     baselineVolume, readVolume, wavPathFor: caseId => resolve(appDirectory, caseId, 'capture.wav')
   });
 

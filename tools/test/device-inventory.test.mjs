@@ -5,7 +5,7 @@ import {
   assertPendingInspection,
   requireConfirmedSerial
 } from '../src/cli/inspect-device.mjs';
-import { buildInventory, collectInventory, readMediaVolume } from '../src/device-inventory.mjs';
+import { buildInventory, collectInventory, parseMediaVolume, readMediaVolume, readStreamVolume } from '../src/device-inventory.mjs';
 
 test('builds a normalized device inventory', () => {
   const inventory = buildInventory({
@@ -20,7 +20,7 @@ test('builds a normalized device inventory', () => {
       { packageName: 'com.netease.cloudmusic', versionName: '9.3.20', versionCode: 9032000, targetSdk: 35 },
       { packageName: 'com.tencent.qqmusic', versionName: '14.6.0', versionCode: 14060000, targetSdk: 35 }
     ],
-    mediaVolume: { current: 7, max: 15 }
+    mediaVolume: { current: 7, min: 0, max: 15 }
   });
 
   assert.equal(inventory.apiLevel, 29);
@@ -53,7 +53,7 @@ test('collects only the defined read-only inventory commands for the selected se
     { serial: 'ABC123', args: ['shell', 'media', 'volume', '--stream', '3', '--get'] }
   ]);
   assert.equal(inventory.apps[0].versionName, '9.3.20');
-  assert.deepEqual(inventory.mediaVolume, { current: 7, max: 15 });
+  assert.deepEqual(inventory.mediaVolume, { current: 7, min: 0, max: 15 });
 });
 
 test('marks below-API-29 inventory with the required gate exit code', () => {
@@ -101,10 +101,22 @@ test('keeps failed command stderr out of public inventory errors', async () => {
 test('reads the current media volume read-only for the selected serial', async () => {
   const calls = [];
   const volume = await readMediaVolume({ serial: 'device-1', runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: 'volume is 4 in range [0..15]\n', stderr: '' }; } });
-  assert.deepEqual(volume, { current: 4, max: 15 });
+  assert.deepEqual(volume, { current: 4, min: 0, max: 15 });
   assert.deepEqual(calls, [{ serial: 'device-1', args: ['shell', 'media', 'volume', '--stream', '3', '--get'] }]);
 });
 
 test('rejects an unreadable media volume instead of guessing', async () => {
   await assert.rejects(() => readMediaVolume({ serial: 'device-1', runAdb: async () => ({ exitCode: 1, stdout: '', stderr: 'error' }) }), /media volume command failed/i);
+});
+
+test('parses a stream range that does not start at zero', () => {
+  assert.deepEqual(parseMediaVolume('volume is 6 in range [1..15]'), { current: 6, min: 1, max: 15 });
+  assert.deepEqual(parseMediaVolume('volume is 5 in range [0..15]'), { current: 5, min: 0, max: 15 });
+});
+
+test('reads any stream read-only for the selected serial', async () => {
+  const calls = [];
+  const volume = await readStreamVolume({ serial: 'device-1', stream: 10, runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '[v] will get volume\nvolume is 6 in range [1..15]\n', stderr: '' }; } });
+  assert.deepEqual(volume, { current: 6, min: 1, max: 15 });
+  assert.deepEqual(calls, [{ serial: 'device-1', args: ['shell', 'media', 'volume', '--stream', '10', '--get'] }]);
 });

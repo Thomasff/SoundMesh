@@ -48,6 +48,123 @@
       "playbackMode": "BACKGROUND_OR_SCREEN_OFF",
       "instruction": "Keep the track playing, and turn the screen off as soon as the capture starts. Leave it off for a full minute.",
       "prerequisite": "C1"
+    },
+    {
+      "caseId": "R1",
+      "durationSeconds": 20,
+      "volumeMode": "ZERO",
+      "playbackMode": "DELAYED_LOCAL_REPLAY",
+      "mode": "DELAYED_LOCAL_PLAYBACK",
+      "playbackUsage": "MEDIA",
+      "instruction": "Keep the track playing. SoundMesh will replay it about three seconds late using the ordinary media usage.",
+      "prerequisite": "C3",
+      "observations": [
+        {
+          "key": "soundmeshAudible",
+          "question": "Could you hear SoundMesh replaying the music about three seconds late?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        },
+        {
+          "key": "distortionObvious",
+          "question": "Was the replayed sound obviously distorted?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        }
+      ]
+    },
+    {
+      "caseId": "R2",
+      "durationSeconds": 20,
+      "volumeMode": "ZERO",
+      "playbackMode": "DELAYED_LOCAL_REPLAY",
+      "mode": "DELAYED_LOCAL_PLAYBACK",
+      "playbackUsage": "ACCESSIBILITY",
+      "instruction": "Keep the track playing. SoundMesh will replay it about three seconds late using the accessibility usage, which has its own volume.",
+      "prerequisite": "C3",
+      "observations": [
+        {
+          "key": "soundmeshAudible",
+          "question": "Could you hear SoundMesh replaying the music about three seconds late?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        },
+        {
+          "key": "feedbackGrew",
+          "question": "Did any echo or feedback build up over time?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        },
+        {
+          "key": "distortionObvious",
+          "question": "Was the replayed sound obviously distorted?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        }
+      ]
+    },
+    {
+      "caseId": "R3",
+      "durationSeconds": 20,
+      "volumeMode": "MIN_NONZERO",
+      "playbackMode": "DELAYED_LOCAL_REPLAY",
+      "mode": "DELAYED_LOCAL_PLAYBACK",
+      "playbackUsage": "ACCESSIBILITY",
+      "instruction": "Keep the track playing at the lowest audible step. SoundMesh will replay it about three seconds late using the accessibility usage.",
+      "prerequisite": "C2",
+      "observations": [
+        {
+          "key": "soundmeshAudible",
+          "question": "Could you hear SoundMesh replaying the music about three seconds late?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        },
+        {
+          "key": "originalLeakHeard",
+          "question": "Could you also hear the original music app itself?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        },
+        {
+          "key": "feedbackGrew",
+          "question": "Did any echo or feedback build up over time?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        },
+        {
+          "key": "distortionObvious",
+          "question": "Was the replayed sound obviously distorted?",
+          "answers": [
+            "YES",
+            "NO",
+            "UNCLEAR"
+          ]
+        }
+      ]
     }
   ]
 }

@@ -12,7 +12,8 @@ data class ProbeCase(
     val caseId: String,
     val durationSeconds: Int,
     val expectedPackage: String,
-    val mode: ProbeMode
+    val mode: ProbeMode,
+    val playbackUsage: PlaybackUsage = PlaybackUsage.MEDIA
 ) {
     init {
         require(isSafeCaseId(caseId)) {
@@ -32,6 +33,7 @@ data class ProbeCase(
         const val EXTRA_DURATION_SECONDS = "duration_seconds"
         const val EXTRA_EXPECTED_PACKAGE = "expected_package"
         const val EXTRA_MODE = "mode"
+        const val EXTRA_PLAYBACK_USAGE = "playback_usage"
         const val EXTRA_FINISH_SESSION = "finish_session"
         const val EXTRA_RESULT_CODE = "media_projection_result_code"
         const val EXTRA_RESULT_DATA = "media_projection_result_data"
@@ -65,7 +67,8 @@ data class ProbeCase(
                     throw IllegalArgumentException("unknown mode: $value")
                 }
             } ?: ProbeMode.CAPTURE_ONLY
-            return ProbeCase(caseId, durationSeconds, expectedPackage, mode)
+            val playbackUsage = PlaybackUsage.fromName(intent.getStringExtra(EXTRA_PLAYBACK_USAGE))
+            return ProbeCase(caseId, durationSeconds, expectedPackage, mode, playbackUsage)
         }
     }
 }
