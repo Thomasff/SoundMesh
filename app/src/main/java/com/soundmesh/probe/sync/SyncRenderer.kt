@@ -9,7 +9,10 @@ import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.RendererPhase
+import com.soundmesh.core.SchedulerStats
+import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.nextPhaseState
+import com.soundmesh.core.pendingPlaybackFrames
 import com.soundmesh.core.playbackErrorFrames
 
 /**
@@ -31,6 +34,9 @@ class SyncRenderer(
     @Volatile private var phaseState = PhaseState.INITIAL
     @Volatile private var acquisitionStartHostNanos = UNDEFINED
     @Volatile private var acquisitionConvergedAtHostNanos = UNDEFINED
+    @Volatile private var chirpStartStats: SchedulerStats? = null
+    @Volatile private var chirpEndStats: SchedulerStats? = null
+    @Volatile private var streamingEndStats: SchedulerStats? = null
     /** Frames the drift controller asked for, waiting for the next chunk to carry them. */
     private var pendingAdjustFrames = 0
 
@@ -48,6 +54,28 @@ class SyncRenderer(
 
     /** The most recent median-filtered drift error, in frames. Thread-safe. */
     fun filteredErrorFrames(): Int = lastFilteredError
+
+    /**
+     * The scheduler counters as they stood immediately before the first chirp chunk was played,
+     * and again immediately after the last one. Null until the chirp has actually been heard.
+     *
+     * Only the renderer can see the streaming -> chirp transition. The caller's own snapshot is
+     * taken when the chirp is *submitted*, which is seconds earlier - every chunk is scheduled
+     * well into its own future - so a window built from it spans the whole audio tail, the
+     * calibration gap and the post-chirp drain as well, and the by-design silence in those swamps
+     * the single missing chirp chunk the window exists to catch. Thread-safe: written on the
+     * render thread, read by the caller after joining it.
+     */
+    fun chirpWindowStart(): SchedulerStats? = chirpStartStats
+
+    fun chirpWindowEnd(): SchedulerStats? = chirpEndStats
+
+    /**
+     * The scheduler counters immediately after the last non-chirp chunk was played - the true end
+     * of the streaming segment, which lags submission by the whole output lead. Null if no audio
+     * chunk was ever played. Thread-safe on the same terms as [chirpWindowStart].
+     */
+    fun lastStreamingStats(): SchedulerStats? = streamingEndStats
 
     /**
      * How long ACQUIRING has taken: from the first drift sample to the instant it converged into
@@ -86,6 +114,9 @@ class SyncRenderer(
                     sampleDrift(track, timestamp, writtenFrames, timelineNextHostNanos)
                     nextDriftCheckHostNanos = hostNanosNow() + driftIntervalNanos()
                 }
+                // Taken before poll on purpose: poll has already counted the chunk it returns, so
+                // this is the only reading that excludes the chirp's own first chunk.
+                val statsBeforePoll = scheduler.stats()
                 val depthNanos = outputDepthNanos(track, timestamp, writtenFrames)
                 when (val decision = scheduler.poll(hostNanosNow() + depthNanos)) {
                     is PlaybackDecision.Play -> {
@@ -101,6 +132,7 @@ class SyncRenderer(
                         // A dropped or duplicated frame deliberately does not move the timeline:
                         // shifting the frame-to-instant mapping by one frame is the correction.
                         timelineNextHostNanos = decision.chunk.playAtHostNanos + CHUNK_NANOS
+                        recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll)
                     }
                     is PlaybackDecision.Silence -> {
                         track.write(silence, 0, silence.size)
@@ -119,10 +151,41 @@ class SyncRenderer(
         }
     }
 
+    /**
+     * Moves the chirp-window and streaming-segment boundaries along as chunks are played.
+     *
+     * Chirp chunks carry their own [CHIRP_SEQUENCE_BASE] sequence range, which is what separates
+     * them from streamed audio here. [statsBeforePoll] is the reading taken before poll counted
+     * this chunk, so the window opens just short of the chirp's first chunk and closes after its
+     * last; [streamingEndStats] keeps the streaming segment's real end, which is up to the whole
+     * output lead later than the instant the caller stopped submitting.
+     */
+    private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats) {
+        if (sequence >= CHIRP_SEQUENCE_BASE) {
+            if (chirpStartStats == null) chirpStartStats = statsBeforePoll
+            chirpEndStats = scheduler.stats()
+        } else {
+            streamingEndStats = scheduler.stats()
+        }
+    }
+
+    /** Frames handed over but not yet heard, or null when the device has no timestamp to give. */
+    private fun pendingFrames(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long): Long? {
+        if (!track.getTimestamp(timestamp)) return null
+        return pendingPlaybackFrames(
+            writtenFrames = writtenFrames,
+            framePosition = timestamp.framePosition,
+            timestampNanos = timestamp.nanoTime,
+            // Deliberately not hostNanosNow(): timestamp.nanoTime is on TIMEBASE_MONOTONIC, the
+            // same origin as System.nanoTime(), and only their difference is used.
+            nowNanos = System.nanoTime(),
+            sampleRate = SAMPLE_RATE
+        )
+    }
+
     /** Frames handed over but not yet heard, as nanoseconds of lead the scheduler must account for. */
     private fun outputDepthNanos(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long): Long {
-        if (!track.getTimestamp(timestamp)) return DEFAULT_DEPTH_NANOS
-        val pending = writtenFrames - timestamp.framePosition
+        val pending = pendingFrames(track, timestamp, writtenFrames) ?: return DEFAULT_DEPTH_NANOS
         return pending.coerceAtLeast(0) * 1_000_000_000L / SAMPLE_RATE
     }
 
@@ -143,8 +206,7 @@ class SyncRenderer(
      * seconds these devices take to drift a single frame at steady state.
      */
     private fun sampleDrift(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long, timelineNextHostNanos: Long) {
-        if (!track.getTimestamp(timestamp)) return
-        val pendingFrames = writtenFrames - timestamp.framePosition
+        val pendingFrames = pendingFrames(track, timestamp, writtenFrames) ?: return
         val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, timelineNextHostNanos, SAMPLE_RATE)
         val decision = drift.observe(errorFrames)
         lastFilteredError = decision.filteredErrorFrames
@@ -159,7 +221,7 @@ class SyncRenderer(
 
     /** Chunk-period cadence (~50Hz) while ACQUIRING; the spec's 1Hz cadence once TRACKING. */
     private fun driftIntervalNanos(): Long =
-        if (phaseState.phase == RendererPhase.ACQUIRING) CHUNK_NANOS else DRIFT_INTERVAL_NANOS
+        driftIntervalNanos(phaseState.phase, CHUNK_NANOS, DRIFT_INTERVAL_NANOS)
 
     /**
      * Carries the correction the last drift sample asked for into the chunk about to be written.
@@ -185,18 +247,19 @@ class SyncRenderer(
     fun currentFailureCode(): String? = failureCode
 
     /**
-     * [streamingSilenceFrames] is the silence PlaybackScheduler counted before this call site's
-     * caller took its own pre-chirp snapshot - i.e. during the actual audio segment, not the
-     * calibration gap/chirp/drain that follows it. `silenceFrames` here stays the session-wide
-     * total (design's health gate was never written against a total that includes ~180 chunks of
-     * silence that are silent by design); the streaming-scoped count lets the gate be checked
-     * against the number it was actually written for.
+     * [streamingSilenceFrames] is the silence PlaybackScheduler counted up to the moment the last
+     * streamed chunk was actually played (see [lastStreamingStats]) - i.e. during the actual audio
+     * segment, not the calibration gap/chirp/drain that follows it. `silenceFrames` here stays the
+     * session-wide total (design's health gate was never written against a total that includes
+     * ~180 chunks of silence that are silent by design); the streaming-scoped count lets the gate
+     * be checked against the number it was actually written for. Null - written out as JSON null
+     * rather than a zero that would read as a clean segment - when no streamed chunk ever played.
      */
-    fun report(streamingSilenceFrames: Int): String {
+    fun report(streamingSilenceFrames: Int?): String {
         val stats = scheduler.stats()
         return "{\"played\":${stats.played},\"droppedLate\":${stats.droppedLate}," +
             "\"droppedOverflow\":${stats.droppedOverflow},\"silenceFrames\":${stats.silenceFrames}," +
-            "\"streamingSilenceFrames\":$streamingSilenceFrames," +
+            "\"streamingSilenceFrames\":${streamingSilenceFrames ?: "null"}," +
             "\"adjustments\":$adjustments,\"driftSamples\":$driftSamples," +
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
             "\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
@@ -207,6 +270,14 @@ class SyncRenderer(
         const val CHANNELS = 2
         const val FRAMES_PER_CHUNK = 960
         const val CHUNK_NANOS = FRAMES_PER_CHUNK * 1_000_000_000L / SAMPLE_RATE
+
+        /**
+         * Chirp chunks are generated locally rather than streamed, so they carry their own
+         * sequence range. The renderer needs it too: it is how a played chunk is told apart from
+         * streamed audio when the chirp window's boundaries are recorded.
+         */
+        const val CHIRP_SEQUENCE_BASE = 1_000_000
+
         private const val DEFAULT_DEPTH_NANOS = 200_000_000L
 
         /** Design sections 9.1 and 12: read the playback position once a second, no faster. */
