@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 
-// Secrets, plus the account and device identifiers a music app attaches to a cast URI.
-const SENSITIVE_KEY = /token|auth|authorization|signature|sign|key|cookie|session|credential|uin|uid|openid|qq|imei|mac|phone|mobile|email|nick|account|device/i;
+/**
+ * Allow-list rather than deny-list: vendors invent their own token parameter names
+ * (vkey, vuutv, ...) faster than any deny-list can grow, and one miss leaks a signed
+ * credential. Only parameters known to be harmless diagnostics survive.
+ */
+const HARMLESS_KEY = /^(dlna|redirect|fromtag|format|bitrate|br|quality|type|mime|ext|codec|rate|channels|duration)$/i;
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 
@@ -18,7 +22,7 @@ export function redactMediaUri(uri) {
     return Object.freeze({ displayUri: 'UNPARSEABLE_URI', scheme: null, host: null, pathExtension: null, sha256 });
   }
   for (const key of [...parsed.searchParams.keys()]) {
-    if (SENSITIVE_KEY.test(key)) parsed.searchParams.set(key, 'REDACTED');
+    if (!HARMLESS_KEY.test(key)) parsed.searchParams.set(key, 'REDACTED');
   }
   const lastSegment = parsed.pathname.split('/').pop() ?? '';
   const dot = lastSegment.lastIndexOf('.');

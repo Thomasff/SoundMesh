@@ -9,6 +9,8 @@ test('advertises a MediaRenderer with a stable uuid and all three control urls',
   assert.match(xml, /urn:schemas-upnp-org:device:MediaRenderer:1/);
   assert.match(xml, /<friendlyName>SoundMesh Probe Renderer<\/friendlyName>/);
   assert.match(xml, new RegExp(`<UDN>uuid:${UUID}</UDN>`));
+  assert.ok(xml.includes('<dlna:X_DLNADOC>DMR-1.50</dlna:X_DLNADOC>'));
+  assert.match(xml, /xmlns:dlna="urn:schemas-dlna-org:device-1-0"/);
   for (const service of ['AVTransport', 'RenderingControl', 'ConnectionManager']) {
     assert.match(xml, new RegExp(`urn:schemas-upnp-org:service:${service}:1`));
     assert.match(xml, new RegExp(`<controlURL>/control/${service}</controlURL>`));

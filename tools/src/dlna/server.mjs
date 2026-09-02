@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
-import { deviceDescription, parseSoapAction, readSoapArgument, soapFault, soapResponse } from './xml.mjs';
+import { deviceDescription, parseSoapAction, readSoapArgument, serviceDescription, soapFault, soapResponse } from './xml.mjs';
 import { redactHeaderNames, redactMediaUri } from './redaction.mjs';
 
 const PRIVATE_IPV4 = /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/;
@@ -82,11 +82,13 @@ export function createRendererServer({ uuid, address, port, state, onEvent = () 
       return;
     }
     if (request.method === 'GET' && url.startsWith('/scpd/')) {
+      onEvent({ type: 'SCPD_FETCHED', path: url });
       response.writeHead(200, { 'Content-Type': 'text/xml; charset="utf-8"' });
-      response.end('<?xml version="1.0"?><scpd xmlns="urn:schemas-upnp-org:service-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><actionList/><serviceStateTable/></scpd>');
+      response.end(serviceDescription(url.slice('/scpd/'.length).replace('.xml', '')));
       return;
     }
     if (request.method === 'SUBSCRIBE' || request.method === 'UNSUBSCRIBE') {
+      onEvent({ type: request.method, path: url });
       response.writeHead(200, { SID: `uuid:${uuid}`, TIMEOUT: 'Second-1800' });
       response.end();
       return;
@@ -95,6 +97,7 @@ export function createRendererServer({ uuid, address, port, state, onEvent = () 
       handleControl(request, response, url.slice('/control/'.length));
       return;
     }
+    onEvent({ type: 'UNHANDLED_REQUEST', method: request.method, path: url });
     response.writeHead(404).end();
   });
 
