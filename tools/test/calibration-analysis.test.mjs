@@ -35,7 +35,7 @@ test('finds a chirp planted at a known sample offset', () => {
   const found = findArrival(recording([12345]), reference(), { searchFrom: 0, searchTo: 30000 });
 
   assert.equal(found.index, 12345);
-  assert.ok(found.ratio > 6, `ratio was ${found.ratio}`);
+  assert.ok(found.ratio > 20, `ratio was ${found.ratio}`);
 });
 
 test('returns nothing rather than a bogus index when the search range is empty', () => {

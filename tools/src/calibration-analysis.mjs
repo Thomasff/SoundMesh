@@ -1,4 +1,14 @@
-const MIN_TRUSTWORTHY_RATIO = 6;
+/**
+ * The noise floor ratio (peak / median of all correlation scores) is a structural property of
+ * pure noise, not a function of how loud that noise is: with scores behaving like half-normal
+ * draws across tens of thousands of lags, the peak sits near 4.2 sigma while the median sits
+ * near 0.67 sigma, giving a ratio near 6.3 regardless of amplitude (it only grows weakly,
+ * roughly logarithmically, with the number of lags searched). A real chirp's ratio lands
+ * orders of magnitude higher (tens of thousands in measurement). 20 is kept well below a real
+ * chirp on purpose: a rejected valid measurement costs an entire device session, which is the
+ * more expensive failure than accepting a slightly weaker true peak.
+ */
+const MIN_TRUSTWORTHY_RATIO = 20;
 
 const median = values => {
   const sorted = Float64Array.from(values).sort();
