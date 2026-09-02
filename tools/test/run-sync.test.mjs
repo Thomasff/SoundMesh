@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink } from '../src/cli/run-sync.mjs';
 
 const HOST_SERIAL = 'HOSTSERIALABC123';
 const SINK_SERIAL = 'SINKSERIALXYZ789';
@@ -290,4 +290,78 @@ test('awaitBothReports gives up at the budget and reports the missing role as un
   assert.match(reports.sink.unavailable, /no such file or directory/);
   // Never longer than the fixed wait it replaces: floor plus budget is the old (seconds + 30).
   assert.equal(slept, 95_000 + 4000);
+});
+
+const PING_OUTPUT = [
+  'PING 192.168.43.1 (192.168.43.1) 56(84) bytes of data.',
+  '64 bytes from 192.168.43.1: icmp_seq=1 ttl=64 time=4.46 ms',
+  '',
+  '--- 192.168.43.1 ping statistics ---',
+  '5 packets transmitted, 5 received, 0% packet loss, time 4005ms',
+  'rtt min/avg/max/mdev = 4.467/12.169/20.627/5.123 ms',
+  ''
+].join('\n');
+
+test('parseLinkRtt reads the round-trip summary and the loss figure', () => {
+  assert.deepEqual(parseLinkRtt(PING_OUTPUT), { minMs: 4.467, avgMs: 12.169, maxMs: 20.627, lossPercent: 0 });
+  // Some builds print the BSD spelling instead.
+  const bsd = PING_OUTPUT
+    .replace('rtt min/avg/max/mdev', 'round-trip min/avg/max/stddev')
+    .replace('0% packet loss', '20% packet loss');
+  assert.deepEqual(parseLinkRtt(bsd), { minMs: 4.467, avgMs: 12.169, maxMs: 20.627, lossPercent: 20 });
+});
+
+test('parseLinkRtt returns null rather than guessing when nothing came back', () => {
+  assert.equal(parseLinkRtt('5 packets transmitted, 0 received, 100% packet loss, time 4010ms'), null);
+  assert.equal(parseLinkRtt(''), null);
+  assert.equal(parseLinkRtt(undefined), null);
+});
+
+test('measureLink probes from the sink towards the host and never fails the run', async () => {
+  const calls = [];
+  const ok = async ({ args }) => { calls.push(args); return { exitCode: 0, stdout: PING_OUTPUT, stderr: '' }; };
+  assert.deepEqual(
+    await measureLink({ serial: SINK_SERIAL, address: '192.168.43.1', runAdbHost: ok, count: 5 }),
+    { minMs: 4.467, avgMs: 12.169, maxMs: 20.627, lossPercent: 0 }
+  );
+  assert.deepEqual(calls, [['-s', SINK_SERIAL, 'shell', 'ping', '-c', '5', '-W', '1', '192.168.43.1']]);
+
+  // Diagnostic, not a gate: an unreachable host is recorded and the run still goes ahead, because
+  // the run itself is the thing that says whether the link works.
+  const dead = async () => ({ exitCode: 1, stdout: '', stderr: 'connect: Network is unreachable' });
+  const result = await measureLink({ serial: SINK_SERIAL, address: '192.168.43.1', runAdbHost: dead, count: 5 });
+  assert.ok(result.unavailable);
+});
+
+test('main measures the link before either role starts, and writes it beside the reports', async () => {
+  const order = [];
+  const runAdbHost = async call => {
+    order.push(call.args.includes('ping') ? 'ping' : `adb ${call.args.join(' ')}`);
+    if (call.args[0] === 'devices') {
+      return {
+        exitCode: 0,
+        stdout: devicesOutput([
+          `${HOST_SERIAL}    device product:pixel model:Pixel_7 transport_id:1`,
+          `${SINK_SERIAL}    device product:pixel model:Pixel_6 transport_id:2`
+        ]),
+        stderr: ''
+      };
+    }
+    if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
+    if (call.args.includes('ping')) return { exitCode: 0, stdout: PING_OUTPUT, stderr: '' };
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const client = {
+    clearSyncArtifacts: async () => {},
+    startSync: async () => { order.push('client startSync'); throw new Error('stop the run here'); }
+  };
+
+  await assert.rejects(
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {} }),
+    /stop the run here/
+  );
+
+  // Before, never during: a probe running alongside the measurement would be perturbing the very
+  // thing being measured.
+  assert.ok(order.indexOf('ping') < order.indexOf('client startSync'), 'the link probe must finish before either role starts');
 });

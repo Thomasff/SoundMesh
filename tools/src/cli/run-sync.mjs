@@ -32,6 +32,9 @@ const COMPLETION_FLOOR_SECONDS = 5;
 /** What is left of the old fixed (seconds + 30) wait, spent polling rather than sleeping. */
 const COMPLETION_BUDGET_SECONDS = 25;
 
+/** Echo requests per link probe. Five is enough for a floor and costs about four seconds. */
+const LINK_PROBE_COUNT = 5;
+
 /**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
@@ -89,6 +92,47 @@ export async function requireBothDevicesAwake({ hostSerial, sinkSerial, runAdbHo
 export async function grantRecordAudio({ serial, runAdbHost }) {
   const result = await runAdbHost({ args: ['-s', serial, 'shell', 'pm', 'grant', PROBE_PACKAGE, 'android.permission.RECORD_AUDIO'] });
   if (result.exitCode !== 0) throw new Error('Granting RECORD_AUDIO to the probe on the recording device failed');
+}
+
+/**
+ * Reads min/avg/max and packet loss out of `ping`'s summary, or null when it printed no summary.
+ *
+ * Null rather than zeros: 100% loss prints the packet line and no round-trip line at all, and a
+ * zero RTT recorded for a dead link is worse than no reading, because a later comparison would
+ * read it as the best link ever measured.
+ */
+export function parseLinkRtt(pingOutput) {
+  const text = Buffer.isBuffer(pingOutput) ? pingOutput.toString('utf8') : String(pingOutput ?? '');
+  const rtt = /(?:rtt|round-trip)\s+min\/avg\/max\/(?:mdev|stddev)\s*=\s*([\d.]+)\/([\d.]+)\/([\d.]+)\//.exec(text);
+  if (!rtt) return null;
+  const loss = /([\d.]+)\s*% packet loss/.exec(text);
+  return {
+    minMs: Number(rtt[1]),
+    avgMs: Number(rtt[2]),
+    maxMs: Number(rtt[3]),
+    lossPercent: loss ? Number(loss[1]) : null
+  };
+}
+
+/**
+ * Measures the link from the sink towards the host, once, before either role starts.
+ *
+ * Every run is compared against runs from other days, and the link is the condition that moves
+ * most between them: a single day already saw the floor go from 3.57ms to 13.10ms, which was
+ * enough to make one robustness comparison unreadable (part three, section 15.2). Without the
+ * link recorded alongside the result, a cross-day difference cannot be told from a cross-link one.
+ *
+ * Before, never during. The probe is ICMP traffic on the very link whose timing is being measured,
+ * so running it alongside the measurement would perturb the thing it is meant to describe.
+ *
+ * Diagnostic, not a gate: an unreachable host is recorded as unavailable and the run goes ahead,
+ * because the run itself is what says whether the link works.
+ */
+export async function measureLink({ serial, address, runAdbHost, count = LINK_PROBE_COUNT }) {
+  const result = await runAdbHost({ args: ['-s', serial, 'shell', 'ping', '-c', String(count), '-W', '1', address] });
+  const parsed = parseLinkRtt(result.stdout);
+  if (!parsed) return { unavailable: 'link probe returned no round-trip summary' };
+  return parsed;
 }
 
 /**
@@ -174,6 +218,10 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   await requireBothSerialsAuthorized({ hostSerial, sinkSerial, runAdbHost });
   await requireBothDevicesAwake({ hostSerial, sinkSerial, runAdbHost });
   await grantRecordAudio({ serial: hostSerial, runAdbHost });
+  const link = await measureLink({ serial: sinkSerial, address: hostAddress, runAdbHost });
+  log(link.unavailable
+    ? `link RTT           unavailable (${link.unavailable})`
+    : `link RTT           min ${link.minMs} / avg ${link.avgMs} / max ${link.maxMs} ms, ${link.lossPercent}% loss`);
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
   await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames });
@@ -188,7 +236,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
 
   const directory = resolve(root, 'sync', caseId);
   await mkdir(directory, { recursive: true });
-  await writeFile(resolve(directory, 'sync-reports.json'), `${JSON.stringify(reports, null, 2)}\n`, 'utf8');
+  // The link goes in the same artifact as the reports so a stored run always carries the condition
+  // it was taken under, not just its result.
+  await writeFile(resolve(directory, 'sync-reports.json'), `${JSON.stringify({ link, ...reports }, null, 2)}\n`, 'utf8');
 
   // The sink now waits (bounded at 40s) for its clock offset estimate to converge before it
   // plays anything; on that timeout sync.json carries a failureCode instead of estimates, and
@@ -219,7 +269,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     log(`alignment error    ${alignment.alignmentErrorMs?.toFixed(3) ?? 'n/a'} ms  (${alignment.confidence})`);
     log(`  of which air     ${alignment.propagationCorrectionMs.toFixed(3)} ms added back for ${separationMetres} m of separation`);
   }
-  return { reports, alignment };
+  return { reports, alignment, link };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();
