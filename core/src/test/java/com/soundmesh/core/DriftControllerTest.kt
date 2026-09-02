@@ -54,4 +54,15 @@ class DriftControllerTest {
         assertEquals(200, controller.observe(200).filteredErrorFrames)
         assertEquals(1, controller.observe(200).adjustFrames)
     }
+
+    @Test
+    fun suppressesAnAbsurdOutlierDuringRampUp() {
+        val controller = DriftController()
+        controller.observe(10)
+
+        val decision = controller.observe(5000)
+
+        assertEquals(0, decision.adjustFrames)
+        assertEquals(10, decision.filteredErrorFrames)
+    }
 }

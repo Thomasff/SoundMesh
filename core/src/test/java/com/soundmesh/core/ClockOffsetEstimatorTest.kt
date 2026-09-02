@@ -166,4 +166,21 @@ class ClockOffsetEstimatorTest {
             assertTrue("drift must be finite", !estimate.driftPpm.isNaN() && !estimate.driftPpm.isInfinite())
         }
     }
+
+    @Test
+    fun refusesEstimatesImplyingPhysicallyImpossibleDrift() {
+        val estimator = ClockOffsetEstimator()
+        val baseT1 = 10L * second
+        repeat(ClockOffsetEstimator.MIN_SAMPLES) { index ->
+            // t1 values spread over 1ms; offsets spread over 500 seconds.
+            // This implies drift of 500 ppm, which exceeds the 500 ppm threshold.
+            val t1 = baseT1 + index * 125_000  // 125 microseconds apart
+            val offsetNanos = index * 63_000_000_000L  // 63 billion nanos apart (63 seconds)
+            estimator.record(exchange(t1, offsetNanos, 2_000_000, 2_000_000))
+        }
+
+        val estimate = estimator.estimate(baseT1 + 5 * second)
+
+        assertNull("should reject estimates implying >500 ppm drift", estimate)
+    }
 }

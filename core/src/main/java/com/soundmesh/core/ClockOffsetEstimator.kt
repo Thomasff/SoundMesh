@@ -39,17 +39,20 @@ class ClockOffsetEstimator(
         val slope = if (denominator == 0.0) 0.0 else (count * sumXY - sumX * sumY) / denominator
         val intercept = (sumY - slope * sumX) / count
         val offset = intercept + slope * ((atLocalNanos - baseNanos) / 1e9)
+        val driftPpm = slope / 1000.0
 
         // Guard against non-finite results from the linear fit
         if (!offset.isFinite() || !slope.isFinite() || !intercept.isFinite()) return null
         val offsetNanos = offset.toLong()
         // Detect saturation: if the result is an extreme value, the fit went wrong
         if (offsetNanos == Long.MAX_VALUE || offsetNanos == Long.MIN_VALUE) return null
+        // Reject physically impossible drift: consumer oscillators cannot differ by more than ~100 ppm
+        if (kotlin.math.abs(driftPpm) > MAX_DRIFT_PPM) return null
 
         return ClockEstimate(
             offsetNanos = offsetNanos,
             uncertaintyNanos = best.minOf { it.roundTripNanos } / 2,
-            driftPpm = slope / 1000.0,
+            driftPpm = driftPpm,
             sampleCount = count
         )
     }
@@ -58,5 +61,6 @@ class ClockOffsetEstimator(
         const val MIN_SAMPLES = 8
         const val DEFAULT_WINDOW = 32
         const val DEFAULT_BEST = 8
+        private const val MAX_DRIFT_PPM = 500.0
     }
 }

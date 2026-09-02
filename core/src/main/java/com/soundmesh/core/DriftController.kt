@@ -21,7 +21,7 @@ class DriftController(
         recent.addLast(errorFrames)
         while (recent.size > MEDIAN_WINDOW) recent.removeFirst()
         val sorted = recent.sorted()
-        val filtered = sorted[sorted.size / 2]
+        val filtered = sorted[(sorted.size - 1) / 2]
         val adjust = when {
             filtered > deadbandFrames -> maxAdjustFrames
             filtered < -deadbandFrames -> -maxAdjustFrames
