@@ -50,7 +50,10 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     // The clock probe measures this device's own audio clock; it needs no session and no projection.
     startClockProbe: async ({ serial, caseId, durationSeconds }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', ACTIVITY, '--es', 'case_id', caseId, '--ei', 'clock_seconds', String(durationSeconds)] }), 'Clock probe start'),
     clearClockArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'clock.json'), privatePath(caseId, 'status.json')] }), 'Clear clock artifacts'),
-    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : [])] }), 'Sync start'),
+    // lowLatency is only sent when asked for: the probe defaults the extra to false, which is the
+    // original output path, so an absent extra and `--ez low_latency false` mean the same thing
+    // and the shorter argv keeps every run so far byte-identical.
+    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress, lowLatency }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : []), ...(lowLatency ? ['--ez', 'low_latency', 'true'] : [])] }), 'Sync start'),
     readSync: options => json({ ...options, fileName: 'sync.json' }),
     clearSyncArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'sync.json'), privatePath(caseId, 'calibration.wav'), privatePath(caseId, 'chirp.wav')] }), 'Clear sync artifacts'),
     exportNamedWav: async ({ serial, caseId, fileName, path }) => {

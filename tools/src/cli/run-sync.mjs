@@ -79,6 +79,10 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   const sinkSerial = value(args, '--sink-serial');
   const hostAddress = value(args, '--host-address');
   const separationMetres = Number(value(args, '--separation-m'));
+  // Both roles or neither: the measurement is a comparison between the two handsets, so running
+  // one on the fast mixer path and the other on the deep one would put the difference between the
+  // paths straight into the alignment number.
+  const lowLatency = args.includes('--low-latency');
   if (!hostSerial || !sinkSerial || !hostAddress) throw new Error('Use --host-serial, --sink-serial and --host-address');
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S2');
   // No default is safe here. The host records its own chirp from a few centimetres away and the
@@ -94,10 +98,10 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   await grantRecordAudio({ serial: hostSerial, runAdbHost });
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress });
-  log(`Both roles started for ${seconds}s. Keep the room quiet and do not touch either phone.`);
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency });
+  log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   await wait((seconds + 30) * 1000);
 
   const directory = resolve(root, 'sync', caseId);

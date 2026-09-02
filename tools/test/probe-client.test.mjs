@@ -103,3 +103,17 @@ test('starts a sync role without leaking extras the other role needs', async () 
     ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--es', 'host_address', '192.168.1.7']
   ]);
 });
+
+test('asks for the low latency output path only when the run wants it', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '{}', stderr: '' }; } });
+  await client.startSync({ serial: 'device-1', caseId: 'S2', role: 'HOST', seconds: 90, mode: 'FULL', lowLatency: true });
+  await client.startSync({ serial: 'device-2', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL', hostAddress: '192.168.1.7', lowLatency: true });
+  await client.startSync({ serial: 'device-3', caseId: 'S2', role: 'HOST', seconds: 90, mode: 'FULL', lowLatency: false });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'HOST', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--ez', 'low_latency', 'true'],
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--es', 'host_address', '192.168.1.7', '--ez', 'low_latency', 'true'],
+    // Not asked for, so the extra is absent entirely and the probe's own false default applies.
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'HOST', '--ei', 'seconds', '90', '--es', 'mode', 'FULL']
+  ]);
+});

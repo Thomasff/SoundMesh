@@ -137,6 +137,57 @@ test('grants RECORD_AUDIO on the recording device before either role starts', as
   assert.ok(order.indexOf('client startSync') > 1, 'the grant must come before either role starts');
 });
 
+function authorisedPairRunner(order = []) {
+  return async call => {
+    order.push(`adb ${call.args.join(' ')}`);
+    if (call.args[0] === 'devices') {
+      return {
+        exitCode: 0,
+        stdout: devicesOutput([
+          `${HOST_SERIAL}    device product:pixel model:Pixel_7 transport_id:1`,
+          `${SINK_SERIAL}    device product:pixel model:Pixel_6 transport_id:2`
+        ]),
+        stderr: ''
+      };
+    }
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+}
+
+/**
+ * Runs main far enough to see both startSync calls and then aborts on the second, so the test
+ * never reaches the (seconds + 30)s wait for a run that has no devices behind it. It still pays
+ * the 2s stagger between the two roles.
+ */
+async function startSyncCalls(extra) {
+  const calls = [];
+  const client = {
+    clearSyncArtifacts: async () => {},
+    startSync: async call => {
+      calls.push(call);
+      if (calls.length === 2) throw new Error('stop the run here');
+    }
+  };
+  await assert.rejects(
+    () => main(
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', ...extra],
+      { client, runAdbHost: authorisedPairRunner(), log: () => {} }
+    ),
+    /stop the run here/
+  );
+  return calls;
+}
+
+test('--low-latency puts both roles on the same output path, and its absence puts neither', async () => {
+  const requested = await startSyncCalls(['--low-latency']);
+  assert.deepEqual(requested.map(({ role, lowLatency }) => [role, lowLatency]), [['HOST', true], ['SINK', true]]);
+
+  // Both handsets are compared against each other, so a run that asks for nothing must leave both
+  // on the path every measurement so far was taken on - never one of each.
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, lowLatency }) => [role, lowLatency]), [['HOST', false], ['SINK', false]]);
+});
+
 test('refuses the run when the RECORD_AUDIO grant fails rather than recording silence', async () => {
   const runAdbHost = async () => ({ exitCode: 1, stdout: '', stderr: 'Unknown package' });
   await assert.rejects(
