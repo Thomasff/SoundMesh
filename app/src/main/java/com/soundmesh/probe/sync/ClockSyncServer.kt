@@ -49,10 +49,14 @@ class ClockSyncServer(private val port: Int) {
     @Volatile private var running = false
 
     fun start() {
+        // Bind on the caller's thread before handing off to the worker: stop() reads `socket`,
+        // and a stop() landing before an async bind completed used to find it null and miss the
+        // close, leaking the thread. Binding here means start() never returns without it set.
+        val bound = DatagramSocket(port)
+        socket = bound
         running = true
         Thread {
-            DatagramSocket(port).use { bound ->
-                socket = bound
+            bound.use {
                 val buffer = ByteArray(ClockPacket.BYTES)
                 while (running) {
                     val incoming = DatagramPacket(buffer, buffer.size)
