@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.TextView
 
 object ProbeIdentity { const val APPLICATION_ID = "com.soundmesh.probe" }
@@ -20,6 +21,7 @@ class MainActivity : Activity() {
     private var pendingIntent: Intent? = null
     private lateinit var runStore: RunStore
     private var pendingCaseId: String? = null
+    @Volatile private var clockProbeRunning = false
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             statusView.text = intent.getStringExtra(CaptureForegroundService.EXTRA_STATUS)
@@ -49,6 +51,10 @@ class MainActivity : Activity() {
     }
 
     private fun handleLauncherIntent(intent: Intent) {
+        if (intent.hasExtra(EXTRA_CLOCK_SECONDS)) {
+            startClockProbe(intent)
+            return
+        }
         if (!intent.hasExtra(ProbeCase.EXTRA_SESSION_ID)) {
             statusView.text = getString(R.string.probe_ready)
             return
@@ -111,6 +117,41 @@ class MainActivity : Activity() {
             .putExtra(ProbeCase.EXTRA_RESULT_DATA, data))
     }
 
+    /**
+     * The clock probe measures this device's own audio clock, so it needs neither the capture
+     * session nor MediaProjection consent. It stays out of the capture path entirely.
+     */
+    private fun startClockProbe(intent: Intent) {
+        val caseId = intent.getStringExtra(ProbeCase.EXTRA_CASE_ID)
+        val seconds = intent.getIntExtra(EXTRA_CLOCK_SECONDS, -1)
+        val rejection = when {
+            caseId == null || !ProbeCase.isSafeCaseId(caseId) -> "invalid clock probe case_id"
+            seconds !in ClockProbeRunner.MIN_DURATION_SECONDS..ClockProbeRunner.MAX_DURATION_SECONDS -> "clock_seconds out of range"
+            CaptureForegroundService.ACTIVE_SESSION_ID != null -> "a capture session is still open"
+            clockProbeRunning -> "a clock probe is already running"
+            else -> null
+        }
+        if (rejection != null) {
+            runCatching { ServiceRejection.record(runStore, caseId, IllegalArgumentException(rejection)) }
+            statusView.text = CaptureForegroundService.STATUS_FAILED
+            return
+        }
+        clockProbeRunning = true
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        statusView.text = STATUS_CLOCK_PROBE_RUNNING
+        Thread {
+            try {
+                ClockProbeRunner(runStore, caseId!!, seconds).run()
+            } finally {
+                clockProbeRunning = false
+                runOnUiThread {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    statusView.text = STATUS_CLOCK_PROBE_DONE
+                }
+            }
+        }.start()
+    }
+
     private fun failPendingRun() {
         pendingCaseId?.let { runStore.writeStatus(it, RunStatus.json(CaptureForegroundService.STATUS_FAILED)) }
         statusView.text = CaptureForegroundService.STATUS_FAILED
@@ -126,5 +167,8 @@ class MainActivity : Activity() {
     private companion object {
         const val REQUEST_RECORD_AUDIO = 41
         const val REQUEST_MEDIA_PROJECTION = 42
+        const val EXTRA_CLOCK_SECONDS = "clock_seconds"
+        const val STATUS_CLOCK_PROBE_RUNNING = "CLOCK_PROBE_RUNNING"
+        const val STATUS_CLOCK_PROBE_DONE = "CLOCK_PROBE_DONE"
     }
 }

@@ -79,3 +79,14 @@ test('reads the private replay report of a case', async () => {
   assert.deepEqual(await client.readReplay({ serial: 's', caseId: 'R2' }), { startedPlayback: true });
   assert.deepEqual(calls[0].args, ['exec-out', 'run-as', 'com.soundmesh.probe', 'cat', 'files/runs/R2/replay.json']);
 });
+
+test('starts the clock probe with no session, duration or projection extras attached', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '{}', stderr: '' }; } });
+  await client.clearClockArtifacts({ serial: 'device-1', caseId: 'S1' });
+  await client.startClockProbe({ serial: 'device-1', caseId: 'S1', durationSeconds: 300 });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['exec-out', 'run-as', 'com.soundmesh.probe', 'rm', '-f', 'files/runs/S1/clock.json', 'files/runs/S1/status.json'],
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.MainActivity', '--es', 'case_id', 'S1', '--ei', 'clock_seconds', '300']
+  ]);
+});

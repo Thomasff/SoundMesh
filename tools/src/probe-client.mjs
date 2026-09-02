@@ -45,6 +45,10 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     readStatus: options => json({ ...options, fileName: 'status.json' }),
     readCapture: options => json({ ...options, fileName: 'capture.json' }),
     readReplay: options => json({ ...options, fileName: 'replay.json' }),
+    readClock: options => json({ ...options, fileName: 'clock.json' }),
+    // The clock probe measures this device's own audio clock; it needs no session and no projection.
+    startClockProbe: async ({ serial, caseId, durationSeconds }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', ACTIVITY, '--es', 'case_id', caseId, '--ei', 'clock_seconds', String(durationSeconds)] }), 'Clock probe start'),
+    clearClockArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'clock.json'), privatePath(caseId, 'status.json')] }), 'Clear clock artifacts'),
     clearCaseArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'status.json'), privatePath(caseId, 'capture.json'), privatePath(caseId, 'capture.wav'), privatePath(caseId, 'replay.json')] }), 'Clear case artifacts'),
     exportWav: async ({ serial, caseId, path }) => {
       const result = requireSuccess(await runAdbBinary({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, 'capture.wav')] }), 'WAV export');
