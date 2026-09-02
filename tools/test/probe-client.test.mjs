@@ -90,3 +90,16 @@ test('starts the clock probe with no session, duration or projection extras atta
     ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.MainActivity', '--es', 'case_id', 'S1', '--ei', 'clock_seconds', '300']
   ]);
 });
+
+test('starts a sync role without leaking extras the other role needs', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '{}', stderr: '' }; } });
+  await client.clearSyncArtifacts({ serial: 'device-1', caseId: 'S2' });
+  await client.startSync({ serial: 'device-1', caseId: 'S2', role: 'HOST', seconds: 90, mode: 'FULL' });
+  await client.startSync({ serial: 'device-2', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL', hostAddress: '192.168.1.7' });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['exec-out', 'run-as', 'com.soundmesh.probe', 'rm', '-f', 'files/runs/S2/sync.json', 'files/runs/S2/calibration.wav', 'files/runs/S2/chirp.wav'],
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'HOST', '--ei', 'seconds', '90', '--es', 'mode', 'FULL'],
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--es', 'host_address', '192.168.1.7']
+  ]);
+});

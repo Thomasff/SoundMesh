@@ -4,6 +4,7 @@ import { runAdb as defaultRunAdb } from './adb.mjs';
 
 const PROBE_PACKAGE = 'com.soundmesh.probe';
 const ACTIVITY = `${PROBE_PACKAGE}/.MainActivity`;
+const SYNC_ACTIVITY = `${PROBE_PACKAGE}/.sync.SyncActivity`;
 export class ProbeStatusNotReadyError extends Error { constructor() { super('Probe status is not ready'); this.code = 'NOT_READY'; } }
 
 function requireSuccess(result, action) {
@@ -49,6 +50,14 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     // The clock probe measures this device's own audio clock; it needs no session and no projection.
     startClockProbe: async ({ serial, caseId, durationSeconds }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', ACTIVITY, '--es', 'case_id', caseId, '--ei', 'clock_seconds', String(durationSeconds)] }), 'Clock probe start'),
     clearClockArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'clock.json'), privatePath(caseId, 'status.json')] }), 'Clear clock artifacts'),
+    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : [])] }), 'Sync start'),
+    readSync: options => json({ ...options, fileName: 'sync.json' }),
+    clearSyncArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'sync.json'), privatePath(caseId, 'calibration.wav'), privatePath(caseId, 'chirp.wav')] }), 'Clear sync artifacts'),
+    exportNamedWav: async ({ serial, caseId, fileName, path }) => {
+      const result = requireSuccess(await runAdbBinary({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, fileName)] }), `${fileName} export`);
+      await writeBinary(path, result.stdout);
+      return path;
+    },
     clearCaseArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'status.json'), privatePath(caseId, 'capture.json'), privatePath(caseId, 'capture.wav'), privatePath(caseId, 'replay.json')] }), 'Clear case artifacts'),
     exportWav: async ({ serial, caseId, path }) => {
       const result = requireSuccess(await runAdbBinary({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, 'capture.wav')] }), 'WAV export');
