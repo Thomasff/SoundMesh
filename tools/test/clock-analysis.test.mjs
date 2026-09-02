@@ -93,3 +93,17 @@ test('reports how often the device actually refreshes its timestamp', () => {
 
   assert.equal(result.timestampUpdate.medianMs, 200);
 });
+
+test('median filters away the isolated stale readings a real device mixes in', () => {
+  // One in every twenty readings comes back a whole millisecond late, and only late.
+  const result = analyzeClockProbe(report({
+    frameAt: steady(NOMINAL),
+    noiseFrames: index => (index % 20 === 7 ? -53 : 0)
+  }));
+
+  assert.ok(result.residual.maxMs > 1, `raw residual was ${result.residual.maxMs}`);
+  assert.ok(
+    result.filteredResidual.maxMs < result.residual.maxMs / 10,
+    `filtering ${result.residual.maxMs} ms only reached ${result.filteredResidual.maxMs} ms`
+  );
+});

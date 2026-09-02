@@ -5,6 +5,8 @@ const UNPREDICTABLE_HOLDOUT_MS = 5;
 const GOOD_RESIDUAL_MS = 1;
 const GOOD_HOLDOUT_MS = 2;
 
+const MEDIAN_WINDOW = 5;
+
 const median = values => {
   if (values.length === 0) return null;
   const sorted = [...values].sort((left, right) => left - right);
@@ -37,6 +39,22 @@ function fitLine(samples) {
 const predictFrames = (fit, nanos) => fit.baseFrames + fit.intercept + fit.slope * ((nanos - fit.baseNanos) / 1e9);
 
 /**
+ * What a consumer of these readings would actually see. Devices mix in occasional stale
+ * snapshots that are isolated and one sided; a short median window removes them without
+ * touching the trend, so both the raw and the usable noise floor get reported.
+ */
+function medianFilter(values) {
+  const half = MEDIAN_WINDOW >> 1;
+  return values.map((value, index) =>
+    index < half || index >= values.length - half ? value : median(values.slice(index - half, index + half + 1)));
+}
+
+const spread = values => ({
+  maxMs: Math.max(...values.map(Math.abs)),
+  rmsMs: Math.sqrt(values.reduce((total, value) => total + value * value, 0) / values.length)
+});
+
+/**
  * Turns one device timestamp log into the two numbers the sync design depends on:
  * how fast this device's audio clock really runs, and how well a fitted model predicts it.
  */
@@ -60,6 +78,7 @@ export function analyzeClockProbe(deviceReport) {
     sampleCount: samples.length, requested, unavailable, duplicates: deviceReport.duplicates ?? 0,
     nominalSampleRate: nominalRate, actualSampleRate: null, ppmDeviation: null,
     residual: Object.freeze({ maxMs: null, rmsMs: null }),
+    filteredResidual: Object.freeze({ maxMs: null, rmsMs: null }),
     holdout: Object.freeze({ fitSeconds: null, predictSeconds: null, maxErrorMs: null }),
     latency: Object.freeze({ medianFrames: null, medianMs: null }),
     timestampUpdate: Object.freeze({ medianMs: null, maxMs: null }),
@@ -72,12 +91,9 @@ export function analyzeClockProbe(deviceReport) {
   const fit = fitLine(samples);
   if (!fit) return Object.freeze({ ...empty, reasons: Object.freeze([...reasons, 'INSUFFICIENT_SAMPLES']) });
 
-  let maxResidual = 0; let sumSquares = 0;
-  for (const [nanos, frames] of samples) {
-    const error = frames - predictFrames(fit, nanos);
-    maxResidual = Math.max(maxResidual, Math.abs(error));
-    sumSquares += error * error;
-  }
+  const residualsMs = samples.map(([nanos, frames]) => framesToMs(frames - predictFrames(fit, nanos)));
+  const rawResidual = spread(residualsMs);
+  const filteredResidual = spread(medianFilter(residualsMs));
 
   const split = samples.length >> 1;
   const holdoutFit = fitLine(samples.slice(0, split));
@@ -90,8 +106,7 @@ export function analyzeClockProbe(deviceReport) {
   for (let index = 1; index < samples.length; index++) gaps.push((samples[index][0] - samples[index - 1][0]) / 1e6);
   const depths = samples.map(([, frames, written]) => written - frames);
 
-  const residualMaxMs = framesToMs(maxResidual);
-  const residualRmsMs = framesToMs(Math.sqrt(sumSquares / samples.length));
+  const residualMaxMs = rawResidual.maxMs;
   const holdoutMaxErrorMs = framesToMs(holdoutError);
   if (residualMaxMs > NOISY_RESIDUAL_MS) reasons.push('NOISY_TIMESTAMPS');
   if (holdoutMaxErrorMs > UNPREDICTABLE_HOLDOUT_MS) reasons.push('UNPREDICTABLE_DRIFT');
@@ -105,7 +120,8 @@ export function analyzeClockProbe(deviceReport) {
     nominalSampleRate: nominalRate,
     actualSampleRate: fit.slope,
     ppmDeviation: ((fit.slope - nominalRate) / nominalRate) * 1e6,
-    residual: Object.freeze({ maxMs: residualMaxMs, rmsMs: residualRmsMs }),
+    residual: Object.freeze(rawResidual),
+    filteredResidual: Object.freeze(filteredResidual),
     holdout: Object.freeze({
       fitSeconds: (samples[split - 1][0] - samples[0][0]) / 1e9,
       predictSeconds: (samples[samples.length - 1][0] - samples[split][0]) / 1e9,
