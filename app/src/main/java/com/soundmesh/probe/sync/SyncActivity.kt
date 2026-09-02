@@ -123,11 +123,20 @@ class SyncActivity : Activity() {
     // on the wire: each device generates the identical sweep locally and submits it to its own
     // scheduler, so it is heard through the very pipeline the measurement is meant to judge.
 
+    /**
+     * Whether this run asked the AudioTrack for the low latency output path, defaulting to off -
+     * the path every M1/M2 measurement so far was taken on. Read straight off the intent, like
+     * `host_address`: the two paths moved the measured residual from -34.7ms to +90ms, so the
+     * choice belongs to the run rather than to the build, and SyncRenderer writes it back into
+     * sync.json so a stored artifact says which path produced it.
+     */
+    private fun lowLatencyRequested(): Boolean = intent.getBooleanExtra("low_latency", false)
+
     private fun runHostFull(caseId: String, seconds: Int) {
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
-        val renderer = SyncRenderer(scheduler, DriftController()) { System.nanoTime() }
+        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested()) { System.nanoTime() }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         try {
             clockServer.start()
@@ -216,7 +225,7 @@ class SyncActivity : Activity() {
         }
 
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
-        val renderer = SyncRenderer(scheduler, DriftController(), hostNanosNow)
+        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested(), hostNanosNow)
         val lastPlayAt = AtomicLong(0L)
         // The spec requires playback not start before the offset estimate has converged, so
         // nothing is submitted to the scheduler until `converged` is set true below. Anything

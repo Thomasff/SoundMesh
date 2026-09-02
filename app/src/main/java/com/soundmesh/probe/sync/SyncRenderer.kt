@@ -11,6 +11,7 @@ import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.driftIntervalNanos
+import com.soundmesh.core.extrapolatedPlaybackFrames
 import com.soundmesh.core.nextPhaseState
 import com.soundmesh.core.pendingPlaybackFrames
 import com.soundmesh.core.playbackErrorFrames
@@ -23,6 +24,13 @@ import com.soundmesh.core.playbackErrorFrames
 class SyncRenderer(
     private val scheduler: PlaybackScheduler,
     private val drift: DriftController,
+    /**
+     * Whether to ask the AudioTrack for the fast mixer path. Defaults to false - the deep normal
+     * mixer the M1/M2 numbers were measured on - because the two paths produce very different
+     * residuals (-34.7ms against +90ms across one measured pair), so which one a run used has to
+     * be a deliberate choice rather than a build-time constant. Echoed into [report].
+     */
+    private val lowLatency: Boolean = false,
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
@@ -41,6 +49,17 @@ class SyncRenderer(
     @Volatile private var trackBufferFrames = 0
     @Volatile private var minPendingFrames = Long.MAX_VALUE
     @Volatile private var maxPendingFrames = Long.MIN_VALUE
+    /**
+     * How the timestamp path itself is holding up. Every getTimestamp that returns false sends
+     * [outputDepthNanos] to [DEFAULT_DEPTH_NANOS], a hardcoded 200ms guess, so on a handset that
+     * fails often that assumption is itself a large fixed error source - and until these counters
+     * existed nothing recorded how often it was being used. [pendingClamped] counts how often
+     * pendingPlaybackFrames' lower bound had to fire, i.e. how often the extrapolated position ran
+     * past everything written (underrun, or a pair the HAL never refreshed).
+     */
+    @Volatile private var timestampQueries = 0
+    @Volatile private var timestampFailures = 0
+    @Volatile private var pendingClamped = 0
     /** Frames the drift controller asked for, waiting for the next chunk to carry them. */
     private var pendingAdjustFrames = 0
 
@@ -99,22 +118,27 @@ class SyncRenderer(
         var track: AudioTrack? = null
         try {
             require(minimum > 0) { "AudioTrack reported no usable buffer size" }
-            track = AudioTrack.Builder()
+            val builder = AudioTrack.Builder()
                 .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
                 .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build())
                 .setBufferSizeInBytes(maxOf(minimum, silence.size * 2))
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                // Asks for the framework's fast mixer path instead of the deep normal-mixer one.
-                // M2 measured a reproducible 34.7ms residual between two handsets that the shared
-                // timeline cannot see, which means at least one device's getTimestamp does not
-                // account for everything between the write and the speaker. A shallower output
-                // path has less room to hide such a delay, so this is the cheap half of that
-                // experiment: if the residual moves, the delay lives in the mixer layers and AAudio
-                // can go further; if it does not, the delay is downstream of anything either API
-                // reports. [trackBufferFrames] and the pending-frame range below record what the
-                // request actually bought, since the framework may decline the fast path.
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .build()
+            // Asks for the framework's fast mixer path instead of the deep normal-mixer one.
+            // M2 measured a reproducible 34.7ms residual between two handsets that the shared
+            // timeline cannot see, which means at least one device's getTimestamp does not
+            // account for everything between the write and the speaker. A shallower output
+            // path has less room to hide such a delay, so this is the cheap half of that
+            // experiment: if the residual moves, the delay lives in the mixer layers and AAudio
+            // can go further; if it does not, the delay is downstream of anything either API
+            // reports. [trackBufferFrames] and the pending-frame range below record what the
+            // request actually bought, since the framework may decline the fast path.
+            //
+            // Under an intent extra rather than always on: the measured residual moved from
+            // -34.7ms to +90ms with it, so the two paths have to be A/B'd on one build instead of
+            // one of them being silently baked in. Off means the call is not made at all, which is
+            // the behaviour every earlier measurement was taken on.
+            if (lowLatency) builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+            track = builder.build()
             trackBufferFrames = track.bufferSizeInFrames
             track.play()
             val timestamp = AudioTimestamp()
@@ -184,16 +208,33 @@ class SyncRenderer(
         }
     }
 
-    /** Frames handed over but not yet heard, or null when the device has no timestamp to give. */
+    /**
+     * Frames handed over but not yet heard, or null when the device has no timestamp to give.
+     *
+     * Every call is counted, and so is every refusal, because a refusal is not free: the caller
+     * falls back to [DEFAULT_DEPTH_NANOS]. The clamp is detected against the unbounded position
+     * rather than guessed from the sign of a later value - a pending count of zero is a perfectly
+     * ordinary reading on a drained output, so only the extrapolated position overrunning
+     * [writtenFrames] says the bound was what produced it.
+     */
     private fun pendingFrames(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long): Long? {
-        if (!track.getTimestamp(timestamp)) return null
+        timestampQueries++
+        if (!track.getTimestamp(timestamp)) {
+            timestampFailures++
+            return null
+        }
+        // Deliberately not hostNanosNow(): timestamp.nanoTime is on TIMEBASE_MONOTONIC, the same
+        // origin as System.nanoTime(), and only their difference is used. Read once so the clamp
+        // check and the returned value share an instant.
+        val nowNanos = System.nanoTime()
+        if (extrapolatedPlaybackFrames(timestamp.framePosition, timestamp.nanoTime, nowNanos, SAMPLE_RATE) > writtenFrames) {
+            pendingClamped++
+        }
         return pendingPlaybackFrames(
             writtenFrames = writtenFrames,
             framePosition = timestamp.framePosition,
             timestampNanos = timestamp.nanoTime,
-            // Deliberately not hostNanosNow(): timestamp.nanoTime is on TIMEBASE_MONOTONIC, the
-            // same origin as System.nanoTime(), and only their difference is used.
-            nowNanos = System.nanoTime(),
+            nowNanos = nowNanos,
             sampleRate = SAMPLE_RATE
         )
     }
@@ -282,6 +323,8 @@ class SyncRenderer(
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
             "\"maxPendingFrames\":${if (maxPendingFrames == Long.MIN_VALUE) "null" else maxPendingFrames}," +
+            "\"timestampQueries\":$timestampQueries,\"timestampFailures\":$timestampFailures," +
+            "\"pendingClamped\":$pendingClamped,\"lowLatency\":$lowLatency," +
             "\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
     }
 
