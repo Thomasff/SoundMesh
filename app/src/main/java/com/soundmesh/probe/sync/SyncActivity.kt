@@ -37,7 +37,18 @@ class SyncActivity : Activity() {
         statusView = TextView(this)
         setContentView(statusView)
         runStore = RunStore(filesDir)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // KEEP_SCREEN_ON only holds a screen that is already on; `am start` does not wake a sleeping
+        // device, so three runs were launched onto handsets reporting Asleep and Dozing. They still
+        // made sound - the audio thread keeps producing at a degraded priority - but the timing this
+        // whole harness measures is exactly what the doze scheduler takes away: one missed the chirp
+        // deadline outright and two recorded chirps the correlator could not locate at all. Turning
+        // the screen on here makes a launch self-sufficient; run-sync also refuses to start against a
+        // sleeping device, so the two together fail loudly instead of producing plausible garbage.
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        )
         handle()
     }
 

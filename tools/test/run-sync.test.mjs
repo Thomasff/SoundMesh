@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake } from '../src/cli/run-sync.mjs';
 
 const HOST_SERIAL = 'HOSTSERIALABC123';
 const SINK_SERIAL = 'SINKSERIALXYZ789';
@@ -120,6 +120,9 @@ test('grants RECORD_AUDIO on the recording device before either role starts', as
         stderr: ''
       };
     }
+    // main now refuses to run against a sleeping handset, so both fixtures have to answer the
+    // wakefulness probe; these stand in for awake devices.
+    if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
     return { exitCode: 0, stdout: '', stderr: '' };
   };
   const client = {
@@ -132,9 +135,13 @@ test('grants RECORD_AUDIO on the recording device before either role starts', as
     /stop the run here/
   );
 
+  // Order is the point of this test: everything that only reads state comes first, and nothing
+  // that changes a device happens until both serials are confirmed and both handsets are awake.
   assert.equal(order[0], 'adb devices -l');
-  assert.equal(order[1], `adb -s ${HOST_SERIAL} shell pm grant com.soundmesh.probe android.permission.RECORD_AUDIO`);
-  assert.ok(order.indexOf('client startSync') > 1, 'the grant must come before either role starts');
+  assert.equal(order[1], `adb -s ${HOST_SERIAL} shell dumpsys power`);
+  assert.equal(order[2], `adb -s ${SINK_SERIAL} shell dumpsys power`);
+  assert.equal(order[3], `adb -s ${HOST_SERIAL} shell pm grant com.soundmesh.probe android.permission.RECORD_AUDIO`);
+  assert.ok(order.indexOf('client startSync') > 3, 'the grant must come before either role starts');
 });
 
 function authorisedPairRunner(order = []) {
@@ -150,6 +157,7 @@ function authorisedPairRunner(order = []) {
         stderr: ''
       };
     }
+    if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
     return { exitCode: 0, stdout: '', stderr: '' };
   };
 }
@@ -194,4 +202,31 @@ test('refuses the run when the RECORD_AUDIO grant fails rather than recording si
     () => grantRecordAudio({ serial: HOST_SERIAL, runAdbHost }),
     /Granting RECORD_AUDIO to the probe on the recording device failed/
   );
+});
+
+test('assertAwake refuses a sleeping or dozing handset and names only the role', () => {
+  assert.doesNotThrow(() => assertAwake('  mWakefulness=Awake\n  mHoldingDisplay=true', 'Host'));
+  for (const state of ['Asleep', 'Dozing', 'Dreaming']) {
+    assert.throws(
+      () => assertAwake(`mWakefulness=${state}`, 'Sink'),
+      error => error.message.includes('Sink') && error.message.includes(state) && !/[0-9A-Z]{8,}/.test(error.message)
+    );
+  }
+});
+
+test('assertAwake refuses to guess when wakefulness is absent', () => {
+  assert.throws(() => assertAwake('some unrelated dumpsys output', 'Host'), /refusing to run blind/);
+});
+
+test('requireBothDevicesAwake checks both roles and stops at the first asleep one', async () => {
+  const queried = [];
+  const runAdbHost = async ({ args }) => {
+    queried.push(args[1]);
+    return { exitCode: 0, stdout: args[1] === 'host-serial' ? 'mWakefulness=Awake' : 'mWakefulness=Asleep' };
+  };
+  await assert.rejects(
+    requireBothDevicesAwake({ hostSerial: 'host-serial', sinkSerial: 'sink-serial', runAdbHost }),
+    /Sink is Asleep/
+  );
+  assert.deepEqual(queried, ['host-serial', 'sink-serial']);
 });

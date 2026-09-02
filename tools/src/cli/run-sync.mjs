@@ -43,6 +43,31 @@ export async function requireBothSerialsAuthorized({ hostSerial, sinkSerial, run
 }
 
 /**
+ * Reads `mWakefulness` out of `dumpsys power` and refuses anything but Awake.
+ *
+ * A sleeping handset still accepts `am start` and still makes sound - the audio thread keeps
+ * producing at a degraded priority - so a run against one looks like it worked. What doze takes
+ * away is timing, which is the only thing this harness measures: three runs launched onto
+ * handsets reporting Asleep and Dozing produced one missed chirp deadline and two recordings whose
+ * chirps the correlator could not locate at all. Cheaper to refuse up front than to spend 90
+ * seconds producing a number nobody should trust. Only the role is named, never the serial.
+ */
+export function assertAwake(dumpsysOutput, role) {
+  const text = Buffer.isBuffer(dumpsysOutput) ? dumpsysOutput.toString('utf8') : String(dumpsysOutput ?? '');
+  const match = /mWakefulness=([A-Za-z]+)/.exec(text);
+  if (!match) throw new Error(`${role} wakefulness could not be read; refusing to run blind`);
+  if (match[1] !== 'Awake') throw new Error(`${role} is ${match[1]}, not Awake. Wake both handsets and keep their screens on for the whole run.`);
+}
+
+export async function requireBothDevicesAwake({ hostSerial, sinkSerial, runAdbHost }) {
+  for (const [role, serial] of [['Host', hostSerial], ['Sink', sinkSerial]]) {
+    const result = await runAdbHost({ args: ['-s', serial, 'shell', 'dumpsys', 'power'] });
+    if (result.exitCode !== 0) throw new Error(`${role} power state query failed`);
+    assertAwake(result.stdout, role);
+  }
+}
+
+/**
  * Grants RECORD_AUDIO to the probe on the recording device.
  *
  * Only MainActivity asks for it at runtime; SyncActivity never does. Without this the run works
@@ -95,6 +120,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Revalidates both confirmed serials immediately before any device action: with two phones
   // attached at once, a mistyped or swapped serial would otherwise silently target the wrong one.
   await requireBothSerialsAuthorized({ hostSerial, sinkSerial, runAdbHost });
+  await requireBothDevicesAwake({ hostSerial, sinkSerial, runAdbHost });
   await grantRecordAudio({ serial: hostSerial, runAdbHost });
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
