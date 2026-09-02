@@ -53,7 +53,12 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     // lowLatency is only sent when asked for: the probe defaults the extra to false, which is the
     // original output path, so an absent extra and `--ez low_latency false` mean the same thing
     // and the shorter argv keeps every run so far byte-identical.
-    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress, lowLatency }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : []), ...(lowLatency ? ['--ez', 'low_latency', 'true'] : [])] }), 'Sync start'),
+    // reacquireThresholdFrames is sent on the same terms as lowLatency: absent means the probe's
+    // own REACQUIRE_THRESHOLD_FRAMES applies. It exists to be lowered far below the noise floor so
+    // the TRACKING fallback can be made to fire on demand - eight two-handset runs passed with the
+    // production threshold and reacquisitions == 0 on every role, which says the mechanism was
+    // never executed, not that it works.
+    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : []), ...(lowLatency ? ['--ez', 'low_latency', 'true'] : []), ...(reacquireThresholdFrames ? ['--ei', 'reacquire_threshold_frames', String(reacquireThresholdFrames)] : [])] }), 'Sync start'),
     readSync: options => json({ ...options, fileName: 'sync.json' }),
     clearSyncArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'sync.json'), privatePath(caseId, 'calibration.wav'), privatePath(caseId, 'chirp.wav')] }), 'Clear sync artifacts'),
     exportNamedWav: async ({ serial, caseId, fileName, path }) => {

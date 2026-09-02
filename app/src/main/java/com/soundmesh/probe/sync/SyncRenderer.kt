@@ -8,6 +8,7 @@ import com.soundmesh.core.DriftController
 import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
 import com.soundmesh.core.PlaybackScheduler
+import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
 import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.driftIntervalNanos
@@ -31,6 +32,17 @@ class SyncRenderer(
      * be a deliberate choice rather than a build-time constant. Echoed into [report].
      */
     private val lowLatency: Boolean = false,
+    /**
+     * How far the filtered error has to go before TRACKING falls back to ACQUIRING. Defaults to
+     * [REACQUIRE_THRESHOLD_FRAMES], which is set well above the drift-sample noise floor so the
+     * fallback only fires on a real slip - and which therefore did not fire once across eight
+     * two-handset runs, leaving the mechanism unexecuted rather than demonstrated. Overridable per
+     * run so it can be dropped below the noise floor deliberately, making the fallback fire on
+     * ordinary jitter; that says nothing about whether the production threshold is right, but it is
+     * the only way to watch the transition run on a device. Echoed into [report] so an artifact
+     * always says which threshold produced it.
+     */
+    private val reacquireThresholdFrames: Int = REACQUIRE_THRESHOLD_FRAMES,
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
@@ -315,7 +327,8 @@ class SyncRenderer(
         phaseState = nextPhaseState(
             phaseState,
             inDeadband = decision.adjustFrames == 0,
-            filteredErrorFrames = decision.filteredErrorFrames
+            filteredErrorFrames = decision.filteredErrorFrames,
+            reacquireThresholdFrames = reacquireThresholdFrames
         )
         val isAcquiring = phaseState.phase == RendererPhase.ACQUIRING
         if (wasAcquiring && !isAcquiring) {
@@ -375,6 +388,7 @@ class SyncRenderer(
             "\"adjustments\":$adjustments,\"driftSamples\":$driftSamples," +
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
             "\"reacquisitions\":$reacquisitions," +
+            "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
             "\"maxPendingFrames\":${if (maxPendingFrames == Long.MIN_VALUE) "null" else maxPendingFrames}," +

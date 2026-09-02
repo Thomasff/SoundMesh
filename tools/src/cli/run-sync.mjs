@@ -22,6 +22,17 @@ const PROBE_PACKAGE = 'com.soundmesh.probe';
 const SEARCH_RADIUS_FRAMES = 12000;
 
 /**
+ * The earliest either handset can have written its report, counted from the audio segment's end:
+ * the 2s calibration gap, the 1.5s chunk lead already inside it, the chirp, its 1s drain and the
+ * host's 2s recording tail come to about seven. Five is deliberately under that, so the floor can
+ * never sleep past a report and turn a fast run into a slow one.
+ */
+const COMPLETION_FLOOR_SECONDS = 5;
+
+/** What is left of the old fixed (seconds + 30) wait, spent polling rather than sleeping. */
+const COMPLETION_BUDGET_SECONDS = 25;
+
+/**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
  * at once here (the only task in this plan where that is true), so a mistyped or swapped serial
@@ -80,6 +91,39 @@ export async function grantRecordAudio({ serial, runAdbHost }) {
   if (result.exitCode !== 0) throw new Error('Granting RECORD_AUDIO to the probe on the recording device failed');
 }
 
+/**
+ * Waits for the run to finish by watching for the sync.json each role writes on completion,
+ * instead of sleeping a fixed (seconds + 30).
+ *
+ * The fixed wait was sized for the worst case and paid on every run: the handsets are done about
+ * (seconds + 7) in - the audio segment, the 2s calibration gap, the chirp, its 1s drain and the
+ * host's 2s recording tail - so roughly twenty seconds of every two-minute cycle was spent
+ * watching two idle phones. Polling from the start would be worse than the wait it replaces: every
+ * poll is an `exec-out run-as` on a device in the middle of the measurement this harness exists to
+ * take. So [floorMs] sleeps out the stretch during which no report can exist yet, and polling only
+ * begins once both handsets have stopped playing.
+ *
+ * [budgetMs] is what is left of the old fixed wait, so a run that genuinely needs the full margin
+ * is never cut short and the worst case is exactly what it was before. RunStore writes sync.json
+ * through a temp file and a rename, so a poll can never catch a half-written report.
+ */
+export async function awaitBothReports({ client, hostSerial, sinkSerial, caseId, floorMs, budgetMs, pollMs = 2000, sleep = wait }) {
+  await sleep(floorMs);
+  const roles = [['host', hostSerial], ['sink', sinkSerial]];
+  const reports = {};
+  for (let waited = 0; ; waited += pollMs) {
+    for (const [name, serial] of roles) {
+      // A report already read is kept: only a role still missing is asked again. A real report
+      // never carries `unavailable`, so it is a safe marker for "not there yet".
+      if (reports[name] && !reports[name].unavailable) continue;
+      reports[name] = await client.readSync({ serial, caseId }).catch(error => ({ unavailable: error.message }));
+    }
+    if (!reports.host.unavailable && !reports.sink.unavailable) return reports;
+    if (waited >= budgetMs) return reports;
+    await sleep(pollMs);
+  }
+}
+
 /** Reads a mono PCM16 WAV written by the probe into an Int16Array. */
 function readPcm16(buffer) {
   let offset = 12;
@@ -108,6 +152,14 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // one on the fast mixer path and the other on the deep one would put the difference between the
   // paths straight into the alignment number.
   const lowLatency = args.includes('--low-latency');
+  // Same both-or-neither rule as --low-latency, for the same reason: the alignment number is a
+  // comparison between the two handsets, so a threshold applied to one loop only would put the
+  // difference between the two loops straight into it.
+  const reacquireRaw = value(args, '--reacquire-threshold');
+  const reacquireThresholdFrames = reacquireRaw === undefined ? undefined : Number(reacquireRaw);
+  if (reacquireRaw !== undefined && (!Number.isInteger(reacquireThresholdFrames) || reacquireThresholdFrames <= 0)) {
+    throw new Error('--reacquire-threshold takes a positive whole number of frames. Leave it out to use the probe\'s own threshold; lower it far below the drift-sample noise floor only to force the TRACKING fallback to fire, which is the one way to see the mechanism execute on a device.');
+  }
   if (!hostSerial || !sinkSerial || !hostAddress) throw new Error('Use --host-serial, --sink-serial and --host-address');
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S2');
   // No default is safe here. The host records its own chirp from a few centimetres away and the
@@ -124,18 +176,18 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   await grantRecordAudio({ serial: hostSerial, runAdbHost });
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
-  await wait((seconds + 30) * 1000);
+  const reports = await awaitBothReports({
+    client, hostSerial, sinkSerial, caseId,
+    floorMs: (seconds + COMPLETION_FLOOR_SECONDS) * 1000,
+    budgetMs: COMPLETION_BUDGET_SECONDS * 1000
+  });
 
   const directory = resolve(root, 'sync', caseId);
   await mkdir(directory, { recursive: true });
-  const reports = {};
-  for (const [name, serial] of [['host', hostSerial], ['sink', sinkSerial]]) {
-    reports[name] = await client.readSync({ serial, caseId }).catch(error => ({ unavailable: error.message }));
-  }
   await writeFile(resolve(directory, 'sync-reports.json'), `${JSON.stringify(reports, null, 2)}\n`, 'utf8');
 
   // The sink now waits (bounded at 40s) for its clock offset estimate to converge before it

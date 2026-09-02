@@ -10,6 +10,7 @@ import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
+import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
 import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStatsWindow
 import com.soundmesh.core.TonePcmSource
@@ -143,11 +144,28 @@ class SyncActivity : Activity() {
      */
     private fun lowLatencyRequested(): Boolean = intent.getBooleanExtra("low_latency", false)
 
+    /**
+     * The TRACKING -> ACQUIRING fallback threshold this run asks for, defaulting to the production
+     * [REACQUIRE_THRESHOLD_FRAMES].
+     *
+     * Read off the intent for one reason: the production threshold sits far above the drift-sample
+     * noise floor, so it fires only on a real slip, and across eight two-handset runs it fired
+     * exactly zero times. Eight clean runs with `reacquisitions == 0` say the fallback was never
+     * executed - not that it works. Lowering the threshold below the noise floor makes ordinary
+     * jitter trip it, which is the only way to watch the transition actually run on a handset.
+     * A non-positive value would make every sample a slip and pin the loop in ACQUIRING forever,
+     * so it falls back to the default rather than being honoured.
+     */
+    private fun reacquireThresholdRequested(): Int {
+        val requested = intent.getIntExtra("reacquire_threshold_frames", REACQUIRE_THRESHOLD_FRAMES)
+        return if (requested > 0) requested else REACQUIRE_THRESHOLD_FRAMES
+    }
+
     private fun runHostFull(caseId: String, seconds: Int) {
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
-        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested()) { System.nanoTime() }
+        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested(), reacquireThresholdRequested()) { System.nanoTime() }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         try {
             clockServer.start()
@@ -236,7 +254,7 @@ class SyncActivity : Activity() {
         }
 
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
-        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested(), hostNanosNow)
+        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested(), reacquireThresholdRequested(), hostNanosNow)
         val lastPlayAt = AtomicLong(0L)
         // The spec requires playback not start before the offset estimate has converged, so
         // nothing is submitted to the scheduler until `converged` is set true below. Anything

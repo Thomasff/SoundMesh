@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports } from '../src/cli/run-sync.mjs';
 
 const HOST_SERIAL = 'HOSTSERIALABC123';
 const SINK_SERIAL = 'SINKSERIALXYZ789';
@@ -229,4 +229,65 @@ test('requireBothDevicesAwake checks both roles and stops at the first asleep on
     /Sink is Asleep/
   );
   assert.deepEqual(queried, ['host-serial', 'sink-serial']);
+});
+
+test('--reacquire-threshold reaches both roles, and its absence leaves both on the probe default', async () => {
+  const lowered = await startSyncCalls(['--reacquire-threshold', '8']);
+  assert.deepEqual(lowered.map(({ role, reacquireThresholdFrames }) => [role, reacquireThresholdFrames]), [['HOST', 8], ['SINK', 8]]);
+
+  // Same reason as --low-latency: the measurement compares the two handsets against each other,
+  // so a threshold on one side only would put the difference between the two loops into the number.
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, reacquireThresholdFrames }) => [role, reacquireThresholdFrames]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('refuses a reacquire threshold that is not a positive whole number of frames', async () => {
+  for (const bad of ['0', '-8', 'wide', '8.5']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--reacquire-threshold', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+      ),
+      /--reacquire-threshold/
+    );
+  }
+});
+
+test('awaitBothReports returns as soon as both roles have written, without burning the budget', async () => {
+  let slept = 0;
+  const sleep = async ms => { slept += ms; };
+  let attempts = 0;
+  const client = {
+    readSync: async ({ serial }) => {
+      // The sink lands two polls after the host, so the pair is only complete on the third pass.
+      if (serial === SINK_SERIAL && attempts++ < 2) throw new Error('no such file or directory');
+      return { role: serial === HOST_SERIAL ? 'HOST' : 'SINK' };
+    }
+  };
+  const reports = await awaitBothReports({
+    client, hostSerial: HOST_SERIAL, sinkSerial: SINK_SERIAL, caseId: 'S2',
+    floorMs: 95_000, budgetMs: 25_000, pollMs: 2000, sleep
+  });
+  assert.deepEqual(reports, { host: { role: 'HOST' }, sink: { role: 'SINK' } });
+  // The floor plus exactly the two polls it took - not the whole budget the old fixed wait paid.
+  assert.equal(slept, 95_000 + 2 * 2000);
+});
+
+test('awaitBothReports gives up at the budget and reports the missing role as unavailable', async () => {
+  let slept = 0;
+  const sleep = async ms => { slept += ms; };
+  const client = {
+    readSync: async ({ serial }) => {
+      if (serial === SINK_SERIAL) throw new Error('no such file or directory');
+      return { role: 'HOST' };
+    }
+  };
+  const reports = await awaitBothReports({
+    client, hostSerial: HOST_SERIAL, sinkSerial: SINK_SERIAL, caseId: 'S2',
+    floorMs: 95_000, budgetMs: 4000, pollMs: 2000, sleep
+  });
+  assert.deepEqual(reports.host, { role: 'HOST' });
+  assert.match(reports.sink.unavailable, /no such file or directory/);
+  // Never longer than the fixed wait it replaces: floor plus budget is the old (seconds + 30).
+  assert.equal(slept, 95_000 + 4000);
 });
