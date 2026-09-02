@@ -233,9 +233,15 @@ class SyncRenderer(
                         recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll)
                     }
                     is PlaybackDecision.Silence -> {
-                        track.write(silence, 0, silence.size)
-                        writtenFrames += FRAMES_PER_CHUNK.toLong()
-                        if (timelineNextHostNanos != UNDEFINED) timelineNextHostNanos += CHUNK_NANOS
+                        // Honours the frame count rather than always writing a whole chunk: the
+                        // scheduler fills only as far as the next chunk's instant, so the write
+                        // stream lands on it instead of stepping past it and making it late.
+                        val bytes = decision.frames * CHANNELS * 2
+                        track.write(silence, 0, bytes)
+                        writtenFrames += decision.frames.toLong()
+                        if (timelineNextHostNanos != UNDEFINED) {
+                            timelineNextHostNanos += decision.frames * 1_000_000_000L / SAMPLE_RATE
+                        }
                     }
                     PlaybackDecision.Wait, PlaybackDecision.Idle -> Thread.sleep(5)
                 }

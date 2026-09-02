@@ -64,6 +64,52 @@ class PlaybackSchedulerTest {
     }
 
     @Test
+    fun fillsOnlyAsMuchSilenceAsTheGapToTheNextChunkNeeds() {
+        // A gap of 5ms must be filled with 5ms of silence, not a whole chunk. Overfilling pushes
+        // the write stream past the next chunk's instant, so that chunk is then released late by
+        // however much was overfilled - the release-phase error the renderer has to trim back off.
+        // Silence quantised to a whole chunk and a release quantised to a whole chunk fight each
+        // other: the overfill creates exactly the lateness the trim then removes, and playback
+        // ends up alternating between a fully trimmed chunk and a full chunk of silence.
+        val scheduler = scheduler()
+        scheduler.submit(chunk(0, 1_000_000_000))
+        scheduler.submit(chunk(2, 1_000_000_000 + chunkNanos + 5_000_000))
+        scheduler.poll(1_000_000_000)
+
+        val decision = scheduler.poll(1_000_000_000 + chunkNanos)
+
+        assertEquals(PlaybackDecision.Silence(240), decision)
+        assertEquals(240, scheduler.stats().silenceFrames)
+    }
+
+    @Test
+    fun fillsAWholeChunkWhenNothingIsQueuedToAlignTo() {
+        // Nothing to aim at, so there is no gap to measure; a whole chunk keeps the AudioTrack fed
+        // and whatever arrives later is aligned by the renderer's own trim instead.
+        val scheduler = scheduler()
+        scheduler.submit(chunk(0, 1_000_000_000))
+        scheduler.poll(1_000_000_000)
+
+        val decision = scheduler.poll(1_000_000_000 + chunkNanos)
+
+        assertEquals(PlaybackDecision.Silence(framesPerChunk), decision)
+    }
+
+    @Test
+    fun neverFillsZeroFramesOfSilence() {
+        // A quarter of a frame of gap truncates to zero. Returning that would have the render loop
+        // write nothing and poll again on the same instant, spinning instead of playing.
+        val scheduler = scheduler()
+        scheduler.submit(chunk(0, 1_000_000_000))
+        scheduler.submit(chunk(2, 1_000_000_000 + chunkNanos + 5_208))
+        scheduler.poll(1_000_000_000)
+
+        val decision = scheduler.poll(1_000_000_000 + chunkNanos)
+
+        assertEquals(PlaybackDecision.Silence(1), decision)
+    }
+
+    @Test
     fun dropsTheOldestChunkWhenTheQueueIsFull() {
         val scheduler = scheduler()
         repeat(6) { index -> scheduler.submit(chunk(index, 1_000_000_000 + index * chunkNanos)) }

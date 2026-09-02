@@ -77,9 +77,9 @@ class PlaybackScheduler(private val framesPerChunk: Int, private val capacityChu
             droppedLate++
         }
         val head = queue.firstOrNull()
-            ?: return if (started) silence() else PlaybackDecision.Idle
+            ?: return if (started) silence(null, nowHostNanos) else PlaybackDecision.Idle
         if (head.playAtHostNanos > nowHostNanos) {
-            return if (started) silence() else PlaybackDecision.Wait
+            return if (started) silence(head.playAtHostNanos, nowHostNanos) else PlaybackDecision.Wait
         }
         queue.removeAt(0)
         started = true
@@ -91,9 +91,32 @@ class PlaybackScheduler(private val framesPerChunk: Int, private val capacityChu
     fun stats(): SchedulerStats =
         SchedulerStats(queue.size, played, droppedLate, droppedOverflow, silenceFrames)
 
-    private fun silence(): PlaybackDecision {
-        silenceFrames += framesPerChunk
-        return PlaybackDecision.Silence(framesPerChunk)
+    /**
+     * Fills only as far as [untilHostNanos], so the write stream lands exactly on the next chunk's
+     * instant instead of stepping past it.
+     *
+     * Filling a whole chunk regardless of the gap is one half of a pair of whole-chunk
+     * quantisations that fight each other. The overfill puts the write stream past the next
+     * chunk's instant, so that chunk is released late by however much was overfilled, and the
+     * renderer then trims exactly that much back off - leaving playback alternating between a
+     * fully trimmed chunk and a full chunk of silence. Measured: 44% of a run spent in silence,
+     * against 3-6% before the trim existed. Filling the real gap removes the cause rather than
+     * the symptom, and leaves the trim to handle only what it was written for - a stream that has
+     * no chunk to align to yet.
+     *
+     * A null [untilHostNanos] means nothing is queued, so there is no gap to measure and a whole
+     * chunk keeps the AudioTrack fed. Never returns zero: a sub-frame gap truncates to nothing,
+     * which would have the render loop write nothing and poll again on the same instant.
+     */
+    private fun silence(untilHostNanos: Long?, nowHostNanos: Long): PlaybackDecision {
+        val frames = if (untilHostNanos == null) {
+            framesPerChunk
+        } else {
+            val gapFrames = (untilHostNanos - nowHostNanos) * SAMPLE_RATE / 1_000_000_000L
+            gapFrames.coerceIn(1L, framesPerChunk.toLong()).toInt()
+        }
+        silenceFrames += frames
+        return PlaybackDecision.Silence(frames)
     }
 
     private fun chunkNanos(): Long = framesPerChunk * 1_000_000_000L / SAMPLE_RATE
