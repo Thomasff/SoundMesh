@@ -36,12 +36,19 @@ class CaptureForegroundService : Service() {
             }
             START_NOT_STICKY
         } catch (error: IllegalArgumentException) {
-            publish(STATUS_FAILED, error.message ?: "INVALID_REQUEST")
+            rejectRequest(intent, error)
             START_NOT_STICKY
         } catch (error: IllegalStateException) {
-            publish(STATUS_FAILED, error.message ?: "INVALID_STATE")
+            rejectRequest(intent, error)
             START_NOT_STICKY
         }
+    }
+
+    /** Makes a service-level rejection visible to the PC instead of leaving no status at all. */
+    private fun rejectRequest(intent: Intent, error: Throwable) {
+        runCatching { ServiceRejection.record(runStore, intent.getStringExtra(ProbeCase.EXTRA_CASE_ID), error) }
+            .onFailure { Log.e(LOG_TAG, "could not record a rejected request", it) }
+        publish(STATUS_FAILED, ServiceRejection.failureCode(error))
     }
 
     private fun startSession(intent: Intent) {
