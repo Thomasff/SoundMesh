@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "caseId": "C1",
+      "durationSeconds": 20,
+      "volumeMode": "UNCHANGED",
+      "playbackMode": "ONLINE_STANDARD_QUALITY",
+      "instruction": "Play a free online track at standard quality through the phone speaker and keep it continuously audible.",
+      "prerequisite": null
+    },
+    {
+      "caseId": "C2",
+      "durationSeconds": 20,
+      "volumeMode": "MIN_NONZERO",
+      "playbackMode": "ONLINE_STANDARD_QUALITY",
+      "instruction": "Keep the same free online track playing.",
+      "prerequisite": "C1"
+    },
+    {
+      "caseId": "C3",
+      "durationSeconds": 20,
+      "volumeMode": "ZERO",
+      "playbackMode": "ONLINE_STANDARD_QUALITY",
+      "instruction": "Keep the same free online track playing even though you will not hear it.",
+      "prerequisite": "C1"
+    },
+    {
+      "caseId": "C4",
+      "durationSeconds": 20,
+      "volumeMode": "UNCHANGED",
+      "playbackMode": "HIGHEST_AVAILABLE_QUALITY",
+      "instruction": "Play a track at the highest quality this account already allows. Do not buy anything.",
+      "prerequisite": "C1"
+    },
+    {
+      "caseId": "C5",
+      "durationSeconds": 20,
+      "volumeMode": "UNCHANGED",
+      "playbackMode": "OFFLINE_DOWNLOADED",
+      "instruction": "Play a free track that is already downloaded for offline playback.",
+      "prerequisite": "C1"
+    },
+    {
+      "caseId": "C6",
+      "durationSeconds": 60,
+      "volumeMode": "UNCHANGED",
+      "playbackMode": "BACKGROUND_OR_SCREEN_OFF",
+      "instruction": "Keep the track playing, and turn the screen off as soon as the capture starts. Leave it off for a full minute.",
+      "prerequisite": "C1"
+    }
+  ]
+}

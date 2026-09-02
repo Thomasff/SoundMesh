@@ -65,12 +65,16 @@ export async function collectInventory({ serial, runAdb = defaultRunAdb }) {
     const result = await runAdb({ serial, args: ['shell', 'dumpsys', 'package', packageName] });
     packages.push(parsePackageInfo(requireSuccessful(result, `dumpsys package ${packageName}`), packageName));
   }
-  const volumeResult = await runAdb({ serial, args: ['shell', 'media', 'volume', '--stream', '3', '--get'] });
-  const mediaVolume = parseMediaVolume(requireSuccessful(volumeResult, 'media volume'));
+  const mediaVolume = await readMediaVolume({ serial, runAdb });
   return buildInventory({ serial, properties, packages, mediaVolume });
 }
 
 export function redactInventory(inventory) {
   const { serial, buildFingerprint, ...preview } = inventory;
   return Object.freeze(preview);
+}
+
+export async function readMediaVolume({ serial, runAdb = defaultRunAdb }) {
+  const result = await runAdb({ serial, args: ['shell', 'media', 'volume', '--stream', '3', '--get'] });
+  return parseMediaVolume(requireSuccessful(result, 'media volume'));
 }

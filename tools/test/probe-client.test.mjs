@@ -52,3 +52,13 @@ test('rejects an invalid case ID and a failed clear instead of continuing', asyn
   const failing = createProbeClient({ runAdb: async () => ({ exitCode: 1, stdout: '', stderr: 'run-as: package not debuggable' }) });
   await assert.rejects(() => failing.clearCaseArtifacts({ serial: 's', caseId: 'C1' }), /Clear case artifacts failed/);
 });
+
+test('finishes a projection session through the launcher with an explicit serial', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '', stderr: '' }; } });
+  await client.finishSession({ serial: 'device-1', sessionId: 's 1' });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.MainActivity', '--es', 'session_id', 's 1', '--ez', 'finish_session', 'true']
+  ]);
+  assert.deepEqual(calls.map(({ serial }) => serial), ['device-1']);
+});

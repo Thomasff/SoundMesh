@@ -51,3 +51,9 @@ test('never starts a session when clearing the previous run artifacts fails', as
   await assert.rejects(() => runCaptureCase({ serial: 'confirmed', apkPath: 'probe.apk', probe: { install: async () => {}, clearCaseArtifacts: async () => { throw new Error('Clear case artifacts failed'); }, start: async () => { started = true; }, readStatus: async () => ({ state: 'COMPLETE' }), readCapture: async () => ({}), exportWav: async () => {} }, acknowledge: async () => {}, pollDelay: async () => {}, analyze: () => ({ outcome: 'PASS' }), wavPath: 'x', readWav: async () => Buffer.alloc(0), probeCase: { caseId: 'C1', expectedPackage: 'pkg' } }), /Clear case artifacts failed/);
   assert.equal(started, false);
 });
+
+test('skips reinstalling the probe because a reinstall would kill an open projection session', async () => {
+  const calls = [];
+  await runCaptureCase({ serial: 'confirmed', apkPath: 'probe.apk', installProbe: false, probe: { install: async () => { calls.push('install'); }, clearCaseArtifacts: async () => { calls.push('clear'); }, start: async () => { calls.push('start'); }, readStatus: async () => ({ state: 'COMPLETE' }), readCapture: async () => ({ expectedBytes: 1, capturedBytes: 1 }), exportWav: async () => {} }, acknowledge: async () => {}, pollDelay: async () => {}, analyze: () => ({ outcome: 'PASS' }), wavPath: 'x', readWav: async () => Buffer.alloc(0), probeCase: { caseId: 'C2', expectedPackage: 'pkg' } });
+  assert.deepEqual(calls, ['clear', 'start']);
+});

@@ -18,10 +18,10 @@ export async function driveProbeStates(states, acknowledge, { maxPolls = 120, de
   fail('Probe polling timed out');
 }
 
-export async function runCaptureCase({ serial, apkPath, probe, acknowledge, deviceAlias, appName, probeCase, sessionId = crypto.randomUUID(), maxPolls = 120, pollDelay = () => new Promise(resolve => setTimeout(resolve, 1000)), analyze = defaultAnalyze, wavPath, readWav = readFile, audibleSource = true }) {
+export async function runCaptureCase({ serial, apkPath, probe, acknowledge, deviceAlias, appName, probeCase, sessionId = crypto.randomUUID(), maxPolls = 120, pollDelay = () => new Promise(resolve => setTimeout(resolve, 1000)), analyze = defaultAnalyze, wavPath, readWav = readFile, audibleSource = true, installProbe = true }) {
   if (!serial) fail('A confirmed serial is required');
   if (!probe || !probeCase || !acknowledge) fail('Probe, case, and acknowledgement dependencies are required');
-  await probe.install({ serial, apkPath });
+  if (installProbe) await probe.install({ serial, apkPath }); // Reinstalling would kill an already open projection session.
   await probe.clearCaseArtifacts({ serial, caseId: probeCase.caseId }); // Prevents a previous run of the same case from being read as this session's result.
   await probe.start({ serial, sessionId, ...probeCase });
   const checkpoints = {}; let playbackPrompted = false; let terminal;
