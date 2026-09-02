@@ -331,9 +331,9 @@ class SyncActivity : Activity() {
      * getTimestamp based output depth compensation and the drift correction.
      *
      * The renderer state has to be read right here, not later from `renderer.report()` after the
-     * chirp has played: TRACKING is sticky, so a snapshot taken after the chirp could show
-     * TRACKING even though the renderer was still ACQUIRING - correcting on every chunk, not yet
-     * converged - at the moment the chirp was actually queued, which is the number that matters.
+     * chirp has played: the phase moves both ways, so a snapshot taken after the chirp says
+     * nothing about where the loop stood at the moment the chirp was actually queued, which is the
+     * number that matters.
      */
     private fun submitChirp(scheduler: PlaybackScheduler, renderer: SyncRenderer, startHostNanos: Long): ChirpSubmission {
         val chunks = ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK)
@@ -427,10 +427,12 @@ class SyncActivity : Activity() {
      * 3. The chirp having been submitted while the renderer was still ACQUIRING - the
      *    median-filtered error had not yet settled into DriftController's deadband when the chirp
      *    was queued, so the measurement rides an unconverged release phase (see
-     *    [ChirpSubmission], [submitChirp]) - or, TRACKING being sticky, having converged earlier
-     *    but sitting outside the alignment budget by the time the chirp was queued
-     *    ([ALIGNMENT_BUDGET_FRAMES]). "phase == TRACKING" only says the loop converged at some
-     *    point, not that it is converged now, so the recorded error has to be looked at too.
+     *    [ChirpSubmission], [submitChirp]) - or having converged earlier but sitting outside the
+     *    alignment budget by the time the chirp was queued ([ALIGNMENT_BUDGET_FRAMES]). TRACKING
+     *    now reacquires on a wide excursion, but only after two 1Hz samples confirm it, and a
+     *    reacquisition still needs seconds to work the error off, so "phase == TRACKING" does not
+     *    on its own mean the loop is converged right now and the recorded error still has to be
+     *    looked at.
      * 4. The chirp's own deadline timing, as before: being late before the wait is unconditionally
      *    a failure (everything ahead of it is milliseconds coarse, so a genuine miss can never
      *    look like noise); the overshoot after the wait needs a tolerance instead, because the

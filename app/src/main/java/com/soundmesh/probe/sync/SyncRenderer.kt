@@ -42,6 +42,12 @@ class SyncRenderer(
     @Volatile private var phaseState = PhaseState.INITIAL
     @Volatile private var acquisitionStartHostNanos = UNDEFINED
     @Volatile private var acquisitionConvergedAtHostNanos = UNDEFINED
+    /**
+     * How many times TRACKING fell back to ACQUIRING on a wide excursion. Without it a run cannot
+     * tell "the fallback never fired" from "the fallback fired and saved the run" - the phase field
+     * alone reads TRACKING in both cases. Emitted by [report].
+     */
+    @Volatile private var reacquisitions = 0
     @Volatile private var chirpStartStats: SchedulerStats? = null
     @Volatile private var chirpEndStats: SchedulerStats? = null
     @Volatile private var streamingEndStats: SchedulerStats? = null
@@ -110,10 +116,15 @@ class SyncRenderer(
     fun lastStreamingStats(): SchedulerStats? = streamingEndStats
 
     /**
-     * How long ACQUIRING has taken: from the first drift sample to the instant it converged into
-     * TRACKING, or up to now if it has not converged yet. Null before the first sample - playback
-     * has not pinned the shared timeline yet, so there is nothing to measure. Thread-safe; reads
-     * [hostNanosNow] so it can be called mid-run, before the phase has settled.
+     * How long the *current* acquisition has taken: from its first drift sample to the instant it
+     * converged into TRACKING, or up to now if it has not converged yet. Null before the first
+     * sample - playback has not pinned the shared timeline yet, so there is nothing to measure.
+     * Thread-safe; reads [hostNanosNow] so it can be called mid-run, before the phase has settled.
+     *
+     * "Current" matters now that the phase can go backwards: a fallback to ACQUIRING restarts both
+     * ends of this window (see [sampleDrift]), so after a fallback this reports the reacquisition
+     * in progress rather than the first acquisition's long-finished duration. [reacquisitions] in
+     * [report] says how many earlier acquisitions this number is hiding.
      */
     fun acquisitionDurationNanos(): Long? {
         val start = acquisitionStartHostNanos
@@ -284,6 +295,12 @@ class SyncRenderer(
      * DriftController's deadband, [nextPhaseState] moves this to TRACKING and it drops
      * to the 1Hz cadence sections 9.1 and 12 of the design call for - far faster than the ~21
      * seconds these devices take to drift a single frame at steady state.
+     *
+     * The move is not one-way. Every Play re-pins `timelineNextHostNanos` to that chunk's own
+     * instant, so a starvation gap re-draws the whole release-phase error mid-run; [nextPhaseState]
+     * sends the phase back to ACQUIRING when the filtered error stays wide, and the acquisition
+     * window is restarted here so [acquisitionDurationNanos] describes the acquisition actually
+     * running.
      */
     private fun sampleDrift(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long, timelineNextHostNanos: Long) {
         val pendingFrames = pendingFrames(track, timestamp, writtenFrames) ?: return
@@ -295,9 +312,22 @@ class SyncRenderer(
         driftSamples++
         pendingAdjustFrames = decision.adjustFrames
         val wasAcquiring = phaseState.phase == RendererPhase.ACQUIRING
-        phaseState = nextPhaseState(phaseState, inDeadband = decision.adjustFrames == 0)
-        if (wasAcquiring && phaseState.phase == RendererPhase.TRACKING) {
+        phaseState = nextPhaseState(
+            phaseState,
+            inDeadband = decision.adjustFrames == 0,
+            filteredErrorFrames = decision.filteredErrorFrames
+        )
+        val isAcquiring = phaseState.phase == RendererPhase.ACQUIRING
+        if (wasAcquiring && !isAcquiring) {
             acquisitionConvergedAtHostNanos = hostNanosNow()
+        } else if (!wasAcquiring && isAcquiring) {
+            // Fallen back. The acquisition window has to be restarted, not extended: leaving the
+            // old converged instant in place would have acquisitionDurationNanos() keep reporting
+            // the first acquisition's duration while a second one is actually running, and moving
+            // only the start would make it negative against that stale end.
+            reacquisitions++
+            acquisitionStartHostNanos = hostNanosNow()
+            acquisitionConvergedAtHostNanos = UNDEFINED
         }
     }
 
@@ -344,6 +374,7 @@ class SyncRenderer(
             "\"streamingSilenceFrames\":${streamingSilenceFrames ?: "null"}," +
             "\"adjustments\":$adjustments,\"driftSamples\":$driftSamples," +
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
+            "\"reacquisitions\":$reacquisitions," +
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
             "\"maxPendingFrames\":${if (maxPendingFrames == Long.MIN_VALUE) "null" else maxPendingFrames}," +
