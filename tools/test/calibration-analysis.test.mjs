@@ -50,7 +50,7 @@ test('orders the two chirps by time even when the later one correlates more stro
   for (let index = 0; index < chirp.length; index++) recorded[9000 + stagger + index] += chirp[index] * 1.4;
 
   const result = analyzeAlignment({
-    recorded, reference: chirp, sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: 4800
+    recorded, reference: chirp, sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: 4800, separationMetres: 0
   });
 
   assert.equal(result.firstIndex, 9000);
@@ -65,7 +65,7 @@ test('measures the alignment error between two staggered devices', () => {
 
   const result = analyzeAlignment({
     recorded, reference: reference(), sampleRate: SAMPLE_RATE,
-    staggerFrames: stagger, searchRadiusFrames: 4800
+    staggerFrames: stagger, searchRadiusFrames: 4800, separationMetres: 0
   });
 
   assert.equal(result.measuredStaggerFrames, stagger + 96);
@@ -76,7 +76,7 @@ test('reports a perfectly aligned pair as zero error', () => {
   const stagger = SAMPLE_RATE / 2;
   const result = analyzeAlignment({
     recorded: recording([8000, 8000 + stagger]), reference: reference(),
-    sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: 4800
+    sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: 4800, separationMetres: 0
   });
 
   assert.equal(result.alignmentErrorMs, 0);
@@ -87,16 +87,71 @@ test('rejects a search radius that could let the two chirps be mistaken for each
 
   assert.throws(() => analyzeAlignment({
     recorded: recording([8000, 8000 + stagger]), reference: reference(),
-    sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: stagger
+    sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: stagger, separationMetres: 0
   }));
 });
 
 test('refuses to report a number when no chirp stands out of the noise', () => {
   const result = analyzeAlignment({
     recorded: recording([], { noise: 3000 }), reference: reference(),
-    sampleRate: SAMPLE_RATE, staggerFrames: SAMPLE_RATE / 2, searchRadiusFrames: 4800
+    sampleRate: SAMPLE_RATE, staggerFrames: SAMPLE_RATE / 2, searchRadiusFrames: 4800, separationMetres: 0
   });
 
+  assert.equal(result.confidence, 'UNRELIABLE');
+  assert.equal(result.alignmentErrorMs, null);
+});
+
+test('refuses to measure at all without the distance between the two handsets', () => {
+  const stagger = SAMPLE_RATE / 2;
+  const call = separationMetres => () => analyzeAlignment({
+    recorded: recording([8000, 8000 + stagger]), reference: reference(),
+    sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: 4800, separationMetres
+  });
+
+  assert.throws(call(undefined), /separationMetres is required/);
+  assert.throws(call(-1), /separationMetres is required/);
+  assert.doesNotThrow(call(0));
+});
+
+test('adds the sink chirp flight time back, so a wider separation reads more positive', () => {
+  const stagger = SAMPLE_RATE / 2;
+  // Physically aligned devices: the raw difference is exactly the stagger. What is left after
+  // the correction is the bias the host's own chirp reaching its own microphone first would
+  // otherwise have hidden.
+  const measure = separationMetres => analyzeAlignment({
+    recorded: recording([8000, 8000 + stagger]), reference: reference(),
+    sampleRate: SAMPLE_RATE, staggerFrames: stagger, searchRadiusFrames: 4800, separationMetres
+  });
+
+  const near = measure(1);
+  const far = measure(3);
+
+  assert.ok(Math.abs(near.propagationCorrectionMs - 1000 / 343) < 1e-9, `correction was ${near.propagationCorrectionMs}`);
+  assert.ok(Math.abs(near.alignmentErrorMs - 1000 / 343) < 1e-9, `error was ${near.alignmentErrorMs}`);
+  assert.ok(far.alignmentErrorMs > near.alignmentErrorMs, 'a wider separation must read more positive');
+  assert.ok(Math.abs(far.alignmentErrorMs - near.alignmentErrorMs - 2000 / 343) < 1e-9);
+  assert.equal(measure(0).alignmentErrorMs, 0);
+});
+
+test('refuses a partner chirp whose peak sits on the edge of the search window', () => {
+  const stagger = SAMPLE_RATE / 2;
+  const radius = 12000;
+  // The partner lands exactly on the last lag searched: the peak is real and clears the
+  // confidence ratio easily, but it is indistinguishable from a chirp that fell outside the
+  // window entirely and only overlapped its final lag.
+  const chirp = reference();
+  const recorded = recording([10000]);
+  for (let index = 0; index < chirp.length; index++) {
+    recorded[10000 + stagger + radius + index] += chirp[index] * 0.4;
+  }
+
+  const result = analyzeAlignment({
+    recorded, reference: chirp, sampleRate: SAMPLE_RATE,
+    staggerFrames: stagger, searchRadiusFrames: radius, separationMetres: 1
+  });
+
+  assert.equal(result.secondIndex, 10000 + stagger + radius);
+  assert.deepEqual([...result.atSearchEdge], [false, true]);
   assert.equal(result.confidence, 'UNRELIABLE');
   assert.equal(result.alignmentErrorMs, null);
 });

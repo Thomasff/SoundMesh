@@ -20,11 +20,24 @@ class SyncRenderer(
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
+    @Volatile private var untilHostNanos = Long.MIN_VALUE
     @Volatile private var adjustments = 0
+    @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
     @Volatile private var failureCode: String? = null
+    /** Frames the drift controller asked for, waiting for the next chunk to carry them. */
+    private var pendingAdjustFrames = 0
 
-    fun run(untilHostNanos: Long) {
+    /**
+     * Sets, or later moves, the instant [run] stops at. It has to be movable: the calibration
+     * chirp is scheduled off the last audio chunk's own timestamp, so how long the renderer must
+     * stay alive is only known once the audio segment is over. Must be called before [run].
+     */
+    fun endAt(hostNanos: Long) {
+        untilHostNanos = hostNanos
+    }
+
+    fun run() {
         val minimum = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
         var track: AudioTrack? = null
         try {
@@ -38,17 +51,31 @@ class SyncRenderer(
             track.play()
             val timestamp = AudioTimestamp()
             var writtenFrames = 0L
+            // Host instant at which the next frame to be written must be heard. Undefined until
+            // the first real chunk pins the write stream to the shared timeline; silence then
+            // carries it forward a chunk at a time, exactly as the write stream advances.
+            var timelineNextHostNanos = UNDEFINED
+            var nextDriftCheckHostNanos = UNDEFINED
             while (hostNanosNow() < untilHostNanos) {
+                if (timelineNextHostNanos != UNDEFINED && hostNanosNow() >= nextDriftCheckHostNanos) {
+                    sampleDrift(track, timestamp, writtenFrames, timelineNextHostNanos)
+                    nextDriftCheckHostNanos = hostNanosNow() + DRIFT_INTERVAL_NANOS
+                }
                 val depthNanos = outputDepthNanos(track, timestamp, writtenFrames)
                 when (val decision = scheduler.poll(hostNanosNow() + depthNanos)) {
                     is PlaybackDecision.Play -> {
-                        val payload = applyDrift(decision.chunk.pcm, track, timestamp, writtenFrames, decision.chunk.playAtHostNanos)
+                        if (timelineNextHostNanos == UNDEFINED) nextDriftCheckHostNanos = hostNanosNow() + DRIFT_INTERVAL_NANOS
+                        val payload = applyPendingAdjust(decision.chunk.pcm)
                         track.write(payload, 0, payload.size)
                         writtenFrames += payload.size / (CHANNELS * 2)
+                        // A dropped or duplicated frame deliberately does not move the timeline:
+                        // shifting the frame-to-instant mapping by one frame is the correction.
+                        timelineNextHostNanos = decision.chunk.playAtHostNanos + CHUNK_NANOS
                     }
                     is PlaybackDecision.Silence -> {
                         track.write(silence, 0, silence.size)
                         writtenFrames += FRAMES_PER_CHUNK.toLong()
+                        if (timelineNextHostNanos != UNDEFINED) timelineNextHostNanos += CHUNK_NANOS
                     }
                     PlaybackDecision.Wait, PlaybackDecision.Idle -> Thread.sleep(5)
                 }
@@ -71,19 +98,37 @@ class SyncRenderer(
 
     /**
      * Compares where playback actually is against where the shared timeline says it should be,
-     * then drops or duplicates a single frame. At the drift these devices show, one frame every
-     * twenty seconds is enough, and twenty microseconds of it cannot be heard.
+     * and asks the controller for a single frame of correction.
+     *
+     * Sampled once a second, on its own getTimestamp reading, and before poll is consulted. Read
+     * straight after poll released a chunk it would be measured against the very comparison that
+     * released it - poll only lets a chunk go once now + depth has reached its instant - so the
+     * error could never come out above zero, and the controller would drop a frame on nearly
+     * every chunk. One second is also what sections 9.1 and 12 of the design call for: it is far
+     * faster than the 21 seconds these devices take to drift a single frame.
      */
-    private fun applyDrift(pcm: ByteArray, track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long, playAtHostNanos: Long): ByteArray {
-        if (!track.getTimestamp(timestamp)) return pcm
+    private fun sampleDrift(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long, timelineNextHostNanos: Long) {
+        if (!track.getTimestamp(timestamp)) return
         val pendingFrames = writtenFrames - timestamp.framePosition
-        val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, playAtHostNanos, SAMPLE_RATE)
+        val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, timelineNextHostNanos, SAMPLE_RATE)
         val decision = drift.observe(errorFrames)
         lastFilteredError = decision.filteredErrorFrames
-        if (decision.adjustFrames == 0) return pcm
+        driftSamples++
+        pendingAdjustFrames = decision.adjustFrames
+    }
+
+    /**
+     * Carries the correction the last drift sample asked for into the chunk about to be written.
+     * At the drift these devices show, one frame every twenty seconds is enough, and twenty
+     * microseconds of it cannot be heard.
+     */
+    private fun applyPendingAdjust(pcm: ByteArray): ByteArray {
+        val adjust = pendingAdjustFrames
+        if (adjust == 0) return pcm
+        pendingAdjustFrames = 0
         adjustments++
         val bytesPerFrame = CHANNELS * 2
-        return if (decision.adjustFrames > 0) pcm + pcm.copyOfRange(pcm.size - bytesPerFrame, pcm.size)
+        return if (adjust > 0) pcm + pcm.copyOfRange(pcm.size - bytesPerFrame, pcm.size)
         else pcm.copyOfRange(0, pcm.size - bytesPerFrame)
     }
 
@@ -91,7 +136,8 @@ class SyncRenderer(
         val stats = scheduler.stats()
         return "{\"played\":${stats.played},\"droppedLate\":${stats.droppedLate}," +
             "\"droppedOverflow\":${stats.droppedOverflow},\"silenceFrames\":${stats.silenceFrames}," +
-            "\"adjustments\":$adjustments,\"lastFilteredErrorFrames\":$lastFilteredError," +
+            "\"adjustments\":$adjustments,\"driftSamples\":$driftSamples," +
+            "\"lastFilteredErrorFrames\":$lastFilteredError," +
             "\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
     }
 
@@ -99,6 +145,11 @@ class SyncRenderer(
         const val SAMPLE_RATE = 48000
         const val CHANNELS = 2
         const val FRAMES_PER_CHUNK = 960
+        const val CHUNK_NANOS = FRAMES_PER_CHUNK * 1_000_000_000L / SAMPLE_RATE
         private const val DEFAULT_DEPTH_NANOS = 200_000_000L
+
+        /** Design sections 9.1 and 12: read the playback position once a second, no faster. */
+        private const val DRIFT_INTERVAL_NANOS = 1_000_000_000L
+        private const val UNDEFINED = Long.MIN_VALUE
     }
 }

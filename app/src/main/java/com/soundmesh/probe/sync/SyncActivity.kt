@@ -15,6 +15,7 @@ import com.soundmesh.probe.ProbeCase
 import com.soundmesh.probe.RunStore
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * ADB driven harness for the M1 and M2 gates. Not product code: the product will discover
@@ -59,9 +60,16 @@ class SyncActivity : Activity() {
             // inside runHostFull/runSinkFull); this thread only needs to cover failures.
             val failure = runCatching {
                 if (role == "HOST") runHost(mode, caseId, seconds) else runSink(mode, caseId, seconds)
-            }.exceptionOrNull()?.javaClass?.simpleName
-            if (failure != null) {
-                runStore.writeSyncJson(caseId, "{\"schemaVersion\":1,\"role\":\"$role\",\"failureCode\":\"$failure\"}")
+            }.exceptionOrNull()
+            // A missing clock offset gets a named code rather than an exception class name: it is
+            // the one failure that used to be silently absorbed as an offset of zero.
+            val failureCode = when (failure) {
+                null -> null
+                is ClockOffsetUnavailable -> "CLOCK_OFFSET_UNAVAILABLE"
+                else -> failure.javaClass.simpleName
+            }
+            if (failureCode != null) {
+                runStore.writeSyncJson(caseId, "{\"schemaVersion\":1,\"role\":\"$role\",\"failureCode\":\"$failureCode\"}")
             }
             runOnUiThread {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -107,13 +115,16 @@ class SyncActivity : Activity() {
     //
     // After the audio segment, the sink plays the calibration chirp at a host instant and the
     // host plays the same chirp 500ms later while recording the room throughout, so a single
-    // WAV on the host carries both chirps for a PC script to cross-correlate.
+    // WAV on the host carries both chirps for a PC script to cross-correlate. Neither chirp goes
+    // on the wire: each device generates the identical sweep locally and submits it to its own
+    // scheduler, so it is heard through the very pipeline the measurement is meant to judge.
 
     private fun runHostFull(caseId: String, seconds: Int) {
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
         val renderer = SyncRenderer(scheduler, DriftController()) { System.nanoTime() }
+        val hostNanosNow: () -> Long = { System.nanoTime() }
         try {
             clockServer.start()
             chunkServer.start()
@@ -123,7 +134,8 @@ class SyncActivity : Activity() {
             val until = audioStart + seconds * 1_000_000_000L
             var lastPlayAtHostNanos = until
 
-            val rendererThread = Thread { renderer.run(until + CALIBRATION_GAP_NANOS) }
+            renderer.endAt(until + CALIBRATION_GAP_NANOS)
+            val rendererThread = Thread { renderer.run() }
             rendererThread.start()
 
             var sequence = 0
@@ -141,20 +153,28 @@ class SyncActivity : Activity() {
                 val sleepNanos = nextAt - System.nanoTime()
                 if (sleepNanos > 0) Thread.sleep(sleepNanos / 1_000_000, (sleepNanos % 1_000_000).toInt())
             }
-            rendererThread.join()
+
+            // Both devices derive the sink's chirp instant from the same wire value - the last
+            // chunk's playAtHostNanos - so they agree on it without another message.
+            val sinkChirpAt = lastPlayAtHostNanos + CALIBRATION_GAP_NANOS
+            val hostChirpAt = sinkChirpAt + STAGGER_NANOS
+            val hostChirpEnd = submitChirp(scheduler, hostChirpAt)
+            // The renderer started on a provisional bound; only now is the chirp's end known.
+            renderer.endAt(hostChirpEnd + CHIRP_DRAIN_NANOS)
 
             val calibration = CalibrationRunner(runStore, caseId)
-            val hostChirpAt = lastPlayAtHostNanos + CALIBRATION_GAP_NANOS + STAGGER_NANOS
-            val recordThread = Thread { calibration.record(recordSecondsFor(hostChirpAt)) }
+            awaitHostInstant(sinkChirpAt - RECORD_LEAD_NANOS, hostNanosNow)
+            val recordThread = Thread { calibration.record(secondsUntil(hostChirpEnd + RECORD_TAIL_NANOS)) }
             recordThread.start()
-            val chirpMissedByNanos = calibration.playChirpAt(hostChirpAt) { System.nanoTime() }
+            val chirpTiming = awaitChirpStart(hostChirpAt, hostNanosNow)
+            rendererThread.join()
             recordThread.join()
 
             runStore.writeSyncJson(
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"HOST\",\"mode\":\"FULL\"," +
-                    "\"failureCode\":${chirpFailureCodeJson(chirpMissedByNanos)}," +
-                    "\"chirpMissedByNanos\":$chirpMissedByNanos,\"renderer\":${renderer.report()}}"
+                    "\"failureCode\":${chirpFailureCodeJson(chirpTiming)}," +
+                    "${chirpTimingJson(chirpTiming)},\"renderer\":${renderer.report()}}"
             )
         } finally {
             chunkServer.stop()
@@ -165,7 +185,24 @@ class SyncActivity : Activity() {
     private fun runSinkFull(address: String, caseId: String, seconds: Int) {
         val estimator = ClockOffsetEstimator()
         val clockClient = ClockSyncClient(address, CLOCK_PORT, estimator)
-        val hostNanosNow: () -> Long = { System.nanoTime() + (clockClient.currentEstimate()?.offsetNanos ?: 0L) }
+        // currentEstimate() re-runs the fit on every call and can go back to null after having
+        // succeeded: the plausibility guard rejects an ill conditioned window whenever the kept
+        // exchanges happen to cluster in time, which a network hiccup makes likely. Falling back
+        // to an offset of zero there would silently replace host time with this device's raw
+        // nanoTime(), wrong by however far apart the two phones were last booted - hours,
+        // reported as a clean run. The last estimate that did succeed is kept and used instead.
+        val cachedEstimate = AtomicReference<ClockEstimate?>(null)
+        fun latestEstimate(): ClockEstimate? {
+            val fresh = clockClient.currentEstimate()
+            if (fresh != null) cachedEstimate.set(fresh)
+            return fresh ?: cachedEstimate.get()
+        }
+        val hostNanosNow: () -> Long = {
+            // Never zero: with no estimate ever having succeeded there is no host time at all,
+            // and inventing one is exactly the failure this whole path exists to detect.
+            val estimate = latestEstimate() ?: throw ClockOffsetUnavailable()
+            System.nanoTime() + estimate.offsetNanos
+        }
 
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
         val renderer = SyncRenderer(scheduler, DriftController(), hostNanosNow)
@@ -203,12 +240,12 @@ class SyncActivity : Activity() {
             // broken link fails loudly rather than hanging or proceeding on a fabricated offset.
             val convergenceStartNanos = System.nanoTime()
             val convergenceDeadline = convergenceStartNanos + CONVERGENCE_TIMEOUT_SECONDS * 1_000_000_000L
-            while (clockClient.currentEstimate() == null && System.nanoTime() < convergenceDeadline) {
+            while (latestEstimate() == null && System.nanoTime() < convergenceDeadline) {
                 Thread.sleep(50)
             }
             val convergenceWaitNanos = System.nanoTime() - convergenceStartNanos
 
-            if (clockClient.currentEstimate() == null) {
+            if (latestEstimate() == null) {
                 runStore.writeSyncJson(
                     caseId,
                     "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\",\"failureCode\":\"CLOCK_SYNC_TIMEOUT\"," +
@@ -218,8 +255,8 @@ class SyncActivity : Activity() {
             }
             converged.set(true)
 
-            val until = hostNanosNow() + (seconds + RENDERER_MARGIN_SECONDS) * 1_000_000_000L
-            val rendererThread = Thread { renderer.run(until) }
+            renderer.endAt(hostNanosNow() + (seconds + RENDERER_MARGIN_SECONDS) * 1_000_000_000L)
+            val rendererThread = Thread { renderer.run() }
             rendererThread.start()
 
             // The TCP connection stays open through calibration, so a gap in arriving chunks
@@ -237,21 +274,22 @@ class SyncActivity : Activity() {
                     break
                 }
             }
-            // rendererThread is intentionally left running: SyncRenderer.run only returns once
-            // its own bound elapses and offers no cancellation hook, and by this point it has
-            // nothing left to play, so joining it would just delay the result for no benefit.
-
-            val calibration = CalibrationRunner(runStore, caseId)
+            // The chirp goes through this device's own scheduler and renderer, so the renderer is
+            // now given an exact end - the instant the chirp has been heard - and joined, rather
+            // than left idling on the generous bound it started with.
             val observed = lastPlayAt.get()
             val chirpAt = (if (observed > 0) observed else hostNanosNow()) + CALIBRATION_GAP_NANOS
-            val chirpMissedByNanos = calibration.playChirpAt(chirpAt, hostNanosNow)
+            val chirpEnd = submitChirp(scheduler, chirpAt)
+            renderer.endAt(chirpEnd + CHIRP_DRAIN_NANOS)
+            val chirpTiming = awaitChirpStart(chirpAt, hostNanosNow)
+            rendererThread.join()
 
             clockThread.join()
             runStore.writeSyncJson(
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\"," +
-                    "\"failureCode\":${chirpFailureCodeJson(chirpMissedByNanos)}," +
-                    "\"convergenceWaitNanos\":$convergenceWaitNanos,\"chirpMissedByNanos\":$chirpMissedByNanos," +
+                    "\"failureCode\":${chirpFailureCodeJson(chirpTiming)}," +
+                    "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
                     "\"estimates\":${estimatesJson(history)},\"renderer\":${renderer.report()}}"
             )
         } finally {
@@ -259,14 +297,85 @@ class SyncActivity : Activity() {
         }
     }
 
-    /** The JSON literal for sync.json's failureCode field, given how late a chirp started. */
-    private fun chirpFailureCodeJson(chirpMissedByNanos: Long): String =
-        if (chirpMissedByNanos > 0) "\"CHIRP_DEADLINE_MISSED\"" else "null"
+    /**
+     * Queues the calibration chirp on this device's own scheduler starting at [startHostNanos],
+     * and returns the instant its last frame must be heard.
+     *
+     * Nothing goes on the wire: both devices generate the identical sweep locally and only agree
+     * on the instant, so the chunk format and the TCP stream are untouched. What the chirp does
+     * pick up on the way out is everything the milestone exists to measure - the scheduler, the
+     * getTimestamp based output depth compensation and the drift correction.
+     */
+    private fun submitChirp(scheduler: PlaybackScheduler, startHostNanos: Long): Long {
+        val chunks = ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK)
+        chunks.forEachIndexed { index, pcm ->
+            scheduler.submit(AudioChunk(CHIRP_SEQUENCE_BASE + index, startHostNanos + index * SyncRenderer.CHUNK_NANOS, pcm))
+        }
+        return startHostNanos + chunks.size * SyncRenderer.CHUNK_NANOS
+    }
 
-    /** How long CalibrationRunner.record() must run, from now, to outlast the host's own chirp. */
-    private fun recordSecondsFor(chirpStartHostNanos: Long): Int {
-        val chirpTailNanos = (ChirpGenerator.DURATION_MS + 200) * 1_000_000L
-        val remaining = chirpStartHostNanos + chirpTailNanos + RECORD_TAIL_NANOS - System.nanoTime()
+    /** How late the chirp's scheduled start was, measured before the wait for it and again after. */
+    private class ChirpTiming(val missedByNanos: Long, val wakeOvershootNanos: Long)
+
+    /**
+     * Waits out the chirp's start instant and reports how far host time had already passed it.
+     *
+     * The chirp is queued on the scheduler seconds in advance, so this only observes. It is
+     * measured twice on purpose. Host time on the sink is a moving estimate: if it jumps forward
+     * while waiting - which is exactly what a re-fitted or a briefly unavailable offset does -
+     * the wait falls straight through and the chirp is already late, yet a check taken only
+     * beforehand reports a clean zero and flags nothing.
+     */
+    private fun awaitChirpStart(startHostNanos: Long, hostNanosNow: () -> Long): ChirpTiming {
+        val missedByNanos = (hostNanosNow() - startHostNanos).coerceAtLeast(0L)
+        awaitHostInstant(startHostNanos, hostNanosNow)
+        val wakeOvershootNanos = (hostNanosNow() - startHostNanos).coerceAtLeast(0L)
+        return ChirpTiming(missedByNanos, wakeOvershootNanos)
+    }
+
+    /**
+     * Waits until [hostNanos], sleeping most of the way and spinning the last stretch.
+     *
+     * Sleeping the whole way quantises the instant to the millisecond the scheduler can honour,
+     * independently on each device, spending one to two milliseconds per side of a five
+     * millisecond budget on nothing at all.
+     */
+    private fun awaitHostInstant(hostNanos: Long, hostNanosNow: () -> Long) {
+        val spinFrom = hostNanos - SPIN_GUARD_NANOS
+        var remaining = spinFrom - hostNanosNow()
+        while (remaining > 0) {
+            Thread.sleep(remaining / 1_000_000L, (remaining % 1_000_000L).toInt())
+            remaining = spinFrom - hostNanosNow()
+        }
+        while (hostNanosNow() < hostNanos) {
+            // Spin: the remaining wait is shorter than the sleep granularity being avoided.
+        }
+    }
+
+    /**
+     * The JSON literal for sync.json's failureCode field, given how the chirp's deadline went.
+     *
+     * Being late before the wait is unconditionally a failure: everything that runs ahead of it
+     * is milliseconds coarse, so a genuine miss can never look like measurement noise. The
+     * overshoot after the wait needs a tolerance instead, because the spin above exits a fraction
+     * past the instant by construction and the sink's host clock is re-fitted continuously. A
+     * fifth of the five millisecond budget sits far above both and far below anything that
+     * would matter.
+     */
+    private fun chirpFailureCodeJson(timing: ChirpTiming): String =
+        if (timing.missedByNanos > 0 || timing.wakeOvershootNanos > CHIRP_WAKE_TOLERANCE_NANOS) {
+            "\"CHIRP_DEADLINE_MISSED\""
+        } else {
+            "null"
+        }
+
+    private fun chirpTimingJson(timing: ChirpTiming): String =
+        "\"chirpMissedByNanos\":${timing.missedByNanos}," +
+            "\"chirpWakeOvershootNanos\":${timing.wakeOvershootNanos}"
+
+    /** Whole seconds from now to [hostNanos] on the host's own clock, never less than one. */
+    private fun secondsUntil(hostNanos: Long): Int {
+        val remaining = hostNanos - System.nanoTime()
         return ((remaining + 999_999_999L) / 1_000_000_000L).toInt().coerceAtLeast(1)
     }
 
@@ -298,6 +407,21 @@ class SyncActivity : Activity() {
         /** The host keeps recording this long after its own chirp ends. */
         private const val RECORD_TAIL_NANOS = 2_000_000_000L
 
+        /** The host starts recording this long before the sink's chirp. */
+        private const val RECORD_LEAD_NANOS = 1_000_000_000L
+
+        /** The renderer keeps writing this long past the chirp so the output buffer drains. */
+        private const val CHIRP_DRAIN_NANOS = 1_000_000_000L
+
+        /** Chirp chunks are generated locally, so they carry their own sequence range. */
+        private const val CHIRP_SEQUENCE_BASE = 1_000_000
+
+        /** The wait for the chirp stops sleeping this far out and spins the rest. */
+        private const val SPIN_GUARD_NANOS = 2_000_000L
+
+        /** Host time may drift past the chirp instant by this much during the wait without alarm. */
+        private const val CHIRP_WAKE_TOLERANCE_NANOS = 1_000_000L
+
         /** How much longer than the nominal segment the sink's renderer/idle-wait stay alive. */
         private const val RENDERER_MARGIN_SECONDS = 10
 
@@ -311,3 +435,10 @@ class SyncActivity : Activity() {
         private const val SCHEDULER_CAPACITY_CHUNKS = 150
     }
 }
+
+/**
+ * No clock offset estimate has ever succeeded, so this device has no host time to convert to.
+ * A hard failure on purpose: the alternative it replaces was an offset of zero, which reads as a
+ * perfectly normal run while every instant on it is wrong by the two phones' boot time apart.
+ */
+private class ClockOffsetUnavailable : IllegalStateException("no clock offset estimate has ever succeeded")

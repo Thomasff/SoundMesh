@@ -10,6 +10,16 @@ const value = (args, key) => { const index = args.indexOf(key); return index ===
 const wait = ms => new Promise(done => setTimeout(done, ms));
 const SAMPLE_RATE = 48000;
 const STAGGER_FRAMES = SAMPLE_RATE / 2;
+const PROBE_PACKAGE = 'com.soundmesh.probe';
+
+/**
+ * 250 ms either side of where the partner chirp is expected. One handset's output buffer measured
+ * 210.7 ms; at the old 100 ms a second model differing by more than that puts the partner outside
+ * the window, and a chirp just past the edge is worse than a miss - it leaves a partial overlap
+ * peak sitting on the boundary that can still clear the confidence ratio. Still well under the
+ * 24000 frame stagger, which analyzeAlignment requires so the two chirps stay distinguishable.
+ */
+const SEARCH_RADIUS_FRAMES = 12000;
 
 /**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
@@ -30,6 +40,19 @@ export async function requireBothSerialsAuthorized({ hostSerial, sinkSerial, run
   const result = await runAdbHost({ args: ['devices', '-l'] });
   if (result.exitCode !== 0) throw new Error('ADB device discovery failed');
   assertAuthorizedPair(parseAdbDevices(result.stdout), { hostSerial, sinkSerial });
+}
+
+/**
+ * Grants RECORD_AUDIO to the probe on the recording device.
+ *
+ * Only MainActivity asks for it at runtime; SyncActivity never does. Without this the run works
+ * only on a handset where an earlier capture probe happened to be granted it, and fails as a
+ * silent recording everywhere else. The serial is the one already confirmed attached and
+ * authorised, passed in argv form so nothing is handed to a shell.
+ */
+export async function grantRecordAudio({ serial, runAdbHost }) {
+  const result = await runAdbHost({ args: ['-s', serial, 'shell', 'pm', 'grant', PROBE_PACKAGE, 'android.permission.RECORD_AUDIO'] });
+  if (result.exitCode !== 0) throw new Error('Granting RECORD_AUDIO to the probe on the recording device failed');
 }
 
 /** Reads a mono PCM16 WAV written by the probe into an Int16Array. */
@@ -55,11 +78,20 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   const hostSerial = value(args, '--host-serial');
   const sinkSerial = value(args, '--sink-serial');
   const hostAddress = value(args, '--host-address');
+  const separationMetres = Number(value(args, '--separation-m'));
   if (!hostSerial || !sinkSerial || !hostAddress) throw new Error('Use --host-serial, --sink-serial and --host-address');
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S2');
+  // No default is safe here. The host records its own chirp from a few centimetres away and the
+  // sink's from across the room, so the raw measurement always carries the flight time of that
+  // gap - about -2.9 ms per metre against a 5 ms gate. Assuming a distance instead of measuring
+  // it turns a real failure into a clean-looking pass, so the run is refused without one.
+  if (!Number.isFinite(separationMetres) || separationMetres < 0) {
+    throw new Error('Use --separation-m <metres>: measure the distance between the two handsets and pass it. It cannot be assumed - leaving it out biases every reported error by roughly -2.9 ms per metre of separation, which is enough to hide a real failure behind a passing number.');
+  }
   // Revalidates both confirmed serials immediately before any device action: with two phones
   // attached at once, a mistyped or swapped serial would otherwise silently target the wrong one.
   await requireBothSerialsAuthorized({ hostSerial, sinkSerial, runAdbHost });
+  await grantRecordAudio({ serial: hostSerial, runAdbHost });
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
   await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode });
@@ -88,7 +120,8 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     alignment = analyzeAlignment({
       recorded: readPcm16(await readFile(resolve(directory, 'calibration.wav'))),
       reference: readPcm16(await readFile(resolve(directory, 'chirp.wav'))),
-      sampleRate: SAMPLE_RATE, staggerFrames: STAGGER_FRAMES, searchRadiusFrames: 4800
+      sampleRate: SAMPLE_RATE, staggerFrames: STAGGER_FRAMES, searchRadiusFrames: SEARCH_RADIUS_FRAMES,
+      separationMetres
     });
     await writeFile(resolve(directory, 'alignment.json'), `${JSON.stringify(alignment, null, 2)}\n`, 'utf8');
   }
@@ -102,6 +135,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   }
   if (alignment) {
     log(`alignment error    ${alignment.alignmentErrorMs?.toFixed(3) ?? 'n/a'} ms  (${alignment.confidence})`);
+    log(`  of which air     ${alignment.propagationCorrectionMs.toFixed(3)} ms added back for ${separationMetres} m of separation`);
   }
   return { reports, alignment };
 }

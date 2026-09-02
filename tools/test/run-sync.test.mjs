@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio } from '../src/cli/run-sync.mjs';
 
 const HOST_SERIAL = 'HOSTSERIALABC123';
 const SINK_SERIAL = 'SINKSERIALXYZ789';
@@ -85,8 +85,62 @@ test('main validates both serials before touching either device', async () => {
     stderr: ''
   });
   await assert.rejects(
-    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7'], { client, runAdbHost, log: () => {} }),
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {} }),
     /Sink serial is not among the attached, authorised devices/
   );
   assert.deepEqual(calls, []);
+});
+
+test('refuses a run that has not measured the distance between the handsets', async () => {
+  const calls = [];
+  const runAdbHost = async call => { calls.push(call.args); return { exitCode: 0, stdout: '', stderr: '' }; };
+  const client = { clearSyncArtifacts: async () => calls.push(['client']) };
+  const run = extra => main(
+    ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', ...extra],
+    { client, runAdbHost, log: () => {} }
+  );
+
+  await assert.rejects(() => run([]), /Use --separation-m/);
+  await assert.rejects(() => run(['--separation-m', 'about a metre']), /Use --separation-m/);
+  // Refused before ADB is touched at all, so nothing on either phone is disturbed.
+  assert.deepEqual(calls, []);
+});
+
+test('grants RECORD_AUDIO on the recording device before either role starts', async () => {
+  const order = [];
+  const runAdbHost = async call => {
+    order.push(`adb ${call.args.join(' ')}`);
+    if (call.args[0] === 'devices') {
+      return {
+        exitCode: 0,
+        stdout: devicesOutput([
+          `${HOST_SERIAL}    device product:pixel model:Pixel_7 transport_id:1`,
+          `${SINK_SERIAL}    device product:pixel model:Pixel_6 transport_id:2`
+        ]),
+        stderr: ''
+      };
+    }
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const client = {
+    clearSyncArtifacts: async () => { order.push('client clearSyncArtifacts'); },
+    startSync: async () => { order.push('client startSync'); throw new Error('stop the run here'); }
+  };
+
+  await assert.rejects(
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {} }),
+    /stop the run here/
+  );
+
+  assert.equal(order[0], 'adb devices -l');
+  assert.equal(order[1], `adb -s ${HOST_SERIAL} shell pm grant com.soundmesh.probe android.permission.RECORD_AUDIO`);
+  assert.ok(order.indexOf('client startSync') > 1, 'the grant must come before either role starts');
+});
+
+test('refuses the run when the RECORD_AUDIO grant fails rather than recording silence', async () => {
+  const runAdbHost = async () => ({ exitCode: 1, stdout: '', stderr: 'Unknown package' });
+  await assert.rejects(
+    () => grantRecordAudio({ serial: HOST_SERIAL, runAdbHost }),
+    /Granting RECORD_AUDIO to the probe on the recording device failed/
+  );
 });

@@ -1,42 +1,23 @@
 package com.soundmesh.probe.sync
 
-import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
-import android.media.AudioTrack
 import android.media.MediaRecorder
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.WavFileWriter
 import java.io.File
 
-/** Plays the calibration chirp at a scheduled instant, and records the room so the PC can measure. */
+/**
+ * Records the room so the PC can measure, and saves the reference the measurement correlates
+ * against.
+ *
+ * Playing the chirp is deliberately not this class's job: both devices inject it into their own
+ * PlaybackScheduler instead, so it travels the same scheduling, output depth compensation and
+ * drift correction path the music does. A chirp played here on a private AudioTrack would have
+ * measured clock sync plus raw play() latency and left the pipeline being validated untested.
+ */
 class CalibrationRunner(private val runStore: RunStore, private val caseId: String) {
-    /**
-     * Plays the chirp at [hostNanos] and returns how many nanoseconds that instant had already
-     * passed by the time playback was ready to wait for it - 0 when it was still in the future.
-     * A nonzero result means the busy-wait below was skipped entirely and playback started
-     * immediately instead of at the scheduled instant, silently breaking the stagger this chirp
-     * exists to measure; the caller is expected to treat that as a failure, not a measurement.
-     */
-    fun playChirpAt(hostNanos: Long, hostNanosNow: () -> Long): Long {
-        val chirp = ChirpGenerator.generateMono()
-        val minimum = AudioTrack.getMinBufferSize(ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-            .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(ChirpGenerator.SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-            .setBufferSizeInBytes(maxOf(minimum, chirp.size * 2))
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .build()
-        track.write(chirp, 0, chirp.size)
-        val missedByNanos = (hostNanosNow() - hostNanos).coerceAtLeast(0L)
-        while (hostNanosNow() < hostNanos) Thread.sleep(1)
-        track.play()
-        Thread.sleep(ChirpGenerator.DURATION_MS.toLong() + 200)
-        runCatching { track.stop() }; runCatching { track.release() }
-        return missedByNanos
-    }
-
     fun record(seconds: Int) {
         val minimum = AudioRecord.getMinBufferSize(ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val record = AudioRecord(MediaRecorder.AudioSource.MIC, ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum, 65536))
