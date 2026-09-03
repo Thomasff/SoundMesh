@@ -55,6 +55,16 @@ const MIN_CHIRP_INTERVAL_SECONDS = 5;
 const MIN_DEADBAND_FRAMES = 5;
 
 /**
+ * Ceiling on the chirp repeat count, set by the probe's scheduler capacity.
+ *
+ * Every repeat is queued up front, seconds ahead of the first, and each costs six of the
+ * scheduler's 150 chunk slots. Past twenty-five the extra chirps are dropped as overflow, which
+ * would leave a run playing a shorter schedule than the analysis then goes looking for - a missing
+ * pair reported as an unreadable one. Twenty leaves headroom for the audio still draining.
+ */
+export const MAX_CHIRP_REPEATS = 20;
+
+/**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
  * at once here (the only task in this plan where that is true), so a mistyped or swapped serial
@@ -379,8 +389,8 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // from that estimate is common to them all, while playout jitter is redrawn for each pair.
   const repeatsRaw = value(args, '--chirp-repeats');
   const chirpRepeats = repeatsRaw === undefined ? undefined : Number(repeatsRaw);
-  if (repeatsRaw !== undefined && (!Number.isInteger(chirpRepeats) || chirpRepeats < 1)) {
-    throw new Error('--chirp-repeats takes a whole number of chirp pairs, at least 1. Leave it out for the single pair every measurement so far was taken on.');
+  if (repeatsRaw !== undefined && (!Number.isInteger(chirpRepeats) || chirpRepeats < 1 || chirpRepeats > MAX_CHIRP_REPEATS)) {
+    throw new Error(`--chirp-repeats takes a whole number of chirp pairs, 1 to ${MAX_CHIRP_REPEATS}. Leave it out for the single pair every measurement so far was taken on.`);
   }
   const intervalRaw = value(args, '--chirp-interval-s');
   const chirpIntervalSeconds = intervalRaw === undefined ? undefined : Number(intervalRaw);

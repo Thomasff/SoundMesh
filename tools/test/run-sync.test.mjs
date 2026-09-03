@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -610,4 +610,19 @@ test('pairSearchWindow bounds a later pair near where the first one puts it', ()
   // The first pair is the anchor; it cannot be anchored on itself.
   assert.deepEqual(pairSearchWindow({ pairIndex: 0, intervalFrames: interval, anchorIndex: 48000 }),
     { searchFrom: 0, searchTo: interval - 1 });
+});
+
+test('refuses more chirp repeats than the scheduler can hold, rather than dropping them silently', async () => {
+  // Every repeat is queued up front and each costs six chunks of the scheduler's 150, so past
+  // twenty-five the extra chirps would be dropped as overflow - a shorter schedule than asked for,
+  // reported as a clean run.
+  await assert.rejects(
+    () => main(
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7',
+        '--separation-m', '1.2', '--chirp-repeats', '30', '--chirp-interval-s', '15'],
+      { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+    ),
+    /--chirp-repeats/
+  );
+  await assert.doesNotReject(() => startSyncCalls(['--chirp-repeats', String(MAX_CHIRP_REPEATS), '--chirp-interval-s', '15']));
 });

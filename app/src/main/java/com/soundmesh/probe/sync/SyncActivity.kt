@@ -364,7 +364,14 @@ class SyncActivity : Activity() {
         // estimator needs 8 samples at a 2s cadence, about 16s) - every such run would then
         // burn the full CONVERGENCE_TIMEOUT_SECONDS regardless of network quality. Running for
         // at least that long keeps convergence possible no matter how short `seconds` is.
-        val clockThread = Thread { history = clockClient.runFor(maxOf(seconds, CONVERGENCE_TIMEOUT_SECONDS)) }
+        // The chirp schedule keeps playing after the audio segment ends, and every chirp on it is
+        // converted to local time through the offset estimate - so the estimate has to be kept
+        // alive for the whole of it. Bounding this by `seconds` alone froze the offset the moment
+        // the audio stopped, and every repeat after the first was then played against a stale one:
+        // at the 8 ppm measured between these two crystals that is about 6 frames per 15s gap,
+        // which is the same size as the sink's whole emission jitter.
+        val playbackSeconds = seconds + chirpScheduleSeconds()
+        val clockThread = Thread { history = clockClient.runFor(maxOf(playbackSeconds, CONVERGENCE_TIMEOUT_SECONDS)) }
         try {
             clockThread.start()
             chunkClient.start()
@@ -607,6 +614,16 @@ class SyncActivity : Activity() {
      * the artifact has to carry the honoured values or a repeats run cannot be told from a plain
      * one after the fact. The PC side slices the recording on exactly this interval.
      */
+    /**
+     * How long the chirp schedule runs past the audio segment, in whole seconds.
+     *
+     * The margin covers what sits between the audio's end and the last chirp being heard: the 2s
+     * calibration gap, the sweep and its 1s drain.
+     */
+    private fun chirpScheduleSeconds(): Int =
+        ((chirpRepeatsRequested() - 1).toLong() * chirpIntervalNanosRequested() / 1_000_000_000L).toInt() +
+            CHIRP_SCHEDULE_MARGIN_SECONDS
+
     private fun chirpScheduleJson(): String =
         "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}," +
             "\"deadbandFrames\":${deadbandFramesRequested()}"
@@ -696,6 +713,9 @@ class SyncActivity : Activity() {
 
         /** How long the sink waits for its first clock estimate before giving up as a failure. */
         private const val CONVERGENCE_TIMEOUT_SECONDS = 40
+
+        /** Slack past the last chirp instant: the calibration gap, the sweep and its drain. */
+        private const val CHIRP_SCHEDULE_MARGIN_SECONDS = 5
 
         /** No new chunk for this long means the host has stopped broadcasting audio. */
         private const val IDLE_THRESHOLD_NANOS = 800_000_000L
