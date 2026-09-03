@@ -114,6 +114,27 @@ export async function grantRecordAudio({ serial, runAdbHost }) {
 }
 
 /**
+ * Reads the handset model behind each role, so a stored run says which device produced it.
+ *
+ * The finding this harness is chasing follows the device, not the role, and until now no artifact
+ * recorded which handset played which part - recovering it afterwards meant inferring it from the
+ * renderer's output buffer size, which only works while the two models happen to differ there.
+ * The model is written; the serial never is, on the same terms as every error message here.
+ *
+ * Nulls rather than throwing: this is provenance about a run that has already produced its numbers,
+ * and a getprop that comes back empty is not a reason to discard them.
+ */
+export async function readDeviceModels({ hostSerial, sinkSerial, runAdbHost }) {
+  const read = async serial => {
+    const result = await runAdbHost({ args: ['-s', serial, 'shell', 'getprop', 'ro.product.model'] }).catch(() => null);
+    if (!result || result.exitCode !== 0) return null;
+    const model = (Buffer.isBuffer(result.stdout) ? result.stdout.toString('utf8') : String(result.stdout ?? '')).trim();
+    return model === '' ? null : model;
+  };
+  return { host: await read(hostSerial), sink: await read(sinkSerial) };
+}
+
+/**
  * Reads min/avg/max and packet loss out of `ping`'s summary, or null when it printed no summary.
  *
  * Null rather than zeros: 100% loss prints the packet line and no round-trip line at all, and a
@@ -341,7 +362,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   await mkdir(directory, { recursive: true });
   // The link goes in the same artifact as the reports so a stored run always carries the condition
   // it was taken under, not just its result.
-  await writeFile(resolve(directory, 'sync-reports.json'), `${JSON.stringify({ link, ...reports }, null, 2)}\n`, 'utf8');
+  const models = await readDeviceModels({ hostSerial, sinkSerial, runAdbHost });
+  await writeFile(resolve(directory, 'sync-reports.json'), `${JSON.stringify({ link, models, ...reports }, null, 2)}\n`, 'utf8');
+  log(`roles              host ${models.host ?? 'unknown'} / sink ${models.sink ?? 'unknown'}`);
 
   // The sink now waits (bounded at 40s) for its clock offset estimate to converge before it
   // plays anything; on that timeout sync.json carries a failureCode instead of estimates, and

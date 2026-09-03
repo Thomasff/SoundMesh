@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -517,4 +517,26 @@ test('combineFacingRun refuses to pair up recordings that read a different numbe
   const pair = errorMs => ({ alignmentErrorMs: errorMs, propagationCorrectionMs: 0 });
   assert.equal(combineFacingRun({ hostSide: { ...pair(-2), repeats: [pair(-2), pair(-5)] }, sinkSide: pair(4) }), null);
   assert.equal(combineFacingRun({ hostSide: pair(-2), sinkSide: null }), null);
+});
+
+test('records which handset model played which role, and never the serials', async () => {
+  const runAdbHost = async ({ args }) => ({
+    exitCode: 0,
+    stdout: args[1] === HOST_SERIAL ? 'KKG-AN00\r\n' : 'BVL-AN16\n',
+    stderr: ''
+  });
+  assert.deepEqual(
+    await readDeviceModels({ hostSerial: HOST_SERIAL, sinkSerial: SINK_SERIAL, runAdbHost }),
+    { host: 'KKG-AN00', sink: 'BVL-AN16' }
+  );
+});
+
+test('a model query that fails leaves the provenance blank rather than losing the run', async () => {
+  // The models are provenance, not a measurement: a run that already produced numbers must not be
+  // thrown away because one extra getprop came back empty.
+  const runAdbHost = async () => ({ exitCode: 1, stdout: '', stderr: 'closed' });
+  assert.deepEqual(
+    await readDeviceModels({ hostSerial: HOST_SERIAL, sinkSerial: SINK_SERIAL, runAdbHost }),
+    { host: null, sink: null }
+  );
 });
