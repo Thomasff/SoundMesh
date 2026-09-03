@@ -64,3 +64,32 @@ test('decimate splits a dense recording into independent runs of the real cadenc
   // Disjoint and complete: every exchange lands in exactly one phase.
   assert.deepEqual(phases.flat().map(([t1]) => t1).sort((a, b) => a - b), SERIES.map(([t1]) => t1));
 });
+
+test('each estimate carries the instant it is anchored at, which is not the instant it was asked at', () => {
+  // The estimator anchors at the centroid of the exchanges it kept, so that is where an estimate
+  // actually describes the clocks - and the gap back to now is the lag it pays. Both a comparison
+  // between two runs offset from each other and the lag half of a design's cost need this instant;
+  // neither can be read off the four fields the shipped estimate carries.
+  const steps = replay(SERIES).filter(step => step.estimate !== null);
+
+  for (const step of steps) {
+    assert.equal(Number.isFinite(step.estimate.anchorT1), true);
+    // Anchored inside the run, and behind the exchange that produced it.
+    assert.equal(step.estimate.anchorT1 <= step.t1, true);
+    assert.equal(step.estimate.anchorT1 >= SERIES[0][0], true);
+  }
+
+  // On a series where every round trip is equal and the offset is flat, the best-of cut keeps the
+  // eight it has and the anchor is unambiguous: the mean of their t1. Reading it off SERIES instead
+  // would mean re-deriving which exchanges the cut kept, which is the logic under test.
+  const flat = Array.from({ length: 8 }, (_, index) => {
+    const t1 = index * 1_000_000_000;
+    const t2 = t1 + 1_000_000 + 3_000_000_000;
+    return [t1, t2, t2, t2 - 3_000_000_000 + 1_000_000];
+  });
+  const [only] = replay(flat).filter(step => step.estimate !== null);
+
+  assert.equal(only.estimate.anchorT1, 3_500_000_000);
+  assert.equal(only.estimate.driftPpm, 0);
+  assert.equal(only.estimate.offsetNanos, 3_000_000_000);
+});

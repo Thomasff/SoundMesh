@@ -62,7 +62,13 @@ export function estimateFromWindow(window, { bestCount = DEFAULT_BEST } = {}) {
     return trip < lowest ? trip : lowest;
   }, roundTripNanos(best[0]));
 
-  return { offsetNanos, uncertaintyNanos: Number(shortest / 2n), driftPpm, sampleCount: count };
+  // Where on the time axis this estimate actually sits: the mean t1 of the kept exchanges, which is
+  // the centroid the fit is anchored at. Not part of what the shipped ClockEstimate carries - it is
+  // diagnostic, and the four fields above are the ones pinned against Kotlin - but without it two
+  // runs offset from each other cannot be compared, and a design's lag cannot be priced.
+  const anchorT1 = Number(baseNanos) + (sumX / count) * 1e9;
+
+  return { offsetNanos, uncertaintyNanos: Number(shortest / 2n), driftPpm, sampleCount: count, anchorT1 };
 }
 
 /**
