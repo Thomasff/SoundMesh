@@ -224,4 +224,37 @@ class ClockOffsetEstimatorTest {
 
         assertNull("should reject estimates implying >500 ppm drift", estimate)
     }
+
+    /**
+     * A window has to be wide enough to hold eight quiet exchanges, or the best-of cut is forced to
+     * take queued ones to reach its count.
+     *
+     * Measured on two recorded runs: round trips here are bimodal, a quiet cluster around 6 ms and a
+     * queued one around 18 ms, and the quiet cluster is about an eighth of all exchanges. A cut that
+     * keeps a quarter of a 32 wide window therefore sits right on the boundary and routinely dips
+     * into the queued population - and a handful of asymmetric exchanges dominates a mean of eight.
+     * Replaying those runs through both, the offset a phase disagrees with its neighbours by falls
+     * from 0.65 ms to 0.14 ms on the wider window, with no overlap between the intervals.
+     */
+    @Test
+    fun keepsTheFitClearOfQueuedExchangesWhenOnlyAnEighthOfThemAreQuiet() {
+        val estimator = ClockOffsetEstimator()
+        val trueOffset = 3_000_000_000L
+        repeat(64) { index ->
+            val t1 = index * 2_000_000_000L
+            // Every eighth exchange is quiet and symmetric; the rest queue on the way out, which
+            // pushes their midpoint above the true offset by half the asymmetry.
+            val quiet = index % 8 == 0
+            val forward = if (quiet) 2_000_000L else 40_000_000L
+            val back = 2_000_000L
+            val t2 = t1 + forward + trueOffset
+            val t3 = t2 + 100_000L
+            estimator.record(ClockExchange(t1, t2, t3, t3 - trueOffset + back))
+        }
+
+        val estimate = estimator.estimate(128_000_000_000L)!!
+
+        // The queued exchanges sit 19 ms above the truth; a fit that admitted any of them shows it.
+        assertEquals(trueOffset.toDouble(), estimate.offsetNanos.toDouble(), 1_000_000.0)
+    }
 }

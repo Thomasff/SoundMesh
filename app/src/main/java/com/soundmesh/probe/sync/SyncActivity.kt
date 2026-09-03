@@ -111,11 +111,12 @@ class SyncActivity : Activity() {
         val address = intent.getStringExtra("host_address")
             ?: throw IllegalArgumentException("SINK needs host_address")
         if (mode == "CLOCK_ONLY") {
-            val client = ClockSyncClient(address, CLOCK_PORT, ClockOffsetEstimator())
+            val estimator = ClockOffsetEstimator()
+            val client = ClockSyncClient(address, CLOCK_PORT, estimator)
             val history = client.runFor(seconds, clockIntervalMillisRequested())
             runStore.writeSyncJson(
                 caseId,
-                "{\"schemaVersion\":1,\"role\":\"SINK\",\"failureCode\":null,${clockJson(client, history)}}"
+                "{\"schemaVersion\":1,\"role\":\"SINK\",\"failureCode\":null,${clockJson(client, estimator, history)}}"
             )
         } else {
             runSinkFull(address, caseId, seconds)
@@ -460,7 +461,7 @@ class SyncActivity : Activity() {
                     "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
-                    "${clockJson(clockClient, history)}," +
+                    "${clockJson(clockClient, estimator, history)}," +
                     "\"renderer\":${renderer.report(renderer.lastStreamingStats()?.silenceFrames)}}"
             )
         } finally {
@@ -672,8 +673,9 @@ class SyncActivity : Activity() {
      * kilobytes against a 50 MB recording - and they are what lets a candidate estimator design be
      * scored offline on the input a real run actually saw, instead of on a second run of the phones.
      */
-    private fun clockJson(client: ClockSyncClient, history: List<ClockEstimate>): String =
+    private fun clockJson(client: ClockSyncClient, estimator: ClockOffsetEstimator, history: List<ClockEstimate>): String =
         "\"clockIntervalMillis\":${clockIntervalMillisRequested()}," +
+            "\"estimatorWindow\":${estimator.windowSize},\"estimatorBest\":${estimator.bestCount}," +
             "\"estimates\":${estimatesJson(history)}," +
             "\"exchanges\":${exchangesJson(client.recordedExchanges())}"
 

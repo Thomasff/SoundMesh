@@ -8,8 +8,11 @@ package com.soundmesh.core
  * the midpoint cannot cancel.
  */
 class ClockOffsetEstimator(
-    private val windowSize: Int = DEFAULT_WINDOW,
-    private val bestCount: Int = DEFAULT_BEST
+    // Public so a run can record which configuration produced its estimates: without that, replaying
+    // a stored run cannot know how to reproduce it, and the check that the replay still matches the
+    // shipped estimator quietly stops working the first time a default moves.
+    val windowSize: Int = DEFAULT_WINDOW,
+    val bestCount: Int = DEFAULT_BEST
 ) {
     private val window = ArrayDeque<ClockExchange>()
 
@@ -80,7 +83,19 @@ class ClockOffsetEstimator(
 
     companion object {
         const val MIN_SAMPLES = 8
-        const val DEFAULT_WINDOW = 32
+        // Wide enough to hold eight quiet exchanges, not just eight exchanges.
+        //
+        // Round trips between two handsets on one link are bimodal: a quiet cluster and a queued
+        // one, with the quiet cluster about an eighth of the traffic on both runs measured. Keeping
+        // the best eight of thirty-two therefore cuts right at the boundary of the quiet population
+        // and routinely reaches past it, and a handful of asymmetric exchanges dominates a mean of
+        // eight - which is why keeping a quarter of the window measured worse than keeping half of
+        // it, and far worse than keeping an eighth. Replayed through two recorded runs, the offset
+        // one phase disagrees with its neighbours by falls from 0.65 ms here to 0.14 ms, intervals
+        // that do not overlap. The cost is lag: the fit describes the middle of a window twice as
+        // long, about 64 seconds back, which at the 0.25 to 0.41 ppm measured between these two
+        // crystals is 16 to 26 microseconds - under a frame, against a millisecond removed.
+        const val DEFAULT_WINDOW = 64
         const val DEFAULT_BEST = 8
         private const val MAX_DRIFT_PPM = 500.0
     }
