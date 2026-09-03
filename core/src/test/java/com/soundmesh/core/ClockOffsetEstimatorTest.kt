@@ -89,6 +89,47 @@ class ClockOffsetEstimatorTest {
     }
 
     @Test
+    fun doesNotLetTheFittedSlopeGrowTheOffsetWithHowFarAheadItIsAsked() {
+        // The fit is anchored at the window it was measured over, not extrapolated to the caller's
+        // instant. Extrapolating multiplied the slope's own error by the whole window span: on a
+        // measured run the slope scattered by 30 ppm across a 28 second lever arm, putting 0.85 ms
+        // of pure noise into every offset - and that offset is what a chirp's playout instant is
+        // converted through. Anchoring costs a lag of the real drift over half a window, about
+        // three frames, in exchange.
+        val estimator = ClockOffsetEstimator()
+        repeat(16) { index ->
+            val localNanos = index * 2L * second
+            val offset = 5 * second + localNanos * 30 / 1_000_000
+            estimator.record(exchange(localNanos, offset, 2_000_000, 2_000_000))
+        }
+
+        val near = estimator.estimate(30L * second)!!
+        val far = estimator.estimate(300L * second)!!
+
+        assertEquals("asking further ahead must not move the offset", near.offsetNanos, far.offsetNanos)
+        // The drift is still measured and reported; only the extrapolation goes.
+        assertTrue("drift was ${far.driftPpm}", abs(far.driftPpm - 30.0) < 3.0)
+    }
+
+    @Test
+    fun anchorsTheOffsetAtTheCentreOfTheExchangesItKept() {
+        // A least squares line passes through the centroid of its points, so the anchored value is
+        // the mean of the kept midpoints - with a symmetric path, the true offset at the middle of
+        // the window.
+        val estimator = ClockOffsetEstimator()
+        repeat(8) { index ->
+            val localNanos = index * 2L * second
+            val offset = 5 * second + localNanos * 30 / 1_000_000
+            estimator.record(exchange(localNanos, offset, 2_000_000, 2_000_000))
+        }
+
+        val estimate = estimator.estimate(1000L * second)!!
+
+        // The window spans 0 to 14s, so its middle is 7s in, where the offset is 5s + 7s * 30ppm.
+        assertTrue("offset was ${estimate.offsetNanos}", abs(estimate.offsetNanos - (5 * second + 210_000)) < 20_000)
+    }
+
+    @Test
     fun refusesToGuessBeforeEnoughExchangesArrive() {
         val estimator = ClockOffsetEstimator()
         repeat(ClockOffsetEstimator.MIN_SAMPLES - 1) { index ->

@@ -19,6 +19,13 @@ class ClockOffsetEstimator(
         while (window.size > windowSize) window.removeFirst()
     }
 
+    /**
+     * The offset to use now, or null when the window cannot support one.
+     *
+     * [atLocalNanos] deliberately does not move the answer. The estimate describes the middle of
+     * the window it was measured over, and asking for a later instant does not make it later - it
+     * only used to make it noisier. See the anchoring note in the body.
+     */
     @Synchronized
     fun estimate(atLocalNanos: Long): ClockEstimate? {
         if (window.size < MIN_SAMPLES) return null
@@ -38,7 +45,21 @@ class ClockOffsetEstimator(
         // Every kept exchange landed at the same instant; a slope through one point is meaningless.
         val slope = if (denominator == 0.0) 0.0 else (count * sumXY - sumX * sumY) / denominator
         val intercept = (sumY - slope * sumX) / count
-        val offset = intercept + slope * ((atLocalNanos - baseNanos) / 1e9)
+        // Anchored at the centroid of the kept exchanges, not extrapolated to [atLocalNanos].
+        //
+        // A least squares line passes through the centroid of its points, so this is simply the
+        // mean of the kept midpoints - and it is the one point on the line the slope's own error
+        // cannot move. Extrapolating to the caller's instant multiplied that error by the lever
+        // arm out to it: over 323 estimates of one measured run the slope scattered by 30 ppm and
+        // the lever arm averaged 28 seconds, which put 0.85 ms of pure noise into every offset.
+        // That is not a diagnostic number - the offset is what a playout instant is converted
+        // through, so it landed whole in the emission timing of every chirp the sink played.
+        //
+        // What it costs is a lag: the estimate describes the middle of the window rather than now,
+        // so it is stale by the real drift across half a window. At the 2.3 ppm measured between
+        // these two handsets that is 65 microseconds, about three frames - a thirteenth of what
+        // extrapolating was adding.
+        val offset = sumY / count
         val driftPpm = slope / 1000.0
 
         // Guard against non-finite results from the linear fit
