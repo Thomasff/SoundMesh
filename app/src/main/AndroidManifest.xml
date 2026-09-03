@@ -32,5 +32,9 @@
             android:name=".CaptureForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <service
+            android:name=".sync.SyncProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
 </manifest>

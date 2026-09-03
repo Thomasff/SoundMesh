@@ -109,14 +109,24 @@ class SyncActivity : Activity() {
             statusView.text = "HOST DONE"
             return
         }
-        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val projection = manager.getMediaProjection(resultCode, data)
-        if (projection == null) {
-            runStore.writeSyncJson(pending.caseId, "{\"schemaVersion\":1,\"role\":\"HOST\",\"failureCode\":\"CAPTURE_PROJECTION_UNAVAILABLE\"}")
-            statusView.text = "HOST DONE"
-            return
+        // The projection cannot be taken here. The platform hands it only to a foreground service
+        // of type mediaProjection, and an activity asking for it throws SecurityException - which is
+        // exactly how the first capture run died. The service takes it and calls back.
+        statusView.text = "HOST ACQUIRING PROJECTION"
+        SyncProjectionService.pending = { projection ->
+            if (projection == null) {
+                runStore.writeSyncJson(pending.caseId, "{\"schemaVersion\":1,\"role\":\"HOST\",\"failureCode\":\"CAPTURE_PROJECTION_UNAVAILABLE\"}")
+                statusView.text = "HOST DONE"
+            } else {
+                startRun("HOST", "FULL", pending.caseId, pending.seconds, projection)
+            }
         }
-        startRun("HOST", "FULL", pending.caseId, pending.seconds, projection)
+        startService(
+            Intent(this, SyncProjectionService::class.java)
+                .setAction(SyncProjectionService.ACTION_ACQUIRE)
+                .putExtra(SyncProjectionService.EXTRA_RESULT_CODE, resultCode)
+                .putExtra(SyncProjectionService.EXTRA_RESULT_DATA, data)
+        )
     }
 
     private fun startRun(role: String, mode: String, caseId: String, seconds: Int, projection: MediaProjection?) {
@@ -421,6 +431,10 @@ class SyncActivity : Activity() {
             )
         } finally {
             capture?.close()
+            if (projection != null) {
+                projection.stop()
+                startService(Intent(this, SyncProjectionService::class.java).setAction(SyncProjectionService.ACTION_RELEASE))
+            }
             chunkServer.stop()
             clockServer.stop()
         }

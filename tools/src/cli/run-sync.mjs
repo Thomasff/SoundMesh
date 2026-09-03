@@ -78,6 +78,12 @@ export const MAX_CHIRP_REPEATS = 12;
  */
 export const MAX_ALIGNMENT_OFFSET_MS = 250;
 
+/** How long a capture run waits for the person to answer the consent dialog, in seconds. */
+const DEFAULT_CONSENT_TIMEOUT_SECONDS = 120;
+
+/** A listener on SyncActivity.CHUNK_PORT (45124 = 0xB044) in state 0A, as /proc/net/tcp spells it. */
+const LISTENING_ON_CHUNK_PORT = /:B044\s+[0-9A-F]{8}:[0-9A-F]{4}\s+0A/i;
+
 /**
  * Shape of an Android package name: dot separated segments, each starting with a letter. Deliberately
  * strict - the value travels into an `am start` argument list on the handset, so anything that is not
@@ -372,6 +378,32 @@ export function combineFacingRun({ hostSide, sinkSide }) {
   return hostPairs.map((pair, index) => combineFacingPair({ hostSide: pair, sinkSide: sinkPairs[index] }));
 }
 
+/**
+ * Waits until the host is listening on SyncActivity.CHUNK_PORT, which it only binds once the run
+ * itself is under way.
+ *
+ * A capture run cannot start both roles on a fixed stagger. The host stops at a consent dialog and
+ * binds nothing until a person has answered it, so the sink's head start guaranteed a
+ * ConnectException that no tapping speed could avoid - which is exactly how O29 was lost.
+ *
+ * Both tables are read because a ServerSocket with no bound address lands on the IPv6 wildcard, and
+ * a listener present in tcp6 alone would otherwise read as absent.
+ */
+export async function awaitHostListening({ serial, runAdbHost, timeoutMs, log = () => {}, pollMs = 1000 }) {
+  const deadline = Date.now() + timeoutMs;
+  let announced = false;
+  while (Date.now() < deadline) {
+    const result = await runAdbHost({ args: ['-s', serial, 'shell', 'cat', '/proc/net/tcp', '/proc/net/tcp6'] });
+    if (result.exitCode === 0 && LISTENING_ON_CHUNK_PORT.test(result.stdout)) return;
+    if (!announced) {
+      log('Waiting for the capture consent dialog on the host. Answer it now - the sink starts once the host is listening.');
+      announced = true;
+    }
+    await wait(pollMs);
+  }
+  throw new Error(`The host never started listening within ${Math.round(timeoutMs / 1000)}s of launch. A capture run waits on the consent dialog: answer it on the host, or raise --consent-timeout-s.`);
+}
+
 export async function main(args = process.argv.slice(2), { client = createProbeClient(), log = text => process.stdout.write(`${text}\n`), runAdbHost = createAdbHostRunner(), listStoredCases = storedCaseIds } = {}) {
   const caseId = value(args, '--case') || 'S2';
   const seconds = Number(value(args, '--seconds') || 90);
@@ -451,6 +483,11 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // The probe's own package is refused because the host plays back the very stream it is capturing.
   // Capturing itself is a feedback loop, and it would run and build a file rather than fail.
   const capturePackage = value(args, '--capture-package');
+  const consentTimeoutRaw = value(args, '--consent-timeout-s');
+  const consentTimeoutSeconds = consentTimeoutRaw === undefined ? DEFAULT_CONSENT_TIMEOUT_SECONDS : Number(consentTimeoutRaw);
+  if (consentTimeoutRaw !== undefined && (!Number.isInteger(consentTimeoutSeconds) || consentTimeoutSeconds < 1)) {
+    throw new Error('--consent-timeout-s takes a whole number of seconds, at least 1: it is how long a capture run waits for the consent dialog to be answered on the host.');
+  }
   if (capturePackage !== undefined && (!PACKAGE_NAME.test(capturePackage) || capturePackage === PROBE_PACKAGE)) {
     throw new Error(`--capture-package takes the package name of the app whose audio the host should stream, such as com.tencent.qqmusic. It cannot be ${PROBE_PACKAGE}: the host plays what it captures, so capturing the probe feeds its own output back into itself.`);
   }
@@ -486,7 +523,10 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
   await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage });
-  await wait(2000);
+  // A generated run keeps the stagger it always had: the host binds its ports immediately. A
+  // capture run has to wait for a person, so it waits on the port rather than on a clock.
+  if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
+  else await wait(2000);
   await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({

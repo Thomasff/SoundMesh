@@ -172,6 +172,9 @@ function authorisedPairRunner(order = []) {
       };
     }
     if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
+    // A host already listening on the chunk port, so a capture run passes the readiness gate
+    // instead of sitting out its consent timeout. Tests about the gate itself supply their own.
+    if (call.args.includes('/proc/net/tcp')) return { exitCode: 0, stdout: '   0: 012BA8C0:B044 00000000:0000 0A', stderr: '' };
     return { exitCode: 0, stdout: '', stderr: '' };
   };
 }
@@ -697,6 +700,60 @@ test('--capture-package reaches the host alone, because only the host captures',
   // output, which is the feedback loop this flag exists to avoid on the host side too.
   const plain = await startSyncCalls([]);
   assert.deepEqual(plain.map(({ role, capturePackage }) => [role, capturePackage]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('a capture run holds the sink back until the host is listening', async () => {
+  // O29 failed here. The host only binds its ports inside the run, and the run only starts once the
+  // user has answered the consent dialog, so the sink's fixed head start guaranteed a
+  // ConnectException no matter how fast anyone tapped.
+  const calls = [];
+  let probes = 0;
+  const runAdbHost = async call => {
+    if (call.args[0] === 'devices') {
+      return { exitCode: 0, stdout: devicesOutput([`${HOST_SERIAL}    device transport_id:1`, `${SINK_SERIAL}    device transport_id:2`]), stderr: '' };
+    }
+    if (call.args.includes('/proc/net/tcp')) {
+      probes += 1;
+      // Not listening until the third look, the way a dialog waits on a person.
+      return { exitCode: 0, stdout: probes < 3 ? '' : '   0: 012BA8C0:B044 00000000:0000 0A', stderr: '' };
+    }
+    if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const client = {
+    clearSyncArtifacts: async () => {},
+    startSync: async call => {
+      calls.push({ role: call.role, probesSoFar: probes });
+      if (calls.length === 2) throw new Error('stop the run here');
+    }
+  };
+  await assert.rejects(
+    () => main(
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--capture-package', 'com.tencent.qqmusic'],
+      { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }
+    ),
+    /stop the run here/
+  );
+  assert.deepEqual(calls.map(entry => entry.role), ['HOST', 'SINK']);
+  assert.equal(calls[0].probesSoFar, 0, 'the host starts before anything is listening');
+  assert.equal(calls[1].probesSoFar, 3, 'the sink waits for the port the host binds inside the run');
+});
+
+test('a capture run gives up on its own terms when the host never starts listening', async () => {
+  const runAdbHost = async call => {
+    if (call.args[0] === 'devices') {
+      return { exitCode: 0, stdout: devicesOutput([`${HOST_SERIAL}    device transport_id:1`, `${SINK_SERIAL}    device transport_id:2`]), stderr: '' };
+    }
+    if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  await assert.rejects(
+    () => main(
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--capture-package', 'com.tencent.qqmusic', '--consent-timeout-s', '1'],
+      { client: { clearSyncArtifacts: async () => {}, startSync: async () => {} }, runAdbHost, log: () => {}, listStoredCases: async () => [] }
+    ),
+    /consent/i
+  );
 });
 
 test('refuses a capture package that is not a package name, and refuses the probe capturing itself', async () => {
