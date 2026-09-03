@@ -173,6 +173,29 @@ class SyncActivity : Activity() {
         CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
 
     /**
+     * Whether the sink records the room as well, defaulting to off - the one-recording arrangement
+     * every measurement so far was taken on.
+     *
+     * With both handsets recording, the same chirp pair is heard twice, and the air between them
+     * enters the two readings with opposite signs: each hears its own chirp across a few
+     * centimetres and its partner's across the room. The half sum of the two readings is then the
+     * alignment error with no flight time in it at all, and the half difference is the flight time
+     * - so the separation stops being a number a person has to measure and hand in, and becomes a
+     * result. Each side's input latency cancels inside its own recording, so neither has to be
+     * known either.
+     *
+     * It also splits the emission jitter from the capture jitter without inferring either: a chirp
+     * leaving a speaker late shifts both readings the same way and so lands entirely in the half
+     * sum, while anything on a capture path shifts one reading only and cannot.
+     *
+     * Off by default and not folded into the normal run, because opening a capture path on the
+     * sink is a change to the very device under measurement - a handset may route or clock its
+     * output differently while its microphone is live. Keeping it opt-in leaves the stored
+     * baseline reproducible and makes the two arrangements an A/B rather than a replacement.
+     */
+    private fun sinkRecordsRequested(): Boolean = intent.getBooleanExtra("sink_records", false)
+
+    /**
      * How many chirp pairs this run plays, and how far apart, defaulting to the single pair every
      * measurement so far was taken on.
      *
@@ -395,8 +418,21 @@ class SyncActivity : Activity() {
             val chirpAt = (if (observed > 0) observed else hostNanosNow()) + CALIBRATION_GAP_NANOS
             val chirpSubmission = submitChirp(scheduler, renderer, chirpAt, chirpRepeatsRequested(), chirpIntervalNanosRequested())
             renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
+
+            // Deliberately the same two host instants the host opens and closes its own recording
+            // on, so the two files cover one window and every pair appears in both. The host's own
+            // chirp trails this device's by the stagger, so the tail is measured from there.
+            val calibration = if (sinkRecordsRequested()) CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested()) else null
+            val recordThread = calibration?.let {
+                val untilHostNanos = chirpSubmission.endHostNanos + STAGGER_NANOS + RECORD_TAIL_NANOS
+                val fromHostNanos = chirpAt - RECORD_LEAD_NANOS
+                awaitHostInstant(fromHostNanos, hostNanosNow)
+                Thread { it.record(secondsBetween(fromHostNanos, untilHostNanos)) }.also(Thread::start)
+            }
+
             val chirpTiming = awaitChirpStart(chirpAt, hostNanosNow)
             rendererThread.join()
+            recordThread?.join()
             val chirpWindow = chirpWindow(renderer)
 
             clockThread.join()
@@ -404,6 +440,9 @@ class SyncActivity : Activity() {
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\"," +
                     "\"failureCode\":${topLevelFailureCodeJson(renderer, chirpSubmission, chirpTiming, chirpWindow)}," +
+                    // Null on a run that did not ask the sink to record, and on the same terms as
+                    // the host otherwise: the source that actually opened, never the one asked for.
+                    "\"audioSource\":${calibration?.openedSource?.let { "\"$it\"" } ?: "null"}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
@@ -590,6 +629,18 @@ class SyncActivity : Activity() {
         val remaining = hostNanos - System.nanoTime()
         return ((remaining + 999_999_999L) / 1_000_000_000L).toInt().coerceAtLeast(1)
     }
+
+    /**
+     * The seconds spanned by two host instants, rounded up.
+     *
+     * The sink cannot use [secondsUntil] for this: that one subtracts a host instant from a raw
+     * nanoTime(), which is only the same clock on the host. Here both ends are host instants and
+     * the offset between the two clocks cancels in their difference, so the duration is right on
+     * either device without a conversion - and without depending on an estimate that could go
+     * stale between the two reads.
+     */
+    private fun secondsBetween(fromHostNanos: Long, toHostNanos: Long): Int =
+        ((toHostNanos - fromHostNanos + 999_999_999L) / 1_000_000_000L).toInt().coerceAtLeast(1)
 
     private fun estimatesJson(history: List<ClockEstimate>): String = buildString {
         append('[')

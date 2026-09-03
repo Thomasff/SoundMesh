@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProbeClient } from '../probe-client.mjs';
-import { analyzeAlignment } from '../calibration-analysis.mjs';
+import { analyzeAlignment, combineFacingPair } from '../calibration-analysis.mjs';
 import { createAdbHostRunner, parseAdbDevices } from '../adb.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifacts');
@@ -231,6 +231,25 @@ export function readAlignment({ recorded, reference, separationMetres, chirpRepe
   return repeats.length > 1 ? { ...repeats[0], repeats } : repeats[0];
 }
 
+/**
+ * Pairs up the two handsets' recordings of the same run, pair by pair.
+ *
+ * Positional, and safely so: both recordings open on the same host instant and are sliced on the
+ * same interval, so slice i of one holds exactly the pair slice i of the other does. The guard is
+ * there because mispairing is silent - pair 1 combined with pair 2 still produces a plausible
+ * number - so a run whose two sides read a different number of pairs reports nothing instead.
+ *
+ * Returns null on a run where only the host recorded, which is what leaves the artifact and the
+ * log identical in shape to every run stored before the sink recorded at all.
+ */
+export function combineFacingRun({ hostSide, sinkSide }) {
+  const pairsOf = side => side?.repeats ?? (side ? [side] : []);
+  const hostPairs = pairsOf(hostSide);
+  const sinkPairs = pairsOf(sinkSide);
+  if (hostPairs.length === 0 || hostPairs.length !== sinkPairs.length) return null;
+  return hostPairs.map((pair, index) => combineFacingPair({ hostSide: pair, sinkSide: sinkPairs[index] }));
+}
+
 export async function main(args = process.argv.slice(2), { client = createProbeClient(), log = text => process.stdout.write(`${text}\n`), runAdbHost = createAdbHostRunner() } = {}) {
   const caseId = value(args, '--case') || 'S2';
   const seconds = Number(value(args, '--seconds') || 90);
@@ -243,6 +262,11 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // one on the fast mixer path and the other on the deep one would put the difference between the
   // paths straight into the alignment number.
   const lowLatency = args.includes('--low-latency');
+  // Deliberately NOT a both-or-neither flag: the host records unconditionally, so this only ever
+  // adds the second recording. What it buys is the flight time between the handsets, which the two
+  // recordings carry with opposite signs and which therefore cancels when they are combined - so
+  // --separation-m stops being load-bearing and becomes a cross-check against a measured distance.
+  const sinkRecords = args.includes('--sink-records');
   // Same both-or-neither rule as --low-latency, for the same reason: the alignment number is a
   // comparison between the two handsets, so a threshold applied to one loop only would put the
   // difference between the two loops straight into it.
@@ -296,6 +320,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   await requireBothSerialsAuthorized({ hostSerial, sinkSerial, runAdbHost });
   await requireBothDevicesAwake({ hostSerial, sinkSerial, runAdbHost });
   await grantRecordAudio({ serial: hostSerial, runAdbHost });
+  if (sinkRecords) await grantRecordAudio({ serial: sinkSerial, runAdbHost });
   const link = await measureLink({ serial: sinkSerial, address: hostAddress, runAdbHost });
   log(link.unavailable
     ? `link RTT           unavailable (${link.unavailable})`
@@ -304,7 +329,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
   await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,
@@ -324,15 +349,28 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // person at the terminal gets a clear failure line instead of a WAV-export stack trace.
   const failureCode = reports.host?.failureCode ?? reports.sink?.failureCode;
   let alignment = null;
+  let facing = null;
   if (mode === 'FULL' && !failureCode) {
     await client.exportNamedWav({ serial: hostSerial, caseId, fileName: 'calibration.wav', path: resolve(directory, 'calibration.wav') });
     await client.exportNamedWav({ serial: hostSerial, caseId, fileName: 'chirp.wav', path: resolve(directory, 'chirp.wav') });
+    const reference = readPcm16(await readFile(resolve(directory, 'chirp.wav')));
     alignment = readAlignment({
       recorded: readPcm16(await readFile(resolve(directory, 'calibration.wav'))),
-      reference: readPcm16(await readFile(resolve(directory, 'chirp.wav'))),
-      separationMetres, chirpRepeats, chirpIntervalSeconds
+      reference, separationMetres, chirpRepeats, chirpIntervalSeconds
     });
-    await writeFile(resolve(directory, 'alignment.json'), `${JSON.stringify(alignment, null, 2)}\n`, 'utf8');
+    if (sinkRecords) {
+      await client.exportNamedWav({ serial: sinkSerial, caseId, fileName: 'calibration.wav', path: resolve(directory, 'calibration-sink.wav') });
+      // Read with no separation on purpose: the single-sided correction assumes the host geometry
+      // and the sink's is its mirror, so applying it here would double the error rather than
+      // remove it. Combining the two sides takes the flight time out without being told it.
+      const sinkSide = readAlignment({
+        recorded: readPcm16(await readFile(resolve(directory, 'calibration-sink.wav'))),
+        reference, separationMetres: 0, chirpRepeats, chirpIntervalSeconds
+      });
+      facing = combineFacingRun({ hostSide: alignment, sinkSide });
+      await writeFile(resolve(directory, 'alignment-sink.json'), `${JSON.stringify(sinkSide, null, 2)}\n`, 'utf8');
+    }
+    await writeFile(resolve(directory, 'alignment.json'), `${JSON.stringify(facing ? { ...alignment, facing } : alignment, null, 2)}\n`, 'utf8');
   }
 
   if (failureCode) {
@@ -354,7 +392,22 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     if (measured.length > 1) log(`  within-session   spread ${(Math.max(...measured) - Math.min(...measured)).toFixed(3)} ms across ${measured.length} pairs`);
     log(`  of which air     ${alignment.propagationCorrectionMs.toFixed(3)} ms added back for ${separationMetres} m of separation`);
   }
-  return { reports, alignment, link };
+  if (facing) {
+    facing.forEach((pair, index) => {
+      const label = facing.length > 1 ? `two-sided error #${index + 1}` : 'two-sided error   ';
+      log(pair
+        ? `${label} ${pair.alignmentErrorMs.toFixed(3)} ms, over a measured ${pair.separationMetres.toFixed(2)} m`
+        : `${label} n/a  (one side of the pair could not be read)`);
+    });
+    // The distance is an independent reading of the same room, so a wide disagreement with the
+    // tape says something is wrong with the measurement chain itself, not with the alignment.
+    const measured = facing.filter(Boolean).map(pair => pair.separationMetres);
+    if (measured.length > 0) {
+      const mean = measured.reduce((total, value) => total + value, 0) / measured.length;
+      log(`  separation       measured ${mean.toFixed(2)} m against ${separationMetres} m entered`);
+    }
+  }
+  return { reports, alignment, facing, link };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -471,4 +471,50 @@ test('refuses a deadband that would put the loop under its own noise floor', asy
       /--deadband-frames/
     );
   }
+});
+
+test('--sink-records reaches the sink alone, and grants RECORD_AUDIO on both handsets', async () => {
+  const granted = [];
+  const runAdbHost = async call => {
+    if (call.args[2] === 'shell' && call.args[3] === 'pm') granted.push(call.args[1]);
+    return authorisedPairRunner()(call);
+  };
+  const calls = [];
+  const client = {
+    clearSyncArtifacts: async () => {},
+    startSync: async call => { calls.push(call); if (calls.length === 2) throw new Error('stop the run here'); }
+  };
+  await assert.rejects(
+    () => main(
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--sink-records'],
+      { client, runAdbHost, log: () => {} }
+    ),
+    /stop the run here/
+  );
+
+  // Only the sink is told to record - the host already does, unconditionally.
+  assert.deepEqual(calls.map(({ role, sinkRecords }) => [role, sinkRecords]), [['HOST', undefined], ['SINK', true]]);
+  assert.deepEqual(granted, [HOST_SERIAL, SINK_SERIAL]);
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, sinkRecords }) => [role, sinkRecords]), [['HOST', undefined], ['SINK', false]]);
+});
+
+test('combineFacingRun pairs the two recordings slice by slice', () => {
+  const pair = (errorMs, correctionMs = 0) => ({ alignmentErrorMs: errorMs, propagationCorrectionMs: correctionMs });
+  // Host reads E - D/c, sink reads E + D/c. Pair 1 is a 1ms error, pair 2 a -2ms one, both across
+  // the same 3ms of air - so a run that mispaired them would report 1ms and -2ms swapped or mixed.
+  const combined = combineFacingRun({
+    hostSide: { ...pair(-2), repeats: [pair(-2), pair(-5)] },
+    sinkSide: { ...pair(4), repeats: [pair(4), pair(1)] }
+  });
+
+  assert.deepEqual(combined.map(entry => entry.alignmentErrorMs), [1, -2]);
+  assert.deepEqual(combined.map(entry => entry.flightTimeMs), [3, 3]);
+});
+
+test('combineFacingRun refuses to pair up recordings that read a different number of pairs', () => {
+  const pair = errorMs => ({ alignmentErrorMs: errorMs, propagationCorrectionMs: 0 });
+  assert.equal(combineFacingRun({ hostSide: { ...pair(-2), repeats: [pair(-2), pair(-5)] }, sinkSide: pair(4) }), null);
+  assert.equal(combineFacingRun({ hostSide: pair(-2), sinkSide: null }), null);
 });
