@@ -82,6 +82,24 @@ class SyncRenderer(
      * doubled run-to-run scatter outside the playback layer; anything else puts them back in it.
      */
     @Volatile private var chirpTrimFrames: Int? = null
+
+    /**
+     * What each chirp repeat was released against, keyed by repeat index: its trim, the output
+     * depth in force, and the drift loop's filtered error - all read at the instant that repeat's
+     * first chunk was actually played, not when it was queued.
+     *
+     * Repeats exist to separate a per-session residual from a per-emission one, and the L batch
+     * settled that: two emissions sharing one clock session still scatter 0.628ms, which is 73% of
+     * the whole run-to-run variance, while the session-level term is not significant. The scatter
+     * is therefore made fresh for each emission, somewhere in this playback path - and these are
+     * the three quantities in it that can differ between two repeats of one run.
+     *
+     * Recording them per repeat turns the search into a paired comparison inside one session, where
+     * the device, the link, the clock offset and the placement are all held constant. That is a far
+     * stronger test than the run-to-run correlations that failed to find anything: those were
+     * diluted by the session-level term and by every common-mode difference between runs.
+     */
+    private val chirpPlays = java.util.concurrent.ConcurrentHashMap<Int, ChirpPlay>()
     /**
      * The output depth this device was working from when it released the chirp's first chunk, or
      * null if no chirp chunk was ever played.
@@ -298,7 +316,10 @@ class SyncRenderer(
      */
     private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats, trimFrames: Int, depthNanos: Long) {
         if (sequence >= CHIRP_SEQUENCE_BASE) {
-            if (sequence >= CHIRP_SEQUENCE_BASE + CHIRP_REPEAT_STRIDE) return
+            // Every repeat is measured on its own first chunk; only the first moves the window.
+            val repeat = (sequence - CHIRP_SEQUENCE_BASE) / CHIRP_REPEAT_STRIDE
+            chirpPlays.putIfAbsent(repeat, ChirpPlay(trimFrames, depthNanos, lastFilteredError))
+            if (repeat > 0) return
             if (chirpStartStats == null) {
                 chirpStartStats = statsBeforePoll
                 chirpTrimFrames = trimFrames
@@ -450,6 +471,16 @@ class SyncRenderer(
      * be checked against the number it was actually written for. Null - written out as JSON null
      * rather than a zero that would read as a clean segment - when no streamed chunk ever played.
      */
+    /** What each repeat was released against, in repeat order. Empty when no chirp ever played. */
+    private fun chirpPlaysJson(): String = chirpPlays.keys.sorted().joinToString(",", "[", "]") { repeat ->
+        val play = chirpPlays.getValue(repeat)
+        "{\"repeat\":$repeat,\"trimFrames\":${play.trimFrames}," +
+            "\"depthNanos\":${play.depthNanos},\"filteredErrorFrames\":${play.filteredErrorFrames}}"
+    }
+
+    /** One chirp repeat's release conditions. See [chirpPlays]. */
+    private class ChirpPlay(val trimFrames: Int, val depthNanos: Long, val filteredErrorFrames: Int)
+
     fun report(streamingSilenceFrames: Int?): String {
         val stats = scheduler.stats()
         return "{\"played\":${stats.played},\"droppedLate\":${stats.droppedLate}," +
@@ -460,6 +491,7 @@ class SyncRenderer(
             "\"reacquisitions\":$reacquisitions," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
             "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"},\"chirpDepthNanos\":${chirpDepthNanos ?: "null"}," +
+            "\"chirpPlays\":${chirpPlaysJson()}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
