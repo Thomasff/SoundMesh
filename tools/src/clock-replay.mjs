@@ -86,6 +86,25 @@ export function replay(exchanges, { windowSize = DEFAULT_WINDOW, bestCount = DEF
 }
 
 /**
+ * The estimate a run would have been converting through at [localNanos], on the asking device's own
+ * clock - the axis the recorded exchanges and a chirp's release instant are both on.
+ *
+ * Two details are what the run actually does rather than what the list looks like. An estimate
+ * becomes available when the reply lands, at t4, not when the request went out at t1. And a cycle
+ * whose fit is rejected does not clear the previous answer: the sink keeps the last estimate that
+ * succeeded, because falling back to nothing would mean converting through a raw local clock that
+ * is wrong by however far apart the two handsets were last booted.
+ */
+export function estimateInForceAt(steps, localNanos) {
+  let standing = null;
+  for (const step of steps) {
+    if (step.t4 > localNanos) break;
+    if (step.estimate !== null) standing = step.estimate;
+  }
+  return standing;
+}
+
+/**
  * Every [stride]-th exchange starting at [phase] - one of [stride] disjoint runs at [stride] times
  * the recorded interval.
  *

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { decimate, replay } from '../src/clock-replay.mjs';
+import { decimate, estimateInForceAt, replay } from '../src/clock-replay.mjs';
 
 // The same series as core/src/test/java/com/soundmesh/core/ClockReplayGoldenTest.kt, which pins what
 // the shipped estimator answers for it. The two must agree: an offline ranking of candidate designs
@@ -92,4 +92,38 @@ test('each estimate carries the instant it is anchored at, which is not the inst
   assert.equal(only.estimate.anchorT1, 3_500_000_000);
   assert.equal(only.estimate.driftPpm, 0);
   assert.equal(only.estimate.offsetNanos, 3_000_000_000);
+});
+
+test('reports the estimate a run would have been converting through at a given instant', () => {
+  // Pairing a chirp with the clock error it was released against is the one test of this change
+  // that a single run can settle: comparing scatter between runs cannot see a 12% change out of
+  // twelve chirps, and per-chirp differences are paired.
+  const steps = replay(SERIES);
+  const answered = steps.filter(step => step.estimate !== null);
+
+  // Nothing is in force until the first fit has come back, and it comes back at t4 - the reply's
+  // arrival - not at t1, when the request went out.
+  assert.equal(estimateInForceAt(steps, SERIES[0][0]), null);
+  assert.equal(estimateInForceAt(steps, answered[0].t4 - 1), null);
+  assert.deepEqual(estimateInForceAt(steps, answered[0].t4), answered[0].estimate);
+
+  // A cycle whose fit is rejected leaves the previous answer standing, exactly as the run does: its
+  // cache keeps the last estimate that succeeded rather than falling back to a raw local clock. The
+  // golden series cannot show this - its one rejection lands before any fit has succeeded - so the
+  // case is built: eight flat exchanges, then one with the shortest round trip of all and an offset
+  // 100 ms out, which the best-of cut is bound to keep and which tips the slope past the guard.
+  const flat = Array.from({ length: 8 }, (_, index) => {
+    const t1 = index * 1_000_000_000;
+    const t2 = t1 + 1_000_000 + 3_000_000_000;
+    return [t1, t2, t2, t2 - 3_000_000_000 + 1_000_000];
+  });
+  const rogueT2 = 8_000_000_000 + 500_000 + 3_100_000_000;
+  const withRogue = [...flat, [8_000_000_000, rogueT2, rogueT2, rogueT2 - 3_100_000_000 + 500_000]];
+  const disturbed = replay(withRogue);
+
+  assert.equal(disturbed.at(-1).estimate, null, 'the rogue exchange is meant to be rejected');
+  assert.equal(estimateInForceAt(disturbed, disturbed.at(-1).t4).offsetNanos, 3_000_000_000);
+
+  // Past the end of the run, the last answer is still the last answer.
+  assert.deepEqual(estimateInForceAt(steps, SERIES.at(-1)[3] + 1e12), answered.at(-1).estimate);
 });

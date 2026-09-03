@@ -318,7 +318,15 @@ class SyncRenderer(
         if (sequence >= CHIRP_SEQUENCE_BASE) {
             // Every repeat is measured on its own first chunk; only the first moves the window.
             val repeat = (sequence - CHIRP_SEQUENCE_BASE) / CHIRP_REPEAT_STRIDE
-            chirpPlays.putIfAbsent(repeat, ChirpPlay(trimFrames, depthNanos, lastFilteredError))
+            // Read the clock only on the repeat's first chunk, not on every chunk of it: the lambda
+            // runs only when this repeat is new. localNanos locates the release in the recorded
+            // exchange stream, whose t1 are on this same clock; offsetNanos is what the run actually
+            // converted through, which is not always the newest estimate - a cycle whose fit is
+            // rejected leaves the previous one standing.
+            chirpPlays.computeIfAbsent(repeat) {
+                val localNanos = System.nanoTime()
+                ChirpPlay(trimFrames, depthNanos, lastFilteredError, localNanos, hostNanosNow() - localNanos)
+            }
             if (repeat > 0) return
             if (chirpStartStats == null) {
                 chirpStartStats = statsBeforePoll
@@ -475,11 +483,20 @@ class SyncRenderer(
     private fun chirpPlaysJson(): String = chirpPlays.keys.sorted().joinToString(",", "[", "]") { repeat ->
         val play = chirpPlays.getValue(repeat)
         "{\"repeat\":$repeat,\"trimFrames\":${play.trimFrames}," +
-            "\"depthNanos\":${play.depthNanos},\"filteredErrorFrames\":${play.filteredErrorFrames}}"
+            "\"depthNanos\":${play.depthNanos},\"filteredErrorFrames\":${play.filteredErrorFrames}," +
+            "\"localNanos\":${play.localNanos},\"offsetNanos\":${play.offsetNanos}}"
     }
 
     /** One chirp repeat's release conditions. See [chirpPlays]. */
-    private class ChirpPlay(val trimFrames: Int, val depthNanos: Long, val filteredErrorFrames: Int)
+    private class ChirpPlay(
+        val trimFrames: Int,
+        val depthNanos: Long,
+        val filteredErrorFrames: Int,
+        /** This device's own clock at the release, which is the axis the recorded exchanges use. */
+        val localNanos: Long,
+        /** The host offset this release was converted through. Zero on the host, its own reference. */
+        val offsetNanos: Long
+    )
 
     fun report(streamingSilenceFrames: Int?): String {
         val stats = scheduler.stats()
