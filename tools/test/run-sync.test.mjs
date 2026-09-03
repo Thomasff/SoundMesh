@@ -657,6 +657,38 @@ test('--clock-interval-ms reaches the sink alone, and its absence leaves the run
   assert.deepEqual(plain.map(({ role, clockIntervalMs }) => [role, clockIntervalMs]), [['HOST', undefined], ['SINK', undefined]]);
 });
 
+test('--alignment-offset-ms reaches the sink alone, in microseconds and with its sign intact', async () => {
+  // Only the sink converts host time into local time, so only the sink has anything to correct -
+  // the host plays on its own clock. The value is the alignmentErrorMs a previous run reported,
+  // handed back verbatim, and the sign has to survive the trip: reversed, it would double the very
+  // error it is meant to cancel and the run would still look plausible.
+  const corrected = await startSyncCalls(['--alignment-offset-ms', '-34.744']);
+  assert.deepEqual(
+    corrected.map(({ role, alignmentOffsetMicros }) => [role, alignmentOffsetMicros]),
+    [['HOST', undefined], ['SINK', -34744]]
+  );
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(
+    plain.map(({ role, alignmentOffsetMicros }) => [role, alignmentOffsetMicros]),
+    [['HOST', undefined], ['SINK', undefined]]
+  );
+});
+
+test('refuses an alignment correction large enough to cross the two chirps', async () => {
+  // analyzeAlignment tells the chirps apart by the 500ms stagger. A correction at that scale moves
+  // the sink's chirp past the host's, and the pairing reverses without anything looking wrong.
+  for (const bad of ['250', '-250', '600', 'later']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--alignment-offset-ms', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+      ),
+      /--alignment-offset-ms/
+    );
+  }
+});
+
 test('refuses a clock cadence outside what the probe will honour', async () => {
   // The probe clamps silently to its own range, so a value it would ignore has to be refused here:
   // a run that quietly collected at 2000ms while its notes say 50ms is worse than one that failed.

@@ -71,6 +71,14 @@ const MAX_CLOCK_INTERVAL_MS = 10_000;
 export const MAX_CHIRP_REPEATS = 12;
 
 /**
+ * Ceiling on the magnitude of the standing alignment correction, in milliseconds. The two chirps
+ * are told apart by a 500 ms stagger, and the correction moves the sink's; at or past the stagger
+ * the peaks cross and analyzeAlignment's premise fails. Half the stagger leaves the ordering
+ * unambiguous while being an order of magnitude above the ~35 ms the pair actually needs.
+ */
+export const MAX_ALIGNMENT_OFFSET_MS = 250;
+
+/**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
  * at once here (the only task in this plan where that is true), so a mistyped or swapped serial
@@ -415,6 +423,20 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (clockIntervalRaw !== undefined && (!Number.isInteger(clockIntervalMs) || clockIntervalMs < MIN_CLOCK_INTERVAL_MS || clockIntervalMs > MAX_CLOCK_INTERVAL_MS)) {
     throw new Error(`--clock-interval-ms takes a whole number of milliseconds, ${MIN_CLOCK_INTERVAL_MS} to ${MAX_CLOCK_INTERVAL_MS}. Leave it out for the production cadence every measurement so far was taken on.`);
   }
+  // Standing correction for the fixed part of the acoustic error, sink only - the host plays on
+  // its own clock and has no host-time conversion to correct. Pass back the alignmentErrorMs a
+  // previous run reported, verbatim and with its sign; the sink subtracts it from its view of host
+  // time, so a negative error advances the sink and the next run should read near zero.
+  //
+  // Bounded by the stagger: a correction that large would move the sink's chirp past the host's and
+  // the two would stop being tellable apart, which analyzeAlignment relies on.
+  const alignmentOffsetRaw = value(args, '--alignment-offset-ms');
+  const alignmentOffsetMs = alignmentOffsetRaw === undefined ? undefined : Number(alignmentOffsetRaw);
+  if (alignmentOffsetRaw !== undefined && (!Number.isFinite(alignmentOffsetMs) || Math.abs(alignmentOffsetMs) >= MAX_ALIGNMENT_OFFSET_MS)) {
+    throw new Error(`--alignment-offset-ms takes a number of milliseconds, magnitude under ${MAX_ALIGNMENT_OFFSET_MS}. Pass back the alignmentErrorMs a previous run reported, sign and all. Leave it out for the uncorrected run every measurement so far was taken on.`);
+  }
+  const alignmentOffsetMicros = alignmentOffsetMs === undefined ? undefined : Math.round(alignmentOffsetMs * 1000);
+
   const deadbandRaw = value(args, '--deadband-frames');
   const deadbandFrames = deadbandRaw === undefined ? undefined : Number(deadbandRaw);
   if (deadbandRaw !== undefined && (!Number.isInteger(deadbandFrames) || deadbandFrames < MIN_DEADBAND_FRAMES)) {
@@ -447,7 +469,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
   await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

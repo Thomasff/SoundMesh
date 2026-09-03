@@ -246,6 +246,17 @@ class SyncActivity : Activity() {
         return if (requested in MIN_CLOCK_INTERVAL_MILLIS..MAX_CLOCK_INTERVAL_MILLIS) requested else DEFAULT_CLOCK_INTERVAL_MILLIS.toLong()
     }
 
+    /**
+     * Standing correction for the fixed part of the acoustic alignment error, in microseconds,
+     * as the previous run reported it in `alignmentErrorMs`. Zero, the default, leaves the run
+     * exactly where every measurement so far was taken.
+     *
+     * Negative values are meaningful - the measured error is about -34.7 ms - so this one has no
+     * positive-only guard, unlike the helpers around it.
+     */
+    private fun alignmentOffsetMicrosRequested(): Long =
+        intent.getIntExtra("alignment_offset_us", 0).toLong()
+
     private fun reacquireThresholdRequested(): Int {
         val requested = intent.getIntExtra("reacquire_threshold_frames", REACQUIRE_THRESHOLD_FRAMES)
         return if (requested > 0) requested else REACQUIRE_THRESHOLD_FRAMES
@@ -341,11 +352,23 @@ class SyncActivity : Activity() {
             if (fresh != null) cachedEstimate.set(fresh)
             return fresh ?: cachedEstimate.get()
         }
+        // Applied to the sink's whole view of host time, not to the chirp alone: the renderer
+        // releases audio chunks and chirps through this same conversion, so correcting it moves
+        // what the device actually plays. Shifting only the chirp would move the ruler instead.
+        //
+        // Attributing the entire error to the sink is a convention, not a finding - the acoustic
+        // measurement gives the difference between the two handsets and cannot say which one is
+        // late. The spec makes the host the reference and gives each sink its own offset.
+        //
+        // Sign: pass back the alignmentErrorMs a previous run reported. A negative error means the
+        // measured stagger came out short, so the sink emitted late; subtracting it advances this
+        // clock, the renderer finds each chunk due sooner, and the sink emits earlier by that much.
+        val alignmentOffsetNanos = alignmentOffsetMicrosRequested() * 1_000L
         val hostNanosNow: () -> Long = {
             // Never zero: with no estimate ever having succeeded there is no host time at all,
             // and inventing one is exactly the failure this whole path exists to detect.
             val estimate = latestEstimate() ?: throw ClockOffsetUnavailable()
-            System.nanoTime() + estimate.offsetNanos
+            System.nanoTime() + estimate.offsetNanos - alignmentOffsetNanos
         }
 
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
@@ -639,7 +662,8 @@ class SyncActivity : Activity() {
 
     private fun chirpScheduleJson(): String =
         "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}," +
-            "\"deadbandFrames\":${deadbandFramesRequested()}"
+            "\"deadbandFrames\":${deadbandFramesRequested()}," +
+            "\"alignmentOffsetMicros\":${alignmentOffsetMicrosRequested()}"
 
     private fun chirpTimingJson(timing: ChirpTiming): String =
         "\"chirpMissedByNanos\":${timing.missedByNanos}," +
