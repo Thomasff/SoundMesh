@@ -195,6 +195,34 @@ function readPcm16(buffer) {
   throw new Error('WAV has no data chunk');
 }
 
+/**
+ * Reads every chirp pair the run played out of the one recording that holds them all.
+ *
+ * One slice of the recording per pair: the probe spaces the pairs by exactly [chirpIntervalSeconds]
+ * in host time and the recording opens a fixed lead before the first, so slice i holds pair i and
+ * nothing else. Only the search for the louder of a pair is windowed - the partner is still looked
+ * for across the whole recording, so a pair straddling a slice boundary still reads correctly.
+ *
+ * A run without repeats searches the whole recording once and gains no `repeats` field, so it stays
+ * byte-identical in shape to every artifact stored before this option existed. When there are
+ * repeats the first pair still sits at the top level, for the same reason, and the rest are
+ * additive: their spread is what tells a per-session residual from a per-emission one.
+ */
+export function readAlignment({ recorded, reference, separationMetres, chirpRepeats, chirpIntervalSeconds }) {
+  const intervalFrames = (chirpIntervalSeconds ?? 0) * SAMPLE_RATE;
+  const repeats = [];
+  for (let index = 0; index < (chirpRepeats ?? 1); index++) {
+    repeats.push(analyzeAlignment({
+      recorded, reference,
+      sampleRate: SAMPLE_RATE, staggerFrames: STAGGER_FRAMES, searchRadiusFrames: SEARCH_RADIUS_FRAMES,
+      separationMetres,
+      searchFrom: index * intervalFrames,
+      searchTo: intervalFrames === 0 ? Infinity : (index + 1) * intervalFrames - 1
+    }));
+  }
+  return repeats.length > 1 ? { ...repeats[0], repeats } : repeats[0];
+}
+
 export async function main(args = process.argv.slice(2), { client = createProbeClient(), log = text => process.stdout.write(`${text}\n`), runAdbHost = createAdbHostRunner() } = {}) {
   const caseId = value(args, '--case') || 'S2';
   const seconds = Number(value(args, '--seconds') || 90);
@@ -281,11 +309,10 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (mode === 'FULL' && !failureCode) {
     await client.exportNamedWav({ serial: hostSerial, caseId, fileName: 'calibration.wav', path: resolve(directory, 'calibration.wav') });
     await client.exportNamedWav({ serial: hostSerial, caseId, fileName: 'chirp.wav', path: resolve(directory, 'chirp.wav') });
-    alignment = analyzeAlignment({
+    alignment = readAlignment({
       recorded: readPcm16(await readFile(resolve(directory, 'calibration.wav'))),
       reference: readPcm16(await readFile(resolve(directory, 'chirp.wav'))),
-      sampleRate: SAMPLE_RATE, staggerFrames: STAGGER_FRAMES, searchRadiusFrames: SEARCH_RADIUS_FRAMES,
-      separationMetres
+      separationMetres, chirpRepeats, chirpIntervalSeconds
     });
     await writeFile(resolve(directory, 'alignment.json'), `${JSON.stringify(alignment, null, 2)}\n`, 'utf8');
   }

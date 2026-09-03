@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment } from '../src/cli/run-sync.mjs';
+
+const SAMPLE_RATE = 48000;
+
+/** A deterministic sweep standing in for the chirp the probe saves alongside the recording. */
+function referenceSweep(frames = 5760) {
+  const out = new Int16Array(frames);
+  for (let index = 0; index < frames; index++) {
+    const t = index / SAMPLE_RATE;
+    const phase = 2 * Math.PI * (1000 * t + ((8000 - 1000) / 0.12) * t * t / 2);
+    const window = 0.5 * (1 - Math.cos(2 * Math.PI * index / (frames - 1)));
+    out[index] = Math.round(Math.sin(phase) * window * 12000);
+  }
+  return out;
+}
 
 const HOST_SERIAL = 'HOSTSERIALABC123';
 const SINK_SERIAL = 'SINKSERIALXYZ789';
@@ -412,4 +426,27 @@ test('refuses a repeat count or interval that would put two pairs in one search 
       /--chirp-repeats|--chirp-interval-s/
     );
   }
+});
+
+test('readAlignment slices one pair per repeat and keeps the first pair at the top level', () => {
+  // Pair 0 at the record lead, pair 1 one interval later, each a 24000 frame stagger and the
+  // second deliberately 96 frames wider so the two cannot be confused for one another.
+  const chirp = referenceSweep();
+  const recorded = new Int16Array(SAMPLE_RATE * 12);
+  const plant = offset => { for (let i = 0; i < chirp.length; i++) recorded[offset + i] += chirp[i]; };
+  const lead = SAMPLE_RATE;
+  plant(lead); plant(lead + 24000);
+  plant(lead + 5 * SAMPLE_RATE); plant(lead + 5 * SAMPLE_RATE + 24096);
+
+  const both = readAlignment({ recorded, reference: chirp, separationMetres: 0, chirpRepeats: 2, chirpIntervalSeconds: 5 });
+
+  assert.equal(both.repeats.length, 2);
+  assert.deepEqual(both.repeats.map(pair => pair.measuredStaggerFrames), [24000, 24096]);
+  assert.equal(both.measuredStaggerFrames, 24000, 'the first pair stays at the top level');
+
+  // A run without repeats searches the whole recording and gains no repeats field, so every
+  // artifact stored before this option existed keeps the exact same shape.
+  const single = readAlignment({ recorded, reference: chirp, separationMetres: 0 });
+  assert.equal(single.repeats, undefined);
+  assert.equal(single.measuredStaggerFrames, 24000);
 });
