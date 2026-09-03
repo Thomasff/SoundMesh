@@ -450,3 +450,25 @@ test('readAlignment slices one pair per repeat and keeps the first pair at the t
   assert.equal(single.repeats, undefined);
   assert.equal(single.measuredStaggerFrames, 24000);
 });
+
+test('--deadband-frames reaches both roles, and its absence leaves both on the production deadband', async () => {
+  const narrowed = await startSyncCalls(['--deadband-frames', '8']);
+  assert.deepEqual(narrowed.map(({ role, deadbandFrames }) => [role, deadbandFrames]), [['HOST', 8], ['SINK', 8]]);
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, deadbandFrames }) => [role, deadbandFrames]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('refuses a deadband that would put the loop under its own noise floor', async () => {
+  // The measured drift-sample noise floor is about 2.4 frames; a deadband at or below it makes the
+  // controller chase its own noise, which jitters worse than leaving the error uncorrected.
+  for (const bad of ['0', '-8', '2', '4.5']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--deadband-frames', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+      ),
+      /--deadband-frames/
+    );
+  }
+});

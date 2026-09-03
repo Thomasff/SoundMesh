@@ -187,6 +187,25 @@ class SyncActivity : Activity() {
      * the reacquire threshold: a zero repeat count would leave the recording with nothing to
      * correlate, and the PC side already refuses an interval too short to hold one pair per slice.
      */
+    /**
+     * The drift loop's deadband for this run, defaulting to DriftController's production
+     * [DriftController.DEFAULT_DEADBAND_FRAMES].
+     *
+     * Read off the intent for the same reason as the reacquire threshold: it is the leading
+     * explanation for the per-emission scatter and cannot be tested without being changeable from
+     * one build. The loop corrects nothing inside the band, so an emission lands wherever the
+     * uncorrected error happens to sit - a uniform draw across the 48 frame default has a standard
+     * deviation of 0.577 ms, against the 0.510 ms measured across twelve two-chirp sessions. If
+     * that is the mechanism, the scatter shrinks with the band.
+     *
+     * Non-positive values fall back rather than being honoured; the PC side already refuses
+     * anything under the loop's own measurement noise floor.
+     */
+    private fun deadbandFramesRequested(): Int {
+        val requested = intent.getIntExtra("deadband_frames", DriftController.DEFAULT_DEADBAND_FRAMES)
+        return if (requested > 0) requested else DriftController.DEFAULT_DEADBAND_FRAMES
+    }
+
     private fun chirpRepeatsRequested(): Int {
         val requested = intent.getIntExtra("chirp_repeats", 1)
         return if (requested > 0) requested else 1
@@ -206,7 +225,7 @@ class SyncActivity : Activity() {
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
-        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested(), reacquireThresholdRequested()) { System.nanoTime() }
+        val renderer = SyncRenderer(scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested()) { System.nanoTime() }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         try {
             clockServer.start()
@@ -300,7 +319,7 @@ class SyncActivity : Activity() {
         }
 
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
-        val renderer = SyncRenderer(scheduler, DriftController(), lowLatencyRequested(), reacquireThresholdRequested(), hostNanosNow)
+        val renderer = SyncRenderer(scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(), hostNanosNow)
         val lastPlayAt = AtomicLong(0L)
         // The spec requires playback not start before the offset estimate has converged, so
         // nothing is submitted to the scheduler until `converged` is set true below. Anything
@@ -550,7 +569,8 @@ class SyncActivity : Activity() {
      * one after the fact. The PC side slices the recording on exactly this interval.
      */
     private fun chirpScheduleJson(): String =
-        "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}"
+        "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}," +
+            "\"deadbandFrames\":${deadbandFramesRequested()}"
 
     private fun chirpTimingJson(timing: ChirpTiming): String =
         "\"chirpMissedByNanos\":${timing.missedByNanos}," +

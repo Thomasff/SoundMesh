@@ -47,6 +47,14 @@ const CAPTURE_SOURCES = ['MIC', 'VOICE_RECOGNITION', 'UNPROCESSED'];
 const MIN_CHIRP_INTERVAL_SECONDS = 5;
 
 /**
+ * Floor on the drift loop's deadband. DriftController's own comment puts the measured drift-sample
+ * noise floor at about a twentieth of its 48 frame default, so roughly 2.4 frames; at or below that
+ * the loop chases its own noise, which jitters worse than leaving the error uncorrected. Five keeps
+ * a narrowed run clear of it while still being a tenth of the production band.
+ */
+const MIN_DEADBAND_FRAMES = 5;
+
+/**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
  * at once here (the only task in this plan where that is true), so a mistyped or swapped serial
@@ -264,6 +272,16 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (intervalRaw !== undefined && (!Number.isInteger(chirpIntervalSeconds) || chirpIntervalSeconds < MIN_CHIRP_INTERVAL_SECONDS)) {
     throw new Error(`--chirp-interval-s takes a whole number of seconds, at least ${MIN_CHIRP_INTERVAL_SECONDS}: below that a slice of the recording cannot hold one pair on its own.`);
   }
+  // Both-or-neither, like the other loop overrides. The deadband is the leading explanation for the
+  // per-emission scatter: the loop corrects nothing inside +/-48 frames, so an emission lands
+  // wherever the uncorrected error happens to sit, and a uniform draw across that band has a
+  // standard deviation of 0.577 ms against the 0.510 ms measured. Narrowing it is the direct test -
+  // if the scatter is the band, it shrinks with the band.
+  const deadbandRaw = value(args, '--deadband-frames');
+  const deadbandFrames = deadbandRaw === undefined ? undefined : Number(deadbandRaw);
+  if (deadbandRaw !== undefined && (!Number.isInteger(deadbandFrames) || deadbandFrames < MIN_DEADBAND_FRAMES)) {
+    throw new Error(`--deadband-frames takes a whole number of frames, at least ${MIN_DEADBAND_FRAMES}: below that the drift loop chases its own measurement noise. Leave it out for the production band every measurement so far was taken on.`);
+  }
   if (!hostSerial || !sinkSerial || !hostAddress) throw new Error('Use --host-serial, --sink-serial and --host-address');
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S2');
   // No default is safe here. The host records its own chirp from a few centimetres away and the
@@ -284,9 +302,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     : `link RTT           min ${link.minMs} / avg ${link.avgMs} / max ${link.maxMs} ms, ${link.lossPercent}% loss`);
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,
