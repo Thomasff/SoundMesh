@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -539,4 +539,27 @@ test('a model query that fails leaves the provenance blank rather than losing th
     await readDeviceModels({ hostSerial: HOST_SERIAL, sinkSerial: SINK_SERIAL, runAdbHost }),
     { host: null, sink: null }
   );
+});
+
+test('the completion floor grows with the chirp schedule, not just the audio segment', () => {
+  // A run that repeats the chirp keeps playing long after the audio segment ends, and the report
+  // is not written until the last recording closes. Waiting only the audio segment made the
+  // harness give up mid-run and export a half-written WAV.
+  assert.equal(completionFloorSeconds({ seconds: 90 }), 95);
+  assert.equal(completionFloorSeconds({ seconds: 90, chirpRepeats: 2, chirpIntervalSeconds: 15 }), 110);
+  assert.equal(completionFloorSeconds({ seconds: 90, chirpRepeats: 4, chirpIntervalSeconds: 15 }), 140);
+});
+
+test('refuses to analyse a run whose handsets never reported, instead of exporting a half-written WAV', () => {
+  // The dangerous case is not the crash: a recording cut short can still hold both chirps and
+  // yield a plausible number from a run that never finished. An unreported role is a failed run.
+  assert.throws(
+    () => requireBothReports({ host: { unavailable: 'no such file' }, sink: { failureCode: null } }),
+    /Host never reported/
+  );
+  assert.throws(
+    () => requireBothReports({ host: { failureCode: null }, sink: { unavailable: 'no such file' } }),
+    /Sink never reported/
+  );
+  assert.doesNotThrow(() => requireBothReports({ host: { failureCode: null }, sink: { failureCode: null } }));
 });

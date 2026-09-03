@@ -191,6 +191,36 @@ export async function measureLink({ serial, address, runAdbHost, count = LINK_PR
  * is never cut short and the worst case is exactly what it was before. RunStore writes sync.json
  * through a temp file and a rename, so a poll can never catch a half-written report.
  */
+/**
+ * The earliest either handset can have written its report, in seconds from the run's start.
+ *
+ * The audio segment is only the first part of a run: the chirp schedule keeps playing after it,
+ * and the report is not written until the last recording closes. Leaving the repeats out of this
+ * made the harness give up mid-run - the polling budget hid it at two repeats and it broke at
+ * four, exporting a recording the probe was still writing.
+ */
+export function completionFloorSeconds({ seconds, chirpRepeats, chirpIntervalSeconds }) {
+  const scheduleSeconds = ((chirpRepeats ?? 1) - 1) * (chirpIntervalSeconds ?? 0);
+  return seconds + scheduleSeconds + COMPLETION_FLOOR_SECONDS;
+}
+
+/**
+ * Refuses a run where either handset never wrote its report.
+ *
+ * Not a courtesy check. A report missing at the end of the budget means the probe was still
+ * running, and the recording exported from under it can still hold both chirps and correlate into
+ * a perfectly plausible number - a failed run reported as a measurement. `failureCode` cannot
+ * catch this: an unavailable report has no fields at all, so the failure guard reads undefined and
+ * waves it through.
+ */
+export function requireBothReports(reports) {
+  for (const [role, name] of [['Host', 'host'], ['Sink', 'sink']]) {
+    if (reports[name]?.unavailable) {
+      throw new Error(`${role} never reported (${reports[name].unavailable}). The run did not finish; nothing has been analysed.`);
+    }
+  }
+}
+
 export async function awaitBothReports({ client, hostSerial, sinkSerial, caseId, floorMs, budgetMs, pollMs = 2000, sleep = wait }) {
   await sleep(floorMs);
   const roles = [['host', hostSerial], ['sink', sinkSerial]];
@@ -354,10 +384,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,
-    floorMs: (seconds + COMPLETION_FLOOR_SECONDS) * 1000,
+    floorMs: completionFloorSeconds({ seconds, chirpRepeats, chirpIntervalSeconds }) * 1000,
     budgetMs: COMPLETION_BUDGET_SECONDS * 1000
   });
-
   const directory = resolve(root, 'sync', caseId);
   await mkdir(directory, { recursive: true });
   // The link goes in the same artifact as the reports so a stored run always carries the condition
@@ -365,6 +394,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   const models = await readDeviceModels({ hostSerial, sinkSerial, runAdbHost });
   await writeFile(resolve(directory, 'sync-reports.json'), `${JSON.stringify({ link, models, ...reports }, null, 2)}\n`, 'utf8');
   log(`roles              host ${models.host ?? 'unknown'} / sink ${models.sink ?? 'unknown'}`);
+  // After the artifact is written, not before: a run that did not finish is still worth keeping the
+  // link and whatever did report, which is the only evidence of why it did not.
+  requireBothReports(reports);
 
   // The sink now waits (bounded at 40s) for its clock offset estimate to converge before it
   // plays anything; on that timeout sync.json carries a failureCode instead of estimates, and
