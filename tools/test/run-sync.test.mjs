@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -562,4 +562,52 @@ test('refuses to analyse a run whose handsets never reported, instead of exporti
     /Sink never reported/
   );
   assert.doesNotThrow(() => requireBothReports({ host: { failureCode: null }, sink: { failureCode: null } }));
+});
+
+test('anchors each later pair near where it is due, so the search cost does not grow with the interval', () => {
+  const chirp = referenceSweep();
+  const stagger = SAMPLE_RATE / 2;
+  const frames = SAMPLE_RATE * 130;
+  const recorded = new Int16Array(frames);
+  let seed = 11;
+  for (let index = 0; index < frames; index++) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    recorded[index] = Math.round(((seed / 0x7fffffff) - 0.5) * 80);
+  }
+  // Three pairs a minute apart. A slice-wide search would scan 2.88M lags per pair; anchored on
+  // the first pair it scans a fixed window regardless of how far apart they sit.
+  const interval = SAMPLE_RATE * 60;
+  const plant = (at, gain) => { for (let i = 0; i < chirp.length; i++) recorded[at + i] += chirp[i] * gain; };
+  for (let pair = 0; pair < 3; pair++) {
+    plant(48000 + pair * interval, 0.6);
+    plant(48000 + pair * interval + stagger + pair * 40, 0.6);
+  }
+
+  const read = readAlignment({ recorded, reference: chirp, separationMetres: 0, chirpRepeats: 3, chirpIntervalSeconds: 60 });
+
+  assert.equal(read.repeats.length, 3);
+  assert.deepEqual(read.repeats.map(p => p.confidence), ['OK', 'OK', 'OK']);
+  // Pair n was planted n*40 frames wide of the stagger, so the error must climb by 40 frames a pair.
+  assert.deepEqual(read.repeats.map(p => p.measuredStaggerFrames - stagger), [0, 40, 80]);
+});
+
+test('pairSearchWindow bounds a later pair near where the first one puts it', () => {
+  const interval = SAMPLE_RATE * 60;
+  // Without an anchor there is nothing better than the pair's own slice.
+  assert.deepEqual(pairSearchWindow({ pairIndex: 0, intervalFrames: interval, anchorIndex: null }),
+    { searchFrom: 0, searchTo: interval - 1 });
+  assert.deepEqual(pairSearchWindow({ pairIndex: 2, intervalFrames: interval, anchorIndex: null }),
+    { searchFrom: 2 * interval, searchTo: 3 * interval - 1 });
+  // A run with no repeats at all keeps searching the whole recording.
+  assert.deepEqual(pairSearchWindow({ pairIndex: 0, intervalFrames: 0, anchorIndex: null }),
+    { searchFrom: 0, searchTo: Infinity });
+
+  // With the first pair located, pair 2 is due exactly two intervals later, so the window is a
+  // fixed radius around that - the same width whether the pairs sit 5 seconds or 5 minutes apart.
+  const w = pairSearchWindow({ pairIndex: 2, intervalFrames: interval, anchorIndex: 48000 });
+  assert.equal(w.searchTo - w.searchFrom, 2 * ANCHOR_RADIUS_FRAMES);
+  assert.equal((w.searchFrom + w.searchTo) / 2, 48000 + 2 * interval);
+  // The first pair is the anchor; it cannot be anchored on itself.
+  assert.deepEqual(pairSearchWindow({ pairIndex: 0, intervalFrames: interval, anchorIndex: 48000 }),
+    { searchFrom: 0, searchTo: interval - 1 });
 });

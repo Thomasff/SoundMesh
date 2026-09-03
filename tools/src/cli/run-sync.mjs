@@ -255,6 +255,40 @@ function readPcm16(buffer) {
 }
 
 /**
+ * Half-width of the window a later pair is looked for in, once the first pair has been located.
+ *
+ * Half a second is far wider than anything that can move a pair inside a run: the whole point of
+ * the drift loop is to hold the two handsets together to within milliseconds, and even a loop that
+ * had given up entirely would need 100 ppm running for over an hour to travel this far. It is also
+ * comfortably inside the shortest interval the CLI accepts, so a window can never reach a
+ * neighbouring pair.
+ */
+export const ANCHOR_RADIUS_FRAMES = SAMPLE_RATE / 2;
+
+/**
+ * Where to look for pair [pairIndex], given where the first pair turned out to be.
+ *
+ * Without an anchor the only bound is the pair's own slice of the recording, and that slice is as
+ * long as the interval - so the search cost grows with how far apart the pairs are asked to sit.
+ * That is what stopped a run from spanning more than a couple of minutes: three pairs a minute
+ * apart already took a minute to read, and the question worth asking next (does the alignment hold
+ * over the length of a song, or a party?) needs pairs spread over far longer than that.
+ *
+ * With the first pair located, every later one is due exactly [pairIndex] intervals after it, so a
+ * fixed radius around that instant bounds the search no matter how long the interval is.
+ */
+export function pairSearchWindow({ pairIndex, intervalFrames, anchorIndex }) {
+  if (anchorIndex !== null && pairIndex > 0) {
+    const due = anchorIndex + pairIndex * intervalFrames;
+    return { searchFrom: due - ANCHOR_RADIUS_FRAMES, searchTo: due + ANCHOR_RADIUS_FRAMES };
+  }
+  return {
+    searchFrom: pairIndex * intervalFrames,
+    searchTo: intervalFrames === 0 ? Infinity : (pairIndex + 1) * intervalFrames - 1
+  };
+}
+
+/**
  * Reads every chirp pair the run played out of the one recording that holds them all.
  *
  * One slice of the recording per pair: the probe spaces the pairs by exactly [chirpIntervalSeconds]
@@ -269,15 +303,21 @@ function readPcm16(buffer) {
  */
 export function readAlignment({ recorded, reference, separationMetres, chirpRepeats, chirpIntervalSeconds }) {
   const intervalFrames = (chirpIntervalSeconds ?? 0) * SAMPLE_RATE;
+  const read = window => analyzeAlignment({
+    recorded, reference,
+    sampleRate: SAMPLE_RATE, staggerFrames: STAGGER_FRAMES, searchRadiusFrames: SEARCH_RADIUS_FRAMES,
+    separationMetres, ...window
+  });
   const repeats = [];
+  let anchorIndex = null;
   for (let index = 0; index < (chirpRepeats ?? 1); index++) {
-    repeats.push(analyzeAlignment({
-      recorded, reference,
-      sampleRate: SAMPLE_RATE, staggerFrames: STAGGER_FRAMES, searchRadiusFrames: SEARCH_RADIUS_FRAMES,
-      separationMetres,
-      searchFrom: index * intervalFrames,
-      searchTo: intervalFrames === 0 ? Infinity : (index + 1) * intervalFrames - 1
-    }));
+    const slice = pairSearchWindow({ pairIndex: index, intervalFrames, anchorIndex: null });
+    const anchored = anchorIndex === null ? null : read(pairSearchWindow({ pairIndex: index, intervalFrames, anchorIndex }));
+    // Falls back to the pair's whole slice whenever the anchored window came up empty, so a drift
+    // wider than the radius costs time rather than a lost measurement.
+    const pair = anchored?.confidence === 'OK' ? anchored : read(slice);
+    if (index === 0 && pair.confidence === 'OK') anchorIndex = pair.firstIndex;
+    repeats.push(pair);
   }
   return repeats.length > 1 ? { ...repeats[0], repeats } : repeats[0];
 }
