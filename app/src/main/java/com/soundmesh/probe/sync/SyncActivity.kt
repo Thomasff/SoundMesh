@@ -1,6 +1,10 @@
 package com.soundmesh.probe.sync
 
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.TextView
@@ -16,6 +20,7 @@ import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStatsWindow
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.core.schedulerStatsWindow
+import com.soundmesh.probe.AndroidPlaybackReader
 import com.soundmesh.probe.ProbeCase
 import com.soundmesh.probe.RunStore
 import java.util.concurrent.atomic.AtomicBoolean
@@ -65,18 +70,62 @@ class SyncActivity : Activity() {
         val role = intent.getStringExtra("role")
         val seconds = intent.getIntExtra("seconds", -1)
         val mode = intent.getStringExtra("mode")
-        if (caseId == null || !ProbeCase.isSafeCaseId(caseId) || role !in setOf("HOST", "SINK") ||
+        if (caseId == null || !ProbeCase.isSafeCaseId(caseId) || role == null || role !in setOf("HOST", "SINK") ||
             seconds !in 10..900 || mode == null || mode !in setOf("CLOCK_ONLY", "FULL")
         ) {
             statusView.text = "REJECTED"
             return
         }
+        // A capture run needs the user's MediaProjection consent before it can produce a single
+        // frame, and consent is a dialog. The run is therefore deferred to onActivityResult; every
+        // other run starts here exactly as it always has.
+        val capturePackage = capturePackageRequested()
+        if (role == "HOST" && mode == "FULL" && capturePackage != null) {
+            pendingRun = PendingRun(caseId, seconds)
+            statusView.text = "HOST AWAITING CAPTURE CONSENT"
+            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
+            return
+        }
+        startRun(role, mode, caseId, seconds, null)
+    }
+
+    private class PendingRun(val caseId: String, val seconds: Int)
+
+    private var pendingRun: PendingRun? = null
+
+    /**
+     * The PC waits on sync.json, so a denied dialog has to leave one behind. Without this the run
+     * would simply never report and the harness would blame its own timeout budget.
+     */
+    @Deprecated("Activity result API is sufficient for this one-time platform consent boundary.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_MEDIA_PROJECTION) return
+        val pending = pendingRun ?: return
+        pendingRun = null
+        if (resultCode != RESULT_OK || data == null) {
+            runStore.writeSyncJson(pending.caseId, "{\"schemaVersion\":1,\"role\":\"HOST\",\"failureCode\":\"CAPTURE_CONSENT_DENIED\"}")
+            statusView.text = "HOST DONE"
+            return
+        }
+        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val projection = manager.getMediaProjection(resultCode, data)
+        if (projection == null) {
+            runStore.writeSyncJson(pending.caseId, "{\"schemaVersion\":1,\"role\":\"HOST\",\"failureCode\":\"CAPTURE_PROJECTION_UNAVAILABLE\"}")
+            statusView.text = "HOST DONE"
+            return
+        }
+        startRun("HOST", "FULL", pending.caseId, pending.seconds, projection)
+    }
+
+    private fun startRun(role: String, mode: String, caseId: String, seconds: Int, projection: MediaProjection?) {
         statusView.text = "$role RUNNING"
         Thread {
             // Both branches write their own sync.json on success (CLOCK_ONLY inline below, FULL
             // inside runHostFull/runSinkFull); this thread only needs to cover failures.
             val failure = runCatching {
-                if (role == "HOST") runHost(mode, caseId, seconds) else runSink(mode, caseId, seconds)
+                if (role == "HOST") runHost(mode, caseId, seconds, projection) else runSink(mode, caseId, seconds)
             }.exceptionOrNull()
             // A missing clock offset gets a named code rather than an exception class name: it is
             // the one failure that used to be silently absorbed as an offset of zero.
@@ -95,7 +144,7 @@ class SyncActivity : Activity() {
         }.start()
     }
 
-    private fun runHost(mode: String, caseId: String, seconds: Int) {
+    private fun runHost(mode: String, caseId: String, seconds: Int, projection: MediaProjection?) {
         if (mode == "CLOCK_ONLY") {
             val server = ClockSyncServer(CLOCK_PORT)
             server.start()
@@ -103,7 +152,7 @@ class SyncActivity : Activity() {
             server.stop()
             runStore.writeSyncJson(caseId, "{\"schemaVersion\":1,\"role\":\"HOST\",\"failureCode\":null}")
         } else {
-            runHostFull(caseId, seconds)
+            runHostFull(caseId, seconds, projection)
         }
     }
 
@@ -257,22 +306,41 @@ class SyncActivity : Activity() {
     private fun alignmentOffsetMicrosRequested(): Long =
         intent.getIntExtra("alignment_offset_us", 0).toLong()
 
+    /**
+     * Package whose playback the host captures and streams, or null for the generated tone every
+     * measurement so far was taken on. Its presence is the switch; run-sync validates the shape and
+     * refuses the probe's own package, which would feed the host's output back into itself.
+     */
+    private fun capturePackageRequested(): String? = intent.getStringExtra("capture_package")
+
     private fun reacquireThresholdRequested(): Int {
         val requested = intent.getIntExtra("reacquire_threshold_frames", REACQUIRE_THRESHOLD_FRAMES)
         return if (requested > 0) requested else REACQUIRE_THRESHOLD_FRAMES
     }
 
-    private fun runHostFull(caseId: String, seconds: Int) {
+    /**
+     * The stop callback only records the fact. Tearing the run down from the projection's own
+     * thread would race the loop that is mid-chunk; the loop notices on its next read, which
+     * returns nothing once the recorder is gone.
+     */
+    private fun openCapture(projection: MediaProjection): CaptureChunkSource =
+        CaptureChunkSource.open(this, projection, capturePackageRequested()!!) { captureStopped.set(true) }
+
+    private val captureStopped = AtomicBoolean(false)
+
+    private fun runHostFull(caseId: String, seconds: Int, projection: MediaProjection?) {
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
         val renderer = SyncRenderer(scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested()) { System.nanoTime() }
         val hostNanosNow: () -> Long = { System.nanoTime() }
+        var capture: CaptureChunkSource? = null
         try {
             clockServer.start()
             chunkServer.start()
 
             val source = TonePcmSource()
+            capture = projection?.let { openCapture(it) }
             val audioStart = System.nanoTime()
             val until = audioStart + seconds * 1_000_000_000L
             var lastPlayAtHostNanos = until
@@ -283,18 +351,37 @@ class SyncActivity : Activity() {
 
             var sequence = 0
             var frameIndex = 0L
+            var captureAnchorNanos = 0L
             while (System.nanoTime() < until) {
-                val pcm = source.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)
-                val playAt = System.nanoTime() + LEAD_NANOS
+                // Two paces, one loop. The generator has none of its own, so it is held to the
+                // timeline by sleeping to the next chunk boundary. Capture has the device's own: a
+                // full chunk only exists once the recorder has produced it, so the read blocks for
+                // exactly as long as the chunk lasts and the sleep would be counted twice.
+                val pcm = if (capture != null) (capture.readChunk() ?: break)
+                    else source.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)
+                // The generator's sleep advances the clock by exactly one chunk per pass, so reading
+                // it fresh each time and anchoring to the first chunk come to the same instants.
+                // Capture has no such guarantee: a stalled pass leaves the recorder holding several
+                // chunks, the reads that follow return at once, and every one of them would be
+                // stamped with nearly the same instant. Anchoring keeps the timeline the timeline;
+                // a loop that falls too far behind then reports droppedLate instead of colliding.
+                val playAt = if (capture != null) {
+                    if (captureAnchorNanos == 0L) captureAnchorNanos = System.nanoTime() + LEAD_NANOS
+                    captureAnchorNanos + sequence * SyncRenderer.CHUNK_NANOS
+                } else {
+                    System.nanoTime() + LEAD_NANOS
+                }
                 val chunk = AudioChunk(sequence, playAt, pcm)
                 lastPlayAtHostNanos = playAt
                 chunkServer.broadcast(chunk)
                 scheduler.submit(chunk)
                 sequence++
                 frameIndex += SyncRenderer.FRAMES_PER_CHUNK
-                val nextAt = audioStart + frameIndex * 1_000_000_000L / SyncRenderer.SAMPLE_RATE
-                val sleepNanos = nextAt - System.nanoTime()
-                if (sleepNanos > 0) Thread.sleep(sleepNanos / 1_000_000, (sleepNanos % 1_000_000).toInt())
+                if (capture == null) {
+                    val nextAt = audioStart + frameIndex * 1_000_000_000L / SyncRenderer.SAMPLE_RATE
+                    val sleepNanos = nextAt - System.nanoTime()
+                    if (sleepNanos > 0) Thread.sleep(sleepNanos / 1_000_000, (sleepNanos % 1_000_000).toInt())
+                }
             }
 
             // Both devices derive the sink's chirp instant from the same wire value - the last
@@ -324,11 +411,16 @@ class SyncActivity : Activity() {
                     "\"audioSource\":${calibration.openedSource?.let { "\"$it\"" } ?: "null"}," +
                     "${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
+                    // A captured run and a generated one are not comparable, and nothing else in
+                    // the report distinguishes them. Same reason alignmentOffsetMicros is echoed.
+                    "\"capturePackage\":${capturePackageRequested()?.let { "\"$it\"" } ?: "null"}," +
+                    "\"captureStopped\":${captureStopped.get()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
                     "\"renderer\":${renderer.report(renderer.lastStreamingStats()?.silenceFrames)}}"
             )
         } finally {
+            capture?.close()
             chunkServer.stop()
             clockServer.stop()
         }
@@ -741,6 +833,7 @@ class SyncActivity : Activity() {
         const val CHUNK_PORT = 45124
 
         /** playAtHostNanos = generation instant + this lead. */
+        private const val REQUEST_MEDIA_PROJECTION = 41
         private const val LEAD_NANOS = 1_500_000_000L
 
         /** Gap between the last audio chunk and the sink's calibration chirp. */

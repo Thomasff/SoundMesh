@@ -689,6 +689,28 @@ test('refuses an alignment correction large enough to cross the two chirps', asy
   }
 });
 
+test('--capture-package reaches the host alone, because only the host captures', async () => {
+  const requested = await startSyncCalls(['--capture-package', 'com.tencent.qqmusic']);
+  assert.deepEqual(requested.map(({ role, capturePackage }) => [role, capturePackage]), [['HOST', 'com.tencent.qqmusic'], ['SINK', undefined]]);
+
+  // The sink plays what the host sends it. A sink told to capture would be capturing its own
+  // output, which is the feedback loop this flag exists to avoid on the host side too.
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, capturePackage }) => [role, capturePackage]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('refuses a capture package that is not a package name, and refuses the probe capturing itself', async () => {
+  for (const bad of ['', 'no-dots', 'com..empty', 'com.soundmesh.probe', 'com.a; rm -rf /']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--capture-package', bad],
+        { client: { clearSyncArtifacts: async () => {}, startSync: async () => {} }, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+      ),
+      /--capture-package/
+    );
+  }
+});
+
 test('refuses a clock cadence outside what the probe will honour', async () => {
   // The probe clamps silently to its own range, so a value it would ignore has to be refused here:
   // a run that quietly collected at 2000ms while its notes say 50ms is worse than one that failed.

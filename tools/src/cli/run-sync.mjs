@@ -79,6 +79,13 @@ export const MAX_CHIRP_REPEATS = 12;
 export const MAX_ALIGNMENT_OFFSET_MS = 250;
 
 /**
+ * Shape of an Android package name: dot separated segments, each starting with a letter. Deliberately
+ * strict - the value travels into an `am start` argument list on the handset, so anything that is not
+ * a package name has no business getting that far.
+ */
+const PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+
+/**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
  * at once here (the only task in this plan where that is true), so a mistyped or swapped serial
@@ -437,6 +444,17 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   }
   const alignmentOffsetMicros = alignmentOffsetMs === undefined ? undefined : Math.round(alignmentOffsetMs * 1000);
 
+  // The package whose playback the host captures and streams in place of the generated tone. Its
+  // presence is the switch: without it the host generates, which is what every measurement so far
+  // was taken on.
+  //
+  // The probe's own package is refused because the host plays back the very stream it is capturing.
+  // Capturing itself is a feedback loop, and it would run and build a file rather than fail.
+  const capturePackage = value(args, '--capture-package');
+  if (capturePackage !== undefined && (!PACKAGE_NAME.test(capturePackage) || capturePackage === PROBE_PACKAGE)) {
+    throw new Error(`--capture-package takes the package name of the app whose audio the host should stream, such as com.tencent.qqmusic. It cannot be ${PROBE_PACKAGE}: the host plays what it captures, so capturing the probe feeds its own output back into itself.`);
+  }
+
   const deadbandRaw = value(args, '--deadband-frames');
   const deadbandFrames = deadbandRaw === undefined ? undefined : Number(deadbandRaw);
   if (deadbandRaw !== undefined && (!Number.isInteger(deadbandFrames) || deadbandFrames < MIN_DEADBAND_FRAMES)) {
@@ -467,7 +485,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     : `link RTT           min ${link.minMs} / avg ${link.avgMs} / max ${link.maxMs} ms, ${link.lossPercent}% loss`);
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage });
   await wait(2000);
   await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
