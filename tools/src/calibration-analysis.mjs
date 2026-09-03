@@ -67,8 +67,13 @@ export function findArrival(recorded, reference, { searchFrom, searchTo }) {
  * real failures - a genuine +3 ms error at one metre reads as +0.1 ms, a clean pass. Design
  * section 10.1 requires this propagation time to be taken back out, and there is no safe
  * default to assume it away with.
+ *
+ * [searchFrom, searchTo] bound where the louder of the pair is looked for, and default to the whole
+ * recording. A run that repeats the chirp inside one clock session puts several pairs in one file,
+ * and only a window tells them apart - the partner is still searched for across the whole
+ * recording, so a pair whose members straddle the window boundary is still read correctly.
  */
-export function analyzeAlignment({ recorded, reference, sampleRate, staggerFrames, searchRadiusFrames, separationMetres }) {
+export function analyzeAlignment({ recorded, reference, sampleRate, staggerFrames, searchRadiusFrames, separationMetres, searchFrom = 0, searchTo = Infinity }) {
   if (!Number.isFinite(separationMetres) || separationMetres < 0) {
     throw new Error('separationMetres is required: the measured distance between the two handsets, in metres');
   }
@@ -80,7 +85,7 @@ export function analyzeAlignment({ recorded, reference, sampleRate, staggerFrame
   if (searchRadiusFrames >= staggerFrames) {
     throw new Error('searchRadiusFrames must be smaller than staggerFrames, or the two chirps can be mistaken for each other');
   }
-  const best = findArrival(recorded, reference, { searchFrom: 0, searchTo: recorded.length });
+  const best = findArrival(recorded, reference, { searchFrom, searchTo: Math.min(searchTo, recorded.length) });
   const window = centre => findArrival(recorded, reference, {
     searchFrom: centre - searchRadiusFrames,
     searchTo: centre + searchRadiusFrames

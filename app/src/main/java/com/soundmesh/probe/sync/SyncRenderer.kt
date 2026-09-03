@@ -289,9 +289,16 @@ class SyncRenderer(
      * this chunk, so the window opens just short of the chirp's first chunk and closes after its
      * last; [streamingEndStats] keeps the streaming segment's real end, which is up to the whole
      * output lead later than the instant the caller stopped submitting.
+     *
+     * A run that repeats the chirp gives each repeat its own [CHIRP_REPEAT_STRIDE] band of
+     * sequences, and only the first band moves these boundaries. Letting a later repeat close the
+     * window would stretch it across the whole interval between them, whose seconds of by-design
+     * silence bury the single missing chunk the window exists to catch - and would leave the
+     * reported numbers incomparable with every run taken before repeats existed.
      */
     private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats, trimFrames: Int, depthNanos: Long) {
         if (sequence >= CHIRP_SEQUENCE_BASE) {
+            if (sequence >= CHIRP_SEQUENCE_BASE + CHIRP_REPEAT_STRIDE) return
             if (chirpStartStats == null) {
                 chirpStartStats = statsBeforePoll
                 chirpTrimFrames = trimFrames
@@ -475,6 +482,14 @@ class SyncRenderer(
          * streamed audio when the chirp window's boundaries are recorded.
          */
         const val CHIRP_SEQUENCE_BASE = 1_000_000
+
+        /**
+         * Sequences per chirp repeat. A run that plays the chirp several times inside one clock
+         * session gives repeat n the band starting at [CHIRP_SEQUENCE_BASE] + n * this, which is
+         * how [recordPlayedBoundary] keeps the reported chirp window on the first repeat alone.
+         * Far wider than the six chunks a sweep occupies, so the bands cannot run into each other.
+         */
+        const val CHIRP_REPEAT_STRIDE = 1_000
 
         private const val DEFAULT_DEPTH_NANOS = 200_000_000L
 

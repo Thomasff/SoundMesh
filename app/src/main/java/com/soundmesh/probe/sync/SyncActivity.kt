@@ -172,6 +172,31 @@ class SyncActivity : Activity() {
     private fun calibrationAudioSourceRequested(): CalibrationAudioSource =
         CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
 
+    /**
+     * How many chirp pairs this run plays, and how far apart, defaulting to the single pair every
+     * measurement so far was taken on.
+     *
+     * Repeating the chirp inside ONE clock session is the only way to tell a per-session residual
+     * from a per-emission one. Every pair in a run is scheduled against the same clock offset
+     * estimate, so a residual coming from that estimate shifts them all together and cancels out of
+     * their spread, while jitter in the playout path is redrawn for each pair and does not. Pairs
+     * agreeing far better than separate runs do puts the run-to-run scatter in the clock layer;
+     * pairs scattering just as widely puts it in the playout path.
+     *
+     * Non-positive values fall back to the default rather than being honoured, on the same terms as
+     * the reacquire threshold: a zero repeat count would leave the recording with nothing to
+     * correlate, and the PC side already refuses an interval too short to hold one pair per slice.
+     */
+    private fun chirpRepeatsRequested(): Int {
+        val requested = intent.getIntExtra("chirp_repeats", 1)
+        return if (requested > 0) requested else 1
+    }
+
+    private fun chirpIntervalNanosRequested(): Long {
+        val requested = intent.getIntExtra("chirp_interval_seconds", 0)
+        return if (requested > 0) requested * 1_000_000_000L else 0L
+    }
+
     private fun reacquireThresholdRequested(): Int {
         val requested = intent.getIntExtra("reacquire_threshold_frames", REACQUIRE_THRESHOLD_FRAMES)
         return if (requested > 0) requested else REACQUIRE_THRESHOLD_FRAMES
@@ -216,7 +241,7 @@ class SyncActivity : Activity() {
             // chunk's playAtHostNanos - so they agree on it without another message.
             val sinkChirpAt = lastPlayAtHostNanos + CALIBRATION_GAP_NANOS
             val hostChirpAt = sinkChirpAt + STAGGER_NANOS
-            val chirpSubmission = submitChirp(scheduler, renderer, hostChirpAt)
+            val chirpSubmission = submitChirp(scheduler, renderer, hostChirpAt, chirpRepeatsRequested(), chirpIntervalNanosRequested())
             // The renderer started on a provisional bound; only now is the chirp's end known.
             renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
 
@@ -238,6 +263,7 @@ class SyncActivity : Activity() {
                     // fallback and the artifact has to say which path produced the number.
                     "\"audioSource\":${calibration.openedSource?.let { "\"$it\"" } ?: "null"}," +
                     "${chirpTimingJson(chirpTiming)}," +
+                    "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
                     "\"renderer\":${renderer.report(renderer.lastStreamingStats()?.silenceFrames)}}"
@@ -348,7 +374,7 @@ class SyncActivity : Activity() {
             // than left idling on the generous bound it started with.
             val observed = lastPlayAt.get()
             val chirpAt = (if (observed > 0) observed else hostNanosNow()) + CALIBRATION_GAP_NANOS
-            val chirpSubmission = submitChirp(scheduler, renderer, chirpAt)
+            val chirpSubmission = submitChirp(scheduler, renderer, chirpAt, chirpRepeatsRequested(), chirpIntervalNanosRequested())
             renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
             val chirpTiming = awaitChirpStart(chirpAt, hostNanosNow)
             rendererThread.join()
@@ -360,6 +386,7 @@ class SyncActivity : Activity() {
                 "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\"," +
                     "\"failureCode\":${topLevelFailureCodeJson(renderer, chirpSubmission, chirpTiming, chirpWindow)}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
+                    "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
                     "\"estimates\":${estimatesJson(history)}," +
@@ -384,13 +411,27 @@ class SyncActivity : Activity() {
      * nothing about where the loop stood at the moment the chirp was actually queued, which is the
      * number that matters.
      */
-    private fun submitChirp(scheduler: PlaybackScheduler, renderer: SyncRenderer, startHostNanos: Long): ChirpSubmission {
+    private fun submitChirp(
+        scheduler: PlaybackScheduler,
+        renderer: SyncRenderer,
+        startHostNanos: Long,
+        repeats: Int,
+        intervalNanos: Long
+    ): ChirpSubmission {
         val chunks = ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK)
-        chunks.forEachIndexed { index, pcm ->
-            scheduler.submit(AudioChunk(SyncRenderer.CHIRP_SEQUENCE_BASE + index, startHostNanos + index * SyncRenderer.CHUNK_NANOS, pcm))
+        // All repeats are queued here, in one go, seconds ahead of the first. The scheduler holds
+        // them until each is due, so a later repeat costs nothing but queue space - and queueing
+        // them together is what keeps every pair on one submission-time snapshot of the loop.
+        for (repeat in 0 until repeats) {
+            val repeatStart = startHostNanos + repeat * intervalNanos
+            val sequenceBase = SyncRenderer.CHIRP_SEQUENCE_BASE + repeat * SyncRenderer.CHIRP_REPEAT_STRIDE
+            chunks.forEachIndexed { index, pcm ->
+                scheduler.submit(AudioChunk(sequenceBase + index, repeatStart + index * SyncRenderer.CHUNK_NANOS, pcm))
+            }
         }
         return ChirpSubmission(
-            endHostNanos = startHostNanos + chunks.size * SyncRenderer.CHUNK_NANOS,
+            // The last repeat's end: it is what the recording and the renderer have to outlive.
+            endHostNanos = startHostNanos + (repeats - 1) * intervalNanos + chunks.size * SyncRenderer.CHUNK_NANOS,
             phase = renderer.phase(),
             filteredErrorFrames = renderer.filteredErrorFrames(),
             acquisitionDurationNanos = renderer.acquisitionDurationNanos()
@@ -502,6 +543,14 @@ class SyncActivity : Activity() {
             ?: if (timing.missedByNanos > 0 || timing.wakeOvershootNanos > CHIRP_WAKE_TOLERANCE_NANOS) "CHIRP_DEADLINE_MISSED" else null
         return code?.let { "\"$it\"" } ?: "null"
     }
+
+    /**
+     * What the run actually played, not what it was asked for: a non-positive extra falls back, so
+     * the artifact has to carry the honoured values or a repeats run cannot be told from a plain
+     * one after the fact. The PC side slices the recording on exactly this interval.
+     */
+    private fun chirpScheduleJson(): String =
+        "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}"
 
     private fun chirpTimingJson(timing: ChirpTiming): String =
         "\"chirpMissedByNanos\":${timing.missedByNanos}," +

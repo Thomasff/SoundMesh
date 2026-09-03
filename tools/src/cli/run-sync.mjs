@@ -39,6 +39,14 @@ const LINK_PROBE_COUNT = 5;
 const CAPTURE_SOURCES = ['MIC', 'VOICE_RECOGNITION', 'UNPROCESSED'];
 
 /**
+ * Floor on the gap between repeated chirp pairs. The pairs are told apart by slicing the recording
+ * at the interval, so a slice has to comfortably hold the probe's 1s record lead, the 500ms stagger
+ * and the sweep itself; five seconds leaves room for the input latency and start jitter on top,
+ * both of which run to tens of milliseconds.
+ */
+const MIN_CHIRP_INTERVAL_SECONDS = 5;
+
+/**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
  * at once here (the only task in this plan where that is true), so a mistyped or swapped serial
@@ -215,6 +223,19 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (audioSource !== undefined && !CAPTURE_SOURCES.includes(audioSource)) {
     throw new Error(`--audio-source takes one of ${CAPTURE_SOURCES.join(', ')}. Leave it out for MIC, the source every measurement so far was taken on.`);
   }
+  // Repeating the chirp inside ONE clock session is what separates a per-session residual from a
+  // per-emission one: every pair in a run shares the same offset estimate, so a residual coming
+  // from that estimate is common to them all, while playout jitter is redrawn for each pair.
+  const repeatsRaw = value(args, '--chirp-repeats');
+  const chirpRepeats = repeatsRaw === undefined ? undefined : Number(repeatsRaw);
+  if (repeatsRaw !== undefined && (!Number.isInteger(chirpRepeats) || chirpRepeats < 1)) {
+    throw new Error('--chirp-repeats takes a whole number of chirp pairs, at least 1. Leave it out for the single pair every measurement so far was taken on.');
+  }
+  const intervalRaw = value(args, '--chirp-interval-s');
+  const chirpIntervalSeconds = intervalRaw === undefined ? undefined : Number(intervalRaw);
+  if (intervalRaw !== undefined && (!Number.isInteger(chirpIntervalSeconds) || chirpIntervalSeconds < MIN_CHIRP_INTERVAL_SECONDS)) {
+    throw new Error(`--chirp-interval-s takes a whole number of seconds, at least ${MIN_CHIRP_INTERVAL_SECONDS}: below that a slice of the recording cannot hold one pair on its own.`);
+  }
   if (!hostSerial || !sinkSerial || !hostAddress) throw new Error('Use --host-serial, --sink-serial and --host-address');
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S2');
   // No default is safe here. The host records its own chirp from a few centimetres away and the
@@ -235,9 +256,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     : `link RTT           min ${link.minMs} / avg ${link.avgMs} / max ${link.maxMs} ms, ${link.lossPercent}% loss`);
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,
@@ -277,7 +298,15 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     log(`clock drift        ${reports.sink?.estimates?.at(-1)?.driftPpm?.toFixed(2) ?? 'n/a'} ppm`);
   }
   if (alignment) {
-    log(`alignment error    ${alignment.alignmentErrorMs?.toFixed(3) ?? 'n/a'} ms  (${alignment.confidence})`);
+    const pairs = alignment.repeats ?? [alignment];
+    pairs.forEach((pair, index) => {
+      const label = pairs.length > 1 ? `alignment error #${index + 1}` : 'alignment error   ';
+      log(`${label} ${pair.alignmentErrorMs?.toFixed(3) ?? 'n/a'} ms  (${pair.confidence})`);
+    });
+    // The whole point of repeating: pairs sharing one clock session should agree far better than
+    // separate runs do if the run-to-run scatter is the offset estimate's own residual.
+    const measured = pairs.map(pair => pair.alignmentErrorMs).filter(value => value != null);
+    if (measured.length > 1) log(`  within-session   spread ${(Math.max(...measured) - Math.min(...measured)).toFixed(3)} ms across ${measured.length} pairs`);
     log(`  of which air     ${alignment.propagationCorrectionMs.toFixed(3)} ms added back for ${separationMetres} m of separation`);
   }
   return { reports, alignment, link };

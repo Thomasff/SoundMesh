@@ -385,3 +385,31 @@ test('refuses a capture source the probe does not implement', async () => {
     );
   }
 });
+
+test('--chirp-repeats reaches both roles with its interval, and its absence leaves both on one chirp', async () => {
+  const repeated = await startSyncCalls(['--chirp-repeats', '2', '--chirp-interval-s', '15']);
+  assert.deepEqual(
+    repeated.map(({ role, chirpRepeats, chirpIntervalSeconds }) => [role, chirpRepeats, chirpIntervalSeconds]),
+    [['HOST', 2, 15], ['SINK', 2, 15]]
+  );
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(
+    plain.map(({ role, chirpRepeats, chirpIntervalSeconds }) => [role, chirpRepeats, chirpIntervalSeconds]),
+    [['HOST', undefined, undefined], ['SINK', undefined, undefined]]
+  );
+});
+
+test('refuses a repeat count or interval that would put two pairs in one search window', async () => {
+  // The pairs are told apart by slicing the recording at the interval, so a repeat count below one
+  // or an interval that does not clear the record lead plus the stagger cannot be measured.
+  for (const bad of [['--chirp-repeats', '0'], ['--chirp-repeats', '2.5'], ['--chirp-repeats', '2', '--chirp-interval-s', '3']]) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', ...bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+      ),
+      /--chirp-repeats|--chirp-interval-s/
+    );
+  }
+});

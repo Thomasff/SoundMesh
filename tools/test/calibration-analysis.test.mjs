@@ -155,3 +155,23 @@ test('refuses a partner chirp whose peak sits on the edge of the search window',
   assert.equal(result.confidence, 'UNRELIABLE');
   assert.equal(result.alignmentErrorMs, null);
 });
+
+test('reads the pair inside the given window when the recording holds several chirp pairs', () => {
+  // Two pairs well apart, each a 24000 frame stagger, the FIRST one far louder. A global
+  // search always lands in the loud pair, so a call windowed onto the quiet one can only answer
+  // correctly if the window is honoured.
+  const chirp = reference();
+  const recorded = recording([], { frames: SAMPLE_RATE * 3 });
+  const plant = (offset, gain) => { for (let i = 0; i < chirp.length; i++) recorded[offset + i] += chirp[i] * gain; };
+  plant(6000, 1.0); plant(30000, 1.0);
+  plant(90000, 0.3); plant(114200, 0.3);
+  const shared = { recorded, reference: chirp, sampleRate: SAMPLE_RATE, staggerFrames: 24000, searchRadiusFrames: 12000, separationMetres: 0 };
+
+  assert.equal(analyzeAlignment(shared).firstIndex, 6000);
+
+  const second = analyzeAlignment({ ...shared, searchFrom: 80000, searchTo: 130000 });
+
+  assert.equal(second.confidence, 'OK');
+  assert.equal(second.firstIndex, 90000);
+  assert.equal(second.secondIndex, 114200);
+});
