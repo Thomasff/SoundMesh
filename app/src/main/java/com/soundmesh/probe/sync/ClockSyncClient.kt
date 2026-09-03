@@ -28,6 +28,13 @@ class ClockSyncClient(
     // real crystal shows - either way small next to the 5ms alignment budget this offset feeds.
     @Volatile private var cachedEstimate: ClockEstimate? = null
 
+    // Kept whole, not merely fed to the estimator and forgotten. The estimator holds a sliding
+    // window and drops whatever falls out of it, so without this the exchanges a run was actually
+    // built on are gone the moment the run ends - and a candidate estimator design can then only be
+    // compared by running the phones again, one run per arm, against all the between-run scatter.
+    // Held here, one recorded run replays through any number of designs offline, on identical input.
+    private val exchanges = ArrayList<ClockExchange>()
+
     fun runFor(seconds: Int, intervalMillis: Long = 2000): List<ClockEstimate> {
         val history = ArrayList<ClockEstimate>()
         val address = InetAddress.getByName(hostAddress)
@@ -42,7 +49,7 @@ class ClockSyncClient(
                 runCatching {
                     socket.send(DatagramPacket(request, request.size, address, port))
                     receiveMatchingReply(socket, sent)
-                }.getOrNull()?.let { estimator.record(it) }
+                }.getOrNull()?.let(::keep)
                 val estimate = estimator.estimate(System.nanoTime())
                 cachedEstimate = estimate
                 estimate?.let { history.add(it) }
@@ -50,6 +57,12 @@ class ClockSyncClient(
             }
         }
         return history
+    }
+
+    /** The one place an exchange enters the run, so what is kept cannot drift from what was fitted. */
+    private fun keep(exchange: ClockExchange) {
+        estimator.record(exchange)
+        exchanges.add(exchange)
     }
 
     /**
@@ -74,6 +87,9 @@ class ClockSyncClient(
      * Cached rather than refit here - see [cachedEstimate].
      */
     fun currentEstimate(): ClockEstimate? = cachedEstimate
+
+    /** Every exchange this run fed the estimator, in the order it fed them. Read once [runFor] has returned. */
+    fun recordedExchanges(): List<ClockExchange> = exchanges.toList()
 
     private companion object {
         const val SOCKET_TIMEOUT_MILLIS = 1000

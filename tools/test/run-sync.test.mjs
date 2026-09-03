@@ -645,3 +645,28 @@ test('refuses a case ID that already has stored artifacts, before touching eithe
   );
   assert.deepEqual(touched, [], 'no ADB call may run before the case ID is cleared');
 });
+
+test('--clock-interval-ms reaches the sink alone, and its absence leaves the run on the production cadence', async () => {
+  // Only the sink runs a clock client; the host answers. A denser cadence is a collection choice -
+  // the recorded exchanges decimate back into several independent runs of the real 2s configuration,
+  // and their disagreement measures the estimator's own noise without any model of the true clock.
+  const dense = await startSyncCalls(['--clock-interval-ms', '500']);
+  assert.deepEqual(dense.map(({ role, clockIntervalMs }) => [role, clockIntervalMs]), [['HOST', undefined], ['SINK', 500]]);
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, clockIntervalMs }) => [role, clockIntervalMs]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('refuses a clock cadence outside what the probe will honour', async () => {
+  // The probe clamps silently to its own range, so a value it would ignore has to be refused here:
+  // a run that quietly collected at 2000ms while its notes say 50ms is worse than one that failed.
+  for (const bad of ['0', '-500', '50', '20000', '500.5']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--clock-interval-ms', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+      ),
+      /--clock-interval-ms/
+    );
+  }
+});

@@ -55,6 +55,10 @@ const MIN_CHIRP_INTERVAL_SECONDS = 5;
  */
 const MIN_DEADBAND_FRAMES = 5;
 
+/** The clock cadence range the probe honours; outside it the probe clamps to its own default. */
+const MIN_CLOCK_INTERVAL_MS = 100;
+const MAX_CLOCK_INTERVAL_MS = 10_000;
+
 /**
  * Ceiling on the chirp repeat count, set by the probe's scheduler capacity.
  *
@@ -404,6 +408,13 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // wherever the uncorrected error happens to sit, and a uniform draw across that band has a
   // standard deviation of 0.577 ms against the 0.510 ms measured. Narrowing it is the direct test -
   // if the scatter is the band, it shrinks with the band.
+  // Mirrors the range the probe itself honours - it clamps anything outside silently, and a run
+  // that collected at the default while its notes claim otherwise is worse than one that refused.
+  const clockIntervalRaw = value(args, '--clock-interval-ms');
+  const clockIntervalMs = clockIntervalRaw === undefined ? undefined : Number(clockIntervalRaw);
+  if (clockIntervalRaw !== undefined && (!Number.isInteger(clockIntervalMs) || clockIntervalMs < MIN_CLOCK_INTERVAL_MS || clockIntervalMs > MAX_CLOCK_INTERVAL_MS)) {
+    throw new Error(`--clock-interval-ms takes a whole number of milliseconds, ${MIN_CLOCK_INTERVAL_MS} to ${MAX_CLOCK_INTERVAL_MS}. Leave it out for the production cadence every measurement so far was taken on.`);
+  }
   const deadbandRaw = value(args, '--deadband-frames');
   const deadbandFrames = deadbandRaw === undefined ? undefined : Number(deadbandRaw);
   if (deadbandRaw !== undefined && (!Number.isInteger(deadbandFrames) || deadbandFrames < MIN_DEADBAND_FRAMES)) {
@@ -436,7 +447,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
   await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

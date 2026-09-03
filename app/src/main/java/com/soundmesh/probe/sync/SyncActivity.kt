@@ -7,6 +7,7 @@ import android.widget.TextView
 import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.ClockEstimate
+import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
@@ -111,10 +112,10 @@ class SyncActivity : Activity() {
             ?: throw IllegalArgumentException("SINK needs host_address")
         if (mode == "CLOCK_ONLY") {
             val client = ClockSyncClient(address, CLOCK_PORT, ClockOffsetEstimator())
-            val history = client.runFor(seconds)
+            val history = client.runFor(seconds, clockIntervalMillisRequested())
             runStore.writeSyncJson(
                 caseId,
-                "{\"schemaVersion\":1,\"role\":\"SINK\",\"failureCode\":null,\"estimates\":${estimatesJson(history)}}"
+                "{\"schemaVersion\":1,\"role\":\"SINK\",\"failureCode\":null,${clockJson(client, history)}}"
             )
         } else {
             runSinkFull(address, caseId, seconds)
@@ -237,6 +238,11 @@ class SyncActivity : Activity() {
     private fun chirpIntervalNanosRequested(): Long {
         val requested = intent.getIntExtra("chirp_interval_seconds", 0)
         return if (requested > 0) requested * 1_000_000_000L else 0L
+    }
+
+    private fun clockIntervalMillisRequested(): Long {
+        val requested = intent.getIntExtra("clock_interval_ms", DEFAULT_CLOCK_INTERVAL_MILLIS).toLong()
+        return if (requested in MIN_CLOCK_INTERVAL_MILLIS..MAX_CLOCK_INTERVAL_MILLIS) requested else DEFAULT_CLOCK_INTERVAL_MILLIS.toLong()
     }
 
     private fun reacquireThresholdRequested(): Int {
@@ -371,7 +377,7 @@ class SyncActivity : Activity() {
         // at the 8 ppm measured between these two crystals that is about 6 frames per 15s gap,
         // which is the same size as the sink's whole emission jitter.
         val playbackSeconds = seconds + chirpScheduleSeconds()
-        val clockThread = Thread { history = clockClient.runFor(maxOf(playbackSeconds, CONVERGENCE_TIMEOUT_SECONDS)) }
+        val clockThread = Thread { history = clockClient.runFor(maxOf(playbackSeconds, CONVERGENCE_TIMEOUT_SECONDS), clockIntervalMillisRequested()) }
         try {
             clockThread.start()
             chunkClient.start()
@@ -454,7 +460,7 @@ class SyncActivity : Activity() {
                     "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
-                    "\"estimates\":${estimatesJson(history)}," +
+                    "${clockJson(clockClient, history)}," +
                     "\"renderer\":${renderer.report(renderer.lastStreamingStats()?.silenceFrames)}}"
             )
         } finally {
@@ -659,6 +665,28 @@ class SyncActivity : Activity() {
     private fun secondsBetween(fromHostNanos: Long, toHostNanos: Long): Int =
         ((toHostNanos - fromHostNanos + 999_999_999L) / 1_000_000_000L).toInt().coerceAtLeast(1)
 
+    /**
+     * The clock layer of a sink report: the estimates the run used, and the exchanges they were fitted from.
+     *
+     * The exchanges are the expensive half to collect and the cheap half to store - a few tens of
+     * kilobytes against a 50 MB recording - and they are what lets a candidate estimator design be
+     * scored offline on the input a real run actually saw, instead of on a second run of the phones.
+     */
+    private fun clockJson(client: ClockSyncClient, history: List<ClockEstimate>): String =
+        "\"clockIntervalMillis\":${clockIntervalMillisRequested()}," +
+            "\"estimates\":${estimatesJson(history)}," +
+            "\"exchanges\":${exchangesJson(client.recordedExchanges())}"
+
+    private fun exchangesJson(exchanges: List<ClockExchange>): String = buildString {
+        append('[')
+        exchanges.forEachIndexed { index, exchange ->
+            if (index > 0) append(',')
+            append("[").append(exchange.t1).append(',').append(exchange.t2)
+            append(',').append(exchange.t3).append(',').append(exchange.t4).append(']')
+        }
+        append(']')
+    }
+
     private fun estimatesJson(history: List<ClockEstimate>): String = buildString {
         append('[')
         history.forEachIndexed { index, estimate ->
@@ -673,6 +701,11 @@ class SyncActivity : Activity() {
 
     companion object {
         const val CLOCK_PORT = 45123
+
+        /** Clock exchange cadence. A run may ask for a denser one; see [clockIntervalMillisRequested]. */
+        private const val DEFAULT_CLOCK_INTERVAL_MILLIS = 2000
+        private const val MIN_CLOCK_INTERVAL_MILLIS = 100L
+        private const val MAX_CLOCK_INTERVAL_MILLIS = 10_000L
         const val CHUNK_PORT = 45124
 
         /** playAtHostNanos = generation instant + this lead. */
