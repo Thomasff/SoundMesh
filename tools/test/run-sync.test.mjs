@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+import {
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -737,6 +738,43 @@ test('a capture run holds the sink back until the host is listening', async () =
   assert.deepEqual(calls.map(entry => entry.role), ['HOST', 'SINK']);
   assert.equal(calls[0].probesSoFar, 0, 'the host starts before anything is listening');
   assert.equal(calls[1].probesSoFar, 3, 'the sink waits for the port the host binds inside the run');
+});
+
+test('the readiness gate sees a listener in tcp6, where an unbound ServerSocket actually lands', async () => {
+  // O30 was lost to a gate that could not match the table it was written for. The addresses in
+  // tcp6 are 32 hex characters, not 8, so a pattern built around the IPv4 width reports a live
+  // listener as absent - and a ServerSocket given no address binds the IPv6 wildcard.
+  const tcp6 = [
+    '  sl  local_address                         remote_address                        st',
+    '   0: 00000000000000000000000000000000:B044 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 10162 0 1234 1'
+  ].join('\n');
+  let seen = false;
+  await awaitHostListening({
+    serial: HOST_SERIAL,
+    runAdbHost: async () => { seen = true; return { exitCode: 0, stdout: tcp6, stderr: '' }; },
+    timeoutMs: 5000,
+    pollMs: 10
+  });
+  assert.ok(seen);
+
+  // The IPv4 table still has to work: the same run reads both.
+  await awaitHostListening({
+    serial: HOST_SERIAL,
+    runAdbHost: async () => ({ exitCode: 0, stdout: '   3: 012BA8C0:B044 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10162 0 99 1', stderr: '' }),
+    timeoutMs: 5000,
+    pollMs: 10
+  });
+
+  // A listener on a neighbouring port is not this one. 45123 is the clock port, bound first.
+  await assert.rejects(
+    () => awaitHostListening({
+      serial: HOST_SERIAL,
+      runAdbHost: async () => ({ exitCode: 0, stdout: '   3: 012BA8C0:B043 00000000:0000 0A', stderr: '' }),
+      timeoutMs: 100,
+      pollMs: 10
+    }),
+    /never started listening/
+  );
 });
 
 test('a capture run gives up on its own terms when the host never starts listening', async () => {

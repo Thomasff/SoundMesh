@@ -81,8 +81,15 @@ export const MAX_ALIGNMENT_OFFSET_MS = 250;
 /** How long a capture run waits for the person to answer the consent dialog, in seconds. */
 const DEFAULT_CONSENT_TIMEOUT_SECONDS = 120;
 
-/** A listener on SyncActivity.CHUNK_PORT (45124 = 0xB044) in state 0A, as /proc/net/tcp spells it. */
-const LISTENING_ON_CHUNK_PORT = /:B044\s+[0-9A-F]{8}:[0-9A-F]{4}\s+0A/i;
+/**
+ * A listener on SyncActivity.CHUNK_PORT (45124 = 0xB044) in state 0A.
+ *
+ * The remote address is matched by shape rather than by width, because the two tables do not
+ * agree on it: tcp writes 8 hex characters and tcp6 writes 32. A pattern fixed at the IPv4 width
+ * reads a live tcp6 listener as absent, and an unbound ServerSocket is exactly where it lands -
+ * which is how O30 was lost with the host running perfectly the whole time.
+ */
+const LISTENING_ON_CHUNK_PORT = /:B044\s+[0-9A-F]+:[0-9A-F]{4}\s+0A\b/i;
 
 /**
  * Shape of an Android package name: dot separated segments, each starting with a letter. Deliberately
