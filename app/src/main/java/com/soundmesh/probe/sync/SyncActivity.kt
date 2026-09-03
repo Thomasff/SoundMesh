@@ -349,7 +349,13 @@ class SyncActivity : Activity() {
         }
 
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
-        val renderer = SyncRenderer(scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(), hostNanosNow)
+        val renderer = SyncRenderer(
+            scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(),
+            // Not thrown when absent, unlike hostNanosNow: this only annotates a release that has
+            // already happened, and a release cannot have happened without an offset to convert it.
+            offsetNanosNow = { latestEstimate()?.offsetNanos ?: 0L },
+            hostNanosNow = hostNanosNow
+        )
         val lastPlayAt = AtomicLong(0L)
         // The spec requires playback not start before the offset estimate has converged, so
         // nothing is submitted to the scheduler until `converged` is set true below. Anything

@@ -44,6 +44,16 @@ class SyncRenderer(
      * always says which threshold produced it.
      */
     private val reacquireThresholdFrames: Int = REACQUIRE_THRESHOLD_FRAMES,
+    /**
+     * The host offset in force, for recording alongside a chirp release. Zero on the host itself.
+     *
+     * Separate from [hostNanosNow] on purpose. Deriving the offset as hostNanosNow() minus a
+     * nanoTime() taken beside it also picks up whatever elapsed between the two reads - measured
+     * at 5 to 75 microseconds on one run, always positive, worst on the first release. Small next
+     * to the millisecond the recording exists to resolve, but it turned an exact check into an
+     * approximate one, and an approximate check is one that gets explained away.
+     */
+    private val offsetNanosNow: () -> Long = { 0L },
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
@@ -325,7 +335,7 @@ class SyncRenderer(
             // rejected leaves the previous one standing.
             chirpPlays.computeIfAbsent(repeat) {
                 val localNanos = System.nanoTime()
-                ChirpPlay(trimFrames, depthNanos, lastFilteredError, localNanos, hostNanosNow() - localNanos)
+                ChirpPlay(trimFrames, depthNanos, lastFilteredError, localNanos, offsetNanosNow())
             }
             if (repeat > 0) return
             if (chirpStartStats == null) {
