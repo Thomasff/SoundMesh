@@ -82,6 +82,20 @@ class SyncRenderer(
      * doubled run-to-run scatter outside the playback layer; anything else puts them back in it.
      */
     @Volatile private var chirpTrimFrames: Int? = null
+    /**
+     * The output depth this device was working from when it released the chirp's first chunk, or
+     * null if no chirp chunk was ever played.
+     *
+     * The last un-instrumented quantity in the chain. Playback, link quality, the clock offset
+     * estimate and the correlator have each been measured and ruled out as the source of the
+     * ~1.15ms run-to-run scatter; the depth has not, and it lands straight in the answer, because
+     * it is what decides how far ahead of being heard the chirp is written. It comes from
+     * getTimestamp, whose position the HAL refreshes on its own schedule, so a run-to-run spread of
+     * about a millisecond is exactly what would be expected here if this is where the scatter
+     * lives. [minPendingFrames] and [maxPendingFrames] cannot answer it: they are whole-run
+     * extremes dominated by the streaming segment.
+     */
+    @Volatile private var chirpDepthNanos: Long? = null
     @Volatile private var chirpStartStats: SchedulerStats? = null
     @Volatile private var chirpEndStats: SchedulerStats? = null
     @Volatile private var streamingEndStats: SchedulerStats? = null
@@ -242,7 +256,7 @@ class SyncRenderer(
                         // A dropped or duplicated frame deliberately does not move the timeline:
                         // shifting the frame-to-instant mapping by one frame is the correction.
                         timelineNextHostNanos = decision.chunk.playAtHostNanos + CHUNK_NANOS
-                        recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll, trimFrames)
+                        recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll, trimFrames, depthNanos)
                     }
                     is PlaybackDecision.Silence -> {
                         // Honours the frame count rather than always writing a whole chunk: the
@@ -276,11 +290,12 @@ class SyncRenderer(
      * last; [streamingEndStats] keeps the streaming segment's real end, which is up to the whole
      * output lead later than the instant the caller stopped submitting.
      */
-    private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats, trimFrames: Int) {
+    private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats, trimFrames: Int, depthNanos: Long) {
         if (sequence >= CHIRP_SEQUENCE_BASE) {
             if (chirpStartStats == null) {
                 chirpStartStats = statsBeforePoll
                 chirpTrimFrames = trimFrames
+                chirpDepthNanos = depthNanos
             }
             chirpEndStats = scheduler.stats()
         } else {
@@ -437,7 +452,7 @@ class SyncRenderer(
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
             "\"reacquisitions\":$reacquisitions," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
-            "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"}," +
+            "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"},\"chirpDepthNanos\":${chirpDepthNanos ?: "null"}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
