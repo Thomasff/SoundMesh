@@ -57,12 +57,13 @@ const MIN_DEADBAND_FRAMES = 5;
 /**
  * Ceiling on the chirp repeat count, set by the probe's scheduler capacity.
  *
- * Every repeat is queued up front, seconds ahead of the first, and each costs six of the
- * scheduler's 150 chunk slots. Past twenty-five the extra chirps are dropped as overflow, which
- * would leave a run playing a shorter schedule than the analysis then goes looking for - a missing
- * pair reported as an unreadable one. Twenty leaves headroom for the audio still draining.
+ * Every repeat is queued up front, in one go, and each costs six of the scheduler's 150 chunk
+ * slots. The queue is not empty when they arrive: submission happens the moment the audio loop
+ * ends, with the whole 1.5s chunk lead - about 75 chunks - still pending. Twenty repeats asked for
+ * 120 slots on top of that and a P1 run duly reported 40 dropped to overflow. Twelve keeps the
+ * total under capacity with the lead still in flight.
  */
-export const MAX_CHIRP_REPEATS = 20;
+export const MAX_CHIRP_REPEATS = 12;
 
 /**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
