@@ -365,3 +365,23 @@ test('main measures the link before either role starts, and writes it beside the
   // thing being measured.
   assert.ok(order.indexOf('ping') < order.indexOf('client startSync'), 'the link probe must finish before either role starts');
 });
+
+test('--audio-source reaches both roles, and its absence leaves the probe on MIC', async () => {
+  const chosen = await startSyncCalls(['--audio-source', 'UNPROCESSED']);
+  assert.deepEqual(chosen.map(({ role, audioSource }) => [role, audioSource]), [['HOST', 'UNPROCESSED'], ['SINK', 'UNPROCESSED']]);
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, audioSource }) => [role, audioSource]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('refuses a capture source the probe does not implement', async () => {
+  for (const bad of ['mic', 'RAW', 'CAMCORDER']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--audio-source', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+      ),
+      /--audio-source/
+    );
+  }
+});

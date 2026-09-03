@@ -156,6 +156,22 @@ class SyncActivity : Activity() {
      * A non-positive value would make every sample a slip and pin the loop in ACQUIRING forever,
      * so it falls back to the default rather than being honoured.
      */
+    /**
+     * Which capture path this run asks the calibration recording to open, defaulting to the MIC
+     * every measurement so far was taken on.
+     *
+     * Read off the intent for the same reason as the other two overrides: this is an A/B against a
+     * measured baseline, so both arms have to be reachable from one build. MIC runs the vendor's
+     * noise suppression and beamforming, whose group delay moves while the adaptive stages settle
+     * and whose beam is direction-dependent - and both chirps land inside the first one and a half
+     * seconds of the recording, so neither the settling nor the steering cancels in the difference.
+     * That makes it a candidate for the run-to-run scatter, the placement sensitivity and the
+     * device residual at once, and none of the three can be tested without being able to turn it
+     * off. See [CalibrationAudioSource].
+     */
+    private fun calibrationAudioSourceRequested(): CalibrationAudioSource =
+        CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
+
     private fun reacquireThresholdRequested(): Int {
         val requested = intent.getIntExtra("reacquire_threshold_frames", REACQUIRE_THRESHOLD_FRAMES)
         return if (requested > 0) requested else REACQUIRE_THRESHOLD_FRAMES
@@ -204,7 +220,7 @@ class SyncActivity : Activity() {
             // The renderer started on a provisional bound; only now is the chirp's end known.
             renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
 
-            val calibration = CalibrationRunner(runStore, caseId)
+            val calibration = CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested())
             awaitHostInstant(sinkChirpAt - RECORD_LEAD_NANOS, hostNanosNow)
             val recordThread = Thread { calibration.record(secondsUntil(chirpSubmission.endHostNanos + RECORD_TAIL_NANOS)) }
             recordThread.start()
@@ -217,6 +233,10 @@ class SyncActivity : Activity() {
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"HOST\",\"mode\":\"FULL\"," +
                     "\"failureCode\":${topLevelFailureCodeJson(renderer, chirpSubmission, chirpTiming, chirpWindow)}," +
+                    // The source that actually opened, not the one asked for: UNPROCESSED is
+                    // optional on Android, so a run that requests it may have been recorded on the
+                    // fallback and the artifact has to say which path produced the number.
+                    "\"audioSource\":${calibration.openedSource?.let { "\"$it\"" } ?: "null"}," +
                     "${chirpTimingJson(chirpTiming)}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +

@@ -9,6 +9,34 @@ import com.soundmesh.probe.WavFileWriter
 import java.io.File
 
 /**
+ * Which capture path the calibration recording opens.
+ *
+ * [MIC] is what every measurement so far was taken on, and it is the one that runs the vendor's
+ * own processing chain - noise suppression and, on a multi-microphone handset, beamforming - whose
+ * configuration lives in the vendor partition and differs between chip platforms. Two properties of
+ * that chain matter here and neither is a fixed latency the calibration constant could absorb:
+ * the adaptive stages have a convergence period whose group delay moves while they settle, and
+ * beamforming is by construction direction-dependent. The two chirps land about one and one and a
+ * half seconds into a recording, so both sit inside that settling window and the delay applied to
+ * them differs, which does not cancel in the difference.
+ *
+ * [UNPROCESSED] is the one Android's CDD requires to add no processing delay at all, so it is the
+ * first choice; not every device implements it. [VOICE_RECOGNITION] is the documented fallback -
+ * AAudio's own default, described as lowest latency on most platforms.
+ */
+enum class CalibrationAudioSource(val androidSource: Int) {
+    MIC(MediaRecorder.AudioSource.MIC),
+    VOICE_RECOGNITION(MediaRecorder.AudioSource.VOICE_RECOGNITION),
+    UNPROCESSED(MediaRecorder.AudioSource.UNPROCESSED);
+
+    companion object {
+        /** The requested source, or [MIC] for anything unrecognised - never a silent failure. */
+        fun parse(name: String?): CalibrationAudioSource =
+            entries.firstOrNull { it.name == name } ?: MIC
+    }
+}
+
+/**
  * Records the room so the PC can measure, and saves the reference the measurement correlates
  * against.
  *
@@ -17,10 +45,28 @@ import java.io.File
  * drift correction path the music does. A chirp played here on a private AudioTrack would have
  * measured clock sync plus raw play() latency and left the pipeline being validated untested.
  */
-class CalibrationRunner(private val runStore: RunStore, private val caseId: String) {
+class CalibrationRunner(
+    private val runStore: RunStore,
+    private val caseId: String,
+    private val requestedSource: CalibrationAudioSource = CalibrationAudioSource.MIC
+) {
+    /**
+     * The source that actually opened, once [record] has run. Not the same as the requested one:
+     * UNPROCESSED is optional on Android, so a run that asks for it may still have been recorded on
+     * the fallback, and a measurement has to say which path produced it rather than let the
+     * intent's request stand in for it.
+     */
+    @Volatile
+    var openedSource: CalibrationAudioSource? = null
+        private set
+
     fun record(seconds: Int) {
         val minimum = AudioRecord.getMinBufferSize(ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val record = AudioRecord(MediaRecorder.AudioSource.MIC, ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum, 65536))
+        val bufferBytes = maxOf(minimum, 65536)
+        val record = open(requestedSource, bufferBytes)
+            ?: open(CalibrationAudioSource.VOICE_RECOGNITION, bufferBytes)
+            ?: open(CalibrationAudioSource.MIC, bufferBytes)
+            ?: throw IllegalStateException("no capture source would open")
         val target = File(runStore.prepareRun(caseId), "calibration.wav")
         WavFileWriter(target, ChirpGenerator.SAMPLE_RATE, 1).use { writer ->
             record.startRecording()
@@ -43,5 +89,25 @@ class CalibrationRunner(private val runStore: RunStore, private val caseId: Stri
         }
         WavFileWriter(File(runStore.prepareRun(caseId), "chirp.wav"), ChirpGenerator.SAMPLE_RATE, 1)
             .use { it.writePcm(bytes, bytes.size) }
+    }
+
+    /**
+     * Opens [source], or returns null if the device refuses it.
+     *
+     * An AudioRecord for an unsupported source constructs without throwing and then sits in
+     * STATE_UNINITIALIZED, so the state has to be checked rather than the constructor trusted -
+     * otherwise startRecording throws mid-run and the whole calibration is lost to a source that
+     * was only ever optional.
+     */
+    private fun open(source: CalibrationAudioSource, bufferBytes: Int): AudioRecord? {
+        val record = runCatching {
+            AudioRecord(source.androidSource, ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferBytes)
+        }.getOrNull() ?: return null
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            runCatching { record.release() }
+            return null
+        }
+        openedSource = source
+        return record
     }
 }

@@ -35,6 +35,9 @@ const COMPLETION_BUDGET_SECONDS = 25;
 /** Echo requests per link probe. Five is enough for a floor and costs about four seconds. */
 const LINK_PROBE_COUNT = 5;
 
+/** The capture paths the probe implements. MIC is its default and the measured baseline. */
+const CAPTURE_SOURCES = ['MIC', 'VOICE_RECOGNITION', 'UNPROCESSED'];
+
 /**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
  * an error message: only the failing role and the reason are said aloud. Two devices are attached
@@ -204,6 +207,14 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (reacquireRaw !== undefined && (!Number.isInteger(reacquireThresholdFrames) || reacquireThresholdFrames <= 0)) {
     throw new Error('--reacquire-threshold takes a positive whole number of frames. Leave it out to use the probe\'s own threshold; lower it far below the drift-sample noise floor only to force the TRACKING fallback to fire, which is the one way to see the mechanism execute on a device.');
   }
+  // Only the recording device opens a capture path, but the extra goes to both roles so an
+  // artifact from either side says what the run asked for. MIC is the default the whole measured
+  // baseline was taken on; UNPROCESSED and VOICE_RECOGNITION are the two that skip the vendor's
+  // noise suppression and beamforming - see CalibrationAudioSource for why that matters.
+  const audioSource = value(args, '--audio-source');
+  if (audioSource !== undefined && !CAPTURE_SOURCES.includes(audioSource)) {
+    throw new Error(`--audio-source takes one of ${CAPTURE_SOURCES.join(', ')}. Leave it out for MIC, the source every measurement so far was taken on.`);
+  }
   if (!hostSerial || !sinkSerial || !hostAddress) throw new Error('Use --host-serial, --sink-serial and --host-address');
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S2');
   // No default is safe here. The host records its own chirp from a few centimetres away and the
@@ -224,9 +235,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     : `link RTT           min ${link.minMs} / avg ${link.avgMs} / max ${link.maxMs} ms, ${link.lossPercent}% loss`);
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource });
   await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

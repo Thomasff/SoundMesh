@@ -130,3 +130,14 @@ test('carries an overridden reacquire threshold to the probe, and omits it other
     ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'HOST', '--ei', 'seconds', '90', '--es', 'mode', 'FULL']
   ]);
 });
+
+test('carries the capture source to the probe, and omits it otherwise', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '{}', stderr: '' }; } });
+  await client.startSync({ serial: 'device-1', caseId: 'S2', role: 'HOST', seconds: 90, mode: 'FULL', audioSource: 'UNPROCESSED' });
+  await client.startSync({ serial: 'device-2', caseId: 'S2', role: 'HOST', seconds: 90, mode: 'FULL' });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'HOST', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--es', 'audio_source', 'UNPROCESSED'],
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'HOST', '--ei', 'seconds', '90', '--es', 'mode', 'FULL']
+  ]);
+});
