@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfirmedSerial } from './inspect-device.mjs';
 import { createProbeClient, ProbeStatusNotReadyError } from '../probe-client.mjs';
 import { analyzeClockProbe } from '../clock-analysis.mjs';
+import { assertCaseDirectoryIsFree, storedCaseIds } from '../case-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifacts');
 const selectionPath = resolve(root, 'session', 'selected-device.json');
@@ -28,12 +29,16 @@ function render(analysis) {
   ].join('\n');
 }
 
-export async function main(args = process.argv.slice(2), { loadSerial = loadConfirmedSerial, client = createProbeClient(), paths = { root, selectionPath }, log = text => process.stdout.write(`${text}\n`) } = {}) {
+export async function main(args = process.argv.slice(2), { loadSerial = loadConfirmedSerial, client = createProbeClient(), paths = { root, selectionPath }, listStoredCases = storedCaseIds, log = text => process.stdout.write(`${text}\n`) } = {}) {
   const caseId = value(args, '--case') || 'S1';
   const durationSeconds = Number(value(args, '--seconds') || 300);
   if (!/^[A-Z][0-9]+$/.test(caseId)) throw new Error('Use a case ID like S1');
   if (!Number.isInteger(durationSeconds) || durationSeconds < 30 || durationSeconds > 900) throw new Error('Use --seconds between 30 and 900');
   const selection = JSON.parse(await readFile(paths.selectionPath, 'utf8'));
+  const family = resolve(paths.root, 'feasibility', selection.fingerprintHash, 'clock');
+  // Before the probe starts, not at the write five minutes later: artifacts/ is outside version
+  // control, so writing into a case ID an earlier batch used replaces it with no way back.
+  assertCaseDirectoryIsFree({ caseId, taken: await listStoredCases(family), overwrite: args.includes('--overwrite') });
   const serial = await loadSerial(); // Revalidates the confirmed selection immediately before any device action.
 
   // A leftover log from an earlier run would otherwise be read as this run's result.
@@ -56,7 +61,7 @@ export async function main(args = process.argv.slice(2), { loadSerial = loadConf
   if (!deviceReport) throw new Error('Clock probe produced no log before the deadline');
 
   const analysis = analyzeClockProbe(deviceReport);
-  const directory = resolve(paths.root, 'feasibility', selection.fingerprintHash, 'clock', caseId);
+  const directory = resolve(family, caseId);
   await mkdir(directory, { recursive: true });
   await writeFile(resolve(directory, 'clock-raw.json'), `${JSON.stringify(deviceReport)}\n`, 'utf8');
   await writeFile(resolve(directory, 'clock-analysis.json'), `${JSON.stringify(analysis, null, 2)}\n`, 'utf8');

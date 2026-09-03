@@ -5,19 +5,24 @@ import { loadConfirmedSerial } from './inspect-device.mjs';
 import { createProbeClient } from '../probe-client.mjs';
 import { runCaptureCase as defaultRunCaptureCase } from '../case-runner.mjs';
 import { renderSummary, redactOutcome } from '../report.mjs';
+import { assertCaseDirectoryIsFree, storedCaseIds } from '../case-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifacts');
 const selectionPath = resolve(root, 'session', 'selected-device.json');
 const value = (args, key) => { const index = args.indexOf(key); return index === -1 ? undefined : args[index + 1]; };
 const APP_NAMES = Object.freeze({ 'com.netease.cloudmusic': 'NetEase Cloud Music', 'com.tencent.qqmusic': 'QQ Music' });
 
-export async function main(args = process.argv.slice(2), { loadSerial = loadConfirmedSerial, client = createProbeClient(), runCase = defaultRunCaptureCase, paths = { root, selectionPath }, acknowledge = async text => { process.stdout.write(`${text}\n`); await new Promise(resolveInput => process.stdin.once('data', resolveInput)); } } = {}) {
+export async function main(args = process.argv.slice(2), { loadSerial = loadConfirmedSerial, client = createProbeClient(), runCase = defaultRunCaptureCase, paths = { root, selectionPath }, listStoredCases = storedCaseIds, acknowledge = async text => { process.stdout.write(`${text}\n`); await new Promise(resolveInput => process.stdin.once('data', resolveInput)); } } = {}) {
   const appId = value(args, '--app'); const caseId = value(args, '--case');
   if (!APP_NAMES[appId] || !/^[A-Z][0-9]+$/.test(caseId || '')) throw new Error('Use a supported --app and case ID');
   const selection = JSON.parse(await readFile(paths.selectionPath, 'utf8'));
   const serial = await loadSerial(); // Revalidates the confirmed selection immediately before any action.
   const apkPath = value(args, '--apk') || resolve(dirname(fileURLToPath(import.meta.url)), '../../../app/build/outputs/apk/debug/app-debug.apk');
-  const directory = resolve(paths.root, 'feasibility', selection.fingerprintHash, appId, caseId);
+  const family = resolve(paths.root, 'feasibility', selection.fingerprintHash, appId);
+  const directory = resolve(family, caseId);
+  // Before the capture starts, not after: artifacts/ is outside version control, so writing into
+  // a case ID an earlier batch used replaces it with nothing to restore from.
+  assertCaseDirectoryIsFree({ caseId, taken: await listStoredCases(family), overwrite: args.includes('--overwrite') });
   await mkdir(directory, { recursive: true });
   const outcome = await runCase({ serial, apkPath, probe: client, acknowledge, deviceAlias: 'Selected device', appName: APP_NAMES[appId], probeCase: { caseId, durationSeconds: 20, expectedPackage: appId }, wavPath: resolve(directory, 'capture.wav') });
   const redacted = redactOutcome(outcome);
