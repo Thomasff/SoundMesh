@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeAlignment, findArrival } from '../src/calibration-analysis.mjs';
+import { analyzeAlignment, combineFacingPair, findArrival } from '../src/calibration-analysis.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -174,4 +174,66 @@ test('reads the pair inside the given window when the recording holds several ch
   assert.equal(second.confidence, 'OK');
   assert.equal(second.firstIndex, 90000);
   assert.equal(second.secondIndex, 114200);
+});
+
+/**
+ * The two recordings of one chirp pair, as the two handsets hear it.
+ *
+ * Both hear the sink's chirp first and the host's a stagger later, but the flight time between
+ * them enters with opposite signs: the host's own chirp reaches its own microphone across a few
+ * centimetres while the sink's crosses the room, and on the sink it is the other way round. That
+ * opposite sign is the whole point of recording on both - it is what lets the pair be combined
+ * into an error that carries no flight time at all.
+ */
+function facingRecordings({ errorFrames, propagationFrames, sinkChirpAt = 20000 }) {
+  const stagger = SAMPLE_RATE / 2;
+  return {
+    hostSide: recording([sinkChirpAt, sinkChirpAt + stagger + errorFrames - propagationFrames]),
+    sinkSide: recording([sinkChirpAt, sinkChirpAt + stagger + errorFrames + propagationFrames])
+  };
+}
+
+test('combines the two facing recordings into an error carrying no flight time, and measures the separation', () => {
+  // 48 frames is 1ms of real misalignment; 140 frames is the 1m of air between the handsets.
+  const { hostSide, sinkSide } = facingRecordings({ errorFrames: 48, propagationFrames: 140 });
+  const read = side => analyzeAlignment({
+    recorded: side, reference: reference(), sampleRate: SAMPLE_RATE,
+    staggerFrames: SAMPLE_RATE / 2, searchRadiusFrames: 12000, separationMetres: 0
+  });
+
+  const combined = combineFacingPair({ hostSide: read(hostSide), sinkSide: read(sinkSide) });
+
+  assert.equal(combined.confidence, 'OK');
+  assert.ok(Math.abs(combined.alignmentErrorMs - 1.0) < 0.001, `error was ${combined.alignmentErrorMs}`);
+  assert.ok(Math.abs(combined.separationMetres - 1.0) < 0.01, `separation was ${combined.separationMetres}`);
+});
+
+test('the combined error is free of the separation the single-sided reading has to be told', () => {
+  // Same misalignment, twice the gap between the handsets. A single-sided reading needs the
+  // distance handed to it and is wrong by 2.9ms per metre if that number is wrong; the combined
+  // one is told nothing and still lands on the same error.
+  const near = facingRecordings({ errorFrames: 48, propagationFrames: 140 });
+  const far = facingRecordings({ errorFrames: 48, propagationFrames: 280 });
+  const read = side => analyzeAlignment({
+    recorded: side, reference: reference(), sampleRate: SAMPLE_RATE,
+    staggerFrames: SAMPLE_RATE / 2, searchRadiusFrames: 12000, separationMetres: 0
+  });
+
+  const nearError = combineFacingPair({ hostSide: read(near.hostSide), sinkSide: read(near.sinkSide) }).alignmentErrorMs;
+  const farError = combineFacingPair({ hostSide: read(far.hostSide), sinkSide: read(far.sinkSide) }).alignmentErrorMs;
+
+  assert.ok(Math.abs(nearError - farError) < 0.001, `${nearError} vs ${farError}`);
+});
+
+test('refuses to combine when either side of the pair could not be read', () => {
+  const { hostSide } = facingRecordings({ errorFrames: 48, propagationFrames: 140 });
+  const good = analyzeAlignment({
+    recorded: hostSide, reference: reference(), sampleRate: SAMPLE_RATE,
+    staggerFrames: SAMPLE_RATE / 2, searchRadiusFrames: 12000, separationMetres: 0
+  });
+  const unreadable = { ...good, alignmentErrorMs: null, confidence: 'UNRELIABLE' };
+
+  assert.equal(combineFacingPair({ hostSide: good, sinkSide: unreadable }), null);
+  assert.equal(combineFacingPair({ hostSide: unreadable, sinkSide: good }), null);
+  assert.equal(combineFacingPair({ hostSide: good, sinkSide: null }), null);
 });

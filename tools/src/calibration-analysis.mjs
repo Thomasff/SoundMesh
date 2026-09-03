@@ -117,3 +117,45 @@ export function analyzeAlignment({ recorded, reference, sampleRate, staggerFrame
     atSearchEdge: Object.freeze([first?.atSearchEdge ?? null, second?.atSearchEdge ?? null])
   });
 }
+
+/**
+ * Combines the two recordings of one chirp pair - one made by each handset - into the alignment
+ * error between them, with the flight time across the room removed by construction rather than
+ * measured with a tape.
+ *
+ * Both handsets hear the same two chirps, but the air between them enters the two readings with
+ * opposite signs. Writing E for the alignment error and D/c for the flight time, the host hears
+ * its own chirp across a few centimetres and the sink's across the room, so its reading is
+ * E - D/c; the sink hears the mirror image, E + D/c. The half sum is E with no D in it at all,
+ * and the half difference is D/c, so the distance comes out as a measurement instead of an
+ * assumption. Any error in the room temperature the speed of sound is taken at shifts the
+ * reported separation and leaves E untouched.
+ *
+ * Two further properties fall out of the same algebra and are why this is worth recording twice.
+ * Each side's input latency cancels inside its own recording, so the two sides need not share one,
+ * and neither has to be known. And a jitter in when a chirp actually leaves a speaker enters both
+ * readings with the same sign, while a jitter on the capture side enters only one - so the half
+ * sum carries the emission jitter and the half difference cannot, which separates the two without
+ * having to infer either from anything.
+ *
+ * Both sides are meant to be read with `separationMetres: 0`: the single-sided correction assumes
+ * the host geometry and would be applied with the wrong sign to the sink's recording.
+ * `propagationCorrectionMs` is taken back out here regardless, so a side read with a distance
+ * still combines correctly.
+ *
+ * Returns null unless both sides were trustworthy - half of a pair says nothing on its own.
+ */
+export function combineFacingPair({ hostSide, sinkSide }) {
+  if (hostSide?.alignmentErrorMs == null || sinkSide?.alignmentErrorMs == null) return null;
+  const rawHostMs = hostSide.alignmentErrorMs - hostSide.propagationCorrectionMs;
+  const rawSinkMs = sinkSide.alignmentErrorMs - sinkSide.propagationCorrectionMs;
+  const flightTimeMs = (rawSinkMs - rawHostMs) / 2;
+  return Object.freeze({
+    alignmentErrorMs: (rawHostMs + rawSinkMs) / 2,
+    separationMetres: (flightTimeMs / 1000) * SPEED_OF_SOUND_M_S,
+    flightTimeMs,
+    rawHostMs,
+    rawSinkMs,
+    confidence: 'OK'
+  });
+}
