@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProbeClient } from '../probe-client.mjs';
@@ -64,6 +64,24 @@ const MIN_DEADBAND_FRAMES = 5;
  * total under capacity with the lead still in flight.
  */
 export const MAX_CHIRP_REPEATS = 12;
+
+/**
+ * Refuses a case ID whose artifacts are already on disk.
+ *
+ * `artifacts/` is deliberately outside version control, so there is no way back from a run that
+ * writes into a case ID an earlier batch already used: the recording, the reports and the
+ * alignment are all replaced in place. It has happened - a run launched as P1, unaware that a P1
+ * batch existed, destroyed all four of its files.
+ *
+ * Checked before either handset is touched, so a mistyped case ID costs a second rather than the
+ * ten minutes of a run. `--overwrite` exists so that replacing a batch stays possible, but as
+ * somebody's stated decision rather than an accident.
+ */
+export function assertCaseNotAlreadyStored({ caseId, alreadyStored, overwrite }) {
+  if (alreadyStored && !overwrite) {
+    throw new Error(`${caseId} already has stored artifacts, and artifacts/ is not in version control - writing here would destroy that batch for good. Pick an unused case ID, or pass --overwrite if replacing it is what you mean.`);
+  }
+}
 
 /**
  * Checks both roles against what ADB actually reports, without ever putting a full serial into
@@ -352,7 +370,7 @@ export function combineFacingRun({ hostSide, sinkSide }) {
   return hostPairs.map((pair, index) => combineFacingPair({ hostSide: pair, sinkSide: sinkPairs[index] }));
 }
 
-export async function main(args = process.argv.slice(2), { client = createProbeClient(), log = text => process.stdout.write(`${text}\n`), runAdbHost = createAdbHostRunner() } = {}) {
+export async function main(args = process.argv.slice(2), { client = createProbeClient(), log = text => process.stdout.write(`${text}\n`), runAdbHost = createAdbHostRunner(), caseExists = directory => access(directory).then(() => true, () => false) } = {}) {
   const caseId = value(args, '--case') || 'S2';
   const seconds = Number(value(args, '--seconds') || 90);
   const mode = value(args, '--mode') || 'FULL';
@@ -419,6 +437,11 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   }
   // Revalidates both confirmed serials immediately before any device action: with two phones
   // attached at once, a mistyped or swapped serial would otherwise silently target the wrong one.
+  const directory = resolve(root, 'sync', caseId);
+  // Before either handset is touched: a case ID clash costs a whole stored batch, and finding out
+  // after the run has played is finding out far too late.
+  const alreadyStored = await caseExists(directory);
+  assertCaseNotAlreadyStored({ caseId, alreadyStored, overwrite: args.includes('--overwrite') });
   await requireBothSerialsAuthorized({ hostSerial, sinkSerial, runAdbHost });
   await requireBothDevicesAwake({ hostSerial, sinkSerial, runAdbHost });
   await grantRecordAudio({ serial: hostSerial, runAdbHost });
@@ -438,7 +461,6 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     floorMs: completionFloorSeconds({ seconds, chirpRepeats, chirpIntervalSeconds }) * 1000,
     budgetMs: COMPLETION_BUDGET_SECONDS * 1000
   });
-  const directory = resolve(root, 'sync', caseId);
   await mkdir(directory, { recursive: true });
   // The link goes in the same artifact as the reports so a stored run always carries the condition
   // it was taken under, not just its result.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+import { main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS, assertCaseNotAlreadyStored } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -99,7 +99,7 @@ test('main validates both serials before touching either device', async () => {
     stderr: ''
   });
   await assert.rejects(
-    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {} }),
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {}, caseExists: async () => false }),
     /Sink serial is not among the attached, authorised devices/
   );
   assert.deepEqual(calls, []);
@@ -111,7 +111,7 @@ test('refuses a run that has not measured the distance between the handsets', as
   const client = { clearSyncArtifacts: async () => calls.push(['client']) };
   const run = extra => main(
     ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', ...extra],
-    { client, runAdbHost, log: () => {} }
+    { client, runAdbHost, log: () => {}, caseExists: async () => false }
   );
 
   await assert.rejects(() => run([]), /Use --separation-m/);
@@ -145,7 +145,7 @@ test('grants RECORD_AUDIO on the recording device before either role starts', as
   };
 
   await assert.rejects(
-    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {} }),
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {}, caseExists: async () => false }),
     /stop the run here/
   );
 
@@ -193,7 +193,7 @@ async function startSyncCalls(extra) {
   await assert.rejects(
     () => main(
       ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', ...extra],
-      { client, runAdbHost: authorisedPairRunner(), log: () => {} }
+      { client, runAdbHost: authorisedPairRunner(), log: () => {}, caseExists: async () => false }
     ),
     /stop the run here/
   );
@@ -260,7 +260,7 @@ test('refuses a reacquire threshold that is not a positive whole number of frame
     await assert.rejects(
       () => main(
         ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--reacquire-threshold', bad],
-        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, caseExists: async () => false }
       ),
       /--reacquire-threshold/
     );
@@ -371,7 +371,7 @@ test('main measures the link before either role starts, and writes it beside the
   };
 
   await assert.rejects(
-    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {} }),
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {}, caseExists: async () => false }),
     /stop the run here/
   );
 
@@ -393,7 +393,7 @@ test('refuses a capture source the probe does not implement', async () => {
     await assert.rejects(
       () => main(
         ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--audio-source', bad],
-        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, caseExists: async () => false }
       ),
       /--audio-source/
     );
@@ -421,7 +421,7 @@ test('refuses a repeat count or interval that would put two pairs in one search 
     await assert.rejects(
       () => main(
         ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', ...bad],
-        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, caseExists: async () => false }
       ),
       /--chirp-repeats|--chirp-interval-s/
     );
@@ -466,7 +466,7 @@ test('refuses a deadband that would put the loop under its own noise floor', asy
     await assert.rejects(
       () => main(
         ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--deadband-frames', bad],
-        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, caseExists: async () => false }
       ),
       /--deadband-frames/
     );
@@ -487,7 +487,7 @@ test('--sink-records reaches the sink alone, and grants RECORD_AUDIO on both han
   await assert.rejects(
     () => main(
       ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--sink-records'],
-      { client, runAdbHost, log: () => {} }
+      { client, runAdbHost, log: () => {}, caseExists: async () => false }
     ),
     /stop the run here/
   );
@@ -620,9 +620,22 @@ test('refuses more chirp repeats than the scheduler can hold, rather than droppi
     () => main(
       ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7',
         '--separation-m', '1.2', '--chirp-repeats', '30', '--chirp-interval-s', '15'],
-      { client: {}, runAdbHost: authorisedPairRunner(), log: () => {} }
+      { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, caseExists: async () => false }
     ),
     /--chirp-repeats/
   );
   await assert.doesNotReject(() => startSyncCalls(['--chirp-repeats', String(MAX_CHIRP_REPEATS), '--chirp-interval-s', '15']));
+});
+
+test('refuses a case ID that already has stored artifacts, before touching either handset', () => {
+  // artifacts/ is deliberately outside version control, so a run writing into a case ID that has
+  // already been used destroys that batch with no way back. It has happened: a run launched as P1
+  // overwrote an earlier P1's recording, reports and alignment, all four files, unrecoverably.
+  assert.throws(
+    () => assertCaseNotAlreadyStored({ caseId: 'P1', alreadyStored: true, overwrite: false }),
+    /P1 already has stored artifacts/
+  );
+  // Named explicitly, an overwrite is someone's decision rather than an accident.
+  assert.doesNotThrow(() => assertCaseNotAlreadyStored({ caseId: 'P1', alreadyStored: true, overwrite: true }));
+  assert.doesNotThrow(() => assertCaseNotAlreadyStored({ caseId: 'O9', alreadyStored: false, overwrite: false }));
 });
