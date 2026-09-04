@@ -18,11 +18,14 @@ import android.util.Log
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.HostId
 import com.soundmesh.core.PeerAdvertisement
+import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
+import com.soundmesh.probe.sync.CaptureChunkSource
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.PeerDiscovery
 import com.soundmesh.probe.sync.SyncActivity
+import com.soundmesh.probe.sync.SyncProjectionService
 import com.soundmesh.probe.sync.SyncRenderer
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
@@ -92,6 +95,7 @@ class SessionService : Service() {
     }
 
     private fun openHost(intent: Intent): SyncSession {
+        if (intent.getBooleanExtra(EXTRA_CAPTURE_SOURCE, false)) return openCapturingHost(intent)
         val name = intent.getStringExtra(EXTRA_SOURCE_FILE)
             ?: throw IllegalArgumentException("missing source file")
         if (!SAFE_SOURCE_FILE.matches(name)) throw IllegalArgumentException("unusable source file name")
@@ -106,6 +110,40 @@ class SessionService : Service() {
         }
         advertise()
         return HostSession(source::readChunk, deadbandFrames(intent), trimFrames(intent))
+    }
+
+    /**
+     * A host whose audio is whatever another app on this handset is playing.
+     *
+     * This is the only answer the product has to "play what I picked in my own music app": there
+     * is no file to hand over, and there is not going to be one. Off unless asked for, so a run
+     * driven by run-session.mjs still opens the file path every archived report was written
+     * against.
+     *
+     * The projection has to exist already. Consent is an activity's business, and the token it
+     * returns may only be turned into a projection by a foreground service of type mediaProjection
+     * - both of those happened before this intent was sent. Missing means consent was refused or
+     * has since been revoked; a session that started anyway would play silence and say PLAYING.
+     *
+     * No package is named, so what is captured is every media output except this app's own. A
+     * person picks their music app, not ours, and excluding ourselves is what stops the replay
+     * from being captured back into itself.
+     *
+     * Accessibility rather than media, and not a preference: capture only makes sense with the
+     * media volume at zero, and a media-usage output is silenced along with it.
+     */
+    private fun openCapturingHost(intent: Intent): SyncSession {
+        val projection = SyncProjectionService.acquired
+            ?: throw IllegalStateException("no media projection to capture with")
+        val source = CaptureChunkSource.open(this, projection, null) {}
+        advertise()
+        return HostSession(
+            readChunk = { source.readChunk() ?: throw IllegalStateException("capture ended") },
+            deadbandFrames = deadbandFrames(intent),
+            trimFrames = trimFrames(intent),
+            playbackUsage = PlaybackUsage.ACCESSIBILITY,
+            closeSource = source::close
+        )
     }
 
     /**
@@ -350,6 +388,7 @@ class SessionService : Service() {
         const val EXTRA_DEADBAND_FRAMES = "deadband_frames"
         const val EXTRA_TRIM_FRAMES = "trim_frames"
         const val EXTRA_WHOLE_SOURCE = "whole_source"
+        const val EXTRA_CAPTURE_SOURCE = "capture_source"
 
         /**
          * Half a chunk. Past this the loop can no longer correct an error smaller than the chunk

@@ -5,6 +5,7 @@ import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.SessionState
+import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.sync.ChunkServer
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.SyncActivity
@@ -42,6 +43,21 @@ class HostSession(
      * archive's 48 without a rebuild.
      */
     trimFrames: Int = PRODUCT_TRIM_FRAMES,
+    /**
+     * Which output this handset's own copy goes to. Defaults to media, the archive's attribution.
+     *
+     * A capturing host has to be something else: capture reads a stream whose media volume is at
+     * zero, and a media-usage output is muted along with it. See [SyncRenderer]'s own note.
+     */
+    playbackUsage: PlaybackUsage = PlaybackUsage.MEDIA,
+    /**
+     * Released when the session stops, for a source that holds something a file does not.
+     *
+     * [readChunk] alone cannot do it: it is called until the session ends, so there is no last
+     * call to close on. A capture source holds an AudioRecord and a MediaProjection callback, and
+     * a session that ended without releasing them leaves the phone recording.
+     */
+    private val closeSource: () -> Unit = {},
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
@@ -59,6 +75,7 @@ class HostSession(
         scheduler,
         DriftController(deadbandFrames),
         trimDeadbandFrames = trimFrames,
+        playbackUsage = playbackUsage,
         hostNanosNow = { System.nanoTime() }
     )
     // How long the slowest call to broadcast took, and how many chunks the source produced.
@@ -159,6 +176,7 @@ class HostSession(
         rendererThread = null
         runCatching { chunkServer.stop() }
         runCatching { clockServer.stop() }
+        runCatching { closeSource() }
     }
 
     private companion object {

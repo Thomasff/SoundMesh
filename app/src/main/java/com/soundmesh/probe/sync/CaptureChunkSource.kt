@@ -42,7 +42,7 @@ class CaptureChunkSource private constructor(private val reader: AndroidPlayback
          * so mono bytes would be read as stereo and play at double speed - audible, but as a wrong
          * song rather than as a failure, and every timing number in the run would still look sane.
          */
-        fun open(context: Context, projection: MediaProjection, expectedPackage: String, onProjectionStopped: () -> Unit): CaptureChunkSource {
+        fun open(context: Context, projection: MediaProjection, expectedPackage: String?, onProjectionStopped: () -> Unit): CaptureChunkSource {
             val reader = AndroidPlaybackReader(context, projection, expectedPackage, onProjectionStopped)
             reader.start()
             if (reader.channelCount != SyncRenderer.CHANNELS || reader.sampleRate != SyncRenderer.SAMPLE_RATE) {

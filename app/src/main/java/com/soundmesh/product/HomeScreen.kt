@@ -44,6 +44,13 @@ enum class Role { NONE, HOST, SINK }
 data class HomeState(
     val role: Role = Role.NONE,
     val songName: String? = null,
+    /**
+     * Whether the host will stream what this phone is playing instead of a file it was handed.
+     *
+     * True only once the consent dialog has been answered and the projection exists, because a
+     * screen that offered to play before then would be offering something that cannot start.
+     */
+    val capturing: Boolean = false,
     val checking: Boolean = false,
     val problem: Int? = null,
     val pairingPayload: String? = null,
@@ -59,6 +66,7 @@ data class HomeState(
 class HomeActions(
     val pickRole: (Role) -> Unit,
     val chooseSong: () -> Unit,
+    val captureAudio: () -> Unit,
     val scan: () -> Unit,
     val play: () -> Unit,
     val stop: () -> Unit
@@ -110,6 +118,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
         Text(
             when {
                 state.checking -> stringResource(R.string.song_checking)
+                state.capturing -> stringResource(R.string.song_capturing)
                 state.songName != null -> state.songName
                 else -> stringResource(R.string.song_none)
             },
@@ -124,6 +133,12 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
         }
         OutlinedButton(onClick = actions.chooseSong, enabled = !state.checking) {
             Text(stringResource(R.string.song_choose))
+        }
+        OutlinedButton(onClick = actions.captureAudio, enabled = !state.checking && !state.capturing) {
+            Text(stringResource(R.string.song_capture))
+        }
+        if (state.capturing) {
+            Text(stringResource(R.string.song_capture_hint), style = MaterialTheme.typography.bodySmall)
         }
     }
     Section(R.string.pair_code) {
@@ -140,7 +155,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
             Text(state.pairingPayload, style = MaterialTheme.typography.bodySmall)
         }
     }
-    PlayControls(state, actions, canPlay = state.songName != null)
+    PlayControls(state, actions, canPlay = state.capturing || state.songName != null)
 }
 
 @Composable

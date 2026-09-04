@@ -1,8 +1,10 @@
 package com.soundmesh.product
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +31,7 @@ import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.SyncActivity
+import com.soundmesh.probe.sync.SyncProjectionService
 import com.soundmesh.session.SessionService
 
 /**
@@ -74,6 +77,42 @@ class HomeActivity : ComponentActivity() {
     // notification is invisible, which is a phone playing music with nothing on screen to say so.
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    // Required, unlike notifications: playback capture is an AudioRecord, and without this it does
+    // not open at all. Asked for before the consent dialog so a refusal here costs one tap.
+    private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) askProjection.launch(projectionManager().createScreenCaptureIntent())
+        else state = state.copy(problem = R.string.capture_no_permission)
+    }
+
+    /**
+     * The system's own capture consent, and then the service that turns its answer into a
+     * projection.
+     *
+     * Two steps rather than one because the platform refuses `getMediaProjection` to anything that
+     * is not already a foreground service of type mediaProjection - the same rule that
+     * [SyncProjectionService] exists for. Nothing here touches the dialog; it is the user's.
+     */
+    private val askProjection = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode != RESULT_OK || data == null) {
+            state = state.copy(capturing = false, problem = R.string.capture_declined)
+            return@registerForActivityResult
+        }
+        SyncProjectionService.pending = { projection ->
+            state = if (projection == null) {
+                state.copy(capturing = false, problem = R.string.capture_declined)
+            } else {
+                state.copy(capturing = true, problem = null)
+            }
+        }
+        startService(
+            Intent(this, SyncProjectionService::class.java)
+                .setAction(SyncProjectionService.ACTION_ACQUIRE)
+                .putExtra(SyncProjectionService.EXTRA_RESULT_CODE, result.resultCode)
+                .putExtra(SyncProjectionService.EXTRA_RESULT_DATA, data)
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Meant to be put down on a table and looked at, like every other screen in this app.
@@ -87,7 +126,8 @@ class HomeActivity : ComponentActivity() {
 
     private val actions = HomeActions(
         pickRole = { role -> state = state.copy(role = role, problem = null); readPairing() },
-        chooseSong = { chooseSong.launch(arrayOf(AUDIO_MIME)) },
+        chooseSong = { releaseProjection(); chooseSong.launch(arrayOf(AUDIO_MIME)) },
+        captureAudio = ::captureAudio,
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
         stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) }
@@ -139,6 +179,39 @@ class HomeActivity : ComponentActivity() {
         }, "SoundMeshChooseSong").start()
     }
 
+    /**
+     * Asks for what capturing needs, in the order the platform wants it.
+     *
+     * Both permissions are asked for here rather than at play time, and for the same reason the
+     * chosen song is decoded at pick time: a refusal that surfaced when the session failed to start
+     * would put the reason three layers away from the moment a person asked for it.
+     */
+    private fun captureAudio() {
+        state = state.copy(problem = null)
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            askRecordAudio.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        askProjection.launch(projectionManager().createScreenCaptureIntent())
+    }
+
+    private fun projectionManager(): MediaProjectionManager =
+        getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+
+    /**
+     * Hands the projection back, because holding one is visible and costs something.
+     *
+     * A held projection keeps a foreground service and the system's own recording indicator alive.
+     * Choosing a file instead is the moment that says it is no longer wanted; a stopped session is
+     * not, since pressing play again is the likeliest next thing and Android would otherwise ask
+     * for consent all over again.
+     */
+    private fun releaseProjection() {
+        if (!state.capturing) return
+        state = state.copy(capturing = false)
+        startService(Intent(this, SyncProjectionService::class.java).setAction(SyncProjectionService.ACTION_RELEASE))
+    }
+
     /** What the picker's provider calls the file, or a fallback rather than an empty line. */
     private fun displayName(uri: Uri): String {
         val name = runCatching {
@@ -156,9 +229,14 @@ class HomeActivity : ComponentActivity() {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         val intent = when (state.role) {
-            Role.HOST -> request(SessionService.ACTION_START_HOST)
-                .putExtra(SessionService.EXTRA_SOURCE_FILE, ChosenSource.FILE_NAME)
-                .putExtra(SessionService.EXTRA_WHOLE_SOURCE, true)
+            Role.HOST -> if (state.capturing) {
+                request(SessionService.ACTION_START_HOST)
+                    .putExtra(SessionService.EXTRA_CAPTURE_SOURCE, true)
+            } else {
+                request(SessionService.ACTION_START_HOST)
+                    .putExtra(SessionService.EXTRA_SOURCE_FILE, ChosenSource.FILE_NAME)
+                    .putExtra(SessionService.EXTRA_WHOLE_SOURCE, true)
+            }
             Role.SINK -> state.paired?.let { code ->
                 request(SessionService.ACTION_START_SINK)
                     .putExtra(SessionService.EXTRA_HOST_ADDRESS, code.address)

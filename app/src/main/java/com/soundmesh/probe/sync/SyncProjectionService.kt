@@ -32,6 +32,7 @@ class SyncProjectionService : Service() {
         when (intent?.action) {
             ACTION_ACQUIRE -> acquire(intent)
             ACTION_RELEASE -> {
+                acquired = null
                 stopForeground(true)
                 stopSelf()
             }
@@ -48,6 +49,7 @@ class SyncProjectionService : Service() {
             val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             runCatching { manager.getMediaProjection(resultCode, resultData) }.getOrNull()
         }
+        acquired = projection
         val waiting = pending
         pending = null
         waiting?.invoke(projection)
@@ -79,5 +81,17 @@ class SyncProjectionService : Service() {
          */
         @Volatile
         var pending: ((MediaProjection?) -> Unit)? = null
+
+        /**
+         * What this service is currently holding, for whoever needs it after the callback.
+         *
+         * A MediaProjection is not Parcelable, so it cannot travel in the intent that starts a
+         * session; and the consent has to be asked for by an activity while the projection may
+         * only be obtained by a foreground service. This is the one place all three of them share.
+         * Cleared on release, so a session that starts without a live projection finds null rather
+         * than a token the platform has already invalidated.
+         */
+        @Volatile
+        var acquired: MediaProjection? = null
     }
 }

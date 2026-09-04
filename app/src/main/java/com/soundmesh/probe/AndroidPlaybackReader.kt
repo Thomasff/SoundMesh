@@ -9,16 +9,27 @@ import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** AudioRecord adapter limited to media playback from the selected package UID. */
+/** AudioRecord adapter over media playback: one package's, or everything except this app's own. */
 class AndroidPlaybackReader(
     context: Context,
     private val mediaProjection: MediaProjection,
-    expectedPackage: String,
+    /**
+     * The one app to capture, or null for whatever is playing.
+     *
+     * A named package is what every capture case on record used, and it is what a measurement
+     * wants: a run that captured a notification chime as well as the track is not the run the
+     * report claims. The product cannot name one - a person picks their music app, not ours - so
+     * null instead captures every media output except this app's own, which is what keeps the
+     * replay from being fed back into itself.
+     */
+    expectedPackage: String?,
     private val onProjectionStopped: () -> Unit
 ) : PcmReader {
-    private val expectedPackageUid = context.packageManager.getApplicationInfo(expectedPackage, 0).uid
+    private val expectedPackageUid = expectedPackage?.let { context.packageManager.getApplicationInfo(it, 0).uid }
+    private val ownUid = Process.myUid()
     private val stopped = AtomicBoolean(false)
     private val callback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -78,7 +89,8 @@ class AndroidPlaybackReader(
         if (minimum <= 0) return null
         val captureConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-            .addMatchingUid(expectedPackageUid)
+            // Matching and excluding UIDs cannot be combined, so it is one or the other.
+            .apply { if (expectedPackageUid != null) addMatchingUid(expectedPackageUid) else excludeUid(ownUid) }
             .build()
         val candidate = AudioRecord.Builder()
             .setAudioFormat(format)

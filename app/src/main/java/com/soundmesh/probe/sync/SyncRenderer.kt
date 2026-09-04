@@ -17,6 +17,7 @@ import com.soundmesh.core.nextPhaseState
 import com.soundmesh.core.pendingPlaybackFrames
 import com.soundmesh.core.playbackErrorFrames
 import com.soundmesh.core.releaseTrimFrames
+import com.soundmesh.probe.PlaybackUsage
 import kotlin.math.PI
 import kotlin.math.cos
 
@@ -67,6 +68,21 @@ class SyncRenderer(
      * ears, and a band that wide is not something to bake in before that answer exists.
      */
     private val trimDeadbandFrames: Int = TRIM_DEADBAND_FRAMES,
+    /**
+     * Which output the audio is attributed to, and therefore which volume slider controls it.
+     *
+     * Defaults to [PlaybackUsage.MEDIA] - the attribution every archived measurement was taken on,
+     * so the ruler's own path is untouched by this parameter existing. A host that is capturing
+     * what a music app plays cannot use it: the capture only reads a stream the media volume has
+     * to be at zero for, and R1 on the X10 proved that a media-usage playback is muted along with
+     * it - the report said the player ran, routed to the speaker, dropped nothing, and nobody heard
+     * a thing. [PlaybackUsage.ACCESSIBILITY] has its own volume and was audible under exactly those
+     * conditions on both handsets.
+     *
+     * Echoed into [report] for the reason [lowLatency] is: which output path a run used is not
+     * something a later reader should have to infer from the build.
+     */
+    private val playbackUsage: PlaybackUsage = PlaybackUsage.MEDIA,
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
@@ -266,7 +282,7 @@ class SyncRenderer(
         try {
             require(minimum > 0) { "AudioTrack reported no usable buffer size" }
             val builder = AudioTrack.Builder()
-                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(playbackUsage.androidUsage).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
                 .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build())
                 .setBufferSizeInBytes(maxOf(minimum, silence.size * 2))
                 .setTransferMode(AudioTrack.MODE_STREAM)
@@ -676,7 +692,7 @@ class SyncRenderer(
             "\"maxPendingFrames\":${if (maxPendingFrames == Long.MIN_VALUE) "null" else maxPendingFrames}," +
             "\"timestampQueries\":$timestampQueries,\"timestampFailures\":$timestampFailures," +
             "\"pendingRejected\":$pendingRejected,\"depthFallbacks\":$depthFallbacks," +
-            "\"lowLatency\":$lowLatency," +
+            "\"lowLatency\":$lowLatency,\"playbackUsage\":\"${playbackUsage.name}\"," +
             "\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
     }
 
