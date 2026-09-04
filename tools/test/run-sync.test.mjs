@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -912,4 +912,64 @@ test('the completion budget grows with the chirp pairs the handset has to correl
   assert.equal(completionBudgetSeconds({}), 25);
   assert.equal(completionBudgetSeconds({ chirpRepeats: 1 }), 45);
   assert.equal(completionBudgetSeconds({ chirpRepeats: 6 }), 145);
+});
+
+const DEVICE_VERDICT = {
+  hostPairs: 3,
+  sinkPairs: 3,
+  failure: null,
+  pairs: [
+    { alignmentErrorMs: 0.15, separationMetres: 0.12, flightTimeMs: 0.35, rawHostMs: -0.2, rawSinkMs: 0.5 },
+    { alignmentErrorMs: 0.25, separationMetres: 0.12, flightTimeMs: 0.35, rawHostMs: -0.1, rawSinkMs: 0.6 },
+    { alignmentErrorMs: -2.17, separationMetres: 0.11, flightTimeMs: 0.32, rawHostMs: -2.49, rawSinkMs: -1.85 }
+  ],
+  verdict: {
+    clusterMeanMs: 0.2, clusterSdMs: 0.0707, clusterCount: 2,
+    outliers: [-2.17], maxAbsMs: 2.17, passed: true, failures: []
+  }
+};
+
+test('says nothing about on-device pairing when the run predates it', () => {
+  assert.deepEqual(pairedAlignmentLines({ paired: undefined, facing: null }), []);
+});
+
+test('names a pairing that failed rather than reporting numbers it does not have', () => {
+  const lines = pairedAlignmentLines({
+    paired: { hostPairs: 6, sinkPairs: 0, failure: 'ONE_SIDED_RUN' },
+    facing: null
+  });
+
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /FAILED \(ONE_SIDED_RUN\)/);
+  assert.match(lines[0], /host 6 pairs, sink 0/);
+});
+
+test('reports the handsets own verdict and how far it sits from the PC analysis', () => {
+  const facing = DEVICE_VERDICT.pairs.map(pair => ({ ...pair }));
+
+  const lines = pairedAlignmentLines({ paired: DEVICE_VERDICT, facing });
+
+  assert.match(lines[0], /PASS/);
+  assert.match(lines[1], /cluster mean\s+0\.200 ms over 2 pairs/);
+  assert.match(lines[2], /worst single\s+2\.170 ms/);
+  assert.match(lines[3], /differs by 0\.000000 ms/);
+});
+
+// The agreement that matters is per pair. Two errors of opposite sign average to nothing, and a
+// mean would report a port that disagrees on every pair as one that agrees perfectly.
+test('measures the disagreement with the PC on the worst single pair, not on the average', () => {
+  const facing = DEVICE_VERDICT.pairs.map((pair, index) => ({
+    ...pair,
+    alignmentErrorMs: pair.alignmentErrorMs + (index === 0 ? 0.02 : index === 1 ? -0.02 : 0)
+  }));
+
+  const lines = pairedAlignmentLines({ paired: DEVICE_VERDICT, facing });
+
+  assert.match(lines[3], /differs by 0\.020000 ms/);
+});
+
+test('claims no agreement with a PC analysis that read a different number of pairs', () => {
+  const lines = pairedAlignmentLines({ paired: DEVICE_VERDICT, facing: [DEVICE_VERDICT.pairs[0]] });
+
+  assert.equal(lines.length, 3);
 });

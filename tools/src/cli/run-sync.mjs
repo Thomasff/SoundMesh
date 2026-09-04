@@ -425,6 +425,46 @@ export function combineFacingRun({ hostSide, sinkSide }) {
 }
 
 /**
+ * The lines describing what the two handsets concluded on their own, with no PC in the loop.
+ *
+ * Printed beside this script's own numbers rather than instead of them. The on-device analysis is
+ * a line-for-line port of the PC one precisely so that every alignment number ever recorded stays
+ * comparable, and a port only stays a port if the agreement is checked on every run - checking it
+ * once, by hand, tests the day it was written.
+ *
+ * The disagreement is the worst single pair, never the mean: two pairs wrong by the same amount in
+ * opposite directions average to nothing, so a mean would report a port that disagrees everywhere
+ * as one that agrees perfectly. One frame is 0.021 ms, so six decimals is enough to see the
+ * smallest disagreement the correlator can even express.
+ */
+export function pairedAlignmentLines({ paired, facing }) {
+  if (!paired) return [];
+  if (paired.failure) {
+    return [`on-device pairing  FAILED (${paired.failure}) - host ${paired.hostPairs} pairs, sink ${paired.sinkPairs ?? 'n/a'}`];
+  }
+  const ms = value => (value == null ? 'n/a' : value.toFixed(3));
+  const verdict = paired.verdict;
+  const lines = [
+    `on-device verdict  ${verdict.passed ? 'PASS' : `FAIL (${verdict.failures.join(', ')})`}`,
+    `  cluster mean     ${ms(verdict.clusterMeanMs)} ms over ${verdict.clusterCount} pairs, sd ${ms(verdict.clusterSdMs)} ms`,
+    `  worst single     ${ms(verdict.maxAbsMs)} ms`
+  ];
+  const worst = worstDisagreementMs(paired.pairs, facing);
+  if (worst != null) lines.push(`  vs PC            worst pair differs by ${worst.toFixed(6)} ms`);
+  return lines;
+}
+
+/** Null rather than zero when there is nothing to compare: no evidence is not agreement. */
+function worstDisagreementMs(devicePairs, pcPairs) {
+  if (!Array.isArray(devicePairs) || !Array.isArray(pcPairs)) return null;
+  if (devicePairs.length !== pcPairs.length) return null;
+  const differences = devicePairs
+    .map((pair, index) => (pair && pcPairs[index] ? Math.abs(pair.alignmentErrorMs - pcPairs[index].alignmentErrorMs) : null))
+    .filter(value => value != null);
+  return differences.length === 0 ? null : Math.max(...differences);
+}
+
+/**
  * Waits until the host is listening on SyncActivity.CHUNK_PORT, which it only binds once the run
  * itself is under way.
  *
@@ -703,6 +743,9 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
       log(`  separation       measured ${mean.toFixed(2)} m against ${separationMetres} m entered`);
     }
   }
+  // Last, so the handsets' own answer reads as a check on everything above it rather than as
+  // another number among them.
+  pairedAlignmentLines({ paired: reports.host?.pairedAlignment, facing }).forEach(line => log(line));
   return { reports, alignment, facing, link };
 }
 
