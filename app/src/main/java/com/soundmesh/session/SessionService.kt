@@ -156,8 +156,22 @@ class SessionService : Service() {
      * thing with either - keeps the address it has and tries again later.
      */
     private fun addressOf(peerId: String): String? {
-        val peer = PeerDiscovery(this).discover(REDISCOVERY_WINDOW_MILLIS).peer ?: return null
-        return if (PeerAdvertisement.hostIdOf(peer) == peerId) peer.hostAddress else null
+        val outcome = PeerDiscovery(this).discover(REDISCOVERY_WINDOW_MILLIS)
+        // Logged rather than only counted, because the two ways of finding nothing need different
+        // fixing and the session's own counters cannot tell them apart: it only records the
+        // address changing, and a search that worked perfectly records nothing when the host is
+        // where it always was.
+        val peer = outcome.peer
+        if (peer == null) {
+            Log.i(LOG_TAG, "no host to follow: ${outcome.seen} seen, ${outcome.compatible} compatible")
+            return null
+        }
+        if (PeerAdvertisement.hostIdOf(peer) != peerId) {
+            Log.i(LOG_TAG, "the search answered with a host this session was not paired to")
+            return null
+        }
+        Log.i(LOG_TAG, "the paired host answered the search")
+        return peer.hostAddress
     }
 
     /**
@@ -178,13 +192,14 @@ class SessionService : Service() {
             override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
                 val now = footprint(network, properties)
                 val before = seen.getAndSet(now)
+                Log.i(LOG_TAG, "the network reported ${now.addresses.size} addresses, moved=${before?.movedTo(now)}")
                 if (before == null || !before.movedTo(now)) return
                 session.onNetworkChanged()
                 readvertise()
             }
         }
         runCatching { manager.registerDefaultNetworkCallback(callback) }
-            .onSuccess { networkCallback = callback }
+            .onSuccess { networkCallback = callback; Log.i(LOG_TAG, "watching the network") }
             .onFailure { Log.e(LOG_TAG, "could not watch the network", it) }
     }
 

@@ -123,6 +123,12 @@ export function reportLines({ role, report }) {
     `      silence writes ${report.silenceWrites ?? 0} (${rate(report.silenceWrites ?? 0)}/s)`,
     `      dropped late ${report.droppedLate ?? 0}, overflow ${report.droppedOverflow ?? 0}, underruns ${report.trackUnderruns ?? 0}`
   ];
+  // The host's own: how long its slowest broadcast took. A sink that vanished without closing
+  // its socket does not fail a write, it fills the buffer and blocks it, and the host broadcasts on
+  // the same thread that feeds its own output.
+  if (report.maxBroadcastNanos !== undefined) {
+    lines.push(`      slowest broadcast ${(report.maxBroadcastNanos / 1e6).toFixed(0)} ms, generated ${report.generated}, dropped to sinks ${report.droppedToSinks ?? 0}`);
+  }
   // Only a sink has these: only a sink dials anybody, and only a sink converts through a clock it
   // did not author. Printed when present rather than as a row of zeroes on the host, which would
   // read as a host that survived nothing rather than one with nothing to survive.

@@ -61,6 +61,17 @@ class HostSession(
         trimDeadbandFrames = trimFrames,
         hostNanosNow = { System.nanoTime() }
     )
+    // How long the slowest call to broadcast took, and how many chunks the source produced.
+    //
+    // Instrumentation rather than a health counter, and it earned its place: it is what measured
+    // the defect that produced it. A socket whose peer vanished without closing does not fail a
+    // write - the send buffer fills and the write blocks - and broadcast used to write on this
+    // thread, which is also the thread that feeds this handset's own output. Twenty-seven seconds
+    // in one call, on hardware, with both handsets silent for all of it. What this reads now is
+    // the enqueue, and it stays because a number that goes back up says the queue stopped working.
+    @Volatile private var maxBroadcastNanos = 0L
+    @Volatile private var generated = 0
+
     private var rendererThread: Thread? = null
     private var producerThread: Thread? = null
 
@@ -68,7 +79,12 @@ class HostSession(
 
     // Null before start(): the renderer exists but has never run, and a report of zeroes reads
     // like a session that played nothing rather than one that has not begun.
-    override fun report(): String? = if (flags.state() == SessionState.IDLE) null else renderer.report(null)
+    override fun report(): String? {
+        if (flags.state() == SessionState.IDLE) return null
+        return renderer.report(null).dropLast(1) +
+            ",\"maxBroadcastNanos\":$maxBroadcastNanos,\"generated\":$generated" +
+            ",\"droppedToSinks\":${chunkServer.droppedChunks()}}"
+    }
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
 
@@ -120,8 +136,11 @@ class HostSession(
         while (!flags.isStopped()) {
             val pcm = readChunk()
             val chunk = AudioChunk(sequence, System.nanoTime() + LEAD_NANOS, pcm)
+            val startedBroadcastAt = System.nanoTime()
             chunkServer.broadcast(chunk)
+            maxBroadcastNanos = maxOf(maxBroadcastNanos, System.nanoTime() - startedBroadcastAt)
             if (flags.state().mayEmit) scheduler.submit(chunk)
+            generated = sequence + 1
             sequence++
             frameIndex += SyncRenderer.FRAMES_PER_CHUNK
             // Paced against the session's own start rather than the previous pass, so a slow pass
