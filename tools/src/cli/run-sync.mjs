@@ -19,6 +19,12 @@ const PROBE_FILES_DIR = `/sdcard/Android/data/${PROBE_PACKAGE}/files`;
 // because the probe falls back to the generated tone rather than failing - and a run that
 // quietly played a sine under a music run's name is worse than one that never started.
 const SAFE_SOURCE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/**
+ * Which handset is the access point. `hotspot` is the host itself, `shared` is anything else -
+ * a router, or a third handset - where both are ordinary clients. Two values are enough because
+ * what a reader needs to know is whether the host role and the AP role are the same device.
+ */
+const NETWORK_MODES = ['hotspot', 'shared'];
 
 /**
  * 250 ms either side of where the partner chirp is expected. One handset's output buffer measured
@@ -553,6 +559,19 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (!Number.isFinite(separationMetres) || separationMetres < 0) {
     throw new Error('Use --separation-m <metres>: measure the distance between the two handsets and pass it. It cannot be assumed - leaving it out biases every reported error by roughly -2.9 ms per metre of separation, which is enough to hide a real failure behind a passing number.');
   }
+  // Required for the same reason the separation is, and learned the same way. Every run before
+  // this one was made on the host's own hotspot and not one report says so, so months later the
+  // configuration had to be recalled rather than read - and was recalled wrongly.
+  //
+  // It is stated rather than sniffed: reading the live WiFi state needs permissions this app has
+  // no other use for, and would report what the phone is doing rather than what the operator
+  // meant. The distinction that matters is whether the host is also the access point, because
+  // that welds the host role to the AP role - the leading candidate for the role residual, since
+  // sink-to-host is a contended STA-to-AP uplink while host-to-sink is not.
+  const networkMode = value(args, '--network-mode');
+  if (!NETWORK_MODES.includes(networkMode)) {
+    throw new Error(`Use --network-mode <${NETWORK_MODES.join('|')}>: say whether the host is itself the access point (hotspot) or both handsets are clients of some other one (shared). It changes how a run should be read and cannot be recovered afterwards.`);
+  }
   // Revalidates both confirmed serials immediately before any device action: with two phones
   // attached at once, a mistyped or swapped serial would otherwise silently target the wrong one.
   const directory = resolve(root, 'sync', caseId);
@@ -572,12 +591,12 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Before the run, not during it: a push that fails after the handsets have started would
   // leave them playing the tone under a run named for a song.
   const sourceFile = sourceFilePath === undefined ? undefined : await pushSourceFile({ serial: hostSerial, localPath: sourceFilePath, runAdbHost });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode });
   // A generated run keeps the stagger it always had: the host binds its ports immediately. A
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
   else await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

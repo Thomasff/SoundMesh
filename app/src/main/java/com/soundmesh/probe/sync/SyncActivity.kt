@@ -326,6 +326,22 @@ class SyncActivity : Activity() {
     private fun capturePackageRequested(): String? = intent.getStringExtra("capture_package")
 
     /**
+     * Which handset was the access point: "hotspot" for the host itself, "shared" for a router or
+     * a third device that both joined as ordinary clients.
+     *
+     * Provenance the run cannot recover afterwards. Every run before this field existed was made
+     * on the host's own hotspot and none of them says so, so the configuration had to be recalled
+     * from memory months later - and was recalled wrongly. It matters because a host that is also
+     * the AP welds the two roles together: the sink's replies climb a contended STA-to-AP uplink
+     * while the host's do not, which is the leading candidate for the role residual.
+     *
+     * Matched against the known values rather than echoed, so an unreadable word cannot reach the
+     * report and be mistaken for a mode later.
+     */
+    private fun networkModeRequested(): String? =
+        intent.getStringExtra("network_mode")?.takeIf { it in NETWORK_MODES }
+
+    /**
      * Name of an audio file in the probe's own external files directory whose head the host
      * decodes and streams, or null for the generated tone. A bare name rather than a path: the
      * directory is fixed here, so a wrong extra cannot point the run at somebody else's file.
@@ -445,6 +461,8 @@ class SyncActivity : Activity() {
                     // optional on Android, so a run that requests it may have been recorded on the
                     // fallback and the artifact has to say which path produced the number.
                     "\"audioSource\":${calibration.openedSource?.let { "\"$it\"" } ?: "null"}," +
+                    // Which handset was the access point. Provenance a finished run cannot recover.
+                    "\"networkMode\":${networkModeRequested()?.let { "\"$it\"" } ?: "null"}," +
                     // What turns a whole-interval search into a windowed one. Recorded even while
                     // the analysis still runs on the PC, so the two can be compared before the
                     // device is trusted to measure on its own.
@@ -630,6 +648,8 @@ class SyncActivity : Activity() {
                     // Null on a run that did not ask the sink to record, and on the same terms as
                     // the host otherwise: the source that actually opened, never the one asked for.
                     "\"audioSource\":${calibration?.openedSource?.let { "\"$it\"" } ?: "null"}," +
+                    // Which handset was the access point. Provenance a finished run cannot recover.
+                    "\"networkMode\":${networkModeRequested()?.let { "\"$it\"" } ?: "null"}," +
                     // The sink's own chirp, and when its own recording opened. Both sides carry
                     // the pair in host time, so either can window its search without the other.
                     "\"recordingStartedAtHostNanos\":${calibration?.startedAtHostNanos ?: "null"}," +
@@ -896,6 +916,9 @@ class SyncActivity : Activity() {
         // what rules out walking off the directory is that no path separator matches at all, and
         // the leading character must be alphanumeric so the name cannot itself be "..".
         private val SAFE_SOURCE_FILE = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+        /** The same two the runner offers. Kept in step with NETWORK_MODES in run-sync.mjs. */
+        private val NETWORK_MODES = setOf("hotspot", "shared")
 
         /** Gap between the last audio chunk and the sink's calibration chirp. */
         private const val CALIBRATION_GAP_NANOS = 2_000_000_000L

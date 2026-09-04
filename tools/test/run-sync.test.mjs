@@ -100,7 +100,7 @@ test('main validates both serials before touching either device', async () => {
     stderr: ''
   });
   await assert.rejects(
-    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }),
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot'], { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }),
     /Sink serial is not among the attached, authorised devices/
   );
   assert.deepEqual(calls, []);
@@ -146,7 +146,7 @@ test('grants RECORD_AUDIO on the recording device before either role starts', as
   };
 
   await assert.rejects(
-    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }),
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot'], { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }),
     /stop the run here/
   );
 
@@ -196,7 +196,9 @@ async function startSyncCalls(extra) {
   };
   await assert.rejects(
     () => main(
-      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', ...extra],
+      // The default trails the caller's arguments on purpose: options are read first-match, so a
+      // test that wants a different network mode can simply pass one.
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', ...extra, '--network-mode', 'hotspot'],
       { client, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
     ),
     /stop the run here/
@@ -263,7 +265,7 @@ test('refuses a reacquire threshold that is not a positive whole number of frame
   for (const bad of ['0', '-8', 'wide', '8.5']) {
     await assert.rejects(
       () => main(
-        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--reacquire-threshold', bad],
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--reacquire-threshold', bad],
         { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
       ),
       /--reacquire-threshold/
@@ -375,7 +377,7 @@ test('main measures the link before either role starts, and writes it beside the
   };
 
   await assert.rejects(
-    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'], { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }),
+    () => main(['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot'], { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }),
     /stop the run here/
   );
 
@@ -396,7 +398,7 @@ test('refuses a capture source the probe does not implement', async () => {
   for (const bad of ['mic', 'RAW', 'CAMCORDER']) {
     await assert.rejects(
       () => main(
-        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--audio-source', bad],
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--audio-source', bad],
         { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
       ),
       /--audio-source/
@@ -424,7 +426,7 @@ test('refuses a repeat count or interval that would put two pairs in one search 
   for (const bad of [['--chirp-repeats', '0'], ['--chirp-repeats', '2.5'], ['--chirp-repeats', '2', '--chirp-interval-s', '3']]) {
     await assert.rejects(
       () => main(
-        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', ...bad],
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', ...bad],
         { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
       ),
       /--chirp-repeats|--chirp-interval-s/
@@ -469,7 +471,7 @@ test('refuses a deadband that would put the loop under its own noise floor', asy
   for (const bad of ['0', '-8', '2', '4.5']) {
     await assert.rejects(
       () => main(
-        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--deadband-frames', bad],
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--deadband-frames', bad],
         { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
       ),
       /--deadband-frames/
@@ -490,7 +492,7 @@ test('--sink-records reaches the sink alone, and grants RECORD_AUDIO on both han
   };
   await assert.rejects(
     () => main(
-      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--sink-records'],
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--sink-records'],
       { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }
     ),
     /stop the run here/
@@ -623,7 +625,7 @@ test('refuses more chirp repeats than the scheduler can hold, rather than droppi
   await assert.rejects(
     () => main(
       ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7',
-        '--separation-m', '1.2', '--chirp-repeats', '30', '--chirp-interval-s', '15'],
+        '--separation-m', '1.2', '--network-mode', 'hotspot', '--chirp-repeats', '30', '--chirp-interval-s', '15'],
       { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
     ),
     /--chirp-repeats/
@@ -637,7 +639,7 @@ test('refuses a case ID that already has stored artifacts, before touching eithe
   const touched = [];
   await assert.rejects(
     () => main(
-      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--case', 'S2'],
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--case', 'S2'],
       {
         client: {},
         runAdbHost: async call => { touched.push(call.args); return authorisedPairRunner()(call); },
@@ -685,7 +687,7 @@ test('refuses an alignment correction large enough to cross the two chirps', asy
   for (const bad of ['250', '-250', '600', 'later']) {
     await assert.rejects(
       () => main(
-        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--alignment-offset-ms', bad],
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--alignment-offset-ms', bad],
         { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
       ),
       /--alignment-offset-ms/
@@ -730,7 +732,7 @@ test('a capture run holds the sink back until the host is listening', async () =
   };
   await assert.rejects(
     () => main(
-      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--capture-package', 'com.tencent.qqmusic'],
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--capture-package', 'com.tencent.qqmusic'],
       { client, runAdbHost, log: () => {}, listStoredCases: async () => [] }
     ),
     /stop the run here/
@@ -787,7 +789,7 @@ test('a capture run gives up on its own terms when the host never starts listeni
   };
   await assert.rejects(
     () => main(
-      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--capture-package', 'com.tencent.qqmusic', '--consent-timeout-s', '1'],
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--capture-package', 'com.tencent.qqmusic', '--consent-timeout-s', '1'],
       { client: { clearSyncArtifacts: async () => {}, startSync: async () => {} }, runAdbHost, log: () => {}, listStoredCases: async () => [] }
     ),
     /consent/i
@@ -812,7 +814,7 @@ test('refuses a clock cadence outside what the probe will honour', async () => {
   for (const bad of ['0', '-500', '50', '20000', '500.5']) {
     await assert.rejects(
       () => main(
-        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--clock-interval-ms', bad],
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--clock-interval-ms', bad],
         { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
       ),
       /--clock-interval-ms/
@@ -833,7 +835,7 @@ test('--source-file reaches the host alone, and travels as a bare name', async (
 test('refuses a file source and a capture source together, because one of them would silently win', async () => {
   await assert.rejects(
     () => main(
-      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2',
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot',
        '--source-file', 'asset/song.mp3', '--capture-package', 'com.tencent.qqmusic'],
       { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
     ),
@@ -871,4 +873,34 @@ test('a push that fails stops the run instead of playing the tone under a music 
     () => pushSourceFile({ serial: HOST_SERIAL, localPath: 'asset/song.mp3', runAdbHost }),
     /cannot stat/
   );
+});
+
+test('the network mode reaches both devices, so a report says what it ran on', async () => {
+  // 170 runs were recorded before this existed, and not one of them says which network it used.
+  // That gap let a plain assumption stand in for a measurement for months.
+  const shared = await startSyncCalls(['--network-mode', 'shared']);
+  assert.deepEqual(shared.map(({ role, networkMode }) => [role, networkMode]), [['HOST', 'shared'], ['SINK', 'shared']]);
+});
+
+test('refuses a run that does not say what network it is on', async () => {
+  await assert.rejects(
+    () => main(
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2'],
+      { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+    ),
+    /--network-mode/
+  );
+});
+
+test('refuses a network mode it does not know, rather than recording a word nobody can read back', async () => {
+  for (const bad of ['wifi', 'HOTSPOT', 'hotspot ', '']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2',
+         '--network-mode', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+      ),
+      /--network-mode/
+    );
+  }
 });
