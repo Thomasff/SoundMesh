@@ -90,7 +90,13 @@ class SessionService : Service() {
         }
         // Requested only once the session exists to be told the answer. The system replies
         // synchronously, and a reply that arrived first would have nowhere to go.
-        session.onAudioFocusChanged(requestAudioFocus(session))
+        //
+        // A capturing host asks for nothing and is told it may emit: see [takesAudioFocus] for
+        // why asking is what silenced both handsets.
+        val capturing = host && intent.getBooleanExtra(EXTRA_CAPTURE_SOURCE, false)
+        session.onAudioFocusChanged(
+            if (takesAudioFocus(host, capturing)) requestAudioFocus(session) else true
+        )
         watchNetwork(session)
     }
 
