@@ -111,6 +111,15 @@ class SyncRenderer(
     /** Silence writes as events and the longest of them, beside the frame total. */
     @Volatile private var silenceWrites = 0
     @Volatile private var maxSilenceFrames = 0
+
+    /**
+     * [silenceWrites] frozen where the streaming segment ends, or -1 if no chirp ever played.
+     *
+     * The whole-run count is dominated by the chirp schedule, which fills a whole chunk of
+     * silence between chirps and so writes about fifty a second for its whole length. Only the
+     * streaming-scoped count can be read beside streamingSilenceFrames.
+     */
+    @Volatile private var streamingSilenceWrites = -1
     /**
      * The trim applied to the chirp's own first chunk, or null if no chirp chunk was ever played.
      *
@@ -395,6 +404,12 @@ class SyncRenderer(
      */
     private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats, trimFrames: Int, depthNanos: Long) {
         if (sequence >= CHIRP_SEQUENCE_BASE) {
+            // Freeze the silence-write count at the streaming segment's end, the same boundary
+            // streamingSilenceFrames is scoped to. O38 reported the whole-run count beside a
+            // streaming-scoped frame total, and dividing one by the other gave a mean of 2.6
+            // frames a write - a number with no meaning, because roughly 15000 of those writes
+            // were the 960-frame fills of the chirp schedule that follows.
+            if (streamingSilenceWrites < 0) streamingSilenceWrites = silenceWrites
             // Every repeat is measured on its own first chunk; only the first moves the window.
             val repeat = (sequence - CHIRP_SEQUENCE_BASE) / CHIRP_REPEAT_STRIDE
             // Read the clock only on the repeat's first chunk, not on every chunk of it: the lambda
@@ -637,6 +652,7 @@ class SyncRenderer(
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
             "\"trimmedFrames\":$trimmedFrames,\"trackUnderruns\":$trackUnderruns," +
             "\"silenceWrites\":$silenceWrites,\"maxSilenceFrames\":$maxSilenceFrames," +
+            "\"streamingSilenceWrites\":$streamingSilenceWrites," +
             "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"},\"chirpDepthNanos\":${chirpDepthNanos ?: "null"}," +
             "\"chirpPlays\":${chirpPlaysJson()}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
