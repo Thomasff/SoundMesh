@@ -120,3 +120,29 @@ test('reads any stream read-only for the selected serial', async () => {
   assert.deepEqual(volume, { current: 6, min: 1, max: 15 });
   assert.deepEqual(calls, [{ serial: 'device-1', args: ['shell', 'media', 'volume', '--stream', '10', '--get'] }]);
 });
+
+test('falls back to the media_session shell command when the media wrapper is gone', async () => {
+  const calls = [];
+  const volume = await readStreamVolume({
+    serial: 'device-1',
+    stream: 3,
+    runAdb: async call => {
+      calls.push(call.args);
+      return call.args[1] === 'media'
+        ? { exitCode: 127, stdout: '', stderr: '/system/bin/sh: media: inaccessible or not found\n' }
+        : { exitCode: 0, stdout: '[V] will get volume\nvolume is 3 in range [0..15]\n', stderr: '' };
+    }
+  });
+  assert.deepEqual(volume, { current: 3, min: 0, max: 15 });
+  assert.deepEqual(calls, [
+    ['shell', 'media', 'volume', '--stream', '3', '--get'],
+    ['shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--get']
+  ]);
+});
+
+test('rejects when neither volume command answers, rather than guessing', async () => {
+  await assert.rejects(
+    () => readStreamVolume({ serial: 'device-1', stream: 3, runAdb: async () => ({ exitCode: 0, stdout: 'No shell command implementation.\n', stderr: '' }) }),
+    /media volume command failed/i
+  );
+});

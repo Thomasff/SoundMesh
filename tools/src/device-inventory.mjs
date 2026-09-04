@@ -76,9 +76,27 @@ export function redactInventory(inventory) {
 
 export const MUSIC_STREAM = 3;
 
+/** The two shells this command has lived behind: `media` on Android 10, `cmd media_session` on 15. */
+const VOLUME_COMMANDS = Object.freeze([['media'], ['cmd', 'media_session']]);
+
+/**
+ * Reads one stream's volume, writing nothing.
+ *
+ * Each handset answers the other one's form with noise rather than a volume - Android 10 has no
+ * media_session shell command, Android 15 has no media wrapper - so both are tried and the first
+ * one that actually reads a volume wins. Neither form reading is a refusal, never a guess.
+ */
 export async function readStreamVolume({ serial, stream, runAdb = defaultRunAdb }) {
-  const result = await runAdb({ serial, args: ['shell', 'media', 'volume', '--stream', String(stream), '--get'] });
-  return parseMediaVolume(requireSuccessful(result, 'media volume'));
+  for (const command of VOLUME_COMMANDS) {
+    const result = await runAdb({ serial, args: ['shell', ...command, 'volume', '--stream', String(stream), '--get'] });
+    if (result.exitCode !== 0) continue;
+    try {
+      return parseMediaVolume(result.stdout);
+    } catch {
+      // The other form may still answer.
+    }
+  }
+  throw new Error('media volume command failed');
 }
 
 export async function readMediaVolume({ serial, runAdb = defaultRunAdb }) {
