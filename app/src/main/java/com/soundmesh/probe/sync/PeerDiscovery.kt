@@ -27,7 +27,8 @@ class PeerUnavailable(val code: String) : IllegalStateException(code)
  * is answered by whichever device owns the name, and the answer is multicast too so everyone
  * caches it. On top of that, DNS-SD turns names into services: a PTR record lists the instances of
  * `_soundmesh._tcp`, an SRV record gives each one a host and a port, and TXT carries the extras -
- * here, the protocol version a sink checks before trusting what it found.
+ * here, the protocol version a sink checks before trusting what it found, and the name it files
+ * that host under afterwards.
  *
  * This is the fast path, not the whole answer. It requires both handsets to already be on the same
  * network, so it cannot be the thing that puts them there, and it cannot say which of two answers
@@ -44,13 +45,16 @@ class PeerDiscovery(context: Context) {
      * rather than to its own copy of the constant - so the record carries something rather than
      * being decorative. The clock and result ports stay compile-time constants shared by both
      * sides; when one of them needs to move per device, it can join the attributes then.
+     *
+     * The identity travels in the attributes beside the version, so a sink that found its host
+     * this way files its calibration under the same name a scanned code would have given it.
      */
-    fun register(serviceName: String, port: Int): AutoCloseable {
+    fun register(serviceName: String, port: Int, hostId: String): AutoCloseable {
         val info = NsdServiceInfo().apply {
             this.serviceName = serviceName
             this.serviceType = PeerAdvertisement.SERVICE_TYPE
             this.port = port
-            PeerAdvertisement.attributes().forEach { (key, value) -> setAttribute(key, value) }
+            PeerAdvertisement.attributes(hostId).forEach { (key, value) -> setAttribute(key, value) }
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onRegistrationFailed(service: NsdServiceInfo, errorCode: Int) = Unit

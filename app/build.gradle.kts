@@ -22,5 +22,8 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    // Decoding is the scanner's, but the writer lives in the same artifact and it is pure JVM, so the
+    // code a host shows can be round tripped in a unit test instead of only off a screen.
+    implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
 }

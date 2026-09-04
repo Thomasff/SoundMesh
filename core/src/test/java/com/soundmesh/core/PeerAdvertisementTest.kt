@@ -8,20 +8,33 @@ class PeerAdvertisementTest {
     private fun peer(
         name: String,
         version: String? = PeerAdvertisement.PROTOCOL_VERSION,
-        address: String = "192.168.43.1"
+        address: String = "192.168.43.1",
+        hostId: String? = "0123456789abcdef"
     ) = DiscoveredPeer(
         name = name,
         hostAddress = address,
         port = 45124,
-        attributes = mapOf(PeerAdvertisement.VERSION_KEY to version)
+        attributes = mapOf(
+            PeerAdvertisement.VERSION_KEY to version,
+            PeerAdvertisement.ID_KEY to hostId
+        )
     )
 
     @Test
     fun advertisesTheVersionASinkChecksFor() {
         assertEquals(
             PeerAdvertisement.PROTOCOL_VERSION,
-            PeerAdvertisement.attributes()[PeerAdvertisement.VERSION_KEY]
+            PeerAdvertisement.attributes("0123456789abcdef")[PeerAdvertisement.VERSION_KEY]
         )
+    }
+
+    /** A run that found its host over mDNS has to file it under the name a scan would give it. */
+    @Test
+    fun advertisesTheNameAPeersCalibrationIsKeptUnder() {
+        val advertised = PeerAdvertisement.attributes("0123456789abcdef")
+
+        assertEquals("0123456789abcdef", advertised[PeerAdvertisement.ID_KEY])
+        assertEquals("0123456789abcdef", PeerAdvertisement.hostIdOf(peer("X10")))
     }
 
     @Test
@@ -49,7 +62,7 @@ class PeerAdvertisementTest {
      */
     @Test
     fun refusesAHostSpeakingAnotherProtocolVersion() {
-        val outcome = PeerAdvertisement.choose(listOf(peer("X10", version = "0")))
+        val outcome = PeerAdvertisement.choose(listOf(peer("X10", version = "1")))
 
         assertEquals(DiscoveryFailure.NO_COMPATIBLE_VERSION, outcome.failure)
         assertEquals(1, outcome.seen)
@@ -65,13 +78,31 @@ class PeerAdvertisementTest {
     }
 
     /**
+     * The identity travels with the version, so this combination is a malformed record rather than
+     * an old build. Accepting it would file the run's calibration under whatever the record held.
+     */
+    @Test
+    fun refusesAHostWhoseIdIsMissingOrMalformed() {
+        assertEquals(
+            DiscoveryFailure.NO_COMPATIBLE_VERSION,
+            PeerAdvertisement.choose(listOf(peer("X10", hostId = null))).failure
+        )
+        assertEquals(
+            DiscoveryFailure.NO_COMPATIBLE_VERSION,
+            PeerAdvertisement.choose(listOf(peer("X10", hostId = "../secret"))).failure
+        )
+    }
+
+    /**
      * Two hosts is not a tie to be broken quietly. In a dorm or a cafe the arbitrary pick joins a
      * stranger's session, and nothing in the run would say so - which is the case the scanned code
      * exists for, because a code read off the screen in your hand names one host and only one.
      */
     @Test
     fun refusesToGuessBetweenTwoCompatibleHosts() {
-        val outcome = PeerAdvertisement.choose(listOf(peer("X10"), peer("Pixel", address = "192.168.43.9")))
+        val outcome = PeerAdvertisement.choose(
+            listOf(peer("X10"), peer("Pixel", address = "192.168.43.9", hostId = "fedcba9876543210"))
+        )
 
         assertEquals(DiscoveryFailure.AMBIGUOUS, outcome.failure)
         assertNull(outcome.peer)
@@ -82,7 +113,7 @@ class PeerAdvertisementTest {
     @Test
     fun ignoresAnIncompatibleNeighbourWhenChoosing() {
         val outcome = PeerAdvertisement.choose(
-            listOf(peer("Old", version = "0", address = "192.168.43.9"), peer("X10"))
+            listOf(peer("Old", version = "1", address = "192.168.43.9"), peer("X10"))
         )
 
         assertNull(outcome.failure)

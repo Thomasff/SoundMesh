@@ -481,7 +481,11 @@ export function calibrationLines({ sink }) {
   const ms = micros => (micros / 1000).toFixed(3);
   const seen = sink.alignmentOffsetObservations;
   const runs = seen === undefined ? '' : `, ${seen} runs`;
-  const parts = [`applied ${ms(sink.alignmentOffsetMicros)} ms (${sink.alignmentOffsetSource}${runs})`];
+  const parts = [];
+  // First, because it says whose correction this is. `anonymous` is the run that was handed an
+  // address and never learned who answered, so nothing it stores is attached to a partner.
+  if (sink.alignmentOffsetPeer !== undefined) parts.push(`peer ${sink.alignmentOffsetPeer}`);
+  parts.push(`applied ${ms(sink.alignmentOffsetMicros)} ms (${sink.alignmentOffsetSource}${runs})`);
   if (sink.observedOffsetMicros != null) parts.push(`observed ${ms(sink.observedOffsetMicros)} ms`);
   parts.push(
     sink.adoptedOffsetMicros == null
@@ -491,6 +495,25 @@ export function calibrationLines({ sink }) {
   return [`calibration        ${parts.join(', ')}`];
 }
 
+
+/**
+ * The line describing the code the host put on its screen.
+ *
+ * Printed even though nothing scans it yet: the payload is what a scanner will have to read, and
+ * having it in the run's own output is what lets a scan be checked against what was shown rather
+ * than against what the code was supposed to say.
+ *
+ * A host with no code is not a failure. It means the handset could not name one address a peer in
+ * the room would reach, which mDNS never had to answer because there the sink resolves it.
+ */
+export function pairingLines({ host }) {
+  if (!host || host.pairingCode === undefined) return [];
+  if (host.pairingCode === null) {
+    return ['pairing            no code: the host has no single address a peer could reach'];
+  }
+  const [, , hostId, address, port] = host.pairingCode.split(' ');
+  return [`pairing            peer ${hostId} at ${address}:${port}`];
+}
 /** Null rather than zero when there is nothing to compare: no evidence is not agreement. */
 function worstDisagreementMs(devicePairs, pcPairs) {
   if (!Array.isArray(devicePairs) || !Array.isArray(pcPairs)) return null;
@@ -787,6 +810,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Last, so the handsets' own answer reads as a check on everything above it rather than as
   // another number among them.
   pairedAlignmentLines({ paired: reports.host?.pairedAlignment, facing }).forEach(line => log(line));
+  pairingLines({ host: reports.host }).forEach(line => log(line));
   calibrationLines({ sink: reports.sink }).forEach(line => log(line));
   return { reports, alignment, facing, link };
 }

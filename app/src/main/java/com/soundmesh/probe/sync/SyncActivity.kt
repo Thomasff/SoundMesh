@@ -6,7 +6,10 @@ import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.view.Gravity
 import android.view.WindowManager
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import com.soundmesh.core.AlignmentPairing
 import com.soundmesh.core.AlignmentReading
@@ -20,6 +23,9 @@ import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PairedAlignment
+import com.soundmesh.core.PairingCode
+import com.soundmesh.core.PairingCodeCodec
+import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
 import com.soundmesh.core.RendererPhase
@@ -45,12 +51,24 @@ import kotlin.math.roundToLong
  */
 class SyncActivity : Activity() {
     private lateinit var statusView: TextView
+    private lateinit var pairingView: ImageView
     private lateinit var runStore: RunStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         statusView = TextView(this)
-        setContentView(statusView)
+        // The code a peer scans sits above the status line rather than replacing it: the harness
+        // reads the status off the screen, and a run that showed a code and nothing else would
+        // have taken that away to gain something only a second handset can see.
+        pairingView = ImageView(this).apply { visibility = android.view.View.GONE }
+        setContentView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                addView(pairingView)
+                addView(statusView)
+            }
+        )
         runStore = RunStore(filesDir)
         // KEEP_SCREEN_ON only holds a screen that is already on; `am start` does not wake a sleeping
         // device, so three runs were launched onto handsets reporting Asleep and Dozing. They still
@@ -73,6 +91,17 @@ class SyncActivity : Activity() {
         handle()
     }
 
+
+    /**
+     * Puts the code on the screen for a peer to scan.
+     *
+     * On the UI thread because the run itself is not: everything below `startRun` happens on a
+     * worker so the audio path never waits on the main looper.
+     */
+    private fun showPairingCode(payload: String) = runOnUiThread {
+        pairingView.setImageBitmap(PairingCodeImage.bitmap(payload, PAIRING_CODE_PIXELS))
+        pairingView.visibility = android.view.View.VISIBLE
+    }
     private fun handle() {
         val caseId = intent.getStringExtra(ProbeCase.EXTRA_CASE_ID)
         val role = intent.getStringExtra("role")
@@ -339,14 +368,14 @@ class SyncActivity : Activity() {
      */
     private class ResolvedOffset(val micros: Long, val source: String, val observations: Int)
 
-    private fun resolveSinkAlignmentOffset(): ResolvedOffset = when {
+    private fun resolveSinkAlignmentOffset(peerId: String): ResolvedOffset = when {
         // An override starts the history over. The estimate this loop maintains is the mean of the
         // runs behind it, and a person naming a different correction is saying those runs are no
         // longer about this setup - carrying their weight forward would damp the loop against a
         // history it was just told to abandon.
         intent.hasExtra("alignment_offset_us") ->
             ResolvedOffset(alignmentOffsetMicrosRequested(), "intent", 0)
-        else -> StoredCalibration(filesDir).read()
+        else -> StoredCalibration(filesDir, peerId).read()
             ?.let { ResolvedOffset(it.micros, "stored", it.observations) }
             ?: ResolvedOffset(0L, "none", 0)
     }
@@ -421,11 +450,19 @@ class SyncActivity : Activity() {
         val resultServer = AlignmentResultServer(RESULT_PORT)
         // Registered before anything binds a socket is fine: mDNS advertises a name and a port,
         // not a listening state, and the sink's discovery window is far longer than the gap.
+        val hostId = HostIdentity(filesDir).current()
         val advertisement = if (discoverRequested()) {
-            PeerDiscovery(this).register("$SERVICE_NAME_PREFIX-$caseId", CHUNK_PORT)
+            PeerDiscovery(this).register("$SERVICE_NAME_PREFIX-$caseId", CHUNK_PORT, hostId)
         } else {
             null
         }
+        // Shown whether or not this run advertised. The code exists for the case where the two
+        // handsets have not found each other, so making it conditional on the mechanism that
+        // requires they already have would leave it useful only where it is not needed.
+        val pairingCode = LocalAddress.choose(LocalAddress.own())?.let { address ->
+            PairingCodeCodec.encode(PairingCode(hostId, address, CHUNK_PORT))
+        }
+        if (pairingCode != null) showPairingCode(pairingCode)
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,
             SCHEDULER_CAPACITY_CHUNKS,
@@ -542,6 +579,9 @@ class SyncActivity : Activity() {
                     // Whether this run advertised itself for the sink to find, rather than the
                     // sink having been handed an address.
                     "\"advertised\":${advertisement != null}," +
+                    // What a sink pointed at this screen would read. Null when the handset has no
+                    // one address a peer in the room could reach - see [LocalAddress].
+                    "\"pairingCode\":${pairingCode?.let { "\"$it\"" } ?: "null"}," +
                     // What turns a whole-interval search into a windowed one. Recorded even while
                     // the analysis still runs on the PC, so the two can be compared before the
                     // device is trusted to measure on its own.
@@ -583,13 +623,28 @@ class SyncActivity : Activity() {
      * `discover` it comes off the network instead. [chunkPort] is the port the service record
      * actually carried when discovery was used, rather than this build's copy of the constant.
      */
-    private class HostLocation(val address: String, val chunkPort: Int, val discovered: Boolean, val json: String)
+    private class HostLocation(
+        val address: String,
+        val chunkPort: Int,
+        val discovered: Boolean,
+        val peerId: String,
+        val json: String
+    )
 
     private fun locateHost(): HostLocation {
         if (!discoverRequested()) {
             val address = intent.getStringExtra("host_address")
                 ?: throw IllegalArgumentException("SINK needs host_address")
-            return HostLocation(address, CHUNK_PORT, discovered = false, json = "null")
+            // Nothing on this path ever learns who answered, so there is no name to file the
+            // correction under. Named rather than left to share whichever peer happened
+            // to be first, so the report says plainly that the correction belongs to nobody.
+            return HostLocation(
+                address,
+                CHUNK_PORT,
+                discovered = false,
+                peerId = StoredCalibration.ANONYMOUS_PEER,
+                json = "null"
+            )
         }
         val startedAt = System.nanoTime()
         val outcome = PeerDiscovery(this).discover(DISCOVERY_WINDOW_MILLIS)
@@ -601,6 +656,7 @@ class SyncActivity : Activity() {
             address = peer.hostAddress,
             chunkPort = peer.port,
             discovered = true,
+            peerId = PeerAdvertisement.hostIdOf(peer),
             json = "{\"seen\":${outcome.seen},\"compatible\":${outcome.compatible}," +
                 "\"elapsedMillis\":$elapsedMillis,\"name\":\"${peer.name}\",\"port\":${peer.port}}"
         )
@@ -639,7 +695,7 @@ class SyncActivity : Activity() {
         // Resolved once, at the top of the run: it is read from a file that this same run rewrites
         // at the end, so re-reading it later would have the report say what the next run will
         // apply rather than what this one did.
-        val resolvedOffset = resolveSinkAlignmentOffset()
+        val resolvedOffset = resolveSinkAlignmentOffset(host.peerId)
         val alignmentOffsetNanos = resolvedOffset.micros * 1_000L
         val hostNanosNow: () -> Long = {
             // Never zero: with no estimate ever having succeeded there is no host time at all,
@@ -787,7 +843,7 @@ class SyncActivity : Activity() {
                 CalibrationUpdate.fold(resolvedOffset.micros, resolvedOffset.observations, it)
             }
             if (adopted != null) {
-                StoredCalibration(filesDir).write(adopted, resolvedOffset.observations + 1)
+                StoredCalibration(filesDir, host.peerId).write(adopted, resolvedOffset.observations + 1)
             }
 
             runStore.writeSyncJson(
@@ -811,6 +867,10 @@ class SyncActivity : Activity() {
                     // stand on. Null adopted means the correction was kept, not that it was zeroed.
                     // The count is the loop's gain, so without it the two offsets cannot be
                     // reconciled: the step between them is the observation divided by count plus one.
+                    // Who that correction belongs to. `anonymous` means this run was handed an
+                    // address and never learned who answered, so the correction is attached to
+                    // nobody and a different partner would silently inherit it.
+                    "\"alignmentOffsetPeer\":\"${host.peerId}\"," +
                     "\"alignmentOffsetSource\":\"${resolvedOffset.source}\"," +
                     "\"alignmentOffsetObservations\":${resolvedOffset.observations}," +
                     "\"observedOffsetMicros\":${observedOffset ?: "null"}," +
@@ -1237,6 +1297,9 @@ class SyncActivity : Activity() {
 
         /** Instance name prefix. The case id follows it, so two runs cannot collide on a name. */
         private const val SERVICE_NAME_PREFIX = "SoundMesh"
+
+        /** Big enough to be read across a room off a phone screen, small enough to fit on one. */
+        private const val PAIRING_CODE_PIXELS = 720
 
         /** ~3s of audio at 20ms/chunk. */
         private const val SCHEDULER_CAPACITY_CHUNKS = 150

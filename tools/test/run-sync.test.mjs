@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, calibrationLines, ANCHOR_RADIUS_FRAMES, STAGGER_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, calibrationLines, pairingLines, ANCHOR_RADIUS_FRAMES, STAGGER_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -1072,4 +1072,67 @@ test('--discover reaches both roles, and its absence leaves both on the typed-in
 
   const told = await startSyncCalls([]);
   assert.deepEqual(told.map(({ role, discover }) => [role, discover]), [['HOST', false], ['SINK', false]]);
+});
+
+// The identity is what the whole per-peer store hangs on, so a report that does not say which
+// peer a correction belongs to cannot be checked against the file it was read from.
+test('names the peer the correction belongs to before the correction itself', () => {
+  const lines = calibrationLines({
+    sink: {
+      alignmentOffsetPeer: '0123456789abcdef',
+      alignmentOffsetMicros: -34957,
+      alignmentOffsetSource: 'stored',
+      alignmentOffsetObservations: 3,
+      adoptedOffsetMicros: -34911
+    }
+  });
+
+  assert.match(lines[0], /peer 0123456789abcdef, applied -34\.957 ms/);
+});
+
+// `anonymous` is not a peer. It is the run that was handed an address and never learned who
+// answered, and the line has to say so rather than read like any other correction.
+test('says plainly when a correction is attached to nobody', () => {
+  const lines = calibrationLines({
+    sink: {
+      alignmentOffsetPeer: 'anonymous',
+      alignmentOffsetMicros: -34957,
+      alignmentOffsetSource: 'stored',
+      alignmentOffsetObservations: 3,
+      adoptedOffsetMicros: -34911
+    }
+  });
+
+  assert.match(lines[0], /peer anonymous/);
+});
+
+test('leaves the calibration line alone for a run recorded before peers had names', () => {
+  const lines = calibrationLines({
+    sink: { alignmentOffsetMicros: -34957, alignmentOffsetSource: 'stored', adoptedOffsetMicros: -34773 }
+  });
+
+  assert.ok(!lines[0].includes('peer'), `should not invent a peer: ${lines[0]}`);
+});
+
+test('shows what a scanner pointed at the host would read', () => {
+  const lines = pairingLines({
+    host: { pairingCode: 'soundmesh-pairing 2 0123456789abcdef 192.168.43.1 45124' }
+  });
+
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /peer 0123456789abcdef at 192\.168\.43\.1:45124/);
+});
+
+// Not a failure. It means the handset could not name one address a peer in the room would reach -
+// a question mDNS never had to answer, because there the sink resolves the address itself.
+test('says why there is no code rather than printing nothing', () => {
+  const lines = pairingLines({ host: { pairingCode: null } });
+
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /no code/);
+});
+
+test('prints no pairing line for a run recorded before codes existed', () => {
+  assert.deepEqual(pairingLines({ host: { advertised: true } }), []);
+  assert.deepEqual(pairingLines({ host: null }), []);
 });

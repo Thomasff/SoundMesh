@@ -38,13 +38,23 @@ data class DiscoveryOutcome(
  * that - it cannot put them on the same network, and it cannot prove which answer is the handset
  * in your hand. Both of those are the scanned code's job.
  *
- * Only the version travels in the attributes. The three ports are compile-time constants shared by
- * both sides, and the one the service record itself carries is the chunk port, which the sink then
- * uses rather than re-deriving - so the record is load bearing rather than decorative.
+ * The attributes carry the version and the host's identity. The three ports are compile-time
+ * constants shared by both sides, and the one the service record itself carries is the chunk port,
+ * which the sink then uses rather than re-deriving - so the record is load bearing rather than
+ * decorative.
  */
 object PeerAdvertisement {
     const val SERVICE_TYPE = "_soundmesh._tcp"
     const val VERSION_KEY = "v"
+
+    /**
+     * Which handset this is, stable across runs - see [HostId].
+     *
+     * In the record rather than only in the scanned code because the sink needs it on both paths.
+     * It is what a peer's remembered calibration is filed under, and a run that found its host over
+     * mDNS has to file under the same name as a run that scanned it.
+     */
+    const val ID_KEY = "id"
 
     /**
      * Bumped whenever a sink of an older build would mis-handle a newer host.
@@ -52,13 +62,28 @@ object PeerAdvertisement {
      * The check this feeds is not politeness. An older build advertising the same service type
      * would be connected to, its chunk frames would decode, and the run would fail somewhere
      * further along where nothing points back at the mismatch.
+     *
+     * 1 to 2: the record gained [ID_KEY]. An older host is not mis-read by a newer sink so much as
+     * unfileable by it - it answers with no name to keep a calibration under, and the newer sink
+     * would have to invent one.
      */
-    const val PROTOCOL_VERSION = "1"
+    const val PROTOCOL_VERSION = "2"
 
-    fun attributes(): Map<String, String> = mapOf(VERSION_KEY to PROTOCOL_VERSION)
+    fun attributes(hostId: String): Map<String, String> =
+        mapOf(VERSION_KEY to PROTOCOL_VERSION, ID_KEY to hostId)
 
+    /**
+     * Whether this is a host this build can talk to and remember.
+     *
+     * The identity is required, not merely read. It travels with the version, so a host with the
+     * matching version and no usable id is not an old build but a malformed record, and letting it
+     * through would put the run's calibration under whatever the record happened to contain.
+     */
     fun isCompatible(attributes: Map<String, String?>): Boolean =
-        attributes[VERSION_KEY] == PROTOCOL_VERSION
+        attributes[VERSION_KEY] == PROTOCOL_VERSION && HostId.isValid(attributes[ID_KEY])
+
+    /** The stable name of a peer that [isCompatible] has already accepted. */
+    fun hostIdOf(peer: DiscoveredPeer): String = peer.attributes.getValue(ID_KEY)!!
 
     /**
      * Picks the host to connect to, or names why there isn't one.
