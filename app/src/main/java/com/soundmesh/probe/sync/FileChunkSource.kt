@@ -5,37 +5,43 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import com.soundmesh.core.Resampler
+import com.soundmesh.core.SourceBudget
 import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
- * Decodes the head of an audio file once, up front, and hands it out as chunks on a loop.
+ * Decodes an audio file once, up front, and hands it out as chunks on a loop.
  *
- * Decoding a bounded prefix into memory rather than streaming keeps every decoder call out of the
- * host's real-time loop: once [open] returns, [readChunk] is arithmetic over a byte array. The
- * prefix is long enough to judge two handsets by ear and short enough to hold - 60 s of 48 kHz
- * stereo is 11.5 MB.
+ * Decoding into memory rather than streaming keeps every decoder call out of the host's real-time
+ * loop: once the file is open, [readChunk] is arithmetic over a byte array. How much gets decoded
+ * is the difference between the two entry points, and it is the only difference: [open] takes the
+ * 60 s prefix every archived alignment measurement was made with, [openWhole] takes the song.
  *
- * The seam where the prefix wraps is a waveform discontinuity, and it is left in on purpose. Both
+ * The seam where the audio wraps is a waveform discontinuity, and it is left in on purpose. Both
  * handsets emit it from the same chunk at the same instant, so it is a shared transient - far
  * easier to hear misalignment in than sustained music is.
  */
-class FileChunkSource private constructor(private val pcm: ByteArray) {
+/**
+ * [length] is where the audio ends, always a whole number of chunks and never more than one chunk
+ * short of [pcm]. Held as a length rather than trimmed off with a copy because a whole song is
+ * tens of megabytes and the tail being dropped is under four kilobytes of it.
+ */
+class FileChunkSource private constructor(private val pcm: ByteArray, private val length: Int) {
     private var position = 0
 
-    /** The decoded prefix, in whole chunks - what the run report says it is playing. */
-    val chunkCount: Int get() = pcm.size / CHUNK_BYTES
+    /** The decoded audio, in whole chunks - what the run report says it is playing. */
+    val chunkCount: Int get() = length / CHUNK_BYTES
 
-    /** One full chunk, wrapping back to the start of the prefix when it runs out. */
+    /** One full chunk, wrapping back to the start when it runs out. */
     fun readChunk(): ByteArray {
         val chunk = ByteArray(CHUNK_BYTES)
         var filled = 0
         while (filled < CHUNK_BYTES) {
-            val take = minOf(CHUNK_BYTES - filled, pcm.size - position)
+            val take = minOf(CHUNK_BYTES - filled, length - position)
             pcm.copyInto(chunk, filled, position, position + take)
             filled += take
             position += take
-            if (position >= pcm.size) position = 0
+            if (position >= length) position = 0
         }
         return chunk
     }
@@ -44,7 +50,11 @@ class FileChunkSource private constructor(private val pcm: ByteArray) {
         private const val BYTES_PER_SAMPLE = 2
         private const val PREFIX_SECONDS = 60
         private const val DEQUEUE_TIMEOUT_MICROS = 10_000L
-        private const val DECODE_BUDGET_MILLIS = 30_000L
+        // Half a millisecond of patience for every millisecond of audio asked for, which is the
+        // harness's own 30 s at 60 s of audio and scales with a whole song rather than expiring
+        // partway through one. Decoding runs about four milliseconds per second of audio on these
+        // handsets, so this is a stall detector and not a race.
+        private const val DECODE_BUDGET_MILLIS_PER_SECOND = 500L
         private const val MIN_SAMPLE_RATE = 8_000
         private const val MAX_SAMPLE_RATE = 96_000
         private val CHUNK_BYTES = SyncRenderer.FRAMES_PER_CHUNK * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
@@ -61,7 +71,20 @@ class FileChunkSource private constructor(private val pcm: ByteArray) {
          * A source that already is 48 kHz stereo comes back out of [Resampler] as the same bytes.
          * That is what keeps every archived alignment run comparable with the ones after this.
          */
-        fun open(file: File): FileChunkSource {
+        fun open(file: File): FileChunkSource = read(file, PREFIX_SECONDS, refuseLonger = false)
+
+        /**
+         * The whole song rather than its first minute, refused outright if it will not fit.
+         *
+         * The harness keeps [open] and its 60 s for two reasons that outlive any one run: a report
+         * says `sourceChunks` and the archive compares that number across 186 measurements, and a
+         * 400 s run of a 214 s song would otherwise stop playing halfway through the schedule.
+         * What a measurement is made against should not change because a product feature landed.
+         */
+        fun openWhole(file: File): FileChunkSource =
+            read(file, SourceBudget.MAX_WHOLE_SECONDS, refuseLonger = true)
+
+        private fun read(file: File, seconds: Int, refuseLonger: Boolean): FileChunkSource {
             if (!file.isFile) throw SourceUnusable("SOURCE_FILE_MISSING")
             val extractor = MediaExtractor()
             try {
@@ -77,17 +100,23 @@ class FileChunkSource private constructor(private val pcm: ByteArray) {
                     }
                 }
                 if (track < 0 || format == null) throw SourceUnusable("SOURCE_FILE_NO_AUDIO")
+                // Refused here rather than after decoding: the length is declared in the container
+                // and costs nothing to read, and the alternative is someone watching a progress
+                // spinner for the whole of a song that was never going to be played.
+                if (refuseLonger && SourceBudget.tooLong(declaredMicros(format))) {
+                    throw SourceUnusable("SOURCE_FILE_TOO_LONG")
+                }
                 extractor.selectTrack(track)
                 val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
                 try {
                     codec.configure(format, null, null, 0)
                     codec.start()
-                    val prefix = decodePrefix(extractor, codec)
+                    val prefix = decodePrefix(extractor, codec, seconds, declaredMicros(format))
                     val pcm = Resampler.toStereo(
                         prefix.pcm, prefix.sampleRate, prefix.channels, SyncRenderer.SAMPLE_RATE
                     )
                     if (pcm.size < CHUNK_BYTES) throw SourceUnusable("SOURCE_FILE_TOO_SHORT")
-                    return FileChunkSource(pcm.copyOf(pcm.size - pcm.size % CHUNK_BYTES))
+                    return FileChunkSource(pcm, pcm.size - pcm.size % CHUNK_BYTES)
                 } finally {
                     runCatching { codec.stop() }
                     runCatching { codec.release() }
@@ -97,15 +126,23 @@ class FileChunkSource private constructor(private val pcm: ByteArray) {
             }
         }
 
-        private fun decodePrefix(extractor: MediaExtractor, codec: MediaCodec): Prefix {
-            // Sixty seconds of the renderer's format until the decoder says what it is actually
-            // producing; a slower rate would otherwise cut the prefix short and a faster one
-            // would run it long. The sync API answers before the first output buffer, so the
-            // provisional figure never gets to bound anything.
-            var limit = PREFIX_SECONDS * SyncRenderer.SAMPLE_RATE * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
-            val decoded = ByteArrayOutputStream(limit)
+        private fun decodePrefix(
+            extractor: MediaExtractor,
+            codec: MediaCodec,
+            seconds: Int,
+            declaredMicros: Long?
+        ): Prefix {
+            // Measured in the renderer's format until the decoder says what it is actually
+            // producing; a slower rate would otherwise cut the read short and a faster one would
+            // run it long. The sync API answers before the first output buffer, so the provisional
+            // figure never gets to bound anything.
+            var limit = seconds * SyncRenderer.SAMPLE_RATE * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
+            // Sized for the song rather than for the ceiling: asking for a whole song allows
+            // seven minutes, and reserving all of that for a three minute one costs 50 MB that
+            // the conversion is about to want.
+            val decoded = ByteArrayOutputStream(expected(limit, declaredMicros))
             val info = MediaCodec.BufferInfo()
-            val deadline = System.nanoTime() + DECODE_BUDGET_MILLIS * 1_000_000L
+            val deadline = System.nanoTime() + seconds * DECODE_BUDGET_MILLIS_PER_SECOND * 1_000_000L
             var inputDone = false
             var sampleRate = 0
             var channels = 0
@@ -133,7 +170,7 @@ class FileChunkSource private constructor(private val pcm: ByteArray) {
                     requireUsableFormat(output)
                     sampleRate = output.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                     channels = output.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                    limit = PREFIX_SECONDS * sampleRate * channels * BYTES_PER_SAMPLE
+                    limit = seconds * sampleRate * channels * BYTES_PER_SAMPLE
                 } else if (outputIndex >= 0) {
                     val buffer = codec.getOutputBuffer(outputIndex)!!
                     val bytes = ByteArray(info.size)
@@ -175,6 +212,25 @@ class FileChunkSource private constructor(private val pcm: ByteArray) {
                 throw SourceUnusable("SOURCE_FILE_FORMAT_UNUSABLE")
             }
         }
+
+        /**
+         * How much decoded audio to reserve room for, in the renderer's format.
+         *
+         * The renderer's rate rather than the source's, because the source's is not known until
+         * the decoder answers. It over-reserves for a 44.1 kHz song, which is the harmless
+         * direction: the alternative is the array doubling itself while it already holds tens of
+         * megabytes.
+         */
+        private fun expected(limit: Int, declaredMicros: Long?): Int {
+            if (declaredMicros == null || declaredMicros <= 0) return limit
+            val seconds = (declaredMicros + 999_999L) / 1_000_000L
+            val bytes = seconds * SyncRenderer.SAMPLE_RATE * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
+            return minOf(limit.toLong(), maxOf(bytes, CHUNK_BYTES.toLong())).toInt()
+        }
+
+        /** What the container says the song lasts, in MediaFormat's own microseconds. */
+        private fun declaredMicros(format: MediaFormat): Long? =
+            if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else null
 
         private class Prefix(val pcm: ByteArray, val sampleRate: Int, val channels: Int)
     }

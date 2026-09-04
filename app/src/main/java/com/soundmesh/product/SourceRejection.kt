@@ -22,6 +22,7 @@ object SourceRejection {
         "SOURCE_FILE_FORMAT_UNKNOWN" -> R.string.source_format_unknown
         "SOURCE_FILE_FORMAT_UNUSABLE" -> R.string.source_format_unusable
         "SOURCE_FILE_CHANNELS_UNUSABLE" -> R.string.source_channels_unusable
+        "SOURCE_FILE_TOO_LONG" -> R.string.source_too_long
         else -> R.string.source_unreadable
     }
 }

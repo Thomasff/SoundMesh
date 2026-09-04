@@ -5,7 +5,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class SourceRejectionTest {
-    /** The seven SourceUnusable throws, spelled exactly as FileChunkSource spells them. */
+    /** The eight SourceUnusable throws, spelled exactly as FileChunkSource spells them. */
     private val codes = listOf(
         "SOURCE_FILE_MISSING",
         "SOURCE_FILE_NO_AUDIO",
@@ -13,7 +13,8 @@ class SourceRejectionTest {
         "SOURCE_FILE_DECODE_STALLED",
         "SOURCE_FILE_FORMAT_UNKNOWN",
         "SOURCE_FILE_FORMAT_UNUSABLE",
-        "SOURCE_FILE_CHANNELS_UNUSABLE"
+        "SOURCE_FILE_CHANNELS_UNUSABLE",
+        "SOURCE_FILE_TOO_LONG"
     )
 
     @Test

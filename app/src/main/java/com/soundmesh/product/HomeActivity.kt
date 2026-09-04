@@ -117,7 +117,10 @@ class HomeActivity : ComponentActivity() {
                     chosen.file().outputStream().use { input.copyTo(it) }
                 }
                 val started = System.nanoTime()
-                FileChunkSource.open(chosen.file())
+                // The whole song, the same way the session will read it: what this is verifying is
+                // that this file plays, and a check that only ever read the first minute would
+                // pass a song that is refused for its length or breaks in its second half.
+                FileChunkSource.openWhole(chosen.file())
                 Log.i(LOG_TAG, "the chosen song was read in ${(System.nanoTime() - started) / 1_000_000} ms")
                 displayName(uri)
             }
@@ -155,6 +158,7 @@ class HomeActivity : ComponentActivity() {
         val intent = when (state.role) {
             Role.HOST -> request(SessionService.ACTION_START_HOST)
                 .putExtra(SessionService.EXTRA_SOURCE_FILE, ChosenSource.FILE_NAME)
+                .putExtra(SessionService.EXTRA_WHOLE_SOURCE, true)
             Role.SINK -> state.paired?.let { code ->
                 request(SessionService.ACTION_START_SINK)
                     .putExtra(SessionService.EXTRA_HOST_ADDRESS, code.address)

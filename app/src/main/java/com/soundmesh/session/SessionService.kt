@@ -95,7 +95,15 @@ class SessionService : Service() {
         val name = intent.getStringExtra(EXTRA_SOURCE_FILE)
             ?: throw IllegalArgumentException("missing source file")
         if (!SAFE_SOURCE_FILE.matches(name)) throw IllegalArgumentException("unusable source file name")
-        val source = FileChunkSource.open(File(getExternalFilesDir(null), name))
+        // The prefix unless asked otherwise. A run driven by run-session.mjs passes nothing
+        // here and gets the 60 s every archived report was written against; the product asks for
+        // the song, because a minute of it on a loop is not what anyone chose the file for.
+        val file = File(getExternalFilesDir(null), name)
+        val source = if (intent.getBooleanExtra(EXTRA_WHOLE_SOURCE, false)) {
+            FileChunkSource.openWhole(file)
+        } else {
+            FileChunkSource.open(file)
+        }
         advertise()
         return HostSession(source::readChunk, deadbandFrames(intent), trimFrames(intent))
     }
@@ -341,6 +349,7 @@ class SessionService : Service() {
         const val EXTRA_PEER_ID = "peer_id"
         const val EXTRA_DEADBAND_FRAMES = "deadband_frames"
         const val EXTRA_TRIM_FRAMES = "trim_frames"
+        const val EXTRA_WHOLE_SOURCE = "whole_source"
 
         /**
          * Half a chunk. Past this the loop can no longer correct an error smaller than the chunk
