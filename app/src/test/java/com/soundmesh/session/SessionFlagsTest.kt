@@ -38,6 +38,49 @@ class SessionFlagsTest {
         assertEquals(SessionState.PLAYING, flags.state())
     }
 
+    /**
+     * Section 11.2 asks for a degraded clock to be said out loud and played through. A flag that
+     * silenced the session instead would be the same answer as an unconverged one, which is the
+     * distinction the whole grading exists to draw.
+     */
+    @Test
+    fun anUncertainClockStillPlays() {
+        val flags = SessionFlags()
+        flags.markStarted()
+        flags.setAudioFocus(true)
+
+        flags.setClockUncertain(true)
+
+        assertEquals(SessionState.DEGRADED, flags.state())
+        assertEquals(true, flags.state().mayEmit)
+    }
+
+    /** A clock too uncertain to use is reported as no clock, which is what silences the session. */
+    @Test
+    fun anUnconvergedClockOutranksAnUncertainOne() {
+        val flags = SessionFlags()
+        flags.markStarted()
+        flags.setAudioFocus(true)
+
+        flags.setClockUncertain(true)
+        flags.setClockConverged(false)
+
+        assertEquals(SessionState.SYNCING, flags.state())
+    }
+
+    /** Grading runs every watchdog pass, so a link that recovers has to be able to say so. */
+    @Test
+    fun anUncertainClockCanBecomeCertainAgain() {
+        val flags = SessionFlags()
+        flags.markStarted()
+        flags.setAudioFocus(true)
+        flags.setClockUncertain(true)
+
+        flags.setClockUncertain(false)
+
+        assertEquals(SessionState.PLAYING, flags.state())
+    }
+
     @Test
     fun stoppingOutranksEverythingElse() {
         val flags = SessionFlags()

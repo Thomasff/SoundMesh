@@ -178,6 +178,26 @@ test('turns counts into rates against the length the chunks imply', () => {
   assert.match(lines[2], /silence writes 30 \(0\.50\/s\)/);
 });
 
+// The sink's own counters, which say what the session survived rather than what the renderer did.
+// A reconnection leaves no trace in the renderer's numbers: to them an outage is a stretch of
+// chunks that did not arrive, which is what a host playing silence looks like too.
+test('reports what a sink survived, when the report has it', () => {
+  const lines = reportLines({
+    role: 'sink',
+    report: { played: 3000, reconnects: 2, rediscoveries: 1, clockHealth: 'GOOD', worstUncertaintyNanos: 3_010_000 }
+  });
+
+  assert.equal(lines[4], '      reconnects 2, rediscoveries 1, clock GOOD (worst 3.01 ms)');
+});
+
+// A host dials nobody and converts through no clock but its own, so a row of zeroes there would
+// read as a host that survived nothing rather than one with nothing to survive.
+test('says nothing about survival for a report without it', () => {
+  const lines = reportLines({ role: 'host', report: { played: 3000 } });
+
+  assert.equal(lines.length, 4);
+});
+
 // A handset that never ran leaves no file, and saying so beats printing a row of zeroes that
 // reads like a session which played nothing.
 test('says so when a handset left no report', () => {

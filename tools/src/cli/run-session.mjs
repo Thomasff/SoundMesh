@@ -117,12 +117,20 @@ export function reportLines({ role, report }) {
   const rate = count => (seconds > 0 ? (count / seconds).toFixed(2) : '-');
   const trims = report.releaseTrims ?? 0;
   const perTrim = trims > 0 ? (report.trimmedFrames / trims).toFixed(0) : '-';
-  return [
+  const lines = [
     `${role.padEnd(5)} played ${report.played} chunks (${seconds.toFixed(0)}s)`,
     `      trims ${trims} (${rate(trims)}/s, mean ${perTrim} frames deleted)`,
     `      silence writes ${report.silenceWrites ?? 0} (${rate(report.silenceWrites ?? 0)}/s)`,
     `      dropped late ${report.droppedLate ?? 0}, overflow ${report.droppedOverflow ?? 0}, underruns ${report.trackUnderruns ?? 0}`
   ];
+  // Only a sink has these: only a sink dials anybody, and only a sink converts through a clock it
+  // did not author. Printed when present rather than as a row of zeroes on the host, which would
+  // read as a host that survived nothing rather than one with nothing to survive.
+  if (report.reconnects !== undefined) {
+    const worstMs = (report.worstUncertaintyNanos ?? 0) / 1e6;
+    lines.push(`      reconnects ${report.reconnects}, rediscoveries ${report.rediscoveries ?? 0}, clock ${report.clockHealth ?? '-'} (worst ${worstMs.toFixed(2)} ms)`);
+  }
+  return lines;
 }
 
 /** Stops whatever is running on both handsets, without starting anything. */

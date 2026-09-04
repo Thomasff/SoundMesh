@@ -15,6 +15,34 @@ import com.soundmesh.core.SessionState
  * Both roles implement this. What differs is what they do between [start] and [stop]; what a
  * caller can ask of them does not.
  */
+/**
+ * How late a product session lets a chunk be released before it shortens it.
+ *
+ * Five milliseconds, against the renderer's own 48-frame default, and the difference is the whole
+ * of what a listener was complaining about. At 48 the host edits its own waveform 6.6 times a
+ * second - 3.30 trims averaging 77 deleted frames, and 3.31 silence writes - which is what "it
+ * keeps hitching" sounds like. At 240 that falls to 0.03 times a second and the hitching is gone;
+ * at 120 it falls to 0.03-0.17 and a little remains.
+ *
+ * It costs nothing measurable. Three runs at 240 (O52-O54) against four archived runs at 48
+ * (O47, O49-O51) put the round-to-round scatter at 0.357 ms against 0.354 ms - the same number -
+ * and the difference in means at 1.4 standard errors, which this many rounds cannot resolve. What
+ * the comparison can exclude is a penalty above about 0.75 ms, against a 5 ms gate. A systematic
+ * component would not survive anyway: the stored per-peer calibration is a running mean and
+ * absorbs one within a few runs, which is what it did across those three.
+ *
+ * Why a wider band is not "tolerating more error": the trim and the drift controller correct the
+ * same quantity, one by deleting a block of audio at once and one by adding or dropping single
+ * frames over seconds. Widening the band hands the work from the audible mechanism to the
+ * inaudible one. The device says the inaudible one keeps up - through all of this the host stayed
+ * in TRACKING with zero reacquisitions and a filtered error of 9 frames.
+ *
+ * The harness keeps [com.soundmesh.probe.sync.SyncRenderer.TRIM_DEADBAND_FRAMES] instead. Every
+ * archived measurement was taken at 48, and moving the ruler to match the product would end the
+ * comparability of all of them.
+ */
+const val PRODUCT_TRIM_FRAMES = 240
+
 interface SyncSession {
     /** Starts the session's threads. Returns once they are running, not once audio is flowing. */
     fun start()
@@ -45,4 +73,18 @@ interface SyncSession {
      * notification rather than a stop and a fresh start.
      */
     fun onAudioFocusChanged(hasFocus: Boolean)
+
+    /**
+     * Told by the service that the device moved to a different network, or kept one and changed
+     * address on it.
+     *
+     * Section 11.2 asks for the change to be detected and acted on rather than waited out, and
+     * what waiting it out would cost is the whole reason: the peer's address is stale from the
+     * instant the switch happens, and the only thing that notices otherwise is a socket timeout
+     * measured in tens of seconds.
+     *
+     * Declared on both roles rather than defaulted, so that a role which does nothing here says so
+     * where a reader is looking.
+     */
+    fun onNetworkChanged()
 }

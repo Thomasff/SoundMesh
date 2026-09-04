@@ -24,6 +24,9 @@ class SessionFlags {
     private val audioFocus = AtomicBoolean(false)
     private val linkUp = AtomicBoolean(true)
     private val clockConverged = AtomicBoolean(true)
+    // Starts false for the same reason the others start true: nothing has measured a clock as
+    // uncertain yet, and a session that has not converged one reports that instead.
+    private val clockUncertain = AtomicBoolean(false)
 
     fun markStarted() = started.set(true)
 
@@ -35,6 +38,8 @@ class SessionFlags {
 
     fun setClockConverged(converged: Boolean) = clockConverged.set(converged)
 
+    fun setClockUncertain(uncertain: Boolean) = clockUncertain.set(uncertain)
+
     fun isStopped(): Boolean = stopped.get()
 
     fun state(): SessionState = SessionState.of(
@@ -43,7 +48,8 @@ class SessionFlags {
             stopped = stopped.get(),
             hasAudioFocus = audioFocus.get(),
             linkUp = linkUp.get(),
-            clockConverged = clockConverged.get()
+            clockConverged = clockConverged.get(),
+            clockUncertain = clockUncertain.get()
         )
     )
 }

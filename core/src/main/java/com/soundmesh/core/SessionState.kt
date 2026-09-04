@@ -33,6 +33,15 @@ enum class SessionState(
     /** On the shared timeline and emitting. */
     PLAYING(mayEmit = true, keepsClockRunning = true),
 
+    /**
+     * Emitting, but the clock no longer promises the band section 4.3 accepts.
+     *
+     * Section 11.2 asks for exactly this: say the sync has degraded and keep playing, because
+     * slightly out of step beats silence. It emits for that reason and no other - the grading it
+     * comes from is [ClockHealth].
+     */
+    DEGRADED(mayEmit = true, keepsClockRunning = true),
+
     /** Another app holds the audio focus. Silent by obligation, not by fault. */
     SUSPENDED(mayEmit = false, keepsClockRunning = true),
 
@@ -50,8 +59,14 @@ enum class SessionState(
          * set deliberately. Focus outranks the link because losing the focus is a prohibition on
          * emitting while losing the link is only an inability to: a session that reported the link
          * would resume the instant the link returned, on top of the call that took the focus.
-         * Convergence is asked last because it is the only one of the four that a healthy session
-         * passes through on its way up.
+         * Convergence is asked last of the four because it is the only one of them that a healthy
+         * session passes through on its way up.
+         *
+         * [SessionConditions.clockUncertain] is asked after it and is the only condition that does
+         * not silence anything: an unconverged clock has no timeline to emit onto, while an
+         * uncertain one has a timeline it can no longer promise the accuracy of. Asking it last
+         * also means a session with no estimate at all reports SYNCING rather than DEGRADED, which
+         * is the difference between not knowing where the timeline is and knowing roughly.
          */
         fun of(conditions: SessionConditions): SessionState = when {
             conditions.stopped -> STOPPED
@@ -59,23 +74,32 @@ enum class SessionState(
             !conditions.hasAudioFocus -> SUSPENDED
             !conditions.linkUp -> RECOVERING
             !conditions.clockConverged -> SYNCING
+            conditions.clockUncertain -> DEGRADED
             else -> PLAYING
         }
     }
 }
 
 /**
- * The four independent facts a session's state is read off, plus whether it has been started and
+ * The independent facts a session's state is read off, plus whether it has been started and
  * stopped.
  *
- * Kept as one value rather than six parameters so that the reading and the thing read are the same
- * shape: a caller assembling these from live sources hands over one snapshot taken at one instant,
- * instead of six values sampled across the time it took to ask for them.
+ * Kept as one value rather than a handful of parameters so that the reading and the thing read are
+ * the same shape: a caller assembling these from live sources hands over one snapshot taken at one
+ * instant, instead of several values sampled across the time it took to ask for them.
  */
 data class SessionConditions(
     val started: Boolean,
     val stopped: Boolean,
     val hasAudioFocus: Boolean,
     val linkUp: Boolean,
-    val clockConverged: Boolean
+    val clockConverged: Boolean,
+    /**
+     * The clock converged, but past what section 4.3 accepts - see [ClockHealth].
+     *
+     * Defaulted so that a caller with nothing to say about the clock's quality describes a session
+     * that is not degraded, rather than one whose quality is unknown. There is no third answer
+     * here: a session that cannot grade its clock has not converged it either.
+     */
+    val clockUncertain: Boolean = false
 )

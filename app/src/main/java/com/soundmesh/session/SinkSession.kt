@@ -1,7 +1,9 @@
 package com.soundmesh.session
 
 import android.util.Log
+import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.ClockEstimate
+import com.soundmesh.core.ClockHealth
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
@@ -12,6 +14,8 @@ import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncRenderer
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -30,18 +34,40 @@ import java.util.concurrent.atomic.AtomicReference
  * which is what the harness measures in order to produce one.
  */
 class SinkSession(
-    private val hostAddress: String,
+    hostAddress: String,
     private val chunkPort: Int,
     private val peerId: String,
     private val calibrationDirectory: File,
     /** As on [HostSession]: both handsets edit their own waveform, so both arms have to move. */
     deadbandFrames: Int = DriftController.DEFAULT_DEADBAND_FRAMES,
     /** As on [HostSession], and for the same reason: an experiment moves both handsets or neither. */
-    trimFrames: Int = SyncRenderer.TRIM_DEADBAND_FRAMES,
+    trimFrames: Int = PRODUCT_TRIM_FRAMES,
+    /**
+     * Where the host is now, asked again after the network moved under this handset.
+     *
+     * A lambda rather than a discovery object because discovery needs a Context and this class has
+     * none: the service that owns both hands one in. Returning null means "no answer this time",
+     * which leaves the address alone - a failed search is not evidence that the host moved.
+     */
+    private val resolveHost: () -> String? = { null },
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val estimator = ClockOffsetEstimator()
-    private val clockClient = ClockSyncClient(hostAddress, SyncActivity.CLOCK_PORT, estimator)
+
+    /**
+     * Where the host is, as far as this handset knows. Moves only when [rediscover] finds it
+     * somewhere else.
+     */
+    @Volatile private var address: String = hostAddress
+
+    // Rebuilt rather than reconfigured when the address moves: the client resolves the address
+    // once and holds a socket for the whole of runFor. The estimator is not rebuilt with it - the
+    // host's clock did not change when its address did, so throwing the window away would cost the
+    // session sixteen silent seconds for a change that told it nothing about the clock.
+    @Volatile private var clockClient = ClockSyncClient(hostAddress, SyncActivity.CLOCK_PORT, estimator)
+
+    // Likewise rebuilt per connection, and null between them.
+    @Volatile private var chunkClient: ChunkClient? = null
 
     // currentEstimate() is cleared back to null by any cycle whose fit is rejected, and an
     // ill-conditioned window is not rare on a busy link. Falling back to no offset there would
@@ -51,6 +77,20 @@ class SinkSession(
 
     /** When the most recent chunk arrived, in local time, for the link watchdog below. */
     private val lastArrivalNanos = AtomicLong(0L)
+
+    /** Set by [onNetworkChanged], cleared by the connection loop once it has acted on it. */
+    private val rediscoverRequested = AtomicBoolean(false)
+
+    // What the session did to stay alive, as against what the renderer did to stay in step. The
+    // renderer's own counters cannot show a reconnection: to them an outage is a stretch of chunks
+    // that did not arrive, which is also what a host playing silence looks like.
+    private val reconnects = AtomicInteger(0)
+    private val rediscoveries = AtomicInteger(0)
+
+    // The grading, kept so a run can be read afterwards against the bounds it was graded by - a
+    // threshold justified by a distribution is only as good as the next distribution measured.
+    @Volatile private var clockHealth: ClockHealth? = null
+    @Volatile private var worstUncertaintyNanos = 0L
 
     private val alignmentOffsetNanos =
         (StoredCalibration(calibrationDirectory, peerId).read()?.micros ?: 0L) * 1_000L
@@ -67,11 +107,9 @@ class SinkSession(
         offsetNanosNow = { latestEstimate()?.offsetNanos ?: 0L },
         hostNanosNow = ::hostNanosNow
     )
-    private val chunkClient = ChunkClient(hostAddress, chunkPort) { chunk ->
-        lastArrivalNanos.set(System.nanoTime())
-        flags.setLinkUp(true)
-        if (flags.state().mayEmit) scheduler.submit(chunk)
-    }
+
+    /** Whether a connection has ever been made, so the first one is not counted as a return. */
+    private var connected = false
 
     private var clockThread: Thread? = null
     private var rendererThread: Thread? = null
@@ -82,9 +120,40 @@ class SinkSession(
 
     // Null before start(): the renderer exists but has never run, and a report of zeroes reads
     // like a session that played nothing rather than one that has not begun.
-    override fun report(): String? = if (flags.state() == SessionState.IDLE) null else renderer.report(null)
+    override fun report(): String? {
+        if (flags.state() == SessionState.IDLE) return null
+        // Spliced into the renderer's object rather than nested beside it: everything that reads
+        // one of these reads a flat set of names, and one more name costs nothing while one more
+        // level costs every reader.
+        return renderer.report(null).dropLast(1) + sessionCounters() + "}"
+    }
+
+    /** What the session survived, which no counter of the renderer's can show. */
+    private fun sessionCounters(): String =
+        ",\"reconnects\":${reconnects.get()}" +
+            ",\"rediscoveries\":${rediscoveries.get()}" +
+            ",\"clockHealth\":\"${clockHealth ?: "NONE"}\"" +
+            ",\"worstUncertaintyNanos\":$worstUncertaintyNanos"
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
+
+    /**
+     * Drops what is certainly stale and asks the connection loop to look for the host again.
+     *
+     * The link is marked down here rather than left to the watchdog's idle threshold, which is
+     * what section 11.2 means by not waiting for the timeout. The arrival clock is reset with it,
+     * or the watchdog's next pass - two hundred milliseconds later, still inside the threshold -
+     * would put the link straight back up on the strength of a chunk that arrived over a network
+     * this handset is no longer on.
+     */
+    override fun onNetworkChanged() {
+        if (flags.isStopped()) return
+        rediscoverRequested.set(true)
+        lastArrivalNanos.set(0L)
+        flags.setLinkUp(false)
+        // Closing the socket is what wakes the reader thread; the loop itself is woken by the flag.
+        runCatching { chunkClient?.stop() }
+    }
 
     private fun latestEstimate(): ClockEstimate? {
         val fresh = clockClient.currentEstimate()
@@ -108,7 +177,7 @@ class SinkSession(
         flags.markStarted()
         flags.setClockConverged(false)
         flags.setLinkUp(false)
-        clockThread = guarded("SoundMeshSinkClock") { clockClient.runFor(FOREVER_SECONDS, CLOCK_INTERVAL_MILLIS) }
+        clockThread = guarded("SoundMeshSinkClock", ::exchangeClock)
         watchdogThread = guarded("SoundMeshSinkWatch", ::watch)
         // The renderer converts through hostNanosNow, which throws until the estimator has a fit,
         // so it is only started once one exists.
@@ -137,26 +206,116 @@ class SinkSession(
     }, name).also { it.start() }
 
     /**
-     * Dials the host until it answers.
+     * Exchanges with the host for as long as the session lasts, across however many addresses it
+     * has in that time.
      *
-     * One attempt is not enough, and the reason is not network trouble: a host opens its file
-     * before it binds anything, and decoding takes as long as it takes. Whoever starts the two
-     * handsets has no way to know when that finished, so the sink's first connection has to be
-     * allowed to arrive early. It refused once on hardware, and a refusal on the starting thread
-     * took the whole process down with it.
+     * The loop exists for the address, not for failure: [ClockSyncClient.runFor] survives a host
+     * that stops answering on its own, and the only thing it cannot survive is being pointed
+     * somewhere else. An interrupt that did not come from [stop] is therefore read as "the address
+     * moved", which is the only other thing that interrupts this thread.
+     */
+    private fun exchangeClock() {
+        while (!flags.isStopped()) {
+            val client = ClockSyncClient(address, SyncActivity.CLOCK_PORT, estimator)
+            clockClient = client
+            runCatching { client.runFor(FOREVER_SECONDS, CLOCK_INTERVAL_MILLIS) }
+            if (flags.isStopped()) return
+            // The interrupt is cleared here rather than left set, or the rebuilt client's first
+            // sleep would throw immediately and spin this loop.
+            Thread.interrupted()
+            Thread.sleep(REBUILD_PAUSE_MILLIS)
+        }
+    }
+
+    /**
+     * Holds a connection to the host for as long as the session lasts, dialling again whenever one
+     * ends.
      *
-     * Retrying only covers the first connection. A link that came up and then went away is a
-     * different problem with a different answer, and the state a person sees says RECOVERING for
-     * both because both are, from the room's point of view, the same silence.
+     * The first connection has to be allowed to arrive early: a host opens its file before it binds
+     * anything, and decoding takes as long as it takes, so whoever started the two handsets cannot
+     * know when the host began listening. It refused once on hardware, and a refusal on the
+     * starting thread took the whole process down with it.
+     *
+     * Every connection after the first is section 11.2's dropped link. What keeps that inaudible is
+     * not this loop but the lead time: chunks are handed over about a second and a half before they
+     * are due, so an outage shorter than the buffer already in the scheduler is played straight
+     * through and only the counters know it happened. This loop's job is to be finished dialling
+     * before that buffer runs out.
      */
     private fun connect() {
+        var failures = 0
         while (!flags.isStopped()) {
-            if (runCatching { chunkClient.start() }.isSuccess) break
-            Thread.sleep(CONNECT_RETRY_MILLIS)
+            if (rediscoverRequested.compareAndSet(true, false)) rediscover()
+            if (dial()) {
+                failures = 0
+                awaitLinkLoss()
+            } else if (++failures >= DIAL_FAILURES_BEFORE_REDISCOVERY) {
+                // The address came off a code scanned at some point in the past, and a lease that
+                // expired since is indistinguishable from a host that has not started yet - until
+                // enough attempts have gone by that a host still decoding is no longer the
+                // explanation. Then it is worth a look rather than another decade of dialling.
+                failures = 0
+                rediscoverRequested.set(true)
+            }
+            runCatching { chunkClient?.stop() }
+            chunkClient = null
         }
-        // A stop that landed between the test above and the connect itself leaves a socket nobody
-        // will close otherwise.
-        if (flags.isStopped()) runCatching { chunkClient.stop() }
+        runCatching { chunkClient?.stop() }
+    }
+
+    /** One attempt. The caller's loop is the retry, so a host that is not up yet costs one sleep. */
+    private fun dial(): Boolean {
+        val client = ChunkClient(address, chunkPort, ::receive)
+        if (runCatching { client.start() }.isFailure) {
+            Thread.sleep(CONNECT_RETRY_MILLIS)
+            return false
+        }
+        chunkClient = client
+        // Counted after the first, so the number reads as "times this session came back" rather
+        // than "times it connected", which is one larger and means something else.
+        if (connected) reconnects.incrementAndGet()
+        connected = true
+        return true
+    }
+
+    /**
+     * Returns once the connection has stopped carrying chunks, or once the network moved.
+     *
+     * Silence is measured from the dial rather than from the last arrival so that a fresh
+     * connection is not judged by the previous one's clock, which stopped at whatever instant that
+     * connection died.
+     */
+    private fun awaitLinkLoss() {
+        val dialledAtNanos = System.nanoTime()
+        while (!flags.isStopped() && !rediscoverRequested.get()) {
+            val quietSinceNanos = maxOf(dialledAtNanos, lastArrivalNanos.get())
+            if (System.nanoTime() - quietSinceNanos > IDLE_THRESHOLD_NANOS) return
+            Thread.sleep(WATCH_INTERVAL_MILLIS)
+        }
+    }
+
+    /**
+     * Looks for the host on the network this handset is on now.
+     *
+     * An answer from some other host is not an answer: the search is filtered by [peerId] on the
+     * far side, so the two ways this returns nothing - nobody answered, and somebody else did -
+     * both leave the known address in place. The alternative is a session that quietly follows a
+     * stranger after a WiFi switch, which nothing in the room would explain.
+     */
+    private fun rediscover() {
+        val found = runCatching { resolveHost() }.getOrNull() ?: return
+        if (found == address) return
+        Log.i(LOG_TAG, "the host moved to another address")
+        address = found
+        rediscoveries.incrementAndGet()
+        // The clock client resolved the old address at construction; only a new one can follow.
+        clockThread?.interrupt()
+    }
+
+    private fun receive(chunk: AudioChunk) {
+        lastArrivalNanos.set(System.nanoTime())
+        flags.setLinkUp(true)
+        if (flags.state().mayEmit) scheduler.submit(chunk)
     }
 
     /**
@@ -169,11 +328,27 @@ class SinkSession(
      */
     private fun watch() {
         while (!flags.isStopped()) {
-            flags.setClockConverged(latestEstimate() != null)
+            grade(latestEstimate())
             val last = lastArrivalNanos.get()
             if (last != 0L) flags.setLinkUp(System.nanoTime() - last < IDLE_THRESHOLD_NANOS)
             Thread.sleep(WATCH_INTERVAL_MILLIS)
         }
+    }
+
+    /**
+     * Turns one estimate into the two conditions section 11.2 asks for.
+     *
+     * An estimate that has never succeeded and one whose uncertainty is past the point of being
+     * usable are reported the same way, as an unconverged clock, and both silence the session. They
+     * are the same answer to the only question that matters here: is there a timeline this handset
+     * can be trusted to emit onto. Everything between the two bounds keeps playing and says so.
+     */
+    private fun grade(estimate: ClockEstimate?) {
+        val health = estimate?.let { ClockHealth.of(it.uncertaintyNanos) }
+        clockHealth = health
+        if (estimate != null) worstUncertaintyNanos = maxOf(worstUncertaintyNanos, estimate.uncertaintyNanos)
+        flags.setClockConverged(health != null && health != ClockHealth.UNUSABLE)
+        flags.setClockUncertain(health == ClockHealth.DEGRADED)
     }
 
     private fun renderOnceConverged() {
@@ -191,7 +366,7 @@ class SinkSession(
         // is safe: the renderer only runs once an estimate exists, and stopping before that leaves
         // the renderer's own wait loop to end it instead.
         runCatching { renderer.endAt(hostNanosNow()) }
-        runCatching { chunkClient.stop() }
+        runCatching { chunkClient?.stop() }
         // runFor sleeps between exchanges and has no stop of its own; the interrupt lands in that
         // sleep and unwinds through the socket's own close.
         clockThread?.interrupt()
@@ -219,6 +394,17 @@ class SinkSession(
 
         /** Between attempts on a host that is not listening yet. Its decode is the thing waited on. */
         const val CONNECT_RETRY_MILLIS = 500L
+
+        /**
+         * Ten seconds of refusals before the address itself is doubted.
+         *
+         * Long enough that a host still opening its file is never the reason - it answers within
+         * two or three attempts - and short enough that nobody waits out a stale lease by hand.
+         */
+        const val DIAL_FAILURES_BEFORE_REDISCOVERY = 20
+
+        /** Between a clock client that ended and its replacement, so a stuck one cannot spin. */
+        const val REBUILD_PAUSE_MILLIS = 200L
 
         /** A duration no session reaches, in place of a deadline the product does not have. */
         const val FOREVER_SECONDS = 365 * 24 * 3600

@@ -25,25 +25,23 @@ import com.soundmesh.probe.sync.SyncRenderer
 class HostSession(
     private val readChunk: () -> ByteArray,
     /**
-     * How far the drift loop lets the write position wander before it edits the waveform.
+     * How far the drift loop lets the write position wander before it corrects it.
      *
-     * Settable because the default sits below a quantity that is known to exist: the 48-frame
-     * deadband is 1 ms, and one handset's emission moves in steps of about 56 frames (1.17 ms).
-     * A step larger than the deadband forces a trim every time it happens, and a trim deletes
-     * audio - the archived runs average 68 frames, 1.4 ms, per event. Whether that is what a
-     * listener still hears is a question for a wider deadband and a pair of ears, not for more
-     * reading of this comment.
+     * Settable, and known not to be the knob that matters here. It was the first guess at the
+     * clicks - the 48-frame default is 1 ms and one handset's emission moves in ~56-frame steps,
+     * so a step would cross it every time - and the guess was wrong. Widening it to 96 frames on a
+     * product session moved the trim rate from 3.30 a second to 3.32. What this governs is when
+     * the loop corrects; what decides whether the waveform gets cut is [trimFrames].
      */
     deadbandFrames: Int = DriftController.DEFAULT_DEADBAND_FRAMES,
     /**
      * The renderer's trim band, and with it the scheduler's early release.
      *
-     * A different knob from [deadbandFrames], which was tried first and changed nothing: the drift
-     * loop's deadband governs how far the write position may wander before the loop corrects it,
-     * while this governs whether a release that is already off gets the waveform cut. The counters
-     * that separate them are trims and silence writes, and only this one moves either.
+     * The knob that does move the clicks - see [PRODUCT_TRIM_FRAMES] for the measurement and for
+     * why the product's default is not the renderer's own. Settable so a run can go back to the
+     * archive's 48 without a rebuild.
      */
-    trimFrames: Int = SyncRenderer.TRIM_DEADBAND_FRAMES,
+    trimFrames: Int = PRODUCT_TRIM_FRAMES,
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
@@ -73,6 +71,16 @@ class HostSession(
     override fun report(): String? = if (flags.state() == SessionState.IDLE) null else renderer.report(null)
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
+
+    /**
+     * Nothing. A host dials nobody: it binds every interface and waits, so an address that moved
+     * under it costs it no connection of its own.
+     *
+     * The one thing a moved host does owe its sinks is a corrected mDNS record, and that belongs
+     * to whoever registered it - [SessionService], which holds the Context the registration needs
+     * and re-registers on the same signal that reaches here.
+     */
+    override fun onNetworkChanged() = Unit
 
     override fun start() {
         clockServer.start()

@@ -1,8 +1,6 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionStateTest {
@@ -68,11 +66,54 @@ class SessionStateTest {
         assertEquals(SessionState.RECOVERING, SessionState.of(regained))
     }
 
+    /**
+     * The one condition that does not silence anything. Section 11.2 asks for the sync to be
+     * reported as degraded while playback continues, so this state has to emit or the requirement
+     * is not implemented.
+     */
     @Test
-    fun playingIsTheOnlyStateThatMayEmit() {
+    fun isDegradedWhileTheClockConvergedPastWhatIsAccepted() {
+        assertEquals(SessionState.DEGRADED, SessionState.of(healthy.copy(clockUncertain = true)))
+    }
+
+    /**
+     * No estimate at all is not a bad estimate. Reading it as degraded would let a handset emit
+     * onto a timeline it has never converged to.
+     */
+    @Test
+    fun anUnconvergedClockOutranksAnUncertainOne() {
+        val both = healthy.copy(clockConverged = false, clockUncertain = true)
+
+        assertEquals(SessionState.SYNCING, SessionState.of(both))
+    }
+
+    /** A degraded clock says nothing about who owns the output. */
+    @Test
+    fun losingTheFocusOutranksADegradedClock() {
+        val both = healthy.copy(hasAudioFocus = false, clockUncertain = true)
+
+        assertEquals(SessionState.SUSPENDED, SessionState.of(both))
+    }
+
+    /** Absent means not degraded, so every reading taken before this existed still reads the same. */
+    @Test
+    fun aCallerThatSaysNothingAboutTheClockQualityDescribesAHealthyOne() {
+        val silent = SessionConditions(
+            started = true,
+            stopped = false,
+            hasAudioFocus = true,
+            linkUp = true,
+            clockConverged = true
+        )
+
+        assertEquals(SessionState.PLAYING, SessionState.of(silent))
+    }
+
+    @Test
+    fun playingAndDegradedAreTheOnlyStatesThatMayEmit() {
         val emitting = SessionState.entries.filter { it.mayEmit }
 
-        assertEquals(listOf(SessionState.PLAYING), emitting)
+        assertEquals(listOf(SessionState.PLAYING, SessionState.DEGRADED), emitting)
     }
 
     /**
@@ -82,11 +123,8 @@ class SessionStateTest {
      */
     @Test
     fun everyStateButIdleAndStoppedKeepsTheClockRunning() {
-        assertFalse(SessionState.IDLE.keepsClockRunning)
-        assertFalse(SessionState.STOPPED.keepsClockRunning)
-        assertTrue(SessionState.SYNCING.keepsClockRunning)
-        assertTrue(SessionState.RECOVERING.keepsClockRunning)
-        assertTrue(SessionState.SUSPENDED.keepsClockRunning)
-        assertTrue(SessionState.PLAYING.keepsClockRunning)
+        val notRunning = SessionState.entries.filterNot { it.keepsClockRunning }
+
+        assertEquals(listOf(SessionState.IDLE, SessionState.STOPPED), notRunning)
     }
 }
