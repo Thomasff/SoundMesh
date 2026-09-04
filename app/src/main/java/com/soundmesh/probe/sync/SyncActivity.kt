@@ -151,6 +151,7 @@ class SyncActivity : Activity() {
                 null -> null
                 is ClockOffsetUnavailable -> "CLOCK_OFFSET_UNAVAILABLE"
                 is SourceUnusable -> failure.code
+                is PeerUnavailable -> failure.code
                 else -> failure.javaClass.simpleName
             }
             if (failureCode != null) {
@@ -176,8 +177,8 @@ class SyncActivity : Activity() {
     }
 
     private fun runSink(mode: String, caseId: String, seconds: Int) {
-        val address = intent.getStringExtra("host_address")
-            ?: throw IllegalArgumentException("SINK needs host_address")
+        val host = locateHost()
+        val address = host.address
         if (mode == "CLOCK_ONLY") {
             val estimator = ClockOffsetEstimator()
             val client = ClockSyncClient(address, CLOCK_PORT, estimator)
@@ -187,7 +188,7 @@ class SyncActivity : Activity() {
                 "{\"schemaVersion\":1,\"role\":\"SINK\",\"failureCode\":null,${clockJson(client, estimator, history)}}"
             )
         } else {
-            runSinkFull(address, caseId, seconds)
+            runSinkFull(host, caseId, seconds)
         }
     }
 
@@ -364,6 +365,18 @@ class SyncActivity : Activity() {
      * Matched against the known values rather than echoed, so an unreadable word cannot reach the
      * report and be mistaken for a mode later.
      */
+    /**
+     * Whether this run finds its partner instead of being told where it is, defaulting to off -
+     * the arrangement every measurement so far was taken on.
+     *
+     * Opt-in for the same reason the sink's own recording is: it changes the device under
+     * measurement. The host starts advertising and the sink spends a discovery window listening on
+     * a multicast group, both during a run whose whole subject is timing. Keeping it a flag leaves
+     * every stored baseline reproducible and makes the two arrangements an A/B rather than a
+     * replacement.
+     */
+    private fun discoverRequested(): Boolean = intent.getBooleanExtra("discover", false)
+
     private fun networkModeRequested(): String? =
         intent.getStringExtra("network_mode")?.takeIf { it in NETWORK_MODES }
 
@@ -400,6 +413,13 @@ class SyncActivity : Activity() {
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
         val resultServer = AlignmentResultServer(RESULT_PORT)
+        // Registered before anything binds a socket is fine: mDNS advertises a name and a port,
+        // not a listening state, and the sink's discovery window is far longer than the gap.
+        val advertisement = if (discoverRequested()) {
+            PeerDiscovery(this).register("$SERVICE_NAME_PREFIX-$caseId", CHUNK_PORT)
+        } else {
+            null
+        }
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,
             SCHEDULER_CAPACITY_CHUNKS,
@@ -512,6 +532,9 @@ class SyncActivity : Activity() {
                     "\"audioSource\":${calibration.openedSource?.let { "\"$it\"" } ?: "null"}," +
                     // Which handset was the access point. Provenance a finished run cannot recover.
                     "\"networkMode\":${networkModeRequested()?.let { "\"$it\"" } ?: "null"}," +
+                    // Whether this run advertised itself for the sink to find, rather than the
+                    // sink having been handed an address.
+                    "\"advertised\":${advertisement != null}," +
                     // What turns a whole-interval search into a windowed one. Recorded even while
                     // the analysis still runs on the PC, so the two can be compared before the
                     // device is trusted to measure on its own.
@@ -539,13 +562,45 @@ class SyncActivity : Activity() {
                 projection.stop()
                 startService(Intent(this, SyncProjectionService::class.java).setAction(SyncProjectionService.ACTION_RELEASE))
             }
+            runCatching { advertisement?.close() }
             resultServer.stop()
             chunkServer.stop()
             clockServer.stop()
         }
     }
 
-    private fun runSinkFull(address: String, caseId: String, seconds: Int) {
+    /**
+     * Where the host is, and how this run came to know.
+     *
+     * An address on the command line still wins, so every stored baseline stays reproducible; with
+     * `discover` it comes off the network instead. [chunkPort] is the port the service record
+     * actually carried when discovery was used, rather than this build's copy of the constant.
+     */
+    private class HostLocation(val address: String, val chunkPort: Int, val discovered: Boolean, val json: String)
+
+    private fun locateHost(): HostLocation {
+        if (!discoverRequested()) {
+            val address = intent.getStringExtra("host_address")
+                ?: throw IllegalArgumentException("SINK needs host_address")
+            return HostLocation(address, CHUNK_PORT, discovered = false, json = "null")
+        }
+        val startedAt = System.nanoTime()
+        val outcome = PeerDiscovery(this).discover(DISCOVERY_WINDOW_MILLIS)
+        val elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000
+        // Thrown rather than fallen back to `host_address`: a run that asked to find its partner
+        // and silently used a typed-in address instead would report discovery as working.
+        val peer = outcome.peer ?: throw PeerUnavailable("DISCOVERY_${outcome.failure}")
+        return HostLocation(
+            address = peer.hostAddress,
+            chunkPort = peer.port,
+            discovered = true,
+            json = "{\"seen\":${outcome.seen},\"compatible\":${outcome.compatible}," +
+                "\"elapsedMillis\":$elapsedMillis,\"name\":\"${peer.name}\",\"port\":${peer.port}}"
+        )
+    }
+
+    private fun runSinkFull(host: HostLocation, caseId: String, seconds: Int) {
+        val address = host.address
         val estimator = ClockOffsetEstimator()
         val clockClient = ClockSyncClient(address, CLOCK_PORT, estimator)
         // currentEstimate() returns the estimate from the last exchange cycle, and runFor stores
@@ -606,7 +661,7 @@ class SyncActivity : Activity() {
         // ruled out just letting the scheduler's own capacity/lateness logic handle it - that
         // would show up as droppedLate/droppedOverflow on an otherwise healthy run.
         val converged = AtomicBoolean(false)
-        val chunkClient = ChunkClient(address, CHUNK_PORT) { chunk ->
+        val chunkClient = ChunkClient(address, host.chunkPort) { chunk ->
             if (converged.get()) {
                 lastPlayAt.set(chunk.playAtHostNanos)
                 scheduler.submit(chunk)
@@ -630,7 +685,12 @@ class SyncActivity : Activity() {
         val clockThread = Thread { history = clockClient.runFor(maxOf(playbackSeconds, CONVERGENCE_TIMEOUT_SECONDS), clockIntervalMillisRequested()) }
         try {
             clockThread.start()
-            chunkClient.start()
+            // A host that answered mDNS but will not take a TCP connection is the signature of
+            // client isolation, which the audio stream cannot survive either. Named here, because
+            // as a bare ConnectException it reads like a host that never started.
+            runCatching { chunkClient.start() }.onFailure {
+                throw if (host.discovered) PeerUnavailable("PEER_UNREACHABLE_AFTER_DISCOVERY") else it
+            }
 
             // hostNanosNow() is meaningless before the estimator has its first fit: it falls
             // back to a raw, uncorrected nanoTime() that can be off by however long the two
@@ -737,6 +797,9 @@ class SyncActivity : Activity() {
                     // Where the correction this run applied came from, and what the next run will
                     // stand on. Null adopted means the correction was kept, not that it was zeroed.
                     "\"alignmentOffsetSource\":\"${resolvedOffset.source}\"," +
+                    // How this run found the host, or null when it was told. The counts are what
+                    // separate a quiet network from one carrying a build that cannot be talked to.
+                    "\"discovery\":${host.json}," +
                     "\"adoptedOffsetMicros\":${adopted ?: "null"}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson(resolvedOffset.micros)}," +
@@ -1145,6 +1208,18 @@ class SyncActivity : Activity() {
 
         /** No new chunk for this long means the host has stopped broadcasting audio. */
         private const val IDLE_THRESHOLD_NANOS = 800_000_000L
+
+        /**
+         * How long the sink listens before deciding what is on the network.
+         *
+         * The whole window is spent every time. mDNS never says "that was all of them", so
+         * returning at the first answer would silently turn two hosts into whichever replied
+         * first - and two hosts is the one outcome discovery must refuse to guess at.
+         */
+        private const val DISCOVERY_WINDOW_MILLIS = 5_000
+
+        /** Instance name prefix. The case id follows it, so two runs cannot collide on a name. */
+        private const val SERVICE_NAME_PREFIX = "SoundMesh"
 
         /** ~3s of audio at 20ms/chunk. */
         private const val SCHEDULER_CAPACITY_CHUNKS = 150

@@ -1010,3 +1010,13 @@ test('says the correction was kept, not zeroed, when the host had nothing to ado
   assert.match(lines[0], /kept/);
   assert.doesNotMatch(lines[0], /next run/);
 });
+
+// Both roles, unlike every other switch here: the host has to advertise for the sink to have
+// anything to find, so one side alone would look exactly like a network that dropped the query.
+test('--discover reaches both roles, and its absence leaves both on the typed-in address', async () => {
+  const discovering = await startSyncCalls(['--discover']);
+  assert.deepEqual(discovering.map(({ role, discover }) => [role, discover]), [['HOST', true], ['SINK', true]]);
+
+  const told = await startSyncCalls([]);
+  assert.deepEqual(told.map(({ role, discover }) => [role, discover]), [['HOST', false], ['SINK', false]]);
+});

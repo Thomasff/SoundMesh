@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Discovery. NsdManager answers out of a platform daemon that this app's multicast filter
+         does not apply to, so the lock may be unnecessary - held anyway because whether these
+         vendor builds behave like the platform one is not something to learn from a failed run. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <queries>
         <package android:name="com.netease.cloudmusic" />
