@@ -48,8 +48,25 @@ enum class CalibrationAudioSource(val androidSource: Int) {
 class CalibrationRunner(
     private val runStore: RunStore,
     private val caseId: String,
-    private val requestedSource: CalibrationAudioSource = CalibrationAudioSource.MIC
+    private val requestedSource: CalibrationAudioSource = CalibrationAudioSource.MIC,
+    private val hostNanosNow: (() -> Long)? = null
 ) {
+    /**
+     * The host instant the recording opened at, once [record] has started it.
+     *
+     * Without it the file is a recording that never says when it began, and the only safe way to
+     * find a chirp in one is to search the whole interval - 2.88 million lags for a 60 second
+     * schedule, 22 seconds of correlation on a PC. With it the search collapses to the uncertainty
+     * between this reading and the first captured sample. See CalibrationWindow.
+     *
+     * Read after `startRecording()` rather than before it, so the open cost sits outside the
+     * uncertainty rather than inside it. It is a search hint and never an input to a measurement:
+     * arrivals stay pinned to the sample by correlation, so half a second of accuracy is ample and
+     * no capture timestamp API has to be trusted for it.
+     */
+    @Volatile
+    var startedAtHostNanos: Long? = null
+        private set
     /**
      * The source that actually opened, once [record] has run. Not the same as the requested one:
      * UNPROCESSED is optional on Android, so a run that asks for it may still have been recorded on
@@ -70,6 +87,9 @@ class CalibrationRunner(
         val target = File(runStore.prepareRun(caseId), "calibration.wav")
         WavFileWriter(target, ChirpGenerator.SAMPLE_RATE, 1).use { writer ->
             record.startRecording()
+            // A run that cannot read the host clock is still a run worth recording, so a failure
+            // here costs the cheap search window and nothing else.
+            startedAtHostNanos = hostNanosNow?.let { runCatching(it).getOrNull() }
             val buffer = ByteArray(8192)
             val deadline = System.nanoTime() + seconds * 1_000_000_000L
             while (System.nanoTime() < deadline) {

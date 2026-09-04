@@ -428,7 +428,7 @@ class SyncActivity : Activity() {
             // The renderer started on a provisional bound; only now is the chirp's end known.
             renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
 
-            val calibration = CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested())
+            val calibration = CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested(), hostNanosNow)
             awaitHostInstant(sinkChirpAt - RECORD_LEAD_NANOS, hostNanosNow)
             val recordThread = Thread { calibration.record(secondsUntil(chirpSubmission.endHostNanos + RECORD_TAIL_NANOS)) }
             recordThread.start()
@@ -445,6 +445,11 @@ class SyncActivity : Activity() {
                     // optional on Android, so a run that requests it may have been recorded on the
                     // fallback and the artifact has to say which path produced the number.
                     "\"audioSource\":${calibration.openedSource?.let { "\"$it\"" } ?: "null"}," +
+                    // What turns a whole-interval search into a windowed one. Recorded even while
+                    // the analysis still runs on the PC, so the two can be compared before the
+                    // device is trusted to measure on its own.
+                    "\"recordingStartedAtHostNanos\":${calibration.startedAtHostNanos ?: "null"}," +
+                    "\"sinkChirpAtHostNanos\":$sinkChirpAt," +
                     "${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
                     // A captured run and a generated one are not comparable, and nothing else in
@@ -604,7 +609,7 @@ class SyncActivity : Activity() {
             // Deliberately the same two host instants the host opens and closes its own recording
             // on, so the two files cover one window and every pair appears in both. The host's own
             // chirp trails this device's by the stagger, so the tail is measured from there.
-            val calibration = if (sinkRecordsRequested()) CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested()) else null
+            val calibration = if (sinkRecordsRequested()) CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested(), hostNanosNow) else null
             val recordThread = calibration?.let {
                 val untilHostNanos = chirpSubmission.endHostNanos + STAGGER_NANOS + RECORD_TAIL_NANOS
                 val fromHostNanos = chirpAt - RECORD_LEAD_NANOS
@@ -625,6 +630,10 @@ class SyncActivity : Activity() {
                     // Null on a run that did not ask the sink to record, and on the same terms as
                     // the host otherwise: the source that actually opened, never the one asked for.
                     "\"audioSource\":${calibration?.openedSource?.let { "\"$it\"" } ?: "null"}," +
+                    // The sink's own chirp, and when its own recording opened. Both sides carry
+                    // the pair in host time, so either can window its search without the other.
+                    "\"recordingStartedAtHostNanos\":${calibration?.startedAtHostNanos ?: "null"}," +
+                    "\"sinkChirpAtHostNanos\":$chirpAt," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
