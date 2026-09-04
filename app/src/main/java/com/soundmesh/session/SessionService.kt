@@ -12,9 +12,11 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.IBinder
 import android.util.Log
+import com.soundmesh.core.DriftController
 import com.soundmesh.core.HostId
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.FileChunkSource
+import com.soundmesh.probe.sync.SyncRenderer
 import java.io.File
 
 /**
@@ -83,7 +85,7 @@ class SessionService : Service() {
             ?: throw IllegalArgumentException("missing source file")
         if (!SAFE_SOURCE_FILE.matches(name)) throw IllegalArgumentException("unusable source file name")
         val source = FileChunkSource.open(File(getExternalFilesDir(null), name))
-        return HostSession(source::readChunk)
+        return HostSession(source::readChunk, deadbandFrames(intent), trimFrames(intent))
     }
 
     private fun openSink(intent: Intent): SyncSession {
@@ -93,7 +95,30 @@ class SessionService : Service() {
         if (!HostId.isValid(peerId)) throw IllegalArgumentException("unusable peer id")
         val port = intent.getIntExtra(EXTRA_CHUNK_PORT, 0)
         if (port !in 1..65535) throw IllegalArgumentException("unusable chunk port")
-        return SinkSession(address, port, peerId!!, filesDir)
+        return SinkSession(address, port, peerId!!, filesDir, deadbandFrames(intent), trimFrames(intent))
+    }
+
+    /**
+     * The drift loop's deadband, or the default when nothing asked for another.
+     *
+     * Absent means default rather than zero, on the same terms every other extra in this project
+     * uses: a session started without an opinion has to behave exactly as one started before the
+     * extra existed, or an experiment's control arm is not the thing it is being compared against.
+     */
+    private fun deadbandFrames(intent: Intent): Int {
+        val requested = intent.getIntExtra(EXTRA_DEADBAND_FRAMES, DriftController.DEFAULT_DEADBAND_FRAMES)
+        return if (requested in 1..MAX_DEADBAND_FRAMES) requested else DriftController.DEFAULT_DEADBAND_FRAMES
+    }
+
+    /**
+     * The renderer's trim band, on the same absent-means-default terms.
+     *
+     * Bounded below by one frame rather than zero: a band of zero is the arrangement O38 removed,
+     * where every release off the grid by a single frame edited the waveform.
+     */
+    private fun trimFrames(intent: Intent): Int {
+        val requested = intent.getIntExtra(EXTRA_TRIM_FRAMES, SyncRenderer.TRIM_DEADBAND_FRAMES)
+        return if (requested in 1..MAX_TRIM_FRAMES) requested else SyncRenderer.TRIM_DEADBAND_FRAMES
     }
 
     /**
@@ -136,6 +161,12 @@ class SessionService : Service() {
         val session = ACTIVE
         ACTIVE = null
         Thread({
+            // Read before the stop, not after: stopping ends the renderer, and the counters this
+            // whole file exists to surface are the renderer's. Written to a file because the run
+            // that produced them is over by the time anyone asks, and a number nobody can read
+            // afterwards is the same as a number nobody counted.
+            runCatching { session?.report()?.let { File(filesDir, REPORT_FILE).writeText(it) } }
+                .onFailure { Log.e(LOG_TAG, "could not write the session report", it) }
             runCatching { session?.stop() }
             releaseAudioFocus()
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -185,6 +216,24 @@ class SessionService : Service() {
         const val EXTRA_HOST_ADDRESS = "host_address"
         const val EXTRA_CHUNK_PORT = "chunk_port"
         const val EXTRA_PEER_ID = "peer_id"
+        const val EXTRA_DEADBAND_FRAMES = "deadband_frames"
+        const val EXTRA_TRIM_FRAMES = "trim_frames"
+
+        /**
+         * Half a chunk. Past this the loop can no longer correct an error smaller than the chunk
+         * period it is correcting within, which is a different design rather than a wider setting.
+         */
+        const val MAX_DEADBAND_FRAMES = 480
+
+        /**
+         * Half a chunk again. A band wider than half the chunk period would let a release sit
+         * closer to the next chunk than to its own, which is a different scheme rather than a
+         * wider band - and 480 frames is 10 ms, already twice the whole alignment gate.
+         */
+        const val MAX_TRIM_FRAMES = 480
+
+        /** Where the last session left its counters, under filesDir so run-as can read it. */
+        const val REPORT_FILE = "session-report.json"
 
         /**
          * The running session, for whatever is showing its state.

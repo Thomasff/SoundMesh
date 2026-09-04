@@ -12,6 +12,8 @@ const SHOW_CODE_ACTIVITY = `${PROBE_PACKAGE}/.sync.ShowCodeActivity`;
 const SESSION_ACTIVITY = `${PROBE_PACKAGE}/com.soundmesh.session.SessionActivity`;
 // Not under runs/: a scanned host outlives every case, which is the whole reason it is on disk.
 const SCANNED_PAIRING_PATH = 'files/scanned-pairing';
+// Same reason: a product session has no case id, because it has no report to file under one.
+const SESSION_REPORT_PATH = 'files/session-report.json';
 export class ProbeStatusNotReadyError extends Error { constructor() { super('Probe status is not ready'); this.code = 'NOT_READY'; } }
 
 function requireSuccess(result, action) {
@@ -71,7 +73,7 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     // the sink runs a clock client, and a denser cadence is a data collection choice, not production.
     // sinkRecords is sent to the sink alone and on the same terms: absent leaves the run on the
     // one-recording arrangement, where only the host opens a capture path.
-    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, capturePackage, sourceFile, networkMode, discover, paired }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : []), ...(lowLatency ? ['--ez', 'low_latency', 'true'] : []), ...(reacquireThresholdFrames ? ['--ei', 'reacquire_threshold_frames', String(reacquireThresholdFrames)] : []), ...(audioSource ? ['--es', 'audio_source', audioSource] : []), ...(chirpRepeats ? ['--ei', 'chirp_repeats', String(chirpRepeats)] : []), ...(chirpIntervalSeconds ? ['--ei', 'chirp_interval_seconds', String(chirpIntervalSeconds)] : []), ...(deadbandFrames ? ['--ei', 'deadband_frames', String(deadbandFrames)] : []), ...(sinkRecords ? ['--ez', 'sink_records', 'true'] : []), ...(clockIntervalMs ? ['--ei', 'clock_interval_ms', String(clockIntervalMs)] : []), ...(alignmentOffsetMicros !== undefined ? ['--ei', 'alignment_offset_us', String(alignmentOffsetMicros)] : []), ...(capturePackage ? ['--es', 'capture_package', capturePackage] : []), ...(sourceFile ? ['--es', 'source_file', sourceFile] : []), ...(networkMode ? ['--es', 'network_mode', networkMode] : []), ...(discover ? ['--ez', 'discover', 'true'] : []), ...(paired ? ['--ez', 'paired', 'true'] : [])] }), 'Sync start'),
+    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, capturePackage, sourceFile, networkMode, discover, paired }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : []), ...(lowLatency ? ['--ez', 'low_latency', 'true'] : []), ...(reacquireThresholdFrames ? ['--ei', 'reacquire_threshold_frames', String(reacquireThresholdFrames)] : []), ...(trimFrames ? ['--ei', 'trim_frames', String(trimFrames)] : []), ...(audioSource ? ['--es', 'audio_source', audioSource] : []), ...(chirpRepeats ? ['--ei', 'chirp_repeats', String(chirpRepeats)] : []), ...(chirpIntervalSeconds ? ['--ei', 'chirp_interval_seconds', String(chirpIntervalSeconds)] : []), ...(deadbandFrames ? ['--ei', 'deadband_frames', String(deadbandFrames)] : []), ...(sinkRecords ? ['--ez', 'sink_records', 'true'] : []), ...(clockIntervalMs ? ['--ei', 'clock_interval_ms', String(clockIntervalMs)] : []), ...(alignmentOffsetMicros !== undefined ? ['--ei', 'alignment_offset_us', String(alignmentOffsetMicros)] : []), ...(capturePackage ? ['--es', 'capture_package', capturePackage] : []), ...(sourceFile ? ['--es', 'source_file', sourceFile] : []), ...(networkMode ? ['--es', 'network_mode', networkMode] : []), ...(discover ? ['--ez', 'discover', 'true'] : []), ...(paired ? ['--ez', 'paired', 'true'] : [])] }), 'Sync start'),
     readSync: options => json({ ...options, fileName: 'sync.json' }),
     // Pairing is its own act, on its own screen, and outside every case: someone holds the handset
     // up to another one's display once, and every run after that starts without a hand on either
@@ -82,8 +84,22 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     startScan: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SCAN_ACTIVITY] }), 'Scanner start'),
     // The product path, not the harness. SessionService is not exported, so the activity is what
     // takes the intent and hands it on - the same reason MainActivity fronts the capture service.
-    startSession: async ({ serial, role, sourceFile }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SESSION_ACTIVITY, '--es', 'role', role, ...(sourceFile ? ['--es', 'source_file', sourceFile] : [])] }), 'Session start'),
+    // deadbandFrames follows the absent-means-default rule the sync extras use: a session started
+    // without it has to behave exactly as one started before the extra existed, or the control arm
+    // of a comparison is not the thing being compared against.
+    startSession: async ({ serial, role, sourceFile, deadbandFrames, trimFrames }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SESSION_ACTIVITY, '--es', 'role', role, ...(sourceFile ? ['--es', 'source_file', sourceFile] : []), ...(deadbandFrames ? ['--ei', 'deadband_frames', String(deadbandFrames)] : []), ...(trimFrames ? ['--ei', 'trim_frames', String(trimFrames)] : [])] }), 'Session start'),
     stopSession: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SESSION_ACTIVITY, '--ez', 'stop', 'true'] }), 'Session stop'),
+    // Null rather than an error when there is none: a handset whose session was never started has
+    // no report, and that is an ordinary answer rather than a failure. A run-as cat of a missing
+    // file exits 0 and puts its complaint on stdout, so the text has to be inspected either way.
+    readSessionReport: async ({ serial }) => {
+      const result = await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', SESSION_REPORT_PATH] });
+      if (result.exitCode !== 0) return null;
+      const text = (Buffer.isBuffer(result.stdout) ? result.stdout.toString('utf8') : String(result.stdout ?? '')).trim();
+      if (text.length === 0 || /no such file or directory/i.test(text)) return null;
+      try { return JSON.parse(text); } catch { return null; }
+    },
+    clearSessionReport: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', SESSION_REPORT_PATH] }), 'Clear session report'),
     // Null rather than an error when nothing has been scanned yet: this is polled while a person is
     // still aiming the camera, so "not there yet" is the ordinary case - and the device says so in
     // an unhelpful way. A run-as cat of a file that is not there exits 0 and puts its complaint on

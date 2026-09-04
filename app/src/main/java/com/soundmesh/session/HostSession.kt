@@ -24,6 +24,26 @@ import com.soundmesh.probe.sync.SyncRenderer
  */
 class HostSession(
     private val readChunk: () -> ByteArray,
+    /**
+     * How far the drift loop lets the write position wander before it edits the waveform.
+     *
+     * Settable because the default sits below a quantity that is known to exist: the 48-frame
+     * deadband is 1 ms, and one handset's emission moves in steps of about 56 frames (1.17 ms).
+     * A step larger than the deadband forces a trim every time it happens, and a trim deletes
+     * audio - the archived runs average 68 frames, 1.4 ms, per event. Whether that is what a
+     * listener still hears is a question for a wider deadband and a pair of ears, not for more
+     * reading of this comment.
+     */
+    deadbandFrames: Int = DriftController.DEFAULT_DEADBAND_FRAMES,
+    /**
+     * The renderer's trim band, and with it the scheduler's early release.
+     *
+     * A different knob from [deadbandFrames], which was tried first and changed nothing: the drift
+     * loop's deadband governs how far the write position may wander before the loop corrects it,
+     * while this governs whether a release that is already off gets the waveform cut. The counters
+     * that separate them are trims and silence writes, and only this one moves either.
+     */
+    trimFrames: Int = SyncRenderer.TRIM_DEADBAND_FRAMES,
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
@@ -31,17 +51,26 @@ class HostSession(
     private val scheduler = PlaybackScheduler(
         SyncRenderer.FRAMES_PER_CHUNK,
         SCHEDULER_CAPACITY_CHUNKS,
-        earlyReleaseNanos = SyncRenderer.EARLY_RELEASE_NANOS
+        earlyReleaseNanos = SyncRenderer.earlyReleaseNanos(trimFrames)
         // exactReleaseFromSequence deliberately left unset: it exists to release calibration chirps
         // without the trim tolerance, and a product session emits no chirps. Passing the harness's
         // value would arm it on ordinary audio after CHIRP_SEQUENCE_BASE chunks - about five and a
         // half hours of continuous playback, which a session can reach.
     )
-    private val renderer = SyncRenderer(scheduler, DriftController(), hostNanosNow = { System.nanoTime() })
+    private val renderer = SyncRenderer(
+        scheduler,
+        DriftController(deadbandFrames),
+        trimDeadbandFrames = trimFrames,
+        hostNanosNow = { System.nanoTime() }
+    )
     private var rendererThread: Thread? = null
     private var producerThread: Thread? = null
 
     override fun state(): SessionState = flags.state()
+
+    // Null before start(): the renderer exists but has never run, and a report of zeroes reads
+    // like a session that played nothing rather than one that has not begun.
+    override fun report(): String? = if (flags.state() == SessionState.IDLE) null else renderer.report(null)
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
 

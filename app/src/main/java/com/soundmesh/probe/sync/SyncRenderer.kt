@@ -56,6 +56,17 @@ class SyncRenderer(
      * approximate one, and an approximate check is one that gets explained away.
      */
     private val offsetNanosNow: () -> Long = { 0L },
+    /**
+     * How late a streamed chunk may be released before it is shortened instead of written whole.
+     *
+     * Defaults to [TRIM_DEADBAND_FRAMES], the value every measurement so far was taken on.
+     * Overridable for the same reason [lowLatency] is: the constant was sized against O35's
+     * 8.6-frame mean release error, and a product session measured a mean of 77 frames among the
+     * releases that actually cross it, about 3.3 times a second on the host. Whether those edits
+     * are what a listener hears is a question for a band wide enough to stop them and a pair of
+     * ears, and a band that wide is not something to bake in before that answer exists.
+     */
+    private val trimDeadbandFrames: Int = TRIM_DEADBAND_FRAMES,
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
@@ -324,7 +335,7 @@ class SyncRenderer(
                         // Chirp chunks keep trimming with no deadband. The chirp is the instrument
                         // the alignment is measured with, so its release must stay exact; the
                         // deadband would put its own width straight into every measurement.
-                        val deadband = if (decision.chunk.sequence >= CHIRP_SEQUENCE_BASE) 0 else TRIM_DEADBAND_FRAMES
+                        val deadband = if (decision.chunk.sequence >= CHIRP_SEQUENCE_BASE) 0 else trimDeadbandFrames
                         val trimFrames = releaseTrimFrames(
                             decision.chunk.playAtHostNanos, heardAtHostNanos, SAMPLE_RATE, FRAMES_PER_CHUNK
                         ).let { if (it < deadband) 0 else it }
@@ -656,6 +667,10 @@ class SyncRenderer(
             "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"},\"chirpDepthNanos\":${chirpDepthNanos ?: "null"}," +
             "\"chirpPlays\":${chirpPlaysJson()}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
+            // Echoed for the same reason the threshold above is: an artifact has to say which band
+            // produced it, or a run taken at a widened band is silently compared against the
+            // archive as though it were taken at the default.
+            "\"trimDeadbandFrames\":$trimDeadbandFrames," +
             "\"trackBufferFrames\":$trackBufferFrames," +
             "\"minPendingFrames\":${if (minPendingFrames == Long.MAX_VALUE) "null" else minPendingFrames}," +
             "\"maxPendingFrames\":${if (maxPendingFrames == Long.MIN_VALUE) "null" else maxPendingFrames}," +
@@ -707,6 +722,16 @@ class SyncRenderer(
          * side edits the waveform for jitter this small.
          */
         const val EARLY_RELEASE_NANOS = TRIM_DEADBAND_FRAMES * 1_000_000_000L / SAMPLE_RATE
+
+        /**
+         * The same mirror for a band that is not the default one.
+         *
+         * A caller that widens the renderer's trim band and leaves the scheduler on the default
+         * early release has not widened the band - it has made it one-sided, which is the exact
+         * arrangement O38 removed. Derived here so the pair cannot be set apart by accident.
+         */
+        fun earlyReleaseNanos(trimDeadbandFrames: Int): Long =
+            trimDeadbandFrames * 1_000_000_000L / SAMPLE_RATE
 
         /**
          * Sequences per chirp repeat. A run that plays the chirp several times inside one clock

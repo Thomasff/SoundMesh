@@ -624,6 +624,14 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (reacquireRaw !== undefined && (!Number.isInteger(reacquireThresholdFrames) || reacquireThresholdFrames <= 0)) {
     throw new Error('--reacquire-threshold takes a positive whole number of frames. Leave it out to use the probe\'s own threshold; lower it far below the drift-sample noise floor only to force the TRACKING fallback to fire, which is the one way to see the mechanism execute on a device.');
   }
+  // Both-or-neither again, and for a second reason on top of the first: the renderer's trim band
+  // and the scheduler's early release are the two halves of one mirror, and the probe derives both
+  // from this one number so they cannot be set apart.
+  const trimRaw = value(args, '--trim-frames');
+  const trimFrames = trimRaw === undefined ? undefined : Number(trimRaw);
+  if (trimRaw !== undefined && (!Number.isInteger(trimFrames) || trimFrames <= 0 || trimFrames > 480)) {
+    throw new Error('--trim-frames takes a whole number of frames between 1 and 480 (half a chunk). Leave it out to use the probe\'s own 48-frame band, which every archived run was measured on. A product session showed the default edits the waveform 6.6 times a second and a listener hears it; this is how the alignment cost of a wider band gets measured.');
+  }
   // Only the recording device opens a capture path, but the extra goes to both roles so an
   // artifact from either side says what the run asked for. MIC is the default the whole measured
   // baseline was taken on; UNPROCESSED and VOICE_RECOGNITION are the two that skip the vendor's
@@ -740,12 +748,12 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Before the run, not during it: a push that fails after the handsets have started would
   // leave them playing the tone under a run named for a song.
   const sourceFile = sourceFilePath === undefined ? undefined : await pushSourceFile({ serial: hostSerial, localPath: sourceFilePath, runAdbHost });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode });
   // A generated run keeps the stagger it always had: the host binds its ports immediately. A
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
   else await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode, paired: pairedHost });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode, paired: pairedHost });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

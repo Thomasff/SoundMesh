@@ -438,6 +438,21 @@ class SyncActivity : Activity() {
     }
 
     /**
+     * How late a streamed chunk may be released before the renderer shortens it.
+     *
+     * Absent leaves [SyncRenderer.TRIM_DEADBAND_FRAMES], the value every run so far was measured
+     * on. It exists because a product session put numbers on what the band costs: at the default
+     * the host edits its own waveform 6.6 times a second, at 240 frames 0.03 times, and a listener
+     * hears the difference. What no product session can say is whether the wider band moves the
+     * alignment, because only a chirp answers that - and the chirp is exempt from the band by
+     * design, so this run measures the timeline the widened band left behind rather than the band.
+     */
+    private fun trimFramesRequested(): Int {
+        val requested = intent.getIntExtra("trim_frames", SyncRenderer.TRIM_DEADBAND_FRAMES)
+        return if (requested > 0) requested else SyncRenderer.TRIM_DEADBAND_FRAMES
+    }
+
+    /**
      * The stop callback only records the fact. Tearing the run down from the projection's own
      * thread would race the loop that is mid-chunk; the loop notices on its next read, which
      * returns nothing once the recorder is gone.
@@ -470,10 +485,13 @@ class SyncActivity : Activity() {
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,
             SCHEDULER_CAPACITY_CHUNKS,
-            earlyReleaseNanos = SyncRenderer.EARLY_RELEASE_NANOS,
+            earlyReleaseNanos = SyncRenderer.earlyReleaseNanos(trimFramesRequested()),
             exactReleaseFromSequence = SyncRenderer.CHIRP_SEQUENCE_BASE
         )
-        val renderer = SyncRenderer(scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested()) { System.nanoTime() }
+        val renderer = SyncRenderer(
+            scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(),
+            trimDeadbandFrames = trimFramesRequested()
+        ) { System.nanoTime() }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         var capture: CaptureChunkSource? = null
         try {
@@ -739,11 +757,12 @@ class SyncActivity : Activity() {
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,
             SCHEDULER_CAPACITY_CHUNKS,
-            earlyReleaseNanos = SyncRenderer.EARLY_RELEASE_NANOS,
+            earlyReleaseNanos = SyncRenderer.earlyReleaseNanos(trimFramesRequested()),
             exactReleaseFromSequence = SyncRenderer.CHIRP_SEQUENCE_BASE
         )
         val renderer = SyncRenderer(
             scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(),
+            trimDeadbandFrames = trimFramesRequested(),
             // Not thrown when absent, unlike hostNanosNow: this only annotates a release that has
             // already happened, and a release cannot have happened without an offset to convert it.
             offsetNanosNow = { latestEstimate()?.offsetNanos ?: 0L },

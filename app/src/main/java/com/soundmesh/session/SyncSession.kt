@@ -26,6 +26,17 @@ interface SyncSession {
     fun state(): SessionState
 
     /**
+     * The renderer's health counters, as JSON, or null before there is a renderer to ask.
+     *
+     * Section 8.3 calls these product-level indicators rather than debug logging, and until now
+     * nothing outside the harness read them. A product session is also the first configuration in
+     * which they can be read: a harness run spends most of its length in the by-design silence
+     * between calibration chirps, which buries the silence counters under millions of frames that
+     * mean nothing about playback quality.
+     */
+    fun report(): String?
+
+    /**
      * Told by the service that owns the audio focus, not asked for by the session.
      *
      * A session that lost the focus stays wired up - its clock keeps exchanging, its link keeps

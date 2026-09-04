@@ -70,7 +70,21 @@ class SessionActivity : Activity() {
             Intent(this, SessionService::class.java)
                 .setAction(SessionService.ACTION_START_HOST)
                 .putExtra(SessionService.EXTRA_SOURCE_FILE, file)
+                .also { carryTuning(intent, it) }
         )
+    }
+
+    /**
+     * Passes an experiment's tuning through to the service, and nothing when none was asked for.
+     *
+     * Absent stays absent rather than becoming an explicit default: the service reads the same
+     * extra, and a control arm that arrives spelled differently from a session started before this
+     * existed is not a control arm.
+     */
+    private fun carryTuning(from: Intent, to: Intent) {
+        for (name in listOf(SessionService.EXTRA_DEADBAND_FRAMES, SessionService.EXTRA_TRIM_FRAMES)) {
+            if (from.hasExtra(name)) to.putExtra(name, from.getIntExtra(name, 0))
+        }
     }
 
     private fun startSink() {
@@ -85,6 +99,7 @@ class SessionActivity : Activity() {
                 .putExtra(SessionService.EXTRA_HOST_ADDRESS, code.address)
                 .putExtra(SessionService.EXTRA_CHUNK_PORT, code.chunkPort)
                 .putExtra(SessionService.EXTRA_PEER_ID, code.hostId)
+                .also { carryTuning(intent, it) }
         )
     }
 
@@ -100,11 +115,30 @@ class SessionActivity : Activity() {
     private fun show() {
         val session = SessionService.ACTIVE
         statusView.text = when {
-            session != null -> "SESSION ${session.state()}"
+            session != null -> "SESSION ${session.state()}\n\n${counters(session.report())}"
             SessionService.FAILURE != null -> "NO SESSION: ${SessionService.FAILURE}"
             else -> "SESSION IDLE"
         }
     }
+
+    /**
+     * The four counters that separate the ways playback can go wrong, one per line.
+     *
+     * On screen rather than only in a file because they are being read against what a person in
+     * the room is hearing: a hitch and a counter that moved at that instant say together what
+     * neither says alone. Trims and silence writes are the two waveform edits, and telling them
+     * apart is the whole question - one deletes audio, the other inserts a gap.
+     */
+    private fun counters(report: String?): String {
+        if (report == null) return ""
+        return listOf("releaseTrims", "trimmedFrames", "silenceWrites", "droppedLate", "trackUnderruns", "played")
+            .map { name -> "$name ${field(report, name)}" }
+            .joinToString("\n")
+    }
+
+    /** Read out of the renderer's own JSON rather than re-derived, so the two cannot disagree. */
+    private fun field(report: String, name: String): String =
+        Regex("\"$name\":(-?\\d+)").find(report)?.groupValues?.get(1) ?: "-"
 
     override fun onResume() {
         super.onResume()

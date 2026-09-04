@@ -34,6 +34,10 @@ class SinkSession(
     private val chunkPort: Int,
     private val peerId: String,
     private val calibrationDirectory: File,
+    /** As on [HostSession]: both handsets edit their own waveform, so both arms have to move. */
+    deadbandFrames: Int = DriftController.DEFAULT_DEADBAND_FRAMES,
+    /** As on [HostSession], and for the same reason: an experiment moves both handsets or neither. */
+    trimFrames: Int = SyncRenderer.TRIM_DEADBAND_FRAMES,
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val estimator = ClockOffsetEstimator()
@@ -54,11 +58,12 @@ class SinkSession(
     private val scheduler = PlaybackScheduler(
         SyncRenderer.FRAMES_PER_CHUNK,
         SCHEDULER_CAPACITY_CHUNKS,
-        earlyReleaseNanos = SyncRenderer.EARLY_RELEASE_NANOS
+        earlyReleaseNanos = SyncRenderer.earlyReleaseNanos(trimFrames)
     )
     private val renderer = SyncRenderer(
         scheduler,
-        DriftController(),
+        DriftController(deadbandFrames),
+        trimDeadbandFrames = trimFrames,
         offsetNanosNow = { latestEstimate()?.offsetNanos ?: 0L },
         hostNanosNow = ::hostNanosNow
     )
@@ -74,6 +79,10 @@ class SinkSession(
     private var connectThread: Thread? = null
 
     override fun state(): SessionState = flags.state()
+
+    // Null before start(): the renderer exists but has never run, and a report of zeroes reads
+    // like a session that played nothing rather than one that has not begun.
+    override fun report(): String? = if (flags.state() == SessionState.IDLE) null else renderer.report(null)
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
 
