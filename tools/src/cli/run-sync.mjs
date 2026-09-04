@@ -46,6 +46,16 @@ const COMPLETION_FLOOR_SECONDS = 5;
 /** What is left of the old fixed (seconds + 30) wait, spent polling rather than sleeping. */
 const COMPLETION_BUDGET_SECONDS = 25;
 
+/**
+ * Extra polling allowed per chirp pair, for the correlation the handset now runs on itself.
+ *
+ * A guess, and knowingly a loose one - the same measurement on a PC took about a second a pair,
+ * and how much slower a handset is at it has never been measured. Being too generous costs a
+ * couple of minutes on a run that has genuinely hung; being too tight throws away a run that
+ * worked. Revisit once a run has reported its own elapsed time.
+ */
+const ON_DEVICE_ANALYSIS_SECONDS_PER_PAIR = 20;
+
 /** Echo requests per link probe. Five is enough for a floor and costs about four seconds. */
 const LINK_PROBE_COUNT = 5;
 
@@ -259,6 +269,22 @@ export async function measureLink({ serial, address, runAdbHost, count = LINK_PR
 export function completionFloorSeconds({ seconds, chirpRepeats, chirpIntervalSeconds }) {
   const scheduleSeconds = ((chirpRepeats ?? 1) - 1) * (chirpIntervalSeconds ?? 0);
   return seconds + scheduleSeconds + COMPLETION_FLOOR_SECONDS;
+}
+
+/**
+ * How long to keep asking for a report after the earliest it could exist.
+ *
+ * The flat budget was set when a handset wrote its report the moment the run ended. It now reads
+ * its own recording first, and every chirp pair is another windowed cross-correlation - work that
+ * takes seconds, not milliseconds, and whose cost on a handset is exactly what the next run is
+ * meant to measure. A budget too small does not degrade the run, it discards it: the reports are
+ * declared missing while both handsets are working normally.
+ *
+ * The allowance is therefore deliberately generous rather than tuned. Tighten it once the cost has
+ * been measured rather than guessed at.
+ */
+export function completionBudgetSeconds({ chirpRepeats }) {
+  return COMPLETION_BUDGET_SECONDS + (chirpRepeats ?? 0) * ON_DEVICE_ANALYSIS_SECONDS_PER_PAIR;
 }
 
 /**
@@ -601,7 +627,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,
     floorMs: completionFloorSeconds({ seconds, chirpRepeats, chirpIntervalSeconds }) * 1000,
-    budgetMs: COMPLETION_BUDGET_SECONDS * 1000
+    budgetMs: completionBudgetSeconds({ chirpRepeats }) * 1000
   });
   await mkdir(directory, { recursive: true });
   // The link goes in the same artifact as the reports so a stored run always carries the condition

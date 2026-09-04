@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pushSourceFile, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -903,4 +903,13 @@ test('refuses a network mode it does not know, rather than recording a word nobo
       /--network-mode/
     );
   }
+});
+
+test('the completion budget grows with the chirp pairs the handset has to correlate itself', () => {
+  // The handset now reads its own recording before it writes its report, and every chirp pair is
+  // another windowed cross-correlation. A flat 25 second budget was set when the report was
+  // written the instant the run ended, and it would now call a working run a failed one.
+  assert.equal(completionBudgetSeconds({}), 25);
+  assert.equal(completionBudgetSeconds({ chirpRepeats: 1 }), 45);
+  assert.equal(completionBudgetSeconds({ chirpRepeats: 6 }), 145);
 });
