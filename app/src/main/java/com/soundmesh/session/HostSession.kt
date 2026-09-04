@@ -51,6 +51,19 @@ class HostSession(
      */
     playbackUsage: PlaybackUsage = PlaybackUsage.MEDIA,
     /**
+     * How far ahead of the media output this handset's chosen output comes out - see
+     * [com.soundmesh.probe.sync.StoredOutputLead] for the measurement.
+     *
+     * Applied to the renderer's clock rather than to the timeline, and that distinction is the
+     * whole reason it is safe. The chunks this host stamps, the clock its sinks converge on, and
+     * the standing peer correction they apply are all left exactly where they were; only this
+     * handset's own view of when a chunk is due moves, so its own speaker fires later by this much
+     * and nothing a sink sees changes at all.
+     *
+     * Zero on the media output and zero on a handset nobody has measured.
+     */
+    private val outputLeadNanos: Long = 0L,
+    /**
      * Released when the session stops, for a source that holds something a file does not.
      *
      * [readChunk] alone cannot do it: it is called until the session ends, so there is no last
@@ -76,7 +89,7 @@ class HostSession(
         DriftController(deadbandFrames),
         trimDeadbandFrames = trimFrames,
         playbackUsage = playbackUsage,
-        hostNanosNow = { System.nanoTime() }
+        hostNanosNow = { System.nanoTime() - outputLeadNanos }
     )
     // How long the slowest call to broadcast took, and how many chunks the source produced.
     //

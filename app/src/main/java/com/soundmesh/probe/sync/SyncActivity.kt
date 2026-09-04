@@ -258,6 +258,16 @@ class SyncActivity : Activity() {
         PlaybackUsage.fromName(intent.getStringExtra("playback_usage"))
 
     /**
+     * The correction for whichever output this run asked for, or none if nobody has measured it.
+     *
+     * Applied to the renderer's clock and to nothing else, exactly as the product applies it, so a
+     * run can measure whether the correction lands - which is the only reason it is here. Zero on
+     * the media output, so every archived run is untouched by this existing.
+     */
+    private fun outputLeadNanos(): Long =
+        (StoredOutputLead(filesDir, playbackUsageRequested()).read() ?: 0L) * 1_000L
+
+    /**
      * The TRACKING -> ACQUIRING fallback threshold this run asks for, defaulting to the production
      * [REACQUIRE_THRESHOLD_FRAMES].
      *
@@ -503,11 +513,13 @@ class SyncActivity : Activity() {
             earlyReleaseNanos = SyncRenderer.earlyReleaseNanos(trimFramesRequested()),
             exactReleaseFromSequence = SyncRenderer.CHIRP_SEQUENCE_BASE
         )
+        // Read once: the lambda below runs on every chunk, and this is a file.
+        val outputLead = outputLeadNanos()
         val renderer = SyncRenderer(
             scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(),
             trimDeadbandFrames = trimFramesRequested(),
             playbackUsage = playbackUsageRequested()
-        ) { System.nanoTime() }
+        ) { System.nanoTime() - outputLead }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         var capture: CaptureChunkSource? = null
         try {
