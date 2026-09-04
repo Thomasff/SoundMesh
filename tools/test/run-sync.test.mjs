@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, calibrationLines, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, calibrationLines, ANCHOR_RADIUS_FRAMES, STAGGER_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -611,11 +611,29 @@ test('pairSearchWindow bounds a later pair near where the first one puts it', ()
   // With the first pair located, pair 2 is due exactly two intervals later, so the window is a
   // fixed radius around that - the same width whether the pairs sit 5 seconds or 5 minutes apart.
   const w = pairSearchWindow({ pairIndex: 2, intervalFrames: interval, anchorIndex: 48000 });
-  assert.equal(w.searchTo - w.searchFrom, 2 * ANCHOR_RADIUS_FRAMES);
-  assert.equal((w.searchFrom + w.searchTo) / 2, 48000 + 2 * interval);
+  assert.equal(w.searchTo - w.searchFrom, 2 * ANCHOR_RADIUS_FRAMES + STAGGER_FRAMES);
+  assert.equal((w.searchFrom + w.searchTo) / 2, 48000 + 2 * interval + STAGGER_FRAMES / 2);
   // The first pair is the anchor; it cannot be anchored on itself.
   assert.deepEqual(pairSearchWindow({ pairIndex: 0, intervalFrames: interval, anchorIndex: 48000 }),
     { searchFrom: 0, searchTo: interval - 1 });
+});
+
+// The anchor is where the FIRST chirp of a pair landed, and the pair is a stagger wide, so a window
+// of one radius either side of the anchor puts the second chirp exactly on its upper edge. On the
+// host's recording the second chirp - the partner's, from across the room - is the one that
+// correlates loudest, so it is the one the outer search returns, and it was being pinned to that
+// edge. O45 to O47 caught it: every disagreement with the handsets' own analysis was the handsets
+// answering 1 to 7 frames beyond this edge, and every agreement was a pair that did not reach it.
+test('the anchored window covers the whole pair, not just its first chirp', () => {
+  const interval = SAMPLE_RATE * 10;
+  const anchor = 47649;
+  const { searchFrom, searchTo } = pairSearchWindow({ pairIndex: 1, intervalFrames: interval, anchorIndex: anchor });
+  const due = anchor + interval;
+
+  assert.equal(searchFrom, due - ANCHOR_RADIUS_FRAMES);
+  // O45 pair 1: the handsets read the second chirp at 551656, seven frames past the old edge.
+  assert.ok(searchTo >= 551656, `window must reach the second chirp, ended at ${searchTo}`);
+  assert.equal(searchTo, due + STAGGER_FRAMES + ANCHOR_RADIUS_FRAMES);
 });
 
 test('refuses more chirp repeats than the scheduler can hold, rather than dropping them silently', async () => {

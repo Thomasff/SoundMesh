@@ -10,7 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifact
 const value = (args, key) => { const index = args.indexOf(key); return index === -1 ? undefined : args[index + 1]; };
 const wait = ms => new Promise(done => setTimeout(done, ms));
 const SAMPLE_RATE = 48000;
-const STAGGER_FRAMES = SAMPLE_RATE / 2;
+export const STAGGER_FRAMES = SAMPLE_RATE / 2;
 const PROBE_PACKAGE = 'com.soundmesh.probe';
 // The probe's own external files directory - the one place on the handset this tool writes.
 // adb reaches it without run-as, and the app reads it with getExternalFilesDir(null).
@@ -362,8 +362,15 @@ export const ANCHOR_RADIUS_FRAMES = SAMPLE_RATE / 2;
  */
 export function pairSearchWindow({ pairIndex, intervalFrames, anchorIndex }) {
   if (anchorIndex !== null && pairIndex > 0) {
+    // The anchor is where the first chirp of pair 0 landed, so `due` is where this pair's FIRST
+    // chirp is expected - and the pair runs a stagger past it. A window of one radius either side
+    // of `due` would therefore end exactly on the second chirp, which is not a margin at all.
+    // It cost real measurements: on the host's recording the second chirp is the partner's, from
+    // across the room, and it is the one that correlates loudest, so the outer search returned it
+    // pinned to that edge. O45 to O47 disagreed with the handsets on exactly the pairs whose
+    // second chirp fell one to seven frames beyond it.
     const due = anchorIndex + pairIndex * intervalFrames;
-    return { searchFrom: due - ANCHOR_RADIUS_FRAMES, searchTo: due + ANCHOR_RADIUS_FRAMES };
+    return { searchFrom: due - ANCHOR_RADIUS_FRAMES, searchTo: due + STAGGER_FRAMES + ANCHOR_RADIUS_FRAMES };
   }
   return {
     searchFrom: pairIndex * intervalFrames,
