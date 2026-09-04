@@ -68,13 +68,14 @@
 
     <string name="counter_played">已播</string>
     <string name="counter_trims">裁剪</string>
+    <string name="counter_trimmed_frames">裁剪帧数</string>
     <string name="counter_silence">静音写入</string>
-    <string name="counter_dropped">丢弃</string>
+    <string name="counter_dropped">迟到丢弃</string>
+    <string name="counter_overflow">溢出丢弃</string>
     <string name="counter_underruns">欠载</string>
     <string name="counter_reconnects">重连</string>
     <string name="counter_rediscoveries">重新找主机</string>
     <string name="counter_clock">时钟</string>
-    <string name="counter_clock_worst">%1$s（最差 %2$s ms）</string>
     <string name="counter_broadcast">最慢广播</string>
     <string name="counter_to_sinks">丢给从机</string>
 </resources>
