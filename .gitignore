@@ -7,3 +7,6 @@
 /artifacts/
 *.iml
 .gradle-task6/
+
+# Source audio for listening tests - licensed stock music, not ours to redistribute
+*.mp3
