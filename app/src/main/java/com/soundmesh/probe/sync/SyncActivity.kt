@@ -8,6 +8,9 @@ import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.TextView
+import com.soundmesh.core.AlignmentPairing
+import com.soundmesh.core.AlignmentReading
+import com.soundmesh.core.AlignmentResultMessage
 import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.ClockEstimate
@@ -373,6 +376,7 @@ class SyncActivity : Activity() {
         if (capturePackageRequested() != null && sourceFileRequested() != null) throw SourceUnusable("SOURCE_CONFLICT")
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
+        val resultServer = AlignmentResultServer(RESULT_PORT)
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,
             SCHEDULER_CAPACITY_CHUNKS,
@@ -385,6 +389,10 @@ class SyncActivity : Activity() {
         try {
             clockServer.start()
             chunkServer.start()
+            // Bound now rather than when the sink's delivery is awaited, at the very end: the two
+            // handsets finish their correlation passes within a second of each other, so a sink
+            // that finishes first must land in the accept backlog instead of being refused.
+            resultServer.start()
 
             val source = TonePcmSource()
             capture = projection?.let { openCapture(it) }
@@ -453,6 +461,11 @@ class SyncActivity : Activity() {
             recordThread.join()
             val chirpWindow = chirpWindow(renderer)
 
+            // Read first, then wait: both handsets start correlating at the same instant, so
+            // waiting first would spend the sink's whole pass idle and then start the host's.
+            val ownAlignment = readOwnAlignment(caseId, calibration, sinkChirpAt)
+            val delivered = resultServer.awaitResult(RESULT_TIMEOUT_MILLIS)
+
             runStore.writeSyncJson(
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"HOST\",\"mode\":\"FULL\"," +
@@ -468,7 +481,10 @@ class SyncActivity : Activity() {
                     // device is trusted to measure on its own.
                     "\"recordingStartedAtHostNanos\":${calibration.startedAtHostNanos ?: "null"}," +
                     "\"sinkChirpAtHostNanos\":$sinkChirpAt," +
-                    "\"onDeviceAlignment\":${onDeviceAlignmentJson(caseId, calibration, sinkChirpAt)}," +
+                    "\"onDeviceAlignment\":${ownAlignment.json}," +
+                    // The whole measurement, taken by the two handsets alone. Everything above it
+                    // is one side of one; this is the field a pair of phones can act on.
+                    "\"pairedAlignment\":${pairedAlignmentJson(caseId, ownAlignment.readings, delivered, resultServer.failureCode)}," +
                     "${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
                     // A captured run and a generated one are not comparable, and nothing else in
@@ -487,6 +503,7 @@ class SyncActivity : Activity() {
                 projection.stop()
                 startService(Intent(this, SyncProjectionService::class.java).setAction(SyncProjectionService.ACTION_RELEASE))
             }
+            resultServer.stop()
             chunkServer.stop()
             clockServer.stop()
         }
@@ -642,6 +659,17 @@ class SyncActivity : Activity() {
             val chirpWindow = chirpWindow(renderer)
 
             clockThread.join()
+
+            // Read this side, then hand it over. The host cannot answer the alignment question
+            // from its own recording alone - it hears its own chirp across centimetres and this
+            // one across the room - so this delivery is what turns two halves into a measurement.
+            // Sent even when there is nothing to send: an empty run and a dead sink look the same
+            // from the host's end of a socket that never opens, and they are not the same.
+            val ownAlignment = calibration?.let { readOwnAlignment(caseId, it, chirpAt) }
+            val resultDelivery = runCatching {
+                AlignmentResultClient(address, RESULT_PORT).send(caseId, ownAlignment?.readings ?: emptyList())
+            }.exceptionOrNull()?.javaClass?.simpleName
+
             runStore.writeSyncJson(
                 caseId,
                 "{\"schemaVersion\":1,\"role\":\"SINK\",\"mode\":\"FULL\"," +
@@ -655,7 +683,10 @@ class SyncActivity : Activity() {
                     // the pair in host time, so either can window its search without the other.
                     "\"recordingStartedAtHostNanos\":${calibration?.startedAtHostNanos ?: "null"}," +
                     "\"sinkChirpAtHostNanos\":$chirpAt," +
-                    "\"onDeviceAlignment\":${calibration?.let { onDeviceAlignmentJson(caseId, it, chirpAt) } ?: "null"}," +
+                    "\"onDeviceAlignment\":${ownAlignment?.json ?: "null"}," +
+                    // Null when the readings reached the host. Named otherwise, because a run whose
+                    // delivery failed leaves the host with a one-sided report and no cause in it.
+                    "\"resultDelivery\":${resultDelivery?.let { "\"$it\"" } ?: "null"}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
@@ -848,13 +879,16 @@ class SyncActivity : Activity() {
      * actually buys on a handset - as opposed to on a PC, where it was measured - is not something
      * to reason about.
      */
-    private fun onDeviceAlignmentJson(caseId: String, calibration: CalibrationRunner, firstChirpAtHostNanos: Long): String {
-        val startedAt = calibration.startedAtHostNanos ?: return "null"
-        return runCatching {
+    private class OwnAlignment(val readings: List<AlignmentReading>, val json: String)
+
+    private fun readOwnAlignment(caseId: String, calibration: CalibrationRunner, firstChirpAtHostNanos: Long): OwnAlignment {
+        val startedAt = calibration.startedAtHostNanos ?: return OwnAlignment(emptyList(), "null")
+        var readings: List<AlignmentReading> = emptyList()
+        val json = runCatching {
             val recording = File(runStore.prepareRun(caseId), "calibration.wav")
             val recorded = com.soundmesh.probe.WavFileReader.readMono(recording)
             val startedNanos = System.nanoTime()
-            val readings = OnDeviceAlignment.readRun(
+            readings = OnDeviceAlignment.readRun(
                 recorded = recorded,
                 reference = ChirpGenerator.generateMono(),
                 recordingStartedAtHostNanos = startedAt,
@@ -872,7 +906,48 @@ class SyncActivity : Activity() {
                     "\"atSearchEdge\":[${reading.atSearchEdge.joinToString(",") { it?.toString() ?: "null" }}]}"
             }
             "{\"elapsedMillis\":$elapsedMillis,\"frames\":${recorded.size},\"pairs\":[$pairs]}"
-        }.getOrElse { "{\"failure\":\"${it.javaClass.simpleName}\"}" }
+        }.getOrElse {
+            // A partial list would be combined against the other side as though it were whole.
+            readings = emptyList()
+            "{\"failure\":\"${it.javaClass.simpleName}\"}"
+        }
+        return OwnAlignment(readings, json)
+    }
+
+    /**
+     * The two handsets' readings combined into the measurement itself, judged on the spot.
+     *
+     * This is the field the migration exists for. Every other alignment number in this report is
+     * one side of a measurement - it carries the flight time across the room, which is why the
+     * separation used to have to be measured with a tape and handed in. [AlignmentPairing] removes
+     * it by construction and judges what is left, so the pair answers "are we aligned" with nothing
+     * attached to either handset.
+     *
+     * Only the shape of the answer is decided here. Which deliveries may be combined at all is
+     * [AlignmentPairing]'s to say, and a delivery that never arrived is the transport's.
+     */
+    private fun pairedAlignmentJson(
+        caseId: String,
+        hostReadings: List<AlignmentReading>,
+        delivered: AlignmentResultMessage?,
+        deliveryFailure: String?
+    ): String {
+        val head = "\"hostPairs\":${hostReadings.size},\"sinkPairs\":${delivered?.readings?.size ?: "null"}"
+        val paired = delivered?.let { AlignmentPairing.combine(caseId, hostReadings, it) }
+            ?: return "{$head,\"failure\":\"${deliveryFailure ?: "RESULT_UNAVAILABLE"}\"}"
+        val verdict = paired.verdict ?: return "{$head,\"failure\":\"${paired.failure}\"}"
+
+        val pairsJson = paired.pairs.joinToString(",") { pair ->
+            if (pair == null) "null"
+            else "{\"alignmentErrorMs\":${pair.alignmentErrorMs},\"separationMetres\":${pair.separationMetres}," +
+                "\"flightTimeMs\":${pair.flightTimeMs},\"rawHostMs\":${pair.rawHostMs},\"rawSinkMs\":${pair.rawSinkMs}}"
+        }
+        return "{$head,\"failure\":null,\"pairs\":[$pairsJson]," +
+            "\"verdict\":{\"clusterMeanMs\":${verdict.clusterMeanMs}," +
+            "\"clusterSdMs\":${verdict.clusterSdMs},\"clusterCount\":${verdict.clusterCount}," +
+            "\"outliers\":[${verdict.outliers.joinToString(",")}],\"maxAbsMs\":${verdict.maxAbsMs}," +
+            "\"passed\":${verdict.passed}," +
+            "\"failures\":[${verdict.failures.joinToString(",") { "\"$it\"" }}]}}"
     }
 
     private fun chirpTimingJson(timing: ChirpTiming): String =
@@ -949,6 +1024,20 @@ class SyncActivity : Activity() {
         private const val MIN_CLOCK_INTERVAL_MILLIS = 100L
         private const val MAX_CLOCK_INTERVAL_MILLIS = 10_000L
         const val CHUNK_PORT = 45124
+
+        /** Where the host takes delivery of the sink's own reading of the run. */
+        const val RESULT_PORT = 45125
+
+        /**
+         * How long the host waits for that delivery.
+         *
+         * What it bounds is the gap between the two handsets finishing, not the correlation pass
+         * itself: both start theirs at the same instant, and the measured passes were 10.9s and
+         * 11.5s, so the wait is normally about a second. Generous enough that a slower handset is
+         * never cut off, short enough that a dead sink costs a minute of a twelve minute run
+         * rather than the report.
+         */
+        const val RESULT_TIMEOUT_MILLIS = 60_000
 
         /** playAtHostNanos = generation instant + this lead. */
         private const val REQUEST_MEDIA_PROJECTION = 41
