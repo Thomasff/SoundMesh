@@ -468,6 +468,7 @@ class SyncActivity : Activity() {
                     // device is trusted to measure on its own.
                     "\"recordingStartedAtHostNanos\":${calibration.startedAtHostNanos ?: "null"}," +
                     "\"sinkChirpAtHostNanos\":$sinkChirpAt," +
+                    "\"onDeviceAlignment\":${onDeviceAlignmentJson(caseId, calibration, sinkChirpAt)}," +
                     "${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
                     // A captured run and a generated one are not comparable, and nothing else in
@@ -654,6 +655,7 @@ class SyncActivity : Activity() {
                     // the pair in host time, so either can window its search without the other.
                     "\"recordingStartedAtHostNanos\":${calibration?.startedAtHostNanos ?: "null"}," +
                     "\"sinkChirpAtHostNanos\":$chirpAt," +
+                    "\"onDeviceAlignment\":${calibration?.let { onDeviceAlignmentJson(caseId, it, chirpAt) } ?: "null"}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson()}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
@@ -832,6 +834,46 @@ class SyncActivity : Activity() {
         "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}," +
             "\"deadbandFrames\":${deadbandFramesRequested()}," +
             "\"alignmentOffsetMicros\":${alignmentOffsetMicrosRequested()}"
+
+    /**
+     * The device's own reading of its own recording, or null if it could not take one.
+     *
+     * Wrapped rather than allowed to throw: this runs at the tail of a twelve minute run, on code
+     * that has never met a real recording, and the WAV is on disk either way. A failure here has
+     * to cost the on-device number and nothing else - the PC analysis reads the same file and is
+     * still the reference the port is checked against.
+     *
+     * `elapsedMillis` is the point of recording it separately. The whole reason the recording is
+     * timestamped is to collapse a whole-interval search into a windowed one, and how much that
+     * actually buys on a handset - as opposed to on a PC, where it was measured - is not something
+     * to reason about.
+     */
+    private fun onDeviceAlignmentJson(caseId: String, calibration: CalibrationRunner, firstChirpAtHostNanos: Long): String {
+        val startedAt = calibration.startedAtHostNanos ?: return "null"
+        return runCatching {
+            val recording = File(runStore.prepareRun(caseId), "calibration.wav")
+            val recorded = com.soundmesh.probe.WavFileReader.readMono(recording)
+            val startedNanos = System.nanoTime()
+            val readings = OnDeviceAlignment.readRun(
+                recorded = recorded,
+                reference = ChirpGenerator.generateMono(),
+                recordingStartedAtHostNanos = startedAt,
+                firstChirpAtHostNanos = firstChirpAtHostNanos,
+                staggerNanos = STAGGER_NANOS,
+                chirpRepeats = chirpRepeatsRequested(),
+                chirpIntervalNanos = chirpIntervalNanosRequested()
+            )
+            val elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000
+            val pairs = readings.joinToString(",") { reading ->
+                "{\"firstIndex\":${reading.firstIndex ?: "null"},\"secondIndex\":${reading.secondIndex ?: "null"}," +
+                    "\"alignmentErrorMs\":${reading.alignmentErrorMs ?: "null"}," +
+                    "\"confidence\":\"${reading.confidence}\"," +
+                    "\"ratios\":[${reading.ratios.joinToString(",") { it?.toString() ?: "null" }}]," +
+                    "\"atSearchEdge\":[${reading.atSearchEdge.joinToString(",") { it?.toString() ?: "null" }}]}"
+            }
+            "{\"elapsedMillis\":$elapsedMillis,\"frames\":${recorded.size},\"pairs\":[$pairs]}"
+        }.getOrElse { "{\"failure\":\"${it.javaClass.simpleName}\"}" }
+    }
 
     private fun chirpTimingJson(timing: ChirpTiming): String =
         "\"chirpMissedByNanos\":${timing.missedByNanos}," +
