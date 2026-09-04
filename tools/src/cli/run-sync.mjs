@@ -514,6 +514,18 @@ export function pairingLines({ host }) {
   const [, , hostId, address, port] = host.pairingCode.split(' ');
   return [`pairing            peer ${hostId} at ${address}:${port}`];
 }
+
+/**
+ * What the sink read off the host's screen, when that is how it found it.
+ *
+ * The counterpart of the pairing line: that one says what the host offered, this one says what a
+ * handset across the room actually got out of it. A run where the two disagree is a run where the
+ * code on disk is stale, which is otherwise only visible as a connection that will not open.
+ */
+export function scanLines({ sink }) {
+  if (!sink?.scan) return [];
+  return [`scanned            peer ${sink.scan.hostId} at ${sink.scan.address}:${sink.scan.port}`];
+}
 /** Null rather than zero when there is nothing to compare: no evidence is not agreement. */
 function worstDisagreementMs(devicePairs, pcPairs) {
   if (!Array.isArray(devicePairs) || !Array.isArray(pcPairs)) return null;
@@ -597,6 +609,13 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // stays required either way: this tool still pings it for the link RTT line, and the sink
   // simply ignores it once discovery is on.
   const discover = args.includes('--discover');
+  // The sink uses the host it last scanned off a screen, and spends no discovery window at all.
+  // --host-address stays required for the same reason it does under --discover: this tool still
+  // pings it for the link RTT line, and the sink ignores it.
+  const pairedHost = args.includes('--paired');
+  if (pairedHost && discover) {
+    throw new Error('--paired and --discover are two ways for the sink to find its host, and the report would not say which one it used. Pass one. --paired needs a scan first: run scan-pair.mjs against the sink.');
+  }
   // Same both-or-neither rule as --low-latency, for the same reason: the alignment number is a
   // comparison between the two handsets, so a threshold applied to one loop only would put the
   // difference between the two loops straight into it.
@@ -726,7 +745,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
   else await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode, paired: pairedHost });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,
@@ -811,6 +830,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // another number among them.
   pairedAlignmentLines({ paired: reports.host?.pairedAlignment, facing }).forEach(line => log(line));
   pairingLines({ host: reports.host }).forEach(line => log(line));
+  scanLines({ sink: reports.sink }).forEach(line => log(line));
   calibrationLines({ sink: reports.sink }).forEach(line => log(line));
   return { reports, alignment, facing, link };
 }

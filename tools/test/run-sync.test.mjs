@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, calibrationLines, pairingLines, ANCHOR_RADIUS_FRAMES, STAGGER_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, calibrationLines, pairingLines, scanLines, ANCHOR_RADIUS_FRAMES, STAGGER_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -1135,4 +1135,19 @@ test('says why there is no code rather than printing nothing', () => {
 test('prints no pairing line for a run recorded before codes existed', () => {
   assert.deepEqual(pairingLines({ host: { advertised: true } }), []);
   assert.deepEqual(pairingLines({ host: null }), []);
+});
+
+test('says which host the sink actually read off the screen', () => {
+  const lines = scanLines({ sink: { scan: { hostId: '0123456789abcdef', address: '192.168.43.1', port: 45124 } } });
+
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /peer 0123456789abcdef at 192\.168\.43\.1:45124/);
+});
+
+// The line exists to be compared against the host's own pairing line, so it has to be absent
+// rather than empty on every run that found its host some other way.
+test('prints no scanned line for a run that did not scan', () => {
+  assert.deepEqual(scanLines({ sink: { scan: null } }), []);
+  assert.deepEqual(scanLines({ sink: {} }), []);
+  assert.deepEqual(scanLines({ sink: null }), []);
 });

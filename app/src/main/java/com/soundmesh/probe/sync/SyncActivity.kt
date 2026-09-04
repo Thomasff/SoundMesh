@@ -23,8 +23,6 @@ import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PairedAlignment
-import com.soundmesh.core.PairingCode
-import com.soundmesh.core.PairingCodeCodec
 import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
@@ -99,7 +97,7 @@ class SyncActivity : Activity() {
      * worker so the audio path never waits on the main looper.
      */
     private fun showPairingCode(payload: String) = runOnUiThread {
-        pairingView.setImageBitmap(PairingCodeImage.bitmap(payload, PAIRING_CODE_PIXELS))
+        pairingView.setImageBitmap(PairingCodeImage.bitmap(payload, PairingCodeImage.DEFAULT_PIXELS))
         pairingView.visibility = android.view.View.VISIBLE
     }
     private fun handle() {
@@ -412,6 +410,14 @@ class SyncActivity : Activity() {
      */
     private fun discoverRequested(): Boolean = intent.getBooleanExtra("discover", false)
 
+    /**
+     * Use the host this handset last scanned, instead of finding one or being told one.
+     *
+     * Checked before `discover` rather than beside it: a run that scanned a code has been told
+     * exactly which handset it means, and nothing a five second listen could add to that.
+     */
+    private fun pairedRequested(): Boolean = intent.getBooleanExtra("paired", false)
+
     private fun networkModeRequested(): String? =
         intent.getStringExtra("network_mode")?.takeIf { it in NETWORK_MODES }
 
@@ -459,9 +465,7 @@ class SyncActivity : Activity() {
         // Shown whether or not this run advertised. The code exists for the case where the two
         // handsets have not found each other, so making it conditional on the mechanism that
         // requires they already have would leave it useful only where it is not needed.
-        val pairingCode = LocalAddress.choose(LocalAddress.own())?.let { address ->
-            PairingCodeCodec.encode(PairingCode(hostId, address, CHUNK_PORT))
-        }
+        val pairingCode = HostPairingCode.of(hostId, CHUNK_PORT)
         if (pairingCode != null) showPairingCode(pairingCode)
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,
@@ -620,18 +624,44 @@ class SyncActivity : Activity() {
      * Where the host is, and how this run came to know.
      *
      * An address on the command line still wins, so every stored baseline stays reproducible; with
-     * `discover` it comes off the network instead. [chunkPort] is the port the service record
-     * actually carried when discovery was used, rather than this build's copy of the constant.
+     * `discover` it comes off the network instead, and with `paired` off a code this handset scanned
+     * earlier. [chunkPort] is the port the record or the code actually carried, rather than this
+     * build's copy of the constant.
+     *
+     * [unreachable] is what to call a host that answered here and then would not take a TCP
+     * connection. It differs by path because the same silence means different things: a discovered
+     * host that will not connect is client isolation, while a scanned one is a code that has gone
+     * stale. Null on the hand-typed path, where the raw failure is already the whole story.
+     *
+     * [discovery] and [scan] are what the report says about how this run found its host, and only
+     * one of them is ever populated. Kept as two fields rather than one renamed by path so that
+     * every run already archived still means exactly what it meant when it was recorded.
      */
     private class HostLocation(
         val address: String,
         val chunkPort: Int,
-        val discovered: Boolean,
+        val unreachable: String?,
         val peerId: String,
-        val json: String
+        val discovery: String,
+        val scan: String
     )
 
     private fun locateHost(): HostLocation {
+        if (pairedRequested()) {
+            // No discovery window at all: the code carried the address, and the person holding the
+            // handset already said which host they meant by pointing it at one screen rather than
+            // another. That is the whole point of the code, and the one thing mDNS cannot do.
+            val code = PairedHost(filesDir).read() ?: throw PeerUnavailable("PAIRING_NOT_SCANNED")
+            return HostLocation(
+                address = code.address,
+                chunkPort = code.chunkPort,
+                unreachable = "PEER_UNREACHABLE_AFTER_SCAN",
+                peerId = code.hostId,
+                discovery = "null",
+                scan = "{\"scanned\":true,\"hostId\":\"${code.hostId}\"," +
+                    "\"address\":\"${code.address}\",\"port\":${code.chunkPort}}"
+            )
+        }
         if (!discoverRequested()) {
             val address = intent.getStringExtra("host_address")
                 ?: throw IllegalArgumentException("SINK needs host_address")
@@ -641,9 +671,10 @@ class SyncActivity : Activity() {
             return HostLocation(
                 address,
                 CHUNK_PORT,
-                discovered = false,
+                unreachable = null,
                 peerId = StoredCalibration.ANONYMOUS_PEER,
-                json = "null"
+                discovery = "null",
+                scan = "null"
             )
         }
         val startedAt = System.nanoTime()
@@ -655,9 +686,10 @@ class SyncActivity : Activity() {
         return HostLocation(
             address = peer.hostAddress,
             chunkPort = peer.port,
-            discovered = true,
+            unreachable = "PEER_UNREACHABLE_AFTER_DISCOVERY",
             peerId = PeerAdvertisement.hostIdOf(peer),
-            json = "{\"seen\":${outcome.seen},\"compatible\":${outcome.compatible}," +
+            scan = "null",
+            discovery = "{\"seen\":${outcome.seen},\"compatible\":${outcome.compatible}," +
                 "\"elapsedMillis\":$elapsedMillis,\"name\":\"${peer.name}\",\"port\":${peer.port}}"
         )
     }
@@ -752,7 +784,7 @@ class SyncActivity : Activity() {
             // client isolation, which the audio stream cannot survive either. Named here, because
             // as a bare ConnectException it reads like a host that never started.
             runCatching { chunkClient.start() }.onFailure {
-                throw if (host.discovered) PeerUnavailable("PEER_UNREACHABLE_AFTER_DISCOVERY") else it
+                throw host.unreachable?.let { name -> PeerUnavailable(name) } ?: it
             }
 
             // hostNanosNow() is meaningless before the estimator has its first fit: it falls
@@ -876,7 +908,7 @@ class SyncActivity : Activity() {
                     "\"observedOffsetMicros\":${observedOffset ?: "null"}," +
                     // How this run found the host, or null when it was told. The counts are what
                     // separate a quiet network from one carrying a build that cannot be talked to.
-                    "\"discovery\":${host.json}," +
+                    "\"discovery\":${host.discovery},\"scan\":${host.scan}," +
                     "\"adoptedOffsetMicros\":${adopted ?: "null"}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
                     "${chirpScheduleJson(resolvedOffset.micros)}," +
@@ -1299,7 +1331,6 @@ class SyncActivity : Activity() {
         private const val SERVICE_NAME_PREFIX = "SoundMesh"
 
         /** Big enough to be read across a room off a phone screen, small enough to fit on one. */
-        private const val PAIRING_CODE_PIXELS = 720
 
         /** ~3s of audio at 20ms/chunk. */
         private const val SCHEDULER_CAPACITY_CHUNKS = 150

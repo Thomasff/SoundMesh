@@ -9,6 +9,10 @@
          does not apply to, so the lock may be unnecessary - held anyway because whether these
          vendor builds behave like the platform one is not something to learn from a failed run. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Pairing. The camera is used for one thing and held for as long as it takes to read one
+         code off another handset screen; nothing here records or keeps an image. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <queries>
         <package android:name="com.netease.cloudmusic" />
@@ -30,6 +34,14 @@
         </activity>
         <activity
             android:name=".sync.SyncActivity"
+            android:exported="true"
+            android:launchMode="singleTask" />
+        <activity
+            android:name=".sync.ScanActivity"
+            android:exported="true"
+            android:launchMode="singleTask" />
+        <activity
+            android:name=".sync.ShowCodeActivity"
             android:exported="true"
             android:launchMode="singleTask" />
         <service

@@ -5,6 +5,10 @@ import { runAdb as defaultRunAdb } from './adb.mjs';
 const PROBE_PACKAGE = 'com.soundmesh.probe';
 const ACTIVITY = `${PROBE_PACKAGE}/.MainActivity`;
 const SYNC_ACTIVITY = `${PROBE_PACKAGE}/.sync.SyncActivity`;
+const SCAN_ACTIVITY = `${PROBE_PACKAGE}/.sync.ScanActivity`;
+const SHOW_CODE_ACTIVITY = `${PROBE_PACKAGE}/.sync.ShowCodeActivity`;
+// Not under runs/: a scanned host outlives every case, which is the whole reason it is on disk.
+const SCANNED_PAIRING_PATH = 'files/scanned-pairing';
 export class ProbeStatusNotReadyError extends Error { constructor() { super('Probe status is not ready'); this.code = 'NOT_READY'; } }
 
 function requireSuccess(result, action) {
@@ -64,8 +68,28 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     // the sink runs a clock client, and a denser cadence is a data collection choice, not production.
     // sinkRecords is sent to the sink alone and on the same terms: absent leaves the run on the
     // one-recording arrangement, where only the host opens a capture path.
-    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, capturePackage, sourceFile, networkMode, discover }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : []), ...(lowLatency ? ['--ez', 'low_latency', 'true'] : []), ...(reacquireThresholdFrames ? ['--ei', 'reacquire_threshold_frames', String(reacquireThresholdFrames)] : []), ...(audioSource ? ['--es', 'audio_source', audioSource] : []), ...(chirpRepeats ? ['--ei', 'chirp_repeats', String(chirpRepeats)] : []), ...(chirpIntervalSeconds ? ['--ei', 'chirp_interval_seconds', String(chirpIntervalSeconds)] : []), ...(deadbandFrames ? ['--ei', 'deadband_frames', String(deadbandFrames)] : []), ...(sinkRecords ? ['--ez', 'sink_records', 'true'] : []), ...(clockIntervalMs ? ['--ei', 'clock_interval_ms', String(clockIntervalMs)] : []), ...(alignmentOffsetMicros !== undefined ? ['--ei', 'alignment_offset_us', String(alignmentOffsetMicros)] : []), ...(capturePackage ? ['--es', 'capture_package', capturePackage] : []), ...(sourceFile ? ['--es', 'source_file', sourceFile] : []), ...(networkMode ? ['--es', 'network_mode', networkMode] : []), ...(discover ? ['--ez', 'discover', 'true'] : [])] }), 'Sync start'),
+    startSync: async ({ serial, caseId, role, seconds, mode, hostAddress, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, capturePackage, sourceFile, networkMode, discover, paired }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SYNC_ACTIVITY, '--es', 'case_id', caseId, '--es', 'role', role, '--ei', 'seconds', String(seconds), '--es', 'mode', mode, ...(hostAddress ? ['--es', 'host_address', hostAddress] : []), ...(lowLatency ? ['--ez', 'low_latency', 'true'] : []), ...(reacquireThresholdFrames ? ['--ei', 'reacquire_threshold_frames', String(reacquireThresholdFrames)] : []), ...(audioSource ? ['--es', 'audio_source', audioSource] : []), ...(chirpRepeats ? ['--ei', 'chirp_repeats', String(chirpRepeats)] : []), ...(chirpIntervalSeconds ? ['--ei', 'chirp_interval_seconds', String(chirpIntervalSeconds)] : []), ...(deadbandFrames ? ['--ei', 'deadband_frames', String(deadbandFrames)] : []), ...(sinkRecords ? ['--ez', 'sink_records', 'true'] : []), ...(clockIntervalMs ? ['--ei', 'clock_interval_ms', String(clockIntervalMs)] : []), ...(alignmentOffsetMicros !== undefined ? ['--ei', 'alignment_offset_us', String(alignmentOffsetMicros)] : []), ...(capturePackage ? ['--es', 'capture_package', capturePackage] : []), ...(sourceFile ? ['--es', 'source_file', sourceFile] : []), ...(networkMode ? ['--es', 'network_mode', networkMode] : []), ...(discover ? ['--ez', 'discover', 'true'] : []), ...(paired ? ['--ez', 'paired', 'true'] : [])] }), 'Sync start'),
     readSync: options => json({ ...options, fileName: 'sync.json' }),
+    // Pairing is its own act, on its own screen, and outside every case: someone holds the handset
+    // up to another one's display once, and every run after that starts without a hand on either
+    // phone. Which is the point - a run measures timing that being touched destroys.
+    // The host's half, and the reason it is not just a side effect of a run: pairing belongs before
+    // anyone presses play, and a code that only appears while a run plays cannot be scanned first.
+    startCodeDisplay: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SHOW_CODE_ACTIVITY] }), 'Code display start'),
+    startScan: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SCAN_ACTIVITY] }), 'Scanner start'),
+    // Null rather than an error when nothing has been scanned yet: this is polled while a person is
+    // still aiming the camera, so "not there yet" is the ordinary case - and the device says so in
+    // an unhelpful way. A run-as cat of a file that is not there exits 0 and puts its complaint on
+    // stdout, so without the pattern below the first poll reads the words "No such file" as a
+    // pairing code. Matched the same way readStatus matches it, for the same reason.
+    readScannedPairing: async ({ serial }) => {
+      const result = await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', SCANNED_PAIRING_PATH] });
+      if (result.exitCode !== 0) return null;
+      const text = (Buffer.isBuffer(result.stdout) ? result.stdout.toString('utf8') : String(result.stdout ?? '')).trim();
+      if (text.length === 0 || /no such file or directory/i.test(text)) return null;
+      return text;
+    },
+    clearScannedPairing: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', SCANNED_PAIRING_PATH] }), 'Clear scanned pairing'),
     clearSyncArtifacts: async ({ serial, caseId }) => requireSuccess(await runAdb({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'rm', '-f', privatePath(caseId, 'sync.json'), privatePath(caseId, 'calibration.wav'), privatePath(caseId, 'chirp.wav')] }), 'Clear sync artifacts'),
     exportNamedWav: async ({ serial, caseId, fileName, path }) => {
       const result = requireSuccess(await runAdbBinary({ serial, args: ['exec-out', 'run-as', PROBE_PACKAGE, 'cat', privatePath(caseId, fileName)] }), `${fileName} export`);

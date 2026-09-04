@@ -23,6 +23,9 @@ object PairingCodeImage {
      */
     private val HINTS = mapOf(EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.Q)
 
+    /** Big enough to be read across a room, small enough to leave a status line under it. */
+    const val DEFAULT_PIXELS = 720
+
     fun matrix(payload: String, size: Int): BitMatrix =
         QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size, HINTS)
 

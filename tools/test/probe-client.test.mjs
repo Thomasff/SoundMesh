@@ -166,3 +166,45 @@ test('passes a denser clock cadence through only when one was asked for', async 
     ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL']
   ]);
 });
+
+test('sends the scanned host only to the role that scanned one', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: '{}', stderr: '' }; } });
+  await client.startSync({ serial: 'device-1', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL', hostAddress: '192.168.1.7', paired: true });
+  await client.startSync({ serial: 'device-2', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL', hostAddress: '192.168.1.7' });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--es', 'host_address', '192.168.1.7', '--ez', 'paired', 'true'],
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--es', 'host_address', '192.168.1.7']
+  ]);
+});
+
+// Pairing is outside every case, which is the whole reason the scanned host is kept where it is:
+// under files/ rather than under files/runs/<case>/, so it outlives the run that used it.
+test('pairs outside any case at all', async () => {
+  const calls = [];
+  const client = createProbeClient({ runAdb: async call => { calls.push(call); return { exitCode: 0, stdout: 'soundmesh-pairing 2 da3fe1c00de55dc6 192.168.43.1 45124', stderr: '' }; } });
+  await client.startCodeDisplay({ serial: 'device-1' });
+  await client.clearScannedPairing({ serial: 'device-2' });
+  await client.startScan({ serial: 'device-2' });
+  const payload = await client.readScannedPairing({ serial: 'device-2' });
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.ShowCodeActivity'],
+    ['exec-out', 'run-as', 'com.soundmesh.probe', 'rm', '-f', 'files/scanned-pairing'],
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.ScanActivity'],
+    ['exec-out', 'run-as', 'com.soundmesh.probe', 'cat', 'files/scanned-pairing']
+  ]);
+  assert.equal(payload, 'soundmesh-pairing 2 da3fe1c00de55dc6 192.168.43.1 45124');
+});
+
+test('reads no scanned host rather than failing when nothing has been scanned', async () => {
+  const client = createProbeClient({ runAdb: async () => ({ exitCode: 1, stdout: '', stderr: 'No such file or directory' }) });
+  assert.equal(await client.readScannedPairing({ serial: 'device-2' }), null);
+});
+
+// The device says "nothing scanned" in an unhelpful way: run-as cat of a missing file exits 0 and
+// puts its complaint on stdout, so the first poll of a fresh sink read the words "No such file" as
+// a pairing code and the whole pairing command died one second in.
+test('reads no scanned host from a device that answers with a complaint', async () => {
+  const client = createProbeClient({ runAdb: async () => ({ exitCode: 0, stdout: 'cat: files/scanned-pairing: No such file or directory', stderr: '' }) });
+  assert.equal(await client.readScannedPairing({ serial: 'device-2' }), null);
+});
