@@ -3,4 +3,6 @@
     <string name="probe_ready">SoundMesh Probe ready</string>
     <string name="capture_channel_name">SoundMesh capture</string>
     <string name="capture_notification">Capturing playback audio</string>
+    <string name="session_channel_name">SoundMesh session</string>
+    <string name="session_notification">Playing in sync</string>
 </resources>

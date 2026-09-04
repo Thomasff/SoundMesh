@@ -7,6 +7,9 @@ const ACTIVITY = `${PROBE_PACKAGE}/.MainActivity`;
 const SYNC_ACTIVITY = `${PROBE_PACKAGE}/.sync.SyncActivity`;
 const SCAN_ACTIVITY = `${PROBE_PACKAGE}/.sync.ScanActivity`;
 const SHOW_CODE_ACTIVITY = `${PROBE_PACKAGE}/.sync.ShowCodeActivity`;
+// Fully qualified: the product path sits outside the probe package, so the leading-dot shorthand
+// the harness activities use would resolve to the wrong name.
+const SESSION_ACTIVITY = `${PROBE_PACKAGE}/com.soundmesh.session.SessionActivity`;
 // Not under runs/: a scanned host outlives every case, which is the whole reason it is on disk.
 const SCANNED_PAIRING_PATH = 'files/scanned-pairing';
 export class ProbeStatusNotReadyError extends Error { constructor() { super('Probe status is not ready'); this.code = 'NOT_READY'; } }
@@ -77,6 +80,10 @@ export function createProbeClient({ runAdb = defaultRunAdb, runAdbBinary = creat
     // anyone presses play, and a code that only appears while a run plays cannot be scanned first.
     startCodeDisplay: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SHOW_CODE_ACTIVITY] }), 'Code display start'),
     startScan: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SCAN_ACTIVITY] }), 'Scanner start'),
+    // The product path, not the harness. SessionService is not exported, so the activity is what
+    // takes the intent and hands it on - the same reason MainActivity fronts the capture service.
+    startSession: async ({ serial, role, sourceFile }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SESSION_ACTIVITY, '--es', 'role', role, ...(sourceFile ? ['--es', 'source_file', sourceFile] : [])] }), 'Session start'),
+    stopSession: async ({ serial }) => requireSuccess(await runAdb({ serial, args: ['shell', 'am', 'start', '-n', SESSION_ACTIVITY, '--ez', 'stop', 'true'] }), 'Session stop'),
     // Null rather than an error when nothing has been scanned yet: this is polled while a person is
     // still aiming the camera, so "not there yet" is the ordinary case - and the device says so in
     // an unhelpful way. A run-as cat of a file that is not there exits 0 and puts its complaint on

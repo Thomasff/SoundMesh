@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Playback. Without it the system stops a sink the moment it leaves the foreground. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Discovery. NsdManager answers out of a platform daemon that this app's multicast filter
@@ -52,5 +54,13 @@
             android:name=".sync.SyncProjectionService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <activity
+            android:name="com.soundmesh.session.SessionActivity"
+            android:exported="true"
+            android:launchMode="singleTask" />
+        <service
+            android:name="com.soundmesh.session.SessionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>
