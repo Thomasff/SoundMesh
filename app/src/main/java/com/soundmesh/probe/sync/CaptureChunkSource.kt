@@ -48,7 +48,7 @@ class CaptureChunkSource private constructor(private val reader: AndroidPlayback
             if (reader.channelCount != SyncRenderer.CHANNELS || reader.sampleRate != SyncRenderer.SAMPLE_RATE) {
                 runCatching { reader.stop() }
                 runCatching { reader.close() }
-                throw IllegalStateException("CAPTURE_FORMAT_UNUSABLE")
+                throw SourceUnusable("CAPTURE_FORMAT_UNUSABLE")
             }
             return CaptureChunkSource(reader)
         }

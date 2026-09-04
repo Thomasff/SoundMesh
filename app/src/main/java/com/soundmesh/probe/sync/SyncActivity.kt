@@ -23,6 +23,7 @@ import com.soundmesh.core.schedulerStatsWindow
 import com.soundmesh.probe.AndroidPlaybackReader
 import com.soundmesh.probe.ProbeCase
 import com.soundmesh.probe.RunStore
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -142,6 +143,7 @@ class SyncActivity : Activity() {
             val failureCode = when (failure) {
                 null -> null
                 is ClockOffsetUnavailable -> "CLOCK_OFFSET_UNAVAILABLE"
+                is SourceUnusable -> failure.code
                 else -> failure.javaClass.simpleName
             }
             if (failureCode != null) {
@@ -323,6 +325,17 @@ class SyncActivity : Activity() {
      */
     private fun capturePackageRequested(): String? = intent.getStringExtra("capture_package")
 
+    /**
+     * Name of an audio file in the probe's own external files directory whose head the host
+     * decodes and streams, or null for the generated tone. A bare name rather than a path: the
+     * directory is fixed here, so a wrong extra cannot point the run at somebody else's file.
+     *
+     * Unlike capture this needs no consent and no foreground service - and unlike capture, the
+     * host plays only what it streams, so the two handsets can be judged by ear.
+     */
+    private fun sourceFileRequested(): String? =
+        intent.getStringExtra("source_file")?.takeIf { SAFE_SOURCE_FILE.matches(it) }
+
     private fun reacquireThresholdRequested(): Int {
         val requested = intent.getIntExtra("reacquire_threshold_frames", REACQUIRE_THRESHOLD_FRAMES)
         return if (requested > 0) requested else REACQUIRE_THRESHOLD_FRAMES
@@ -339,6 +352,9 @@ class SyncActivity : Activity() {
     private val captureStopped = AtomicBoolean(false)
 
     private fun runHostFull(caseId: String, seconds: Int, projection: MediaProjection?) {
+        // Both sources feed the same loop, so one of them would otherwise silently win.
+        // run-sync refuses the pair too; this is the half the artifact can prove was honoured.
+        if (capturePackageRequested() != null && sourceFileRequested() != null) throw SourceUnusable("SOURCE_CONFLICT")
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
         val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
@@ -351,6 +367,7 @@ class SyncActivity : Activity() {
 
             val source = TonePcmSource()
             capture = projection?.let { openCapture(it) }
+            val file = sourceFileRequested()?.let { FileChunkSource.open(File(getExternalFilesDir(null), it)) }
             val audioStart = System.nanoTime()
             val until = audioStart + seconds * 1_000_000_000L
             var lastPlayAtHostNanos = until
@@ -363,12 +380,16 @@ class SyncActivity : Activity() {
             var frameIndex = 0L
             var captureAnchorNanos = 0L
             while (System.nanoTime() < until) {
-                // Two paces, one loop. The generator has none of its own, so it is held to the
+                // Two paces, one loop. Neither the generator nor the decoded file has one of its
+                // own - both produce a chunk as fast as they are asked - so both are held to the
                 // timeline by sleeping to the next chunk boundary. Capture has the device's own: a
                 // full chunk only exists once the recorder has produced it, so the read blocks for
                 // exactly as long as the chunk lasts and the sleep would be counted twice.
-                val pcm = if (capture != null) (capture.readChunk() ?: break)
-                    else source.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)
+                val pcm = when {
+                    capture != null -> capture.readChunk() ?: break
+                    file != null -> file.readChunk()
+                    else -> source.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)
+                }
                 // The generator's sleep advances the clock by exactly one chunk per pass, so reading
                 // it fresh each time and anchoring to the first chunk come to the same instants.
                 // Capture has no such guarantee: a stalled pass leaves the recorder holding several
@@ -425,6 +446,8 @@ class SyncActivity : Activity() {
                     // the report distinguishes them. Same reason alignmentOffsetMicros is echoed.
                     "\"capturePackage\":${capturePackageRequested()?.let { "\"$it\"" } ?: "null"}," +
                     "\"captureStopped\":${captureStopped.get()}," +
+                    "\"sourceFile\":${sourceFileRequested()?.let { "\"$it\"" } ?: "null"}," +
+                    "\"sourceChunks\":${file?.chunkCount ?: 0}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
                     "\"renderer\":${renderer.report(renderer.lastStreamingStats()?.silenceFrames)}}"
@@ -849,6 +872,11 @@ class SyncActivity : Activity() {
         /** playAtHostNanos = generation instant + this lead. */
         private const val REQUEST_MEDIA_PROJECTION = 41
         private const val LEAD_NANOS = 1_500_000_000L
+
+        // A bare file name. Dots are allowed anywhere, so this does not rule out ".." on its own -
+        // what rules out walking off the directory is that no path separator matches at all, and
+        // the leading character must be alphanumeric so the name cannot itself be "..".
+        private val SAFE_SOURCE_FILE = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
         /** Gap between the last audio chunk and the sink's calibration chirp. */
         private const val CALIBRATION_GAP_NANOS = 2_000_000_000L

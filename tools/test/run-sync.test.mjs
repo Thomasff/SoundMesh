@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, requireBothReports, pushSourceFile, pairSearchWindow, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -818,4 +818,57 @@ test('refuses a clock cadence outside what the probe will honour', async () => {
       /--clock-interval-ms/
     );
   }
+});
+
+test('--source-file reaches the host alone, and travels as a bare name', async () => {
+  // Only the host decodes: the sink plays the PCM the host sends it, so a sink told to open a file
+  // would be playing a second copy of the song against the one on the wire.
+  const requested = await startSyncCalls(['--source-file', 'asset/song.mp3']);
+  assert.deepEqual(requested.map(({ role, sourceFile }) => [role, sourceFile]), [['HOST', 'song.mp3'], ['SINK', undefined]]);
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, sourceFile }) => [role, sourceFile]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('refuses a file source and a capture source together, because one of them would silently win', async () => {
+  await assert.rejects(
+    () => main(
+      ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2',
+       '--source-file', 'asset/song.mp3', '--capture-package', 'com.tencent.qqmusic'],
+      { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+    ),
+    /--source-file/
+  );
+});
+
+test('refuses a source file whose name the probe would not accept', async () => {
+  // The probe matches the same shape on its side and would fall back to the generated tone on a
+  // mismatch - a run that quietly played a sine while its notes say it played music.
+  for (const bad of ['asset/-lead.mp3', 'asset/my song.mp3', 'asset/_x.mp3', 'asset/', `asset/${'a'.repeat(70)}.mp3`]) {
+    await assert.rejects(
+      () => pushSourceFile({ serial: HOST_SERIAL, localPath: bad, runAdbHost: authorisedPairRunner() }),
+      /--source-file/
+    );
+  }
+});
+
+test('pushes the source file into the probe own directory, and nowhere else', async () => {
+  const calls = [];
+  const runAdbHost = async call => { calls.push(call.args); return { exitCode: 0, stdout: '', stderr: '' }; };
+  const name = await pushSourceFile({ serial: HOST_SERIAL, localPath: 'asset/song.mp3', runAdbHost });
+  assert.equal(name, 'song.mp3');
+  // The directory is created first: it only exists once the app has called getExternalFilesDir(),
+  // so on a fresh install the push would otherwise fail on a directory adb could have made.
+  assert.deepEqual(calls, [
+    ['-s', HOST_SERIAL, 'shell', 'mkdir', '-p', '/sdcard/Android/data/com.soundmesh.probe/files'],
+    ['-s', HOST_SERIAL, 'push', 'asset/song.mp3', '/sdcard/Android/data/com.soundmesh.probe/files/song.mp3']
+  ]);
+});
+
+test('a push that fails stops the run instead of playing the tone under a music run name', async () => {
+  const runAdbHost = async () => ({ exitCode: 1, stdout: '', stderr: 'adb: error: cannot stat: No such file or directory' });
+  await assert.rejects(
+    () => pushSourceFile({ serial: HOST_SERIAL, localPath: 'asset/song.mp3', runAdbHost }),
+    /cannot stat/
+  );
 });

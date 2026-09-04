@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProbeClient } from '../probe-client.mjs';
 import { analyzeAlignment, combineFacingPair } from '../calibration-analysis.mjs';
@@ -12,6 +12,13 @@ const wait = ms => new Promise(done => setTimeout(done, ms));
 const SAMPLE_RATE = 48000;
 const STAGGER_FRAMES = SAMPLE_RATE / 2;
 const PROBE_PACKAGE = 'com.soundmesh.probe';
+// The probe's own external files directory - the one place on the handset this tool writes.
+// adb reaches it without run-as, and the app reads it with getExternalFilesDir(null).
+const PROBE_FILES_DIR = `/sdcard/Android/data/${PROBE_PACKAGE}/files`;
+// The shape SyncActivity matches on its side. A name it would reject is refused here instead,
+// because the probe falls back to the generated tone rather than failing - and a run that
+// quietly played a sine under a music run's name is worse than one that never started.
+const SAFE_SOURCE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /**
  * 250 ms either side of where the partner chirp is expected. One handset's output buffer measured
@@ -396,6 +403,32 @@ export function combineFacingRun({ hostSide, sinkSide }) {
  * Both tables are read because a ServerSocket with no bound address lands on the IPv6 wildcard, and
  * a listener present in tcp6 alone would otherwise read as absent.
  */
+/**
+ * Puts the audio file the host should stream into the probe's own directory, and answers with
+ * the bare name the run passes on - the activity fixes the directory, so only a name travels.
+ *
+ * A missing local file is left for adb to report: it names the path it could not stat, which is
+ * the same thing a check here would have said and one fewer place for the two to disagree.
+ */
+export async function pushSourceFile({ serial, localPath, runAdbHost }) {
+  // basename('asset/') answers 'asset', so a directory would pass the name check and adb would
+  // push the whole directory. The trailing separator is the only thing that tells them apart.
+  if (/[/\\]$/.test(localPath)) throw new Error(`--source-file needs a file, not a directory: ${JSON.stringify(localPath)} ends with a path separator.`);
+  const name = basename(localPath);
+  if (!SAFE_SOURCE_FILE.test(name)) {
+    throw new Error(`--source-file needs a file whose name starts with a letter or digit and holds only letters, digits, dot, dash and underscore, up to 64 characters. ${JSON.stringify(name)} is not one, and the probe would silently fall back to the generated tone.`);
+  }
+  // The directory exists only once the app has called getExternalFilesDir(), which it does inside
+  // a run - so on a fresh install the first push would fail on a directory adb can simply make.
+  await runAdbHost({ args: ['-s', serial, 'shell', 'mkdir', '-p', PROBE_FILES_DIR] });
+  const result = await runAdbHost({ args: ['-s', serial, 'push', localPath, `${PROBE_FILES_DIR}/${name}`], timeoutMs: 120_000 });
+  if (result.exitCode !== 0) {
+    const detail = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
+    throw new Error(`Pushing ${localPath} to the host failed: ${detail || `adb exited ${result.exitCode}`}`);
+  }
+  return name;
+}
+
 export async function awaitHostListening({ serial, runAdbHost, timeoutMs, log = () => {}, pollMs = 1000 }) {
   const deadline = Date.now() + timeoutMs;
   let announced = false;
@@ -490,6 +523,13 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // The probe's own package is refused because the host plays back the very stream it is capturing.
   // Capturing itself is a feedback loop, and it would run and build a file rather than fail.
   const capturePackage = value(args, '--capture-package');
+  // The local path of an audio file the host decodes and streams in place of the tone. Unlike
+  // capture this needs no consent, and the host plays only what it streams - so the pair can be
+  // judged by ear, which a capture run cannot be: the tap does not mute the app it taps.
+  const sourceFilePath = value(args, '--source-file');
+  if (sourceFilePath !== undefined && capturePackage !== undefined) {
+    throw new Error('--source-file and --capture-package are two sources for one loop; the host would play one of them and the report would not say which. Pass one.');
+  }
   const consentTimeoutRaw = value(args, '--consent-timeout-s');
   const consentTimeoutSeconds = consentTimeoutRaw === undefined ? DEFAULT_CONSENT_TIMEOUT_SECONDS : Number(consentTimeoutRaw);
   if (consentTimeoutRaw !== undefined && (!Number.isInteger(consentTimeoutSeconds) || consentTimeoutSeconds < 1)) {
@@ -529,7 +569,10 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
     : `link RTT           min ${link.minMs} / avg ${link.avgMs} / max ${link.maxMs} ms, ${link.lossPercent}% loss`);
 
   for (const serial of [hostSerial, sinkSerial]) await client.clearSyncArtifacts({ serial, caseId });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage });
+  // Before the run, not during it: a push that fails after the handsets have started would
+  // leave them playing the tone under a run named for a song.
+  const sourceFile = sourceFilePath === undefined ? undefined : await pushSourceFile({ serial: hostSerial, localPath: sourceFilePath, runAdbHost });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, reacquireThresholdFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile });
   // A generated run keeps the stagger it always had: the host binds its ports immediately. A
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
