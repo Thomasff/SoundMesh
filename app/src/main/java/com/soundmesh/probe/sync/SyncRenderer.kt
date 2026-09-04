@@ -295,13 +295,24 @@ class SyncRenderer(
                         }
                         val payload = applyPendingAdjust(decision.chunk.pcm)
                         // Whatever of this chunk is already in the past is dropped rather than
-                        // written late (see releaseTrimFrames). Zero in contiguous playback, so
-                        // this only bites at a start or after a gap - which is exactly where the
-                        // release phase was being re-drawn. Clamped against the payload because
-                        // applyPendingAdjust may have shortened it by a frame.
+                        // written late (see releaseTrimFrames). Clamped against the payload
+                        // because applyPendingAdjust may have shortened it by a frame.
+                        //
+                        // Below TRIM_DEADBAND_FRAMES the chunk is written whole and heard that
+                        // fraction of a millisecond late instead. O35 measured why: the release
+                        // error is two-sided jitter with a mean trim of 8.6 frames, and trimming
+                        // was a one-sided answer to it - late chunks lost audio, early ones gained
+                        // silence, and the silence written over the run (90444 frames) came out
+                        // within 1% of the audio cut (91174). That is 0.47% of the music replaced
+                        // by ~26 splices a second, which is what a listener hears as a crackle.
+                        //
+                        // Chirp chunks keep trimming with no deadband. The chirp is the instrument
+                        // the alignment is measured with, so its release must stay exact; the
+                        // deadband would put its own width straight into every measurement.
+                        val deadband = if (decision.chunk.sequence >= CHIRP_SEQUENCE_BASE) 0 else TRIM_DEADBAND_FRAMES
                         val trimFrames = releaseTrimFrames(
                             decision.chunk.playAtHostNanos, heardAtHostNanos, SAMPLE_RATE, FRAMES_PER_CHUNK
-                        )
+                        ).let { if (it < deadband) 0 else it }
                         val offset = minOf(trimFrames * CHANNELS * 2, payload.size)
                         if (trimFrames > 0) {
                             releaseTrims++
@@ -571,6 +582,17 @@ class SyncRenderer(
          * streamed audio when the chirp window's boundaries are recorded.
          */
         const val CHIRP_SEQUENCE_BASE = 1_000_000
+
+        /**
+         * One millisecond. Streamed chunks released later than this by the poll's own quantisation
+         * are written whole and heard late, rather than shortened to stay exactly on the grid.
+         *
+         * Sized against what the release error actually is, not against the gate: O35 measured a
+         * mean trim of 8.6 frames with the worst at 403, so a band of 48 passes the jitter through
+         * untouched while still cutting a real gap back. What it costs is up to 1 ms of timing,
+         * against a 5 ms gate and a drift controller that goes on correcting underneath it.
+         */
+        const val TRIM_DEADBAND_FRAMES = 48
 
         /**
          * Sequences per chirp repeat. A run that plays the chirp several times inside one clock
