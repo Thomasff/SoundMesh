@@ -13,6 +13,8 @@ import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.extrapolatedPlaybackFrames
+import kotlin.math.PI
+import kotlin.math.cos
 import com.soundmesh.core.nextPhaseState
 import com.soundmesh.core.pendingPlaybackFrames
 import com.soundmesh.core.playbackErrorFrames
@@ -319,7 +321,23 @@ class SyncRenderer(
                             trimmedFrames += trimFrames
                             if (trimFrames > maxTrimFrames) maxTrimFrames = trimFrames
                         }
-                        track.write(payload, offset, payload.size - offset)
+                        // A trim leaves a step in the waveform: the previous chunk ran on into
+                        // payload[0], and the next sample heard is payload[offset]. The step is
+                        // what clicks - not the missing frames - so streamed audio is faded across
+                        // it instead of butted together. Same length either way, so the release
+                        // instant this trim exists to hit is untouched.
+                        //
+                        // Chirp chunks keep the butt splice they have always had. The fade would
+                        // rewrite the sweep's first frames, and those are what the correlator
+                        // measures alignment with - every run back to O1 would stop being
+                        // comparable to answer a question about the music.
+                        val faded = if (offset > 0 && decision.chunk.sequence < CHIRP_SEQUENCE_BASE) {
+                            spliceAcross(payload, offset)
+                        } else {
+                            null
+                        }
+                        if (faded != null) track.write(faded, 0, faded.size)
+                        else track.write(payload, offset, payload.size - offset)
                         writtenFrames += (payload.size - offset) / (CHANNELS * 2)
                         // A dropped or duplicated frame deliberately does not move the timeline:
                         // shifting the frame-to-instant mapping by one frame is the correction.
@@ -513,6 +531,55 @@ class SyncRenderer(
     }
 
     /**
+     * The kept part of a trimmed chunk, with the cut faded over instead of butted against what
+     * came before.
+     *
+     * Where the discontinuity is: the previous chunk ran on into `payload[0]`, and a trim of
+     * `offset` bytes makes the next sample heard `payload[offset]`. Those two are unrelated
+     * samples, and the step between them is what is heard - the missing frames themselves are
+     * inaudible at the sizes measured (a mean of 70 frames after the deadband, 1.5 ms).
+     *
+     * So the first [SPLICE_RAMP_FRAMES] frames of the result cross from the audio that would have
+     * played to the audio that does:
+     *
+     *     out[i] = payload[i] * (1 - w) + payload[offset + i] * w,  w rising 0 -> 1
+     *
+     * At `i = 0` the result is exactly `payload[0]`, which continues the previous chunk; at the end
+     * of the ramp it is exactly `payload[offset + ramp - 1]`, which continues into the rest. Both
+     * joins are now continuous, and the ramp is raised-cosine so the slope is continuous too - a
+     * linear fade would leave a corner at each end, which is a quieter click rather than none.
+     *
+     * The result is the same length as the plain trim, so this changes what is heard and not when.
+     */
+    private fun spliceAcross(payload: ByteArray, offset: Int): ByteArray {
+        val out = payload.copyOfRange(offset, payload.size)
+        val bytesPerFrame = CHANNELS * 2
+        // Bounded by both sides: the fade reads `offset` frames of outgoing audio and the same
+        // count of incoming, so a trim shorter than the ramp fades over only what it has.
+        val ramp = minOf(SPLICE_RAMP_FRAMES, offset / bytesPerFrame, out.size / bytesPerFrame)
+        // A ramp of two frames is a butt splice in disguise and measured worse than one: the
+        // deadband keeps offset at 48 frames or more so it cannot be reached, but a shorter one
+        // must not quietly make things worse.
+        if (ramp < 4) return out
+        for (frame in 0 until ramp) {
+            val w = 0.5 - 0.5 * cos(PI * frame / (ramp - 1))
+            for (channel in 0 until CHANNELS) {
+                val at = frame * bytesPerFrame + channel * 2
+                val outgoing = sampleAt(payload, at)
+                val incoming = sampleAt(out, at)
+                val blended = (outgoing * (1.0 - w) + incoming * w).toInt()
+                out[at] = (blended and 0xFF).toByte()
+                out[at + 1] = (blended shr 8).toByte()
+            }
+        }
+        return out
+    }
+
+    /** One little-endian 16-bit sample, sign extended. */
+    private fun sampleAt(pcm: ByteArray, at: Int): Int =
+        ((pcm[at].toInt() and 0xFF) or (pcm[at + 1].toInt() shl 8)).toShort().toInt()
+
+    /**
      * The exception the render loop died of, if any. Exposed on its own (not just inside
      * [report]'s JSON) so the caller can surface it at the top level of sync.json: the renderer is
      * the only source of the calibration chirp now, so a renderer that threw must not read back as
@@ -593,6 +660,14 @@ class SyncRenderer(
          * against a 5 ms gate and a drift controller that goes on correcting underneath it.
          */
         const val TRIM_DEADBAND_FRAMES = 48
+
+        /**
+         * 1.3 ms of cross-fade over the cut a trim leaves. Long enough that the blend is gradual
+         * at the lowest frequencies a phone speaker reproduces, short enough to sit inside the
+         * trims actually seen - O36 measured a mean of 70 frames with the deadband in place, so
+         * the ramp fits whole in the typical case and clamps to the trim in the rest.
+         */
+        const val SPLICE_RAMP_FRAMES = 64
 
         /**
          * Sequences per chirp repeat. A run that plays the chirp several times inside one clock
