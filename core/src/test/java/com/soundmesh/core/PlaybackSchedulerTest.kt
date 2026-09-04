@@ -153,4 +153,44 @@ class PlaybackSchedulerTest {
         assertEquals(0, window.droppedOverflow)
         assertEquals(40, window.silenceFrames)
     }
+
+    @Test
+    fun releasesAChunkThatIsOnlyMarginallyEarlyInsteadOfWedgingSilenceInFrontOfIt() {
+        // O35-O37: the release test was a strict comparison, so a chunk due a nanosecond later
+        // got silence written ahead of it. In steady playback that fires on ordinary jitter, tens
+        // of times a second, each one a one-to-few-frame hole punched into the music - which is
+        // what a listener hears as a crackle in bursts. Small early releases cost up to the
+        // tolerance in timing and leave the waveform whole.
+        val scheduler = PlaybackScheduler(framesPerChunk, capacityChunks = 4, earlyReleaseNanos = 1_000_000)
+        scheduler.submit(chunk(0, 1_000_000_000))
+        assertEquals(PlaybackDecision.Play(chunk(0, 1_000_000_000)), scheduler.poll(999_500_000))
+    }
+
+    @Test
+    fun stillFillsSilenceWhenTheChunkIsFurtherOutThanTheTolerance() {
+        val scheduler = PlaybackScheduler(framesPerChunk, capacityChunks = 4, earlyReleaseNanos = 1_000_000)
+        scheduler.submit(chunk(0, 1_000_000_000))
+        assertTrue(scheduler.poll(990_000_000) is PlaybackDecision.Wait)
+    }
+
+    @Test
+    fun holdsAChirpToItsExactInstantEvenInsideTheTolerance() {
+        // The chirp is what alignment is measured with, and an early release cannot be trimmed
+        // back the way a late one can - releasing it early would put the tolerance straight into
+        // every measurement.
+        val scheduler = PlaybackScheduler(
+            framesPerChunk, capacityChunks = 4, earlyReleaseNanos = 1_000_000, exactReleaseFromSequence = 1_000_000
+        )
+        scheduler.submit(chunk(0, 1_000_000_000))
+        scheduler.poll(1_000_000_000)
+        scheduler.submit(chunk(1_000_000, 2_000_000_000))
+        assertTrue(scheduler.poll(1_999_500_000) is PlaybackDecision.Silence)
+    }
+
+    @Test
+    fun leavesTheReleaseExactWhenNoToleranceIsAskedFor() {
+        val scheduler = scheduler()
+        scheduler.submit(chunk(0, 1_000_000_000))
+        assertEquals(PlaybackDecision.Wait, scheduler.poll(999_999_999))
+    }
 }

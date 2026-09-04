@@ -13,12 +13,12 @@ import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.extrapolatedPlaybackFrames
-import kotlin.math.PI
-import kotlin.math.cos
 import com.soundmesh.core.nextPhaseState
 import com.soundmesh.core.pendingPlaybackFrames
 import com.soundmesh.core.playbackErrorFrames
 import com.soundmesh.core.releaseTrimFrames
+import kotlin.math.PI
+import kotlin.math.cos
 
 /**
  * Feeds the scheduler's decisions to an AudioTrack and keeps playback on the shared timeline.
@@ -107,6 +107,10 @@ class SyncRenderer(
      * the sync path never did, so a gap in the audio had nowhere to show up.
      */
     @Volatile private var trackUnderruns = 0
+
+    /** Silence writes as events and the longest of them, beside the frame total. */
+    @Volatile private var silenceWrites = 0
+    @Volatile private var maxSilenceFrames = 0
     /**
      * The trim applied to the chirp's own first chunk, or null if no chirp chunk was ever played.
      *
@@ -345,6 +349,13 @@ class SyncRenderer(
                         recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll, trimFrames, depthNanos)
                     }
                     is PlaybackDecision.Silence -> {
+                        // Counted as events, not only as frames. The frame total said 124 a second
+                        // without saying whether that was one long gap or fifty short ones - and
+                        // only the second of those punches fifty holes into the music. The
+                        // listener's description was bursts of clicks, which is what the frame
+                        // total alone could neither confirm nor rule out.
+                        silenceWrites++
+                        if (decision.frames > maxSilenceFrames) maxSilenceFrames = decision.frames
                         // Honours the frame count rather than always writing a whole chunk: the
                         // scheduler fills only as far as the next chunk's instant, so the write
                         // stream lands on it instead of stepping past it and making it late.
@@ -625,6 +636,7 @@ class SyncRenderer(
             "\"reacquisitions\":$reacquisitions," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
             "\"trimmedFrames\":$trimmedFrames,\"trackUnderruns\":$trackUnderruns," +
+            "\"silenceWrites\":$silenceWrites,\"maxSilenceFrames\":$maxSilenceFrames," +
             "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"},\"chirpDepthNanos\":${chirpDepthNanos ?: "null"}," +
             "\"chirpPlays\":${chirpPlaysJson()}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
@@ -668,6 +680,17 @@ class SyncRenderer(
          * the ramp fits whole in the typical case and clamps to the trim in the rest.
          */
         const val SPLICE_RAMP_FRAMES = 64
+
+        /**
+         * The trim deadband expressed as time, for the scheduler's early release.
+         *
+         * Derived rather than written out so the two stay the mirror of each other: the renderer
+         * lets a chunk run this far late without cutting it, and the scheduler lets one go this
+         * far early without wedging silence in front of it. Together the write position moves
+         * inside a band of +/-1 ms instead of being snapped to the grid every chunk, and neither
+         * side edits the waveform for jitter this small.
+         */
+        const val EARLY_RELEASE_NANOS = TRIM_DEADBAND_FRAMES * 1_000_000_000L / SAMPLE_RATE
 
         /**
          * Sequences per chirp repeat. A run that plays the chirp several times inside one clock

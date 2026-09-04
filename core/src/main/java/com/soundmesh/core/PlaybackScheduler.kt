@@ -50,7 +50,33 @@ fun schedulerStatsWindow(before: SchedulerStats, after: SchedulerStats): Schedul
  * The caller passes the host instant at which the data it is about to write will actually
  * reach the speakers, so output latency is the renderer's concern, not this class's.
  */
-class PlaybackScheduler(private val framesPerChunk: Int, private val capacityChunks: Int) {
+class PlaybackScheduler(
+    private val framesPerChunk: Int,
+    private val capacityChunks: Int,
+    /**
+     * How early a chunk may be released rather than have silence written in front of it.
+     *
+     * Zero is the exact release this class had until O37, and it is exact to the nanosecond: a
+     * chunk due a nanosecond later got silence. In steady playback that fires on ordinary jitter
+     * tens of times a second, and each firing is a one-to-few-frame hole punched into the audio -
+     * measured at 124 frames a second of silence spread across a run that was otherwise healthy.
+     * The holes are what a listener hears, in bursts, as a crackle.
+     *
+     * A tolerance costs up to its own width in timing and leaves the waveform whole. It is the
+     * mirror of the renderer's trim deadband, which does the same for a chunk released late; with
+     * both, small jitter moves the write position inside a band instead of editing the audio.
+     */
+    private val earlyReleaseNanos: Long = 0,
+    /**
+     * Sequence at or above which [earlyReleaseNanos] does not apply, or null for none.
+     *
+     * The chirp is the instrument alignment is measured with, and an early release cannot be taken
+     * back the way a late one can - the renderer trims a late chunk, but nothing un-plays an early
+     * one. Releasing a chirp inside the tolerance would put the tolerance straight into every
+     * measurement, so chirps keep the exact release.
+     */
+    private val exactReleaseFromSequence: Int? = null
+) {
     private val queue = ArrayList<AudioChunk>()
     private var started = false
     private var played = 0
@@ -78,7 +104,9 @@ class PlaybackScheduler(private val framesPerChunk: Int, private val capacityChu
         }
         val head = queue.firstOrNull()
             ?: return if (started) silence(null, nowHostNanos) else PlaybackDecision.Idle
-        if (head.playAtHostNanos > nowHostNanos) {
+        val exact = exactReleaseFromSequence?.let { head.sequence >= it } ?: false
+        val tolerance = if (exact) 0L else earlyReleaseNanos
+        if (head.playAtHostNanos - nowHostNanos > tolerance) {
             return if (started) silence(head.playAtHostNanos, nowHostNanos) else PlaybackDecision.Wait
         }
         queue.removeAt(0)

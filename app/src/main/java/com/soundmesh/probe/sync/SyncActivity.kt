@@ -357,7 +357,12 @@ class SyncActivity : Activity() {
         if (capturePackageRequested() != null && sourceFileRequested() != null) throw SourceUnusable("SOURCE_CONFLICT")
         val clockServer = ClockSyncServer(CLOCK_PORT)
         val chunkServer = ChunkServer(CHUNK_PORT)
-        val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
+        val scheduler = PlaybackScheduler(
+            SyncRenderer.FRAMES_PER_CHUNK,
+            SCHEDULER_CAPACITY_CHUNKS,
+            earlyReleaseNanos = SyncRenderer.EARLY_RELEASE_NANOS,
+            exactReleaseFromSequence = SyncRenderer.CHIRP_SEQUENCE_BASE
+        )
         val renderer = SyncRenderer(scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested()) { System.nanoTime() }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         var capture: CaptureChunkSource? = null
@@ -500,7 +505,12 @@ class SyncActivity : Activity() {
             System.nanoTime() + estimate.offsetNanos - alignmentOffsetNanos
         }
 
-        val scheduler = PlaybackScheduler(SyncRenderer.FRAMES_PER_CHUNK, SCHEDULER_CAPACITY_CHUNKS)
+        val scheduler = PlaybackScheduler(
+            SyncRenderer.FRAMES_PER_CHUNK,
+            SCHEDULER_CAPACITY_CHUNKS,
+            earlyReleaseNanos = SyncRenderer.EARLY_RELEASE_NANOS,
+            exactReleaseFromSequence = SyncRenderer.CHIRP_SEQUENCE_BASE
+        )
         val renderer = SyncRenderer(
             scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(),
             // Not thrown when absent, unlike hostNanosNow: this only annotates a release that has
