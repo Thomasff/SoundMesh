@@ -19,7 +19,7 @@ class AlignmentPairingTest {
     )
 
     private fun message(caseId: String, errors: List<Double?>) =
-        AlignmentResultMessage(caseId, errors.map(::reading))
+        AlignmentResultMessage(caseId, -34_957L, errors.map(::reading))
 
     /**
      * The two readings of one pair straddle the flight time: the host hears its partner across the

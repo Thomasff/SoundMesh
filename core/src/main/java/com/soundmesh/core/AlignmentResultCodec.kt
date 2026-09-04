@@ -1,7 +1,60 @@
 package com.soundmesh.core
 
-/** One handset's whole reading of one run, as it travels to the handset that combines the two. */
-data class AlignmentResultMessage(val caseId: String, val readings: List<AlignmentReading>)
+/**
+ * One handset's whole reading of one run, as it travels to the handset that combines the two.
+ *
+ * [appliedOffsetMicros] rides along because the correction is cumulative: what this handset
+ * measured is the residual left over on top of what it was already correcting by, and only the
+ * sender knows what it actually applied. The receiver could read its own copy of the same launch
+ * flag instead, and would then compute a silently wrong new correction on any run where the two
+ * roles were not started with the same one.
+ */
+data class AlignmentResultMessage(
+    val caseId: String,
+    val appliedOffsetMicros: Long,
+    val readings: List<AlignmentReading>
+)
+
+/**
+ * What the combining handset sends back: the correction the other side should stand on from now
+ * on, and enough of the verdict for a report on that side to say why.
+ *
+ * [nextOffsetMicros] is null when this run cannot say - it could not be combined, or its scatter
+ * makes the mean meaningless - and the receiver then keeps the correction it already had.
+ */
+data class CalibrationReply(
+    val nextOffsetMicros: Long?,
+    val clusterMeanMicros: Long?,
+    val passed: Boolean?
+)
+
+/** Wire format for [CalibrationReply]: one line, sent back down the same socket. */
+object CalibrationReplyCodec {
+    const val MAGIC = "soundmesh-calibration"
+    const val VERSION = 1
+
+    fun encode(reply: CalibrationReply): String =
+        "$MAGIC $VERSION ${reply.nextOffsetMicros ?: "null"} ${reply.clusterMeanMicros ?: "null"} ${reply.passed ?: "null"}"
+
+    fun decode(text: String): CalibrationReply {
+        val fields = text.trim().split(" ")
+        require(fields.size == 5 && fields[0] == MAGIC) { "not a calibration reply: $text" }
+        require(fields[1] == VERSION.toString()) { "unsupported calibration reply version: ${fields[1]}" }
+        return CalibrationReply(
+            nextOffsetMicros = fields[2].longOrNull(),
+            clusterMeanMicros = fields[3].longOrNull(),
+            passed = when (fields[4]) {
+                "null" -> null
+                "true" -> true
+                "false" -> false
+                else -> throw IllegalArgumentException("unreadable boolean: ${fields[4]}")
+            }
+        )
+    }
+
+    private fun String.longOrNull(): Long? =
+        if (this == "null") null else toLongOrNull() ?: throw IllegalArgumentException("unreadable number: $this")
+}
 
 /**
  * Wire format for [AlignmentResultMessage].
@@ -18,17 +71,17 @@ data class AlignmentResultMessage(val caseId: String, val readings: List<Alignme
  */
 object AlignmentResultCodec {
     const val MAGIC = "soundmesh-alignment"
-    const val VERSION = 1
+    const val VERSION = 2
 
     private const val FIELDS_PER_READING = 11
     private const val NULL = "null"
 
-    fun encode(caseId: String, readings: List<AlignmentReading>): String {
+    fun encode(caseId: String, appliedOffsetMicros: Long, readings: List<AlignmentReading>): String {
         require(caseId.isNotEmpty() && caseId.none { it.isWhitespace() }) {
             "caseId must be non-empty and carry no whitespace: it is a header field"
         }
         val lines = ArrayList<String>(readings.size + 1)
-        lines.add("$MAGIC $VERSION $caseId ${readings.size}")
+        lines.add("$MAGIC $VERSION $caseId $appliedOffsetMicros ${readings.size}")
         for (reading in readings) {
             lines.add(
                 listOf(
@@ -60,10 +113,12 @@ object AlignmentResultCodec {
         val lines = text.split("\n").map { it.removeSuffix("\r") }
         require(lines.isNotEmpty()) { "empty alignment result" }
         val header = lines[0].split(" ")
-        require(header.size == 4 && header[0] == MAGIC) { "not an alignment result: ${lines[0]}" }
+        require(header.size == 5 && header[0] == MAGIC) { "not an alignment result: ${lines[0]}" }
         require(header[1] == VERSION.toString()) { "unsupported alignment result version: ${header[1]}" }
         val caseId = header[2]
-        val count = header[3].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[3]}")
+        val appliedOffsetMicros = header[3].toLongOrNull()
+            ?: throw IllegalArgumentException("unreadable applied offset: ${header[3]}")
+        val count = header[4].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[4]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "alignment result promised $count readings and carried ${lines.size - 1}"
@@ -85,7 +140,7 @@ object AlignmentResultCodec {
                 atSearchEdge = listOf(fields[9].toBooleanOrNullable(), fields[10].toBooleanOrNullable())
             )
         }
-        return AlignmentResultMessage(caseId, readings)
+        return AlignmentResultMessage(caseId, appliedOffsetMicros, readings)
     }
 
     private fun Any?.orNull(): String = this?.toString() ?: NULL

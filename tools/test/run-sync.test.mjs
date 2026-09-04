@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
+  awaitHostListening, main, assertAuthorizedPair, requireBothSerialsAuthorized, grantRecordAudio, assertAwake, requireBothDevicesAwake, awaitBothReports, parseLinkRtt, measureLink, readAlignment, combineFacingRun, readDeviceModels, completionFloorSeconds, completionBudgetSeconds, requireBothReports, pushSourceFile, pairSearchWindow, pairedAlignmentLines, calibrationLines, ANCHOR_RADIUS_FRAMES, MAX_CHIRP_REPEATS } from '../src/cli/run-sync.mjs';
 
 const SAMPLE_RATE = 48000;
 
@@ -972,4 +972,41 @@ test('claims no agreement with a PC analysis that read a different number of pai
   const lines = pairedAlignmentLines({ paired: DEVICE_VERDICT, facing: [DEVICE_VERDICT.pairs[0]] });
 
   assert.equal(lines.length, 3);
+});
+
+// An explicit zero is a real instruction - "measure me uncorrected" - and it has to reach the
+// sink, or the handset falls back to the correction it stored from the last run and the arm that
+// was supposed to be uncorrected silently is not.
+test('--alignment-offset-ms 0 reaches the sink rather than being dropped as falsy', async () => {
+  const zeroed = await startSyncCalls(['--alignment-offset-ms', '0']);
+
+  assert.deepEqual(
+    zeroed.map(({ role, alignmentOffsetMicros }) => [role, alignmentOffsetMicros]),
+    [['HOST', undefined], ['SINK', 0]]
+  );
+});
+
+test('says nothing about the calibration loop when the run predates it', () => {
+  assert.deepEqual(calibrationLines({ sink: { chirpRepeats: 3 } }), []);
+});
+
+test('reports the correction the sink applied, where it came from, and what it adopted', () => {
+  const lines = calibrationLines({
+    sink: { alignmentOffsetMicros: -34957, alignmentOffsetSource: 'stored', adoptedOffsetMicros: -34773 }
+  });
+
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /applied -34\.957 ms \(stored\)/);
+  assert.match(lines[0], /next run -34\.773 ms/);
+});
+
+// Keeping the old correction and being reset to zero are opposite outcomes, and a run whose
+// verdict could not be trusted does the first.
+test('says the correction was kept, not zeroed, when the host had nothing to adopt', () => {
+  const lines = calibrationLines({
+    sink: { alignmentOffsetMicros: -34957, alignmentOffsetSource: 'intent', adoptedOffsetMicros: null }
+  });
+
+  assert.match(lines[0], /kept/);
+  assert.doesNotMatch(lines[0], /next run/);
 });

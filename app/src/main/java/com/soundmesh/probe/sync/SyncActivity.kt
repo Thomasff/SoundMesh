@@ -12,11 +12,14 @@ import com.soundmesh.core.AlignmentPairing
 import com.soundmesh.core.AlignmentReading
 import com.soundmesh.core.AlignmentResultMessage
 import com.soundmesh.core.AudioChunk
+import com.soundmesh.core.CalibrationReply
+import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
+import com.soundmesh.core.PairedAlignment
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
 import com.soundmesh.core.RendererPhase
@@ -31,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 /**
  * ADB driven harness for the M1 and M2 gates. Not product code: the product will discover
@@ -322,6 +326,25 @@ class SyncActivity : Activity() {
         intent.getIntExtra("alignment_offset_us", 0).toLong()
 
     /**
+     * The correction the sink actually applies, and where it came from.
+     *
+     * An explicit extra still wins, so every stored artifact stays reproducible by re-running the
+     * same command. Absent one, the handset stands on what the last run told it - which is the
+     * whole point: a pair of handsets nobody has ever calibrated has no number for a person to
+     * type in, and this is what lets the first run produce it and the second run use it.
+     *
+     * `hasExtra` rather than a sentinel value, because an explicit zero is a real instruction -
+     * "measure me uncorrected" - and must not be confused with "nothing was said".
+     */
+    private class ResolvedOffset(val micros: Long, val source: String)
+
+    private fun resolveSinkAlignmentOffset(): ResolvedOffset = when {
+        intent.hasExtra("alignment_offset_us") -> ResolvedOffset(alignmentOffsetMicrosRequested(), "intent")
+        else -> StoredCalibration(filesDir).read()?.let { ResolvedOffset(it, "stored") }
+            ?: ResolvedOffset(0L, "none")
+    }
+
+    /**
      * Package whose playback the host captures and streams, or null for the generated tone every
      * measurement so far was taken on. Its presence is the switch; run-sync validates the shape and
      * refuses the probe's own package, which would feed the host's output back into itself.
@@ -464,7 +487,20 @@ class SyncActivity : Activity() {
             // Read first, then wait: both handsets start correlating at the same instant, so
             // waiting first would spend the sink's whole pass idle and then start the host's.
             val ownAlignment = readOwnAlignment(caseId, calibration, sinkChirpAt)
-            val delivered = resultServer.awaitResult(RESULT_TIMEOUT_MILLIS)
+            // Combined inside the exchange, because the answer the sink is waiting for is made of
+            // it: the correction it should stand on from the next run onwards.
+            var paired: PairedAlignment? = null
+            val delivered = resultServer.awaitResult(RESULT_TIMEOUT_MILLIS) { message ->
+                val combined = AlignmentPairing.combine(caseId, ownAlignment.readings, message)
+                paired = combined
+                CalibrationReply(
+                    // Folded onto what the sink says it already applied, not onto this device's
+                    // copy of the same launch flag - only the sink knows what it actually used.
+                    nextOffsetMicros = CalibrationUpdate.next(message.appliedOffsetMicros, combined.verdict),
+                    clusterMeanMicros = combined.verdict?.clusterMeanMs?.let { (it * 1000).roundToLong() },
+                    passed = combined.verdict?.passed
+                )
+            }
 
             runStore.writeSyncJson(
                 caseId,
@@ -484,9 +520,9 @@ class SyncActivity : Activity() {
                     "\"onDeviceAlignment\":${ownAlignment.json}," +
                     // The whole measurement, taken by the two handsets alone. Everything above it
                     // is one side of one; this is the field a pair of phones can act on.
-                    "\"pairedAlignment\":${pairedAlignmentJson(caseId, ownAlignment.readings, delivered, resultServer.failureCode)}," +
+                    "\"pairedAlignment\":${pairedAlignmentJson(ownAlignment.readings.size, paired, delivered, resultServer.failureCode)}," +
                     "${chirpTimingJson(chirpTiming)}," +
-                    "${chirpScheduleJson()}," +
+                    "${chirpScheduleJson(alignmentOffsetMicrosRequested())}," +
                     // A captured run and a generated one are not comparable, and nothing else in
                     // the report distinguishes them. Same reason alignmentOffsetMicros is echoed.
                     "\"capturePackage\":${capturePackageRequested()?.let { "\"$it\"" } ?: "null"}," +
@@ -538,7 +574,11 @@ class SyncActivity : Activity() {
         // Sign: pass back the alignmentErrorMs a previous run reported. A negative error means the
         // measured stagger came out short, so the sink emitted late; subtracting it advances this
         // clock, the renderer finds each chunk due sooner, and the sink emits earlier by that much.
-        val alignmentOffsetNanos = alignmentOffsetMicrosRequested() * 1_000L
+        // Resolved once, at the top of the run: it is read from a file that this same run rewrites
+        // at the end, so re-reading it later would have the report say what the next run will
+        // apply rather than what this one did.
+        val resolvedOffset = resolveSinkAlignmentOffset()
+        val alignmentOffsetNanos = resolvedOffset.micros * 1_000L
         val hostNanosNow: () -> Long = {
             // Never zero: with no estimate ever having succeeded there is no host time at all,
             // and inventing one is exactly the failure this whole path exists to detect.
@@ -666,9 +706,16 @@ class SyncActivity : Activity() {
             // Sent even when there is nothing to send: an empty run and a dead sink look the same
             // from the host's end of a socket that never opens, and they are not the same.
             val ownAlignment = calibration?.let { readOwnAlignment(caseId, it, chirpAt) }
-            val resultDelivery = runCatching {
-                AlignmentResultClient(address, RESULT_PORT).send(caseId, ownAlignment?.readings ?: emptyList())
-            }.exceptionOrNull()?.javaClass?.simpleName
+            val exchange = runCatching {
+                AlignmentResultClient(address, RESULT_PORT)
+                    .exchange(caseId, resolvedOffset.micros, ownAlignment?.readings ?: emptyList())
+            }
+            val resultDelivery = exchange.exceptionOrNull()?.javaClass?.simpleName
+            // The loop closes here. Stored only when the host had something to say: a run it could
+            // not combine, or whose scatter makes the mean meaningless, leaves this handset on the
+            // correction it already had rather than replacing it with a worse one.
+            val adopted = exchange.getOrNull()?.nextOffsetMicros
+            if (adopted != null) StoredCalibration(filesDir).write(adopted)
 
             runStore.writeSyncJson(
                 caseId,
@@ -687,8 +734,12 @@ class SyncActivity : Activity() {
                     // Null when the readings reached the host. Named otherwise, because a run whose
                     // delivery failed leaves the host with a one-sided report and no cause in it.
                     "\"resultDelivery\":${resultDelivery?.let { "\"$it\"" } ?: "null"}," +
+                    // Where the correction this run applied came from, and what the next run will
+                    // stand on. Null adopted means the correction was kept, not that it was zeroed.
+                    "\"alignmentOffsetSource\":\"${resolvedOffset.source}\"," +
+                    "\"adoptedOffsetMicros\":${adopted ?: "null"}," +
                     "\"convergenceWaitNanos\":$convergenceWaitNanos,${chirpTimingJson(chirpTiming)}," +
-                    "${chirpScheduleJson()}," +
+                    "${chirpScheduleJson(resolvedOffset.micros)}," +
                     "\"chirpAcquisition\":${chirpAcquisitionJson(chirpSubmission)}," +
                     "\"chirpWindow\":${chirpWindowJson(chirpWindow)}," +
                     "${clockJson(clockClient, estimator, history)}," +
@@ -861,10 +912,12 @@ class SyncActivity : Activity() {
         ((chirpRepeatsRequested() - 1).toLong() * chirpIntervalNanosRequested() / 1_000_000_000L).toInt() +
             CHIRP_SCHEDULE_MARGIN_SECONDS
 
-    private fun chirpScheduleJson(): String =
+    /** [alignmentOffsetMicros] is the correction the run honoured, which on the sink is not
+     * necessarily the one the launch flag asked for - see [resolveSinkAlignmentOffset]. */
+    private fun chirpScheduleJson(alignmentOffsetMicros: Long): String =
         "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}," +
             "\"deadbandFrames\":${deadbandFramesRequested()}," +
-            "\"alignmentOffsetMicros\":${alignmentOffsetMicrosRequested()}"
+            "\"alignmentOffsetMicros\":$alignmentOffsetMicros"
 
     /**
      * The device's own reading of its own recording, or null if it could not take one.
@@ -927,14 +980,14 @@ class SyncActivity : Activity() {
      * [AlignmentPairing]'s to say, and a delivery that never arrived is the transport's.
      */
     private fun pairedAlignmentJson(
-        caseId: String,
-        hostReadings: List<AlignmentReading>,
+        hostPairs: Int,
+        paired: PairedAlignment?,
         delivered: AlignmentResultMessage?,
         deliveryFailure: String?
     ): String {
-        val head = "\"hostPairs\":${hostReadings.size},\"sinkPairs\":${delivered?.readings?.size ?: "null"}"
-        val paired = delivered?.let { AlignmentPairing.combine(caseId, hostReadings, it) }
-            ?: return "{$head,\"failure\":\"${deliveryFailure ?: "RESULT_UNAVAILABLE"}\"}"
+        val head = "\"hostPairs\":$hostPairs,\"sinkPairs\":${delivered?.readings?.size ?: "null"}," +
+            "\"sinkAppliedOffsetMicros\":${delivered?.appliedOffsetMicros ?: "null"}"
+        if (paired == null) return "{$head,\"failure\":\"${deliveryFailure ?: "RESULT_UNAVAILABLE"}\"}"
         val verdict = paired.verdict ?: return "{$head,\"failure\":\"${paired.failure}\"}"
 
         val pairsJson = paired.pairs.joinToString(",") { pair ->

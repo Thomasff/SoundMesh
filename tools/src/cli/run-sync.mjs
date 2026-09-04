@@ -454,6 +454,24 @@ export function pairedAlignmentLines({ paired, facing }) {
   return lines;
 }
 
+/**
+ * The line describing the calibration loop: what the sink stood on this run, where that came
+ * from, and what it will stand on next time.
+ *
+ * The constant used to be carried by a person - read out of one run's output, typed into the next
+ * run's command line - which is the last step of the calibration that needed a PC at all. It now
+ * travels between the handsets, and this line is how a person at the terminal can still see it.
+ *
+ * "kept" and "zeroed" are opposite outcomes and must not read alike: a run whose verdict could not
+ * be trusted leaves the sink on the correction it already had.
+ */
+export function calibrationLines({ sink }) {
+  if (!sink || sink.alignmentOffsetSource === undefined) return [];
+  const ms = micros => (micros / 1000).toFixed(3);
+  const applied = `applied ${ms(sink.alignmentOffsetMicros)} ms (${sink.alignmentOffsetSource})`;
+  return [`calibration        ${applied}, ${sink.adoptedOffsetMicros == null ? 'kept' : `next run ${ms(sink.adoptedOffsetMicros)} ms`}`];
+}
+
 /** Null rather than zero when there is nothing to compare: no evidence is not agreement. */
 function worstDisagreementMs(devicePairs, pcPairs) {
   if (!Array.isArray(devicePairs) || !Array.isArray(pcPairs)) return null;
@@ -746,6 +764,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Last, so the handsets' own answer reads as a check on everything above it rather than as
   // another number among them.
   pairedAlignmentLines({ paired: reports.host?.pairedAlignment, facing }).forEach(line => log(line));
+  calibrationLines({ sink: reports.sink }).forEach(line => log(line));
   return { reports, alignment, facing, link };
 }
 

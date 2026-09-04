@@ -2,6 +2,8 @@ package com.soundmesh.probe.sync
 
 import com.soundmesh.core.AlignmentResultCodec
 import com.soundmesh.core.AlignmentResultMessage
+import com.soundmesh.core.CalibrationReply
+import com.soundmesh.core.CalibrationReplyCodec
 import java.net.ServerSocket
 
 /**
@@ -34,13 +36,18 @@ class AlignmentResultServer(private val port: Int) {
     }
 
     /**
-     * Waits for one delivery, for at most [timeoutMillis].
+     * Waits for one delivery, for at most [timeoutMillis], and answers it with what [reply] makes
+     * of it.
+     *
+     * One exchange on one socket, rather than a second connection the other way: the answer is
+     * only meaningful to the handset that just delivered, and it is already at the other end.
+     * The sender half-closes to mark the end of its readings, which leaves this direction open.
      *
      * Returns null on a timeout or an unreadable stream, leaving the reason in [failureCode]. A
      * bounded wait rather than an open one: the sink is the only thing that can deliver, and a
      * sink that has died must cost the combined number rather than the host's whole report.
      */
-    fun awaitResult(timeoutMillis: Int): AlignmentResultMessage? {
+    fun awaitResult(timeoutMillis: Int, reply: (AlignmentResultMessage) -> CalibrationReply): AlignmentResultMessage? {
         val bound = server ?: run {
             failureCode = "RESULT_UNBOUND"
             return null
@@ -49,7 +56,12 @@ class AlignmentResultServer(private val port: Int) {
             bound.soTimeout = timeoutMillis
             bound.accept().use { socket ->
                 socket.soTimeout = timeoutMillis
-                AlignmentResultCodec.decode(String(socket.getInputStream().readBytes(), Charsets.UTF_8))
+                val message = AlignmentResultCodec.decode(String(socket.getInputStream().readBytes(), Charsets.UTF_8))
+                socket.getOutputStream().apply {
+                    write(CalibrationReplyCodec.encode(reply(message)).toByteArray(Charsets.UTF_8))
+                    flush()
+                }
+                message
             }
         }.onFailure {
             failureCode = if (it is java.net.SocketTimeoutException) "RESULT_TIMEOUT" else "RESULT_UNREADABLE"
