@@ -8,9 +8,9 @@ import com.soundmesh.probe.R
  *
  * The codes come from [com.soundmesh.probe.sync.SourceUnusable] and were written for a report
  * file. On a screen they are worse than nothing: SOURCE_FILE_FORMAT_UNUSABLE reads as "wrong file
- * type", when what it means is "wrong sample rate" - and the two suggest different next moves.
- * That one is also the code a person is most likely to meet, because most music on a phone is
- * 44.1 kHz and this version only decodes 48 kHz.
+ * type", when what it means is a bit depth or a sample rate the converter has no route from -
+ * and the two suggest different next moves. SOURCE_FILE_CHANNELS_UNUSABLE is its own code for the
+ * same reason: a surround mix is refused for a reason that has nothing to do with the encoding.
  */
 object SourceRejection {
     @StringRes
@@ -21,6 +21,7 @@ object SourceRejection {
         "SOURCE_FILE_DECODE_STALLED" -> R.string.source_stalled
         "SOURCE_FILE_FORMAT_UNKNOWN" -> R.string.source_format_unknown
         "SOURCE_FILE_FORMAT_UNUSABLE" -> R.string.source_format_unusable
+        "SOURCE_FILE_CHANNELS_UNUSABLE" -> R.string.source_channels_unusable
         else -> R.string.source_unreadable
     }
 }

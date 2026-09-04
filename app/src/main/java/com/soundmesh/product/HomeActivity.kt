@@ -102,9 +102,10 @@ class HomeActivity : ComponentActivity() {
      * shared with the harness that every alignment measurement was taken through. One copy of a few
      * megabytes buys the product the same already-measured path instead of a second one.
      *
-     * Decoding here rather than at play time is the other half. The most likely refusal by far is a
-     * 44.1 kHz song, and finding that out when the service fails to start would put the reason
-     * three layers away from the moment a person chose the file.
+     * Decoding here rather than at play time is the other half: a refusal found when the service
+     * fails to start would put the reason three layers away from the moment a person chose the
+     * file. It also runs the whole conversion, which is the slow part and the reason this thread
+     * exists - what it cost is logged, because the wait is a person's to sit through.
      */
     private fun adopt(uri: Uri) {
         state = state.copy(checking = true, problem = null, songName = null)
@@ -115,7 +116,9 @@ class HomeActivity : ComponentActivity() {
                     requireNotNull(input) { "no stream" }
                     chosen.file().outputStream().use { input.copyTo(it) }
                 }
+                val started = System.nanoTime()
                 FileChunkSource.open(chosen.file())
+                Log.i(LOG_TAG, "the chosen song was read in ${(System.nanoTime() - started) / 1_000_000} ms")
                 displayName(uri)
             }
             handler.post {

@@ -64,7 +64,8 @@
     <string name="source_too_short">这首歌太短，不到一个数据块</string>
     <string name="source_stalled">解码卡住了，换一首试试</string>
     <string name="source_format_unknown">解码器没说清楚这首歌的格式</string>
-    <string name="source_format_unusable">这一版只支持 48 kHz 立体声。手机里的歌多数是 44.1 kHz，先换一首 48 kHz 的</string>
+    <string name="source_format_unusable">这首歌的解码格式放不了：需要 16 位 PCM，采样率在 8 到 96 kHz 之间</string>
+    <string name="source_channels_unusable">这首歌不止两个声道（比如 5.1 环绕声），这一版只放立体声</string>
     <string name="source_unreadable">打不开这个文件</string>
 
     <string name="counter_played">已播</string>
