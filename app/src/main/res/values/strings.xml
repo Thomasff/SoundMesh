@@ -6,4 +6,75 @@
     <string name="session_channel_name">SoundMesh session</string>
     <string name="session_notification">Playing in sync</string>
     <string name="home_title">SoundMesh</string>
+
+    <!-- The product's own screen. Chinese, because it is read by the people using it, while every
+         harness string above stays English because it is read by ADB. -->
+    <string name="role_pick">这台手机当什么？</string>
+    <string name="role_host">当主机</string>
+    <string name="role_host_hint">放歌的那台，选一首本地歌曲</string>
+    <string name="role_sink">当从机</string>
+    <string name="role_sink_hint">跟着主机一起响的那台</string>
+    <string name="role_change">换个角色</string>
+
+    <string name="song_title">歌曲</string>
+    <string name="song_none">还没选歌</string>
+    <string name="song_choose">选择歌曲</string>
+    <string name="song_checking">正在检查这首歌…</string>
+
+    <string name="pair_title">配对</string>
+    <string name="pair_code">配对码</string>
+    <string name="pair_none">还没配对</string>
+    <string name="pair_scan">扫描主机的码</string>
+    <string name="pair_scan_hint">扫到之后按返回键回来</string>
+    <string name="pair_with">已配对 %1$s @ %2$s:%3$d</string>
+    <string name="pair_no_address">这台手机现在没有一个能让对方连上的地址</string>
+
+    <string name="play_start">开始播放</string>
+    <string name="play_stop">停止</string>
+
+    <string name="state_title">状态</string>
+    <string name="state_idle">没在播</string>
+    <string name="state_syncing">正在对时，马上出声</string>
+    <string name="state_playing">正在齐奏</string>
+    <string name="state_degraded">正在齐奏，但同步质量下降</string>
+    <string name="state_recovering">连接断了，正在找回来</string>
+    <string name="state_suspended">被其它 App 占了声音</string>
+    <string name="state_stopped">已停止</string>
+    <string name="state_failed">起不来：%1$s</string>
+
+    <string name="health_title">这台手机</string>
+    <string name="health_battery">电量</string>
+    <string name="health_charging">充电中</string>
+    <string name="health_temperature">电池温度</string>
+    <string name="health_thermal">发热</string>
+    <string name="health_unknown">—</string>
+
+    <string name="thermal_none">正常</string>
+    <string name="thermal_light">微热</string>
+    <string name="thermal_moderate">有点热</string>
+    <string name="thermal_severe">很热，系统开始降频</string>
+    <string name="thermal_critical">过热</string>
+    <string name="thermal_emergency">紧急过热</string>
+    <string name="thermal_shutdown">即将关机</string>
+    <string name="thermal_unknown">读不出来</string>
+
+    <string name="source_missing">文件不见了，重新选一首</string>
+    <string name="source_no_audio">这个文件里没有音轨</string>
+    <string name="source_too_short">这首歌太短，不到一个数据块</string>
+    <string name="source_stalled">解码卡住了，换一首试试</string>
+    <string name="source_format_unknown">解码器没说清楚这首歌的格式</string>
+    <string name="source_format_unusable">这一版只支持 48 kHz 立体声。手机里的歌多数是 44.1 kHz，先换一首 48 kHz 的</string>
+    <string name="source_unreadable">打不开这个文件</string>
+
+    <string name="counter_played">已播</string>
+    <string name="counter_trims">裁剪</string>
+    <string name="counter_silence">静音写入</string>
+    <string name="counter_dropped">丢弃</string>
+    <string name="counter_underruns">欠载</string>
+    <string name="counter_reconnects">重连</string>
+    <string name="counter_rediscoveries">重新找主机</string>
+    <string name="counter_clock">时钟</string>
+    <string name="counter_clock_worst">%1$s（最差 %2$s ms）</string>
+    <string name="counter_broadcast">最慢广播</string>
+    <string name="counter_to_sinks">丢给从机</string>
 </resources>
