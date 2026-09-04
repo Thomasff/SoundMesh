@@ -76,10 +76,35 @@ class SyncRenderer(
      * phase made directly observable: before the trim existed the same quantity was silently
      * carried into the audio and left for the drift controller, and the only place it ever showed
      * up was the microphone. [maxTrimFrames] approaching one chunk means the loop is polling a
-     * whole chunk period late; near zero means playback is contiguous. Emitted by [report].
+     * whole chunk period late. Emitted by [report].
+     *
+     * This used to add "near zero means playback is contiguous", which read as a claim that a
+     * healthy run trims rarely. It does not: O26-O34 trimmed 25-56% of chunks with nothing else
+     * wrong, so the rate says which scheduling the run used, not whether it was well. See
+     * [trimmedFrames] for the quantity that does carry information.
      */
     @Volatile private var releaseTrims = 0
     @Volatile private var maxTrimFrames = 0
+
+    /**
+     * Every frame the trim has thrown away, so the typical trim is readable as
+     * [trimmedFrames] / [releaseTrims] rather than guessed at from the worst one.
+     *
+     * The count alone was not enough to act on. Runs O26-O34 all reported a trim on 25-56% of
+     * chunks, against a comment two lines up claiming playback that is contiguous trims near zero -
+     * and with only the count and the maximum, there was no telling a harmless one-frame
+     * quantisation from an audible three-millisecond edit. A listener reported a crackle on both
+     * handsets on every source; this is the number that says whether the trim is what they heard.
+     */
+    @Volatile private var trimmedFrames = 0L
+
+    /**
+     * What the AudioTrack itself says it ran dry, which the scheduler's own counts cannot see: a
+     * chunk trimmed or dropped is still a chunk this renderer knows about, while an underrun is
+     * the HAL reaching the end of what was written. DelayedLocalPlayer has reported this since D1;
+     * the sync path never did, so a gap in the audio had nowhere to show up.
+     */
+    @Volatile private var trackUnderruns = 0
     /**
      * The trim applied to the chirp's own first chunk, or null if no chirp chunk was ever played.
      *
@@ -257,6 +282,9 @@ class SyncRenderer(
                 // the trim below are asked about the same instant on purpose: poll decides whether
                 // the chunk is due, the trim decides how much of it already is not.
                 val heardAtHostNanos = hostNanosNow() + depthNanos
+                // Cumulative on the track, so the last read is the run's total. Polled here rather
+                // than once at the end because the track is released before report() is called.
+                runCatching { trackUnderruns = track.underrunCount }
                 when (val decision = scheduler.poll(heardAtHostNanos)) {
                     is PlaybackDecision.Play -> {
                         if (timelineNextHostNanos == UNDEFINED) {
@@ -277,6 +305,7 @@ class SyncRenderer(
                         val offset = minOf(trimFrames * CHANNELS * 2, payload.size)
                         if (trimFrames > 0) {
                             releaseTrims++
+                            trimmedFrames += trimFrames
                             if (trimFrames > maxTrimFrames) maxTrimFrames = trimFrames
                         }
                         track.write(payload, offset, payload.size - offset)
@@ -517,6 +546,7 @@ class SyncRenderer(
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
             "\"reacquisitions\":$reacquisitions," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
+            "\"trimmedFrames\":$trimmedFrames,\"trackUnderruns\":$trackUnderruns," +
             "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"},\"chirpDepthNanos\":${chirpDepthNanos ?: "null"}," +
             "\"chirpPlays\":${chirpPlaysJson()}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
