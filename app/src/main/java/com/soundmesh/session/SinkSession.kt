@@ -1,5 +1,6 @@
 package com.soundmesh.session
 
+import android.util.Log
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
@@ -70,6 +71,7 @@ class SinkSession(
     private var clockThread: Thread? = null
     private var rendererThread: Thread? = null
     private var watchdogThread: Thread? = null
+    private var connectThread: Thread? = null
 
     override fun state(): SessionState = flags.state()
 
@@ -97,15 +99,55 @@ class SinkSession(
         flags.markStarted()
         flags.setClockConverged(false)
         flags.setLinkUp(false)
-        clockThread = Thread(
-            { runCatching { clockClient.runFor(FOREVER_SECONDS, CLOCK_INTERVAL_MILLIS) } },
-            "SoundMeshSinkClock"
-        ).also { it.start() }
-        watchdogThread = Thread(::watch, "SoundMeshSinkWatch").also { it.start() }
+        clockThread = guarded("SoundMeshSinkClock") { clockClient.runFor(FOREVER_SECONDS, CLOCK_INTERVAL_MILLIS) }
+        watchdogThread = guarded("SoundMeshSinkWatch", ::watch)
         // The renderer converts through hostNanosNow, which throws until the estimator has a fit,
         // so it is only started once one exists.
-        rendererThread = Thread(::renderOnceConverged, "SoundMeshSinkRender").also { it.start() }
-        chunkClient.start()
+        rendererThread = guarded("SoundMeshSinkRender", ::renderOnceConverged)
+        connectThread = guarded("SoundMeshSinkConnect", ::connect)
+    }
+
+    /**
+     * A started thread whose failure ends the session instead of the process.
+     *
+     * An uncaught throw on any thread takes the whole app down, which from the room looks like the
+     * app vanishing rather than like a session ending. One refused connection did exactly that on
+     * hardware. Marked stopped rather than merely logged, because a session missing one of these
+     * threads is over whether or not anything says so.
+     */
+    private fun guarded(name: String, body: () -> Unit): Thread = Thread({
+        try {
+            body()
+        } catch (error: Throwable) {
+            // stop() interrupts the clock thread, so an already-stopped session unwinding through
+            // here is the ordinary ending rather than a fault worth a line in the log.
+            if (flags.isStopped()) return@Thread
+            Log.e(LOG_TAG, "$name stopped", error)
+            flags.markStopped()
+        }
+    }, name).also { it.start() }
+
+    /**
+     * Dials the host until it answers.
+     *
+     * One attempt is not enough, and the reason is not network trouble: a host opens its file
+     * before it binds anything, and decoding takes as long as it takes. Whoever starts the two
+     * handsets has no way to know when that finished, so the sink's first connection has to be
+     * allowed to arrive early. It refused once on hardware, and a refusal on the starting thread
+     * took the whole process down with it.
+     *
+     * Retrying only covers the first connection. A link that came up and then went away is a
+     * different problem with a different answer, and the state a person sees says RECOVERING for
+     * both because both are, from the room's point of view, the same silence.
+     */
+    private fun connect() {
+        while (!flags.isStopped()) {
+            if (runCatching { chunkClient.start() }.isSuccess) break
+            Thread.sleep(CONNECT_RETRY_MILLIS)
+        }
+        // A stop that landed between the test above and the connect itself leaves a socket nobody
+        // will close otherwise.
+        if (flags.isStopped()) runCatching { chunkClient.stop() }
     }
 
     /**
@@ -145,9 +187,11 @@ class SinkSession(
         // sleep and unwinds through the socket's own close.
         clockThread?.interrupt()
         clockThread?.join(JOIN_TIMEOUT_MILLIS)
+        connectThread?.join(JOIN_TIMEOUT_MILLIS)
         watchdogThread?.join(JOIN_TIMEOUT_MILLIS)
         rendererThread?.join(JOIN_TIMEOUT_MILLIS)
         clockThread = null
+        connectThread = null
         watchdogThread = null
         rendererThread = null
     }
@@ -164,10 +208,15 @@ class SinkSession(
 
         const val WATCH_INTERVAL_MILLIS = 200L
 
+        /** Between attempts on a host that is not listening yet. Its decode is the thing waited on. */
+        const val CONNECT_RETRY_MILLIS = 500L
+
         /** A duration no session reaches, in place of a deadline the product does not have. */
         const val FOREVER_SECONDS = 365 * 24 * 3600
 
         const val JOIN_TIMEOUT_MILLIS = 5_000L
+
+        const val LOG_TAG = "SoundMeshSession"
     }
 }
 

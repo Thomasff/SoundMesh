@@ -61,7 +61,18 @@ class SessionService : Service() {
             return
         }
         ACTIVE = session
-        session.start()
+        try {
+            session.start()
+        } catch (error: Throwable) {
+            // Inside the try for the same reason opening is: start reaches the network, and a
+            // handset whose peer is not ready yet is an ordinary Tuesday, not a reason to take the
+            // process down. It did exactly that on hardware - one refused connection, one dead app.
+            Log.e(LOG_TAG, "a session failed while starting", error)
+            ACTIVE = null
+            runCatching { session.stop() }
+            failed(error)
+            return
+        }
         // Requested only once the session exists to be told the answer. The system replies
         // synchronously, and a reply that arrived first would have nowhere to go.
         session.onAudioFocusChanged(requestAudioFocus(session))

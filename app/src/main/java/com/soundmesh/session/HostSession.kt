@@ -1,5 +1,6 @@
 package com.soundmesh.session
 
+import android.util.Log
 import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
@@ -63,6 +64,19 @@ class HostSession(
      * is their own business, and stopping the broadcast would silence a room because one phone rang.
      */
     private fun produce() {
+        try {
+            generate()
+        } catch (error: Throwable) {
+            // An uncaught throw on any of a session's threads takes the whole process with it,
+            // which on hardware looks like the app vanishing rather than like a session ending.
+            // Marked stopped rather than merely logged: the timeline has no producer any more, and
+            // a state that still said PLAYING would be a lie a person acts on.
+            Log.e(LOG_TAG, "the host's source stopped", error)
+            flags.markStopped()
+        }
+    }
+
+    private fun generate() {
         var sequence = 0
         var frameIndex = 0L
         val startNanos = System.nanoTime()
@@ -99,5 +113,7 @@ class HostSession(
         const val SCHEDULER_CAPACITY_CHUNKS = 150
 
         const val JOIN_TIMEOUT_MILLIS = 5_000L
+
+        const val LOG_TAG = "SoundMeshSession"
     }
 }
