@@ -46,6 +46,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Exported so it can be started by name: the self-measurement's first job is to agree
+             with the PC-measured constant it replaces, and that comparison is driven over ADB. -->
+        <activity
+            android:name="com.soundmesh.product.CalibrateActivity"
+            android:exported="true"
+            android:launchMode="singleTask" />
         <activity
             android:name=".sync.SyncActivity"
             android:exported="true"

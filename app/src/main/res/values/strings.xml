@@ -27,6 +27,12 @@
     <string name="capture_declined">没有拿到采集授权，或者授权已经被收回了。</string>
     <string name="song_unnamed">未命名</string>
 
+    <string name="calibrate_running">正在测这台手机自己的输出延迟。请把手机放在桌上别动，保持安静，大约一分半。</string>
+    <string name="calibrate_done">测完了：这条输出比媒体输出早 %1$.3f 毫秒（%2$s），已经记下来了。</string>
+    <string name="calibrate_refused">这次不算数，没有记下来：%1$s</string>
+    <string name="calibrate_failed">校准没跑完：%1$s</string>
+    <string name="calibrate_no_permission">没有录音权限就没法测，手机得听见自己的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
+
     <string name="pair_title">配对</string>
     <string name="pair_code">配对码</string>
     <string name="pair_none">还没配对</string>
