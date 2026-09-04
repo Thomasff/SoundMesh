@@ -28,9 +28,15 @@
         android:allowBackup="false"
         android:label="@string/app_name"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <!-- The product's front door. What moved here from MainActivity is only which activity
-             the launcher icon opens: the harness screens stay exported and every ADB command
-             starts them by explicit component, so none of them notice. -->
+        <!-- Still first, and still written with a closing tag: LauncherIntentDeliveryTest reads
+             this file and checks the first activity block, which is how it holds MainActivity to
+             singleTask. What it lost is only the launcher filter below - ADB starts it by explicit
+             component, which is the only way anything has ever started it. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"></activity>
+        <!-- The product's front door: the one screen someone who never attaches a cable sees. -->
         <activity
             android:name="com.soundmesh.product.HomeActivity"
             android:exported="true"
@@ -40,10 +46,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTask" />
         <activity
             android:name=".sync.SyncActivity"
             android:exported="true"

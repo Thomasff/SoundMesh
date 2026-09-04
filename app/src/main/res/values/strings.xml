@@ -20,6 +20,7 @@
     <string name="song_none">还没选歌</string>
     <string name="song_choose">选择歌曲</string>
     <string name="song_checking">正在检查这首歌…</string>
+    <string name="song_unnamed">未命名</string>
 
     <string name="pair_title">配对</string>
     <string name="pair_code">配对码</string>
