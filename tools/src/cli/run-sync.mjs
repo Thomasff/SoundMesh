@@ -61,6 +61,10 @@ const LINK_PROBE_COUNT = 5;
 
 /** The capture paths the probe implements. MIC is its default and the measured baseline. */
 const CAPTURE_SOURCES = ['MIC', 'VOICE_RECOGNITION', 'UNPROCESSED'];
+// The outputs a run may attribute the host's own playback to. MEDIA is what every archived run
+// used; ACCESSIBILITY is what the product's capturing host has to use, because capture only works
+// with the media volume at zero and a media-usage output is muted along with it.
+const PLAYBACK_USAGES = ['MEDIA', 'ALARM', 'ACCESSIBILITY'];
 
 /**
  * Floor on the gap between repeated chirp pairs. The pairs are told apart by slicing the recording
@@ -616,6 +620,15 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (pairedHost && discover) {
     throw new Error('--paired and --discover are two ways for the sink to find its host, and the report would not say which one it used. Pass one. --paired needs a scan first: run scan-pair.mjs against the sink.');
   }
+  // Host only, and deliberately not both-or-neither like --low-latency. That flag is held equal
+  // because a difference between the two output paths would land straight in the alignment number;
+  // this one exists to measure exactly that difference, since the product pairs a capturing host on
+  // the accessibility output against a sink on the media one and nothing has ever measured what
+  // that pairing costs - the only evidence so far is a listener saying one handset sounded early.
+  const hostPlaybackUsage = value(args, '--host-playback-usage');
+  if (hostPlaybackUsage !== undefined && !PLAYBACK_USAGES.includes(hostPlaybackUsage)) {
+    throw new Error(`--host-playback-usage takes one of ${PLAYBACK_USAGES.join(', ')}. Leave it out for MEDIA, the output every archived run was measured on.`);
+  }
   // Same both-or-neither rule as --low-latency, for the same reason: the alignment number is a
   // comparison between the two handsets, so a threshold applied to one loop only would put the
   // difference between the two loops straight into it.
@@ -748,7 +761,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Before the run, not during it: a push that fails after the handsets have started would
   // leave them playing the tone under a run named for a song.
   const sourceFile = sourceFilePath === undefined ? undefined : await pushSourceFile({ serial: hostSerial, localPath: sourceFilePath, runAdbHost });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode, playbackUsage: hostPlaybackUsage });
   // A generated run keeps the stagger it always had: the host binds its ports immediately. A
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });

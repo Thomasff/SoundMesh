@@ -1151,3 +1151,30 @@ test('prints no scanned line for a run that did not scan', () => {
   assert.deepEqual(scanLines({ sink: {} }), []);
   assert.deepEqual(scanLines({ sink: null }), []);
 });
+
+test('--host-playback-usage reaches the host alone, so the two outputs can be compared in one run', async () => {
+  const asked = await startSyncCalls(['--host-playback-usage', 'ACCESSIBILITY']);
+  assert.deepEqual(
+    asked.map(({ role, playbackUsage }) => [role, playbackUsage]),
+    [['HOST', 'ACCESSIBILITY'], ['SINK', undefined]]
+  );
+
+  // Absent on both is what the whole archive was measured on; the probe defaults it to MEDIA.
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(
+    plain.map(({ role, playbackUsage }) => [role, playbackUsage]),
+    [['HOST', undefined], ['SINK', undefined]]
+  );
+});
+
+test('refuses an output attribution the probe does not implement', async () => {
+  for (const bad of ['media', 'MUSIC', 'NOTIFICATION']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--host-playback-usage', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+      ),
+      /--host-playback-usage/
+    );
+  }
+});

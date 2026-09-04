@@ -31,6 +31,7 @@ import com.soundmesh.core.SchedulerStatsWindow
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.core.schedulerStatsWindow
 import com.soundmesh.probe.AndroidPlaybackReader
+import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.ProbeCase
 import com.soundmesh.probe.RunStore
 import java.io.File
@@ -241,6 +242,20 @@ class SyncActivity : Activity() {
      * sync.json so a stored artifact says which path produced it.
      */
     private fun lowLatencyRequested(): Boolean = intent.getBooleanExtra("low_latency", false)
+
+    /**
+     * Which output this role plays on, defaulting to the media attribution the archive was
+     * measured on.
+     *
+     * Per role rather than both-or-neither, and that is the opposite of [lowLatencyRequested] for
+     * a reason: low latency is held equal because a difference between the two output paths would
+     * land straight in the alignment number, while this exists precisely to measure that
+     * difference. The product runs a capturing host on the accessibility output against a sink on
+     * the media one, and until this could be asked for, the only evidence that the pairing costs
+     * anything was a listener saying one handset sounded slightly early.
+     */
+    private fun playbackUsageRequested(): PlaybackUsage =
+        PlaybackUsage.fromName(intent.getStringExtra("playback_usage"))
 
     /**
      * The TRACKING -> ACQUIRING fallback threshold this run asks for, defaulting to the production
@@ -490,7 +505,8 @@ class SyncActivity : Activity() {
         )
         val renderer = SyncRenderer(
             scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(),
-            trimDeadbandFrames = trimFramesRequested()
+            trimDeadbandFrames = trimFramesRequested(),
+            playbackUsage = playbackUsageRequested()
         ) { System.nanoTime() }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         var capture: CaptureChunkSource? = null
@@ -766,6 +782,7 @@ class SyncActivity : Activity() {
             // Not thrown when absent, unlike hostNanosNow: this only annotates a release that has
             // already happened, and a release cannot have happened without an offset to convert it.
             offsetNanosNow = { latestEstimate()?.offsetNanos ?: 0L },
+            playbackUsage = playbackUsageRequested(),
             hostNanosNow = hostNanosNow
         )
         val lastPlayAt = AtomicLong(0L)
