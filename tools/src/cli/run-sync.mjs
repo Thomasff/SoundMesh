@@ -464,12 +464,24 @@ export function pairedAlignmentLines({ paired, facing }) {
  *
  * "kept" and "zeroed" are opposite outcomes and must not read alike: a run whose verdict could not
  * be trusted leaves the sink on the correction it already had.
+ *
+ * The observation and the run counts are printed beside the estimate because the estimate is a
+ * running mean: it deliberately moves only a fraction of the way to what this run saw, and without
+ * both numbers a loop that is working looks like one that is stuck.
  */
 export function calibrationLines({ sink }) {
   if (!sink || sink.alignmentOffsetSource === undefined) return [];
   const ms = micros => (micros / 1000).toFixed(3);
-  const applied = `applied ${ms(sink.alignmentOffsetMicros)} ms (${sink.alignmentOffsetSource})`;
-  return [`calibration        ${applied}, ${sink.adoptedOffsetMicros == null ? 'kept' : `next run ${ms(sink.adoptedOffsetMicros)} ms`}`];
+  const seen = sink.alignmentOffsetObservations;
+  const runs = seen === undefined ? '' : `, ${seen} runs`;
+  const parts = [`applied ${ms(sink.alignmentOffsetMicros)} ms (${sink.alignmentOffsetSource}${runs})`];
+  if (sink.observedOffsetMicros != null) parts.push(`observed ${ms(sink.observedOffsetMicros)} ms`);
+  parts.push(
+    sink.adoptedOffsetMicros == null
+      ? 'kept'
+      : `next run ${ms(sink.adoptedOffsetMicros)} ms${seen === undefined ? '' : ` (${seen + 1} runs)`}`
+  );
+  return [`calibration        ${parts.join(', ')}`];
 }
 
 /** Null rather than zero when there is nothing to compare: no evidence is not agreement. */

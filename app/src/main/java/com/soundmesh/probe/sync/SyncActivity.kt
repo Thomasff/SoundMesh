@@ -337,12 +337,18 @@ class SyncActivity : Activity() {
      * `hasExtra` rather than a sentinel value, because an explicit zero is a real instruction -
      * "measure me uncorrected" - and must not be confused with "nothing was said".
      */
-    private class ResolvedOffset(val micros: Long, val source: String)
+    private class ResolvedOffset(val micros: Long, val source: String, val observations: Int)
 
     private fun resolveSinkAlignmentOffset(): ResolvedOffset = when {
-        intent.hasExtra("alignment_offset_us") -> ResolvedOffset(alignmentOffsetMicrosRequested(), "intent")
-        else -> StoredCalibration(filesDir).read()?.let { ResolvedOffset(it, "stored") }
-            ?: ResolvedOffset(0L, "none")
+        // An override starts the history over. The estimate this loop maintains is the mean of the
+        // runs behind it, and a person naming a different correction is saying those runs are no
+        // longer about this setup - carrying their weight forward would damp the loop against a
+        // history it was just told to abandon.
+        intent.hasExtra("alignment_offset_us") ->
+            ResolvedOffset(alignmentOffsetMicrosRequested(), "intent", 0)
+        else -> StoredCalibration(filesDir).read()
+            ?.let { ResolvedOffset(it.micros, "stored", it.observations) }
+            ?: ResolvedOffset(0L, "none", 0)
     }
 
     /**
@@ -514,9 +520,10 @@ class SyncActivity : Activity() {
                 val combined = AlignmentPairing.combine(caseId, ownAlignment.readings, message)
                 paired = combined
                 CalibrationReply(
-                    // Folded onto what the sink says it already applied, not onto this device's
+                    // Read through what the sink says it already applied, not through this device's
                     // copy of the same launch flag - only the sink knows what it actually used.
-                    nextOffsetMicros = CalibrationUpdate.next(message.appliedOffsetMicros, combined.verdict),
+                    // One observation: the sink owns the history it gets averaged into.
+                    measuredOffsetMicros = CalibrationUpdate.measured(message.appliedOffsetMicros, combined.verdict),
                     clusterMeanMicros = combined.verdict?.clusterMeanMs?.let { (it * 1000).roundToLong() },
                     passed = combined.verdict?.passed
                 )
@@ -771,11 +778,17 @@ class SyncActivity : Activity() {
                     .exchange(caseId, resolvedOffset.micros, ownAlignment?.readings ?: emptyList())
             }
             val resultDelivery = exchange.exceptionOrNull()?.javaClass?.simpleName
-            // The loop closes here. Stored only when the host had something to say: a run it could
-            // not combine, or whose scatter makes the mean meaningless, leaves this handset on the
-            // correction it already had rather than replacing it with a worse one.
-            val adopted = exchange.getOrNull()?.nextOffsetMicros
-            if (adopted != null) StoredCalibration(filesDir).write(adopted)
+            // The loop closes here, and it closes by averaging rather than by replacing. Stored
+            // only when the host had something to say: a run it could not combine, or whose scatter
+            // makes the mean meaningless, leaves this handset on the estimate it already had, with
+            // its observation count untouched - a run that cannot be read is not an observation.
+            val observedOffset = exchange.getOrNull()?.measuredOffsetMicros
+            val adopted = observedOffset?.let {
+                CalibrationUpdate.fold(resolvedOffset.micros, resolvedOffset.observations, it)
+            }
+            if (adopted != null) {
+                StoredCalibration(filesDir).write(adopted, resolvedOffset.observations + 1)
+            }
 
             runStore.writeSyncJson(
                 caseId,
@@ -796,7 +809,11 @@ class SyncActivity : Activity() {
                     "\"resultDelivery\":${resultDelivery?.let { "\"$it\"" } ?: "null"}," +
                     // Where the correction this run applied came from, and what the next run will
                     // stand on. Null adopted means the correction was kept, not that it was zeroed.
+                    // The count is the loop's gain, so without it the two offsets cannot be
+                    // reconciled: the step between them is the observation divided by count plus one.
                     "\"alignmentOffsetSource\":\"${resolvedOffset.source}\"," +
+                    "\"alignmentOffsetObservations\":${resolvedOffset.observations}," +
+                    "\"observedOffsetMicros\":${observedOffset ?: "null"}," +
                     // How this run found the host, or null when it was told. The counts are what
                     // separate a quiet network from one carrying a build that cannot be talked to.
                     "\"discovery\":${host.json}," +

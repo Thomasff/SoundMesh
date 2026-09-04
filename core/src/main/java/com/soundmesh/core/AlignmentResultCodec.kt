@@ -16,14 +16,19 @@ data class AlignmentResultMessage(
 )
 
 /**
- * What the combining handset sends back: the correction the other side should stand on from now
- * on, and enough of the verdict for a report on that side to say why.
+ * What the combining handset sends back: what this one run observed the pair's offset to be, and
+ * enough of the verdict for a report on the other side to say why.
  *
- * [nextOffsetMicros] is null when this run cannot say - it could not be combined, or its scatter
- * makes the mean meaningless - and the receiver then keeps the correction it already had.
+ * One observation, not the next correction. The receiver owns its own history and averages this
+ * into it - see [CalibrationUpdate]. Sending a finished correction instead would put the estimator
+ * on the handset that has none of the estimate, which is how the walk got in.
+ *
+ * [measuredOffsetMicros] is null when this run cannot say - it could not be combined, or its
+ * scatter makes the mean meaningless - and the receiver then keeps the estimate it already had,
+ * with its observation count untouched.
  */
 data class CalibrationReply(
-    val nextOffsetMicros: Long?,
+    val measuredOffsetMicros: Long?,
     val clusterMeanMicros: Long?,
     val passed: Boolean?
 )
@@ -31,17 +36,17 @@ data class CalibrationReply(
 /** Wire format for [CalibrationReply]: one line, sent back down the same socket. */
 object CalibrationReplyCodec {
     const val MAGIC = "soundmesh-calibration"
-    const val VERSION = 1
+    const val VERSION = 2
 
     fun encode(reply: CalibrationReply): String =
-        "$MAGIC $VERSION ${reply.nextOffsetMicros ?: "null"} ${reply.clusterMeanMicros ?: "null"} ${reply.passed ?: "null"}"
+        "$MAGIC $VERSION ${reply.measuredOffsetMicros ?: "null"} ${reply.clusterMeanMicros ?: "null"} ${reply.passed ?: "null"}"
 
     fun decode(text: String): CalibrationReply {
         val fields = text.trim().split(" ")
         require(fields.size == 5 && fields[0] == MAGIC) { "not a calibration reply: $text" }
         require(fields[1] == VERSION.toString()) { "unsupported calibration reply version: ${fields[1]}" }
         return CalibrationReply(
-            nextOffsetMicros = fields[2].longOrNull(),
+            measuredOffsetMicros = fields[2].longOrNull(),
             clusterMeanMicros = fields[3].longOrNull(),
             passed = when (fields[4]) {
                 "null" -> null

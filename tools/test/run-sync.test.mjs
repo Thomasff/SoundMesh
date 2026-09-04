@@ -992,12 +992,47 @@ test('says nothing about the calibration loop when the run predates it', () => {
 
 test('reports the correction the sink applied, where it came from, and what it adopted', () => {
   const lines = calibrationLines({
-    sink: { alignmentOffsetMicros: -34957, alignmentOffsetSource: 'stored', adoptedOffsetMicros: -34773 }
+    sink: {
+      alignmentOffsetMicros: -34957,
+      alignmentOffsetSource: 'stored',
+      alignmentOffsetObservations: 3,
+      observedOffsetMicros: -34773,
+      adoptedOffsetMicros: -34911
+    }
   });
 
   assert.equal(lines.length, 1);
+  assert.match(lines[0], /applied -34\.957 ms \(stored, 3 runs\)/);
+  assert.match(lines[0], /next run -34\.911 ms \(4 runs\)/);
+});
+
+// The whole point of the change: the estimate moves a fraction of the way to what the run saw,
+// and a line that showed only the estimate would make a working loop look like a stuck one.
+test('shows the raw observation next to the damped estimate it moved', () => {
+  const lines = calibrationLines({
+    sink: {
+      alignmentOffsetMicros: -35884,
+      alignmentOffsetSource: 'stored',
+      alignmentOffsetObservations: 4,
+      observedOffsetMicros: -34821,
+      adoptedOffsetMicros: -35671
+    }
+  });
+
+  assert.match(lines[0], /observed -34\.821 ms/);
+  assert.match(lines[0], /next run -35\.671 ms \(5 runs\)/);
+});
+
+// Runs recorded before the loop averaged anything have no count to print, and inventing one would
+// have the report claim a history the run did not have.
+test('drops the counts for a run recorded before the loop averaged', () => {
+  const lines = calibrationLines({
+    sink: { alignmentOffsetMicros: -34957, alignmentOffsetSource: 'stored', adoptedOffsetMicros: -34773 }
+  });
+
   assert.match(lines[0], /applied -34\.957 ms \(stored\)/);
   assert.match(lines[0], /next run -34\.773 ms/);
+  assert.doesNotMatch(lines[0], /runs/);
 });
 
 // Keeping the old correction and being reset to zero are opposite outcomes, and a run whose

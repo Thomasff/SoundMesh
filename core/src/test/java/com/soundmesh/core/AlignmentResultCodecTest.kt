@@ -98,7 +98,7 @@ class AlignmentResultCodecTest {
 
     @Test
     fun roundTripsACalibrationReply() {
-        val reply = CalibrationReply(nextOffsetMicros = -34_773L, clusterMeanMicros = 184L, passed = true)
+        val reply = CalibrationReply(measuredOffsetMicros = -34_773L, clusterMeanMicros = 184L, passed = true)
 
         assertEquals(reply, CalibrationReplyCodec.decode(CalibrationReplyCodec.encode(reply)))
     }
@@ -106,14 +106,14 @@ class AlignmentResultCodecTest {
     /** A run that cannot say leaves the other side on the correction it already had. */
     @Test
     fun roundTripsAReplyWithNothingToAdopt() {
-        val reply = CalibrationReply(nextOffsetMicros = null, clusterMeanMicros = null, passed = null)
+        val reply = CalibrationReply(measuredOffsetMicros = null, clusterMeanMicros = null, passed = null)
 
         assertEquals(reply, CalibrationReplyCodec.decode(CalibrationReplyCodec.encode(reply)))
     }
 
     @Test
     fun rejectsAReplyOfAnUnknownVersion() {
-        val text = CalibrationReplyCodec.encode(CalibrationReply(1L, 2L, true)).replace("calibration 1 ", "calibration 2 ")
+        val text = CalibrationReplyCodec.encode(CalibrationReply(1L, 2L, true)).replace("calibration 2 ", "calibration 3 ")
 
         assertThrows(IllegalArgumentException::class.java) { CalibrationReplyCodec.decode(text) }
     }
