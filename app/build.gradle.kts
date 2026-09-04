@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -12,6 +13,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+    }
+
+    buildFeatures {
+        compose = true
     }
 
     compileOptions {
@@ -37,5 +42,10 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$cameraX")
     implementation("androidx.camera:camera-lifecycle:$cameraX")
     implementation("androidx.camera:camera-view:$cameraX")
+    // The product's own interface. The harness screens stay on plain Views on purpose: ADB reads
+    // them off a screen, and rewriting them would change what the ruler is read with.
+    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.9.3")
     testImplementation("junit:junit:4.13.2")
 }
