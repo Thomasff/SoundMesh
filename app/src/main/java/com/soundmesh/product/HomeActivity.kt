@@ -144,7 +144,8 @@ class HomeActivity : ComponentActivity() {
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
         stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) },
-        calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) }
+        calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) },
+        pairCalibrate = { startActivity(Intent(this, PeerCalibrateActivity::class.java)) }
     )
 
     /**

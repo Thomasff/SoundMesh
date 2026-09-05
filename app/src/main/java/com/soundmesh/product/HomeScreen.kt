@@ -78,7 +78,8 @@ class HomeActions(
     val scan: () -> Unit,
     val play: () -> Unit,
     val stop: () -> Unit,
-    val calibrate: () -> Unit
+    val calibrate: () -> Unit,
+    val pairCalibrate: () -> Unit
 )
 
 @Composable
@@ -110,6 +111,11 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
         // rather than to a role, and it is wanted before the first session rather than during one.
         TextButton(onClick = actions.calibrate) {
             Text(stringResource(R.string.home_calibrate))
+        }
+        // The other calibration: that one is this handset against itself, this one is this pair
+        // against each other. Both are wanted before the first session rather than during one.
+        TextButton(onClick = actions.pairCalibrate) {
+            Text(stringResource(R.string.home_pair_calibrate))
         }
     }
 }

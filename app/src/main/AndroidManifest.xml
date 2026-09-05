@@ -52,6 +52,12 @@
             android:name="com.soundmesh.product.CalibrateActivity"
             android:exported="true"
             android:launchMode="singleTask" />
+        <!-- Exported for the same reason as the one above: the first job of this measurement is to
+             agree with the four harness runs it replaces, and that comparison is driven over ADB. -->
+        <activity
+            android:name="com.soundmesh.product.PeerCalibrateActivity"
+            android:exported="true"
+            android:launchMode="singleTask" />
         <activity
             android:name=".sync.SyncActivity"
             android:exported="true"
