@@ -146,14 +146,14 @@ class SessionService : Service() {
         // Null on a handset nobody has measured, and a run then plays as early as O65 did. Logged
         // rather than refused: the session is still worth having, and silence about it is what let
         // nineteen milliseconds hide behind "a little bit faster, but you can hardly tell".
-        val lead = StoredOutputLead(filesDir, PlaybackUsage.ACCESSIBILITY).read()
-        Log.i(LOG_TAG, "the accessibility output leads media by ${lead ?: "an unmeasured amount"}")
+        val lead = StoredOutputLead(filesDir, CAPTURING_HOST_USAGE).read()
+        Log.i(LOG_TAG, "the $CAPTURING_HOST_USAGE output leads media by ${lead ?: "an unmeasured amount"}")
         advertise()
         return HostSession(
             readChunk = { source.readChunk() ?: throw IllegalStateException("capture ended") },
             deadbandFrames = deadbandFrames(intent),
             trimFrames = trimFrames(intent),
-            playbackUsage = PlaybackUsage.ACCESSIBILITY,
+            playbackUsage = CAPTURING_HOST_USAGE,
             outputLeadNanos = (lead ?: 0L) * 1_000L,
             closeSource = source::close
         )

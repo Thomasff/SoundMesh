@@ -17,7 +17,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -65,10 +64,10 @@ data class HomeState(
     /**
      * The accessibility output's volume, on a host that is capturing and therefore heard on it.
      *
-     * Null when nothing is being captured: that output carries nothing then, and a slider for a
-     * silent stream is a control with no effect to observe. See [AccessibilityVolume].
+     * Null when nothing is being captured: that output carries nothing then, and a level for a
+     * silent stream is a number with nothing behind it. See [AccessibilityVolume].
      */
-    val accessibilityVolume: OutputVolume? = null
+    val hostOutputVolume: OutputVolume? = null
 )
 
 /** What the screen can ask for. Held as one object so a preview can hand it empty lambdas. */
@@ -79,8 +78,7 @@ class HomeActions(
     val scan: () -> Unit,
     val play: () -> Unit,
     val stop: () -> Unit,
-    val calibrate: () -> Unit,
-    val setAccessibilityVolume: (Int) -> Unit
+    val calibrate: () -> Unit
 )
 
 @Composable
@@ -119,27 +117,18 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
 /**
  * The volume of the output a capturing host is heard on.
  *
- * Here rather than left to the system's own panel because the panel cannot reach it: with a session
- * playing, the volume keys move the media stream. A listener found that out by hand, after
- * reporting that the host sounded quiet.
+ * Read-only, because the app cannot set this stream and a control that cannot is a lie. What moves
+ * it is the handset own volume keys, which this screen aims at it while a capture is up.
  */
 @Composable
-private fun AccessibilityVolumePanel(volume: OutputVolume, actions: HomeActions) {
+private fun HostOutputVolumePanel(volume: OutputVolume) {
     Section(R.string.volume_title) {
-        if (!volume.settable) {
-            Text(stringResource(R.string.volume_locked), style = MaterialTheme.typography.bodyMedium)
-            return@Section
-        }
         Text(
             stringResource(R.string.volume_level, volume.level, volume.max),
             style = MaterialTheme.typography.bodyLarge
         )
-        Slider(
-            value = volume.level.toFloat(),
-            onValueChange = { actions.setAccessibilityVolume(it.toInt()) },
-            valueRange = 0f..volume.max.toFloat(),
-            steps = (volume.max - 1).coerceAtLeast(0)
-        )
+        // Shown, not offered. The app cannot set this stream - see AccessibilityVolume - so what
+        // this panel does is say where the level is and where the control for it actually is.
         Text(stringResource(R.string.volume_hint), style = MaterialTheme.typography.bodySmall)
     }
 }
@@ -188,7 +177,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
             Text(stringResource(R.string.song_capture_hint), style = MaterialTheme.typography.bodySmall)
         }
     }
-    state.accessibilityVolume?.let { AccessibilityVolumePanel(it, actions) }
+    state.hostOutputVolume?.let { HostOutputVolumePanel(it) }
     Section(R.string.pair_code) {
         if (state.pairingPayload == null) {
             Text(stringResource(R.string.pair_no_address))

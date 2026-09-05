@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.soundmesh.probe.R
+import com.soundmesh.session.CAPTURING_HOST_STREAM
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.HostPairingCode
@@ -60,8 +61,8 @@ class HomeActivity : ComponentActivity() {
     private var awaitingSession = false
     private var ticks = 0
 
-    /** Built once: it settles whether this handset lets an app move that stream at all. */
-    private val accessibilityVolume by lazy { AccessibilityVolume(getSystemService(AudioManager::class.java)) }
+    /** Reads the output a capturing host is heard on. It cannot set it - see AccessibilityVolume. */
+    private val hostOutputVolume by lazy { HostOutputVolume(getSystemService(AudioManager::class.java)) }
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
@@ -71,9 +72,9 @@ class HomeActivity : ComponentActivity() {
             if (ticks++ % HEALTH_EVERY_TICKS == 0) {
                 state = state.copy(
                     health = DeviceHealth.read(this@HomeActivity),
-                    // Whoever else moved it - a system panel, another app - the slider has to show
-                    // where the stream really is rather than where this screen last put it.
-                    accessibilityVolume = if (state.capturing) accessibilityVolume.read() else null
+                    // The volume keys are what move this, so the level changes under the screen
+                    // rather than because of it, and has to be re-read to stay true.
+                    hostOutputVolume = if (state.capturing) hostOutputVolume.read() else null
                 )
             }
             handler.postDelayed(this, REFRESH_MILLIS)
@@ -113,7 +114,8 @@ class HomeActivity : ComponentActivity() {
             state = if (projection == null) {
                 state.copy(capturing = false, problem = R.string.capture_declined)
             } else {
-                state.copy(capturing = true, problem = null, accessibilityVolume = accessibilityVolume.read())
+                state.copy(capturing = true, problem = null, hostOutputVolume = hostOutputVolume.read())
+                    .also { handler.post(::aimVolumeKeys) }
             }
         }
         startService(
@@ -142,19 +144,26 @@ class HomeActivity : ComponentActivity() {
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
         stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) },
-        calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) },
-        setAccessibilityVolume = ::setAccessibilityVolume
+        calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) }
     )
 
     /**
-     * Moves the accessibility output's volume and shows the move at once.
+     * Points this screen's volume keys at whichever output the host is being heard on.
      *
-     * Read back rather than assumed: the platform clamps, and a slider left showing a level the
-     * stream does not hold would keep offering to set it again.
+     * The app cannot set the accessibility stream itself - `setStreamVolume` on it neither throws
+     * nor moves anything - but the handset's own keys do move it, and they were measured doing so:
+     * across four passes alternating the two outputs with the keys held down, media went 3 -> 15
+     * and accessibility 4 -> 15. The keys follow whatever is playing, which is exactly why nobody
+     * can reach this stream during a session: the app being captured holds the media stream the
+     * whole time and wins them. Pointing them here, while this screen is in front, is the one
+     * control that answers a listener saying the host sounds quiet.
+     *
+     * Back to the default when nothing is being captured, so an ordinary session's keys still do
+     * the ordinary thing.
      */
-    private fun setAccessibilityVolume(level: Int) {
-        runCatching { accessibilityVolume.set(level) }
-        state = state.copy(accessibilityVolume = accessibilityVolume.read())
+    private fun aimVolumeKeys() {
+        volumeControlStream =
+            if (state.capturing) CAPTURING_HOST_STREAM else AudioManager.USE_DEFAULT_STREAM_TYPE
     }
 
     /**
@@ -232,7 +241,8 @@ class HomeActivity : ComponentActivity() {
      */
     private fun releaseProjection() {
         if (!state.capturing) return
-        state = state.copy(capturing = false, accessibilityVolume = null)
+        state = state.copy(capturing = false, hostOutputVolume = null)
+        aimVolumeKeys()
         startService(Intent(this, SyncProjectionService::class.java).setAction(SyncProjectionService.ACTION_RELEASE))
     }
 

@@ -25,6 +25,7 @@ import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.CalibrationAudioSource
 import com.soundmesh.probe.sync.OutputLeadRunner
 import com.soundmesh.probe.sync.StoredOutputLead
+import com.soundmesh.session.CAPTURING_HOST_USAGE
 import java.io.File
 
 /**
@@ -120,7 +121,7 @@ class CalibrateActivity : ComponentActivity() {
     }
 
     private fun measure(verifying: Boolean) {
-        val subject = PlaybackUsage.fromName(intent.getStringExtra("subject") ?: PlaybackUsage.ACCESSIBILITY.name)
+        val subject = PlaybackUsage.fromName(intent.getStringExtra("subject") ?: CAPTURING_HOST_USAGE.name)
         val caseId = intent.getStringExtra("case") ?: OutputLeadRunner.DEFAULT_CASE_ID
         // A verification replays the stored answer through the renderer that will use it, so what
         // it reads is what is left over rather than the whole difference. Near zero means the
@@ -159,7 +160,7 @@ class CalibrateActivity : ComponentActivity() {
      * remembered copy would leave the screen announcing the answer it had before it measured.
      */
     private fun storedMicros(): Long? =
-        StoredOutputLead(filesDir, PlaybackUsage.ACCESSIBILITY).read()?.takeIf { it != 0L }
+        StoredOutputLead(filesDir, CAPTURING_HOST_USAGE).read()?.takeIf { it != 0L }
 
     private fun show(text: String) {
         handler.post { state = state.copy(message = text) }

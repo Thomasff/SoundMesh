@@ -22,7 +22,7 @@
     <string name="song_checking">正在检查这首歌…</string>
     <string name="song_capture">采集这台手机正在放的音乐</string>
     <string name="song_capturing">采集这台手机正在放的声音</string>
-    <string name="song_capture_hint">把这台手机的媒体音量调到 0，再用你自己的音乐 App 播放。采到的声音会晚约 1.5 秒和另一台一起放出来；音量不调到 0，你会听到一前一后两遍。</string>
+    <string name="song_capture_hint">把这台手机的媒体音量调到 0，再用你自己的音乐 App 播放。采到的声音会晚约 1.5 秒和另一台一起放出来；音量不调到 0，你会听到一前一后两遍。这台手机自己的声音走闹钟通道，响度用下面那条调。</string>
     <string name="capture_no_permission">没有录音权限就采不了这台手机的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
     <string name="capture_declined">没有拿到采集授权，或者授权已经被收回了。</string>
     <string name="song_unnamed">未命名</string>
@@ -31,7 +31,7 @@
 
     <string name="calibrate_title">输出延迟校准</string>
     <string name="calibrate_what">这是在测什么</string>
-    <string name="calibrate_intro">这台手机采集别的 App 的声音时，只能用「无障碍」这条输出通道来放，而它和平时放音乐那条通道的发声时刻不一样。这个差要量出来补掉，否则两台手机对不齐。它是这台手机自己的属性，所以一台手机就能测，不需要另一台。</string>
+    <string name="calibrate_intro">这台手机采集别的 App 的声音时，媒体音量必须是 0，所以它不能用平时放音乐那条通道来放，改走「闹钟」通道。两条通道的发声时刻不一样，这个差要量出来补掉，否则两台手机对不齐。它是这台手机自己的属性，所以一台手机就能测，不需要另一台。</string>
     <string name="calibrate_stored">已经测过：早 %1$.3f 毫秒</string>
     <string name="calibrate_unmeasured">还没测过。没测过就当作零来补，这台手机当主机时会对不齐。</string>
     <string name="calibrate_run">开始测</string>
@@ -47,10 +47,9 @@
     <string name="calibrate_failed">校准没跑完：%1$s</string>
     <string name="calibrate_no_permission">没有录音权限就没法测，手机得听见自己的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
 
-    <string name="volume_title">无障碍音量</string>
+    <string name="volume_title">闹钟音量</string>
     <string name="volume_level">%1$d / %2$d</string>
-    <string name="volume_hint">采集播放走的是无障碍通道，不是媒体通道。放音的时候按音量键调的是媒体音量，够不到这里，所以要用这条。</string>
-    <string name="volume_locked">这台手机不允许 app 调无障碍音量，只能到系统设置里改。</string>
+    <string name="volume_hint">采集播放走的是闹钟通道，它的音量和媒体音量互不影响。停在这个页面按手机的音量键就能调它，也可以到 设置 → 声音 里调闹钟音量。</string>
 
     <string name="pair_title">配对</string>
     <string name="pair_code">配对码</string>
