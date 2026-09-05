@@ -2,6 +2,7 @@ package com.soundmesh.session
 
 import android.util.Log
 import com.soundmesh.core.AudioChunk
+import com.soundmesh.core.ChunkTimeline
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.SessionState
@@ -161,21 +162,27 @@ class HostSession(
 
     private fun generate() {
         var sequence = 0
-        var frameIndex = 0L
-        val startNanos = System.nanoTime()
+        // The instant a chunk is due comes from here rather than from the clock, because once the
+        // source is a capture the two are not the same thing: readChunk blocks until the recorder
+        // has audio and hands it over on the recorder's own cadence, and stamping chunks with the
+        // moment they happened to arrive put that cadence into the timeline for both handsets to
+        // reproduce faithfully. See [ChunkTimeline] for what it cost and how it was measured.
+        val timeline = ChunkTimeline(SyncRenderer.FRAMES_PER_CHUNK, SyncRenderer.SAMPLE_RATE)
         while (!flags.isStopped()) {
             val pcm = readChunk()
-            val chunk = AudioChunk(sequence, System.nanoTime() + LEAD_NANOS, pcm)
+            val chunk = AudioChunk(sequence, timeline.accept(System.nanoTime()) + LEAD_NANOS, pcm)
             val startedBroadcastAt = System.nanoTime()
             chunkServer.broadcast(chunk)
             maxBroadcastNanos = maxOf(maxBroadcastNanos, System.nanoTime() - startedBroadcastAt)
             if (flags.state().mayEmit) scheduler.submit(chunk)
             generated = sequence + 1
             sequence++
-            frameIndex += SyncRenderer.FRAMES_PER_CHUNK
             // Paced against the session's own start rather than the previous pass, so a slow pass
-            // is absorbed instead of pushing every later chunk out by the same amount.
-            val sleepNanos = startNanos + frameIndex * 1_000_000_000L / SyncRenderer.SAMPLE_RATE - System.nanoTime()
+            // is absorbed instead of pushing every later chunk out by the same amount. Against the
+            // anchored timeline rather than a fixed grid, so a recorder running fast is not held
+            // below its own rate until its buffer overruns; a source that answers instantly holds
+            // the anchor at zero and is paced by the grid exactly as before.
+            val sleepNanos = (timeline.nextDueNanos() ?: System.nanoTime()) - System.nanoTime()
             if (sleepNanos > 0) Thread.sleep(sleepNanos / 1_000_000, (sleepNanos % 1_000_000).toInt())
         }
     }
