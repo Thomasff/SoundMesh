@@ -34,8 +34,13 @@ class CalibrationPlanServer(private val port: Int) {
      * [planFor] is called on the accept rather than before the wait, and that is the whole reason
      * it is a lambda: a plan names instants a few seconds out in the host's clock, so one minted
      * while waiting for somebody to pick up the other phone would already be in the past.
+     *
+     * It is handed the case the sink asked for. That name reaches a run store which will create
+     * whatever directory it is given, so [planFor] is expected to refuse one it does not run by
+     * throwing IllegalArgumentException - reported apart from a garbled request, because the two
+     * mean different things to whoever reads the failure.
      */
-    fun awaitRequest(timeoutMillis: Int, planFor: () -> CalibrationPlan): CalibrationPlan? {
+    fun awaitRequest(timeoutMillis: Int, planFor: (String) -> CalibrationPlan): CalibrationPlan? {
         val bound = server ?: run {
             failureCode = "PLAN_UNBOUND"
             return null
@@ -44,9 +49,9 @@ class CalibrationPlanServer(private val port: Int) {
             bound.soTimeout = timeoutMillis
             bound.accept().use { socket ->
                 socket.soTimeout = timeoutMillis
-                // The sink half-closes to mark its request; there is nothing in it to read.
-                socket.getInputStream().readBytes()
-                val plan = planFor()
+                // The sink writes the case it wants and half-closes to mark the request complete.
+                val requested = String(socket.getInputStream().readBytes(), Charsets.UTF_8).trim()
+                val plan = planFor(requested)
                 socket.getOutputStream().apply {
                     write(CalibrationPlanCodec.encode(plan).toByteArray(Charsets.UTF_8))
                     flush()
@@ -54,7 +59,11 @@ class CalibrationPlanServer(private val port: Int) {
                 plan
             }
         }.onFailure {
-            failureCode = if (it is SocketTimeoutException) "PLAN_TIMEOUT" else "PLAN_UNREADABLE"
+            failureCode = when (it) {
+                is SocketTimeoutException -> "PLAN_TIMEOUT"
+                is IllegalArgumentException -> "PLAN_REFUSED"
+                else -> "PLAN_UNREADABLE"
+            }
         }.getOrNull()
     }
 

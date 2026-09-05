@@ -176,9 +176,15 @@ class PeerCalibrateActivity : ComponentActivity() {
             clockServer.start()
             resultServer.start()
             planServer.start()
-            val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS) {
+            val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS) { requested ->
+                // The case names a directory RunStore will create, and it arrived over a socket.
+                // Only the two this handset runs are honoured; anything else ends the run here
+                // rather than at the run store.
+                if (requested !in setOf(CASE_MEASURE, CASE_VERIFY)) {
+                    throw IllegalArgumentException("not a case this handset runs: $requested")
+                }
                 CalibrationPlan(
-                    caseId = CASE_MEASURE,
+                    caseId = requested,
                     hostId = hostId,
                     // Far enough out to cover the warm-up and the gap the sink has yet to start.
                     firstChirpAtHostNanos = System.nanoTime() + PLAN_LEAD_NANOS,
@@ -273,15 +279,22 @@ class PeerCalibrateActivity : ComponentActivity() {
             }
             val converged = clockClient.currentEstimate()
                 ?: return show(getString(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
-            val plan = CalibrationPlanClient(paired.address, PLAN_PORT).request()
+            // Asked for by name: the host cannot tell a measurement from a check, and both landing
+            // in one directory cost the measurement's host half once already.
+            val caseId = if (verifying) CASE_VERIFY else CASE_MEASURE
+            val plan = CalibrationPlanClient(paired.address, PLAN_PORT).request(caseId)
             // The host id is the file name the correction is stored under. A plan from somebody
             // this handset never scanned would file the answer against the wrong peer, and every
             // later session would apply it with nothing in the result to notice it by.
             if (plan.hostId != paired.hostId) {
                 return show(getString(R.string.pair_calibrate_failed, "PLAN_FROM_ANOTHER_HOST"))
             }
+            // Both sides file under the plan's case. A host that answered with a different one
+            // would split one run across two directories with nothing in either saying so.
+            if (plan.caseId != caseId) {
+                return show(getString(R.string.pair_calibrate_failed, "PLAN_FOR_ANOTHER_CASE"))
+            }
             show(getString(R.string.pair_calibrate_running))
-            val caseId = if (verifying) CASE_VERIFY else plan.caseId
             val run = PeerCalibrationRunner(
                 runStore = RunStore(filesDir),
                 caseId = caseId,

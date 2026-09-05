@@ -11,11 +11,21 @@ import java.net.Socket
  * that quietly invented its own instants would play chirps nobody was listening for.
  */
 class CalibrationPlanClient(private val hostAddress: String, private val port: Int) {
-    fun request(): CalibrationPlan =
+    /**
+     * Asks for [caseId], the case both handsets will file this run under.
+     *
+     * It travels from here because only this side knows what kind of run it is: the host serves
+     * whoever asks and cannot tell a measurement from a check. A host that assumed put both kinds
+     * in one directory, where the later silently overwrote the earlier.
+     */
+    fun request(caseId: String): CalibrationPlan =
         Socket(hostAddress, port).use { socket ->
             socket.soTimeout = REPLY_TIMEOUT_MILLIS
-            // Half-closed rather than written to: the request carries nothing, and the half-close
-            // is what tells the host the ask is complete.
+            socket.getOutputStream().apply {
+                write(caseId.toByteArray(Charsets.UTF_8))
+                flush()
+            }
+            // The half-close is what tells the host the ask is complete; without it both ends wait.
             socket.shutdownOutput()
             CalibrationPlanCodec.decode(String(socket.getInputStream().readBytes(), Charsets.UTF_8))
         }

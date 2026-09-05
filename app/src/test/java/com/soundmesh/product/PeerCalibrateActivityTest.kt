@@ -110,6 +110,22 @@ class PeerCalibrateActivityTest {
         assertTrue("a case id could be an archived run's directory", cases.all { it >= 90 })
     }
 
+    /**
+     * Only the sink knows whether a run is a measurement or a check, so the host has to be told
+     * which case to file under rather than assuming the measurement. Assuming it put the verify
+     * run's host half on top of the measure run's: same directory, no warning, and afterwards the
+     * two rounds could not be compared. What arrives is a name from the network, so the host takes
+     * it only if it is one of the two it runs.
+     */
+    @Test
+    fun theHostFilesUnderTheCaseTheSinkAskedForRatherThanAlwaysTheMeasurement() {
+        assertFalse(
+            "the host plans the measurement case whatever the sink asked for",
+            source.contains("caseId = CASE_MEASURE")
+        )
+        assertTrue(source.contains("requested !in setOf(CASE_MEASURE, CASE_VERIFY)"))
+    }
+
     @Test
     fun theRoleIsToldToTheScreenRatherThanGuessedFromThePairingFile() {
         assertTrue(source.contains("intent.getStringExtra(\"role\")"))

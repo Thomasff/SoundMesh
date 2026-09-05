@@ -30,7 +30,7 @@ class CalibrationPlanChannelTest {
         try {
             val plan = planAt(100_000_000_000L)
             val received = ArrayBlockingQueue<CalibrationPlan>(1)
-            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request()) }.start()
+            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request("C90")) }.start()
 
             val served = server.awaitRequest(5_000) { plan }
 
@@ -57,7 +57,7 @@ class CalibrationPlanChannelTest {
         try {
             Thread.sleep(100)
             val received = ArrayBlockingQueue<CalibrationPlan>(1)
-            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request()) }.start()
+            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request("C90")) }.start()
 
             val served = server.awaitRequest(5_000) { planAt(System.nanoTime()) }
 
@@ -84,6 +84,58 @@ class CalibrationPlanChannelTest {
         try {
             assertNull(server.awaitRequest(200) { planAt(0L) })
             assertEquals("PLAN_TIMEOUT", server.failureCode)
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * Which case a run is filed under is the sink's to say - it is the side that knows whether it
+     * is measuring or checking - and the host has to hear it, or both kinds of run land in one
+     * directory and the later one overwrites the earlier. The verification did exactly that to the
+     * measurement's host-side artifacts before this was carried.
+     */
+    @Test
+    fun theCaseTheSinkAsksForIsTheOneTheHostPlans() {
+        val port = freePort()
+        val server = CalibrationPlanServer(port)
+        server.start()
+        try {
+            val asked = ArrayBlockingQueue<String>(1)
+            Thread { CalibrationPlanClient("127.0.0.1", port).request("C91") }.start()
+
+            val served = server.awaitRequest(5_000) { requested ->
+                asked.put(requested)
+                planAt(100_000_000_000L).copy(caseId = requested)
+            }
+
+            assertEquals("C91", asked.poll(5, TimeUnit.SECONDS))
+            assertEquals("C91", served?.caseId)
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * The case id arrives over the network and names a directory the run store will create, so a
+     * host that served whatever it was handed would write wherever it was told to. A host that
+     * will not run the ask says so instead of throwing it at the run store.
+     */
+    @Test
+    fun aCaseTheHostWillNotRunIsRefusedRatherThanServed() {
+        val port = freePort()
+        val server = CalibrationPlanServer(port)
+        server.start()
+        try {
+            Thread { runCatching { CalibrationPlanClient("127.0.0.1", port).request("Z9") } }.start()
+
+            val served = server.awaitRequest(5_000) { requested ->
+                require(requested == "C90") { "not a case this handset runs: $requested" }
+                planAt(100_000_000_000L)
+            }
+
+            assertNull(served)
+            assertEquals("PLAN_REFUSED", server.failureCode)
         } finally {
             server.stop()
         }
