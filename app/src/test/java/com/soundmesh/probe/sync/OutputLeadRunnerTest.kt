@@ -74,6 +74,38 @@ class OutputLeadRunnerTest {
     }
 
     /**
+     * A calibration can be re-run with its own answer already applied, and then a right answer
+     * reads back as nothing left over - the whole of O65 -> O66 on one handset instead of two.
+     *
+     * The correction belongs to the subject's renderer alone, exactly as it does in HostSession:
+     * moving both would move the pair together and measure the same difference all over again,
+     * which would pass whatever the constant was.
+     */
+    @Test
+    fun aCorrectionUnderVerificationMovesOnlyTheOutputItWasMeasuredFor() {
+        val passes = OutputLeadRunner(
+            runStore = RunStore(directory),
+            caseId = "test",
+            subject = PlaybackUsage.ACCESSIBILITY,
+            repeats = 2,
+            appliedLeadNanos = 124_791_000L
+        ).plan(0L)
+
+        for (pass in passes) {
+            assertEquals(
+                if (pass.usage == PlaybackUsage.ACCESSIBILITY) 124_791_000L else 0L,
+                pass.leadNanos
+            )
+        }
+    }
+
+    /** Nothing is applied unless a verification asked for it: the measurement is of the raw paths. */
+    @Test
+    fun anOrdinaryCalibrationCorrectsNothing() {
+        assertTrue(runner(2).plan(0L).all { it.leadNanos == 0L })
+    }
+
+    /**
      * The recording is written through the probe's own run store, and that store takes only the
      * harness's case ids - `[A-Z][0-9]+`. A default it rejects throws on the recording thread,
      * which is a whole process rather than a whole run.

@@ -17,7 +17,12 @@ import java.io.File
 internal data class Pass(
     val usage: PlaybackUsage,
     val startHostNanos: Long,
-    val chirpAtHostNanos: Long
+    val chirpAtHostNanos: Long,
+    /**
+     * How far this pass's renderer holds its own clock back, which is zero for a measurement and
+     * the stored constant for a verification.
+     */
+    val leadNanos: Long = 0L
 )
 
 /** What a calibration run found, and everything a later reader needs to disbelieve it. */
@@ -59,7 +64,16 @@ class OutputLeadRunner(
     private val warmupNanos: Long = WARMUP_NANOS,
     private val audioSource: CalibrationAudioSource = CalibrationAudioSource.MIC,
     private val minimumReadings: Int = DEFAULT_MINIMUM_READINGS,
-    private val maximumSpreadMicros: Long = DEFAULT_MAXIMUM_SPREAD_MICROS
+    private val maximumSpreadMicros: Long = DEFAULT_MAXIMUM_SPREAD_MICROS,
+    /**
+     * A constant already measured, applied to the subject's renderer the way a session applies it.
+     *
+     * Zero for a measurement. Non-zero turns this into a verification: a right constant leaves
+     * nothing behind, so the run should read near zero, and a constant with the wrong sign reads
+     * near twice its own size. That is O65 -> O66 done on one handset, and it is the only check on
+     * this number available without pairing the two phones the other way round.
+     */
+    private val appliedLeadNanos: Long = 0L
 ) {
     private val tone = TonePcmSource()
 
@@ -112,7 +126,15 @@ class OutputLeadRunner(
         val order = if (repeat % 2 == 0) listOf(PlaybackUsage.MEDIA, subject) else listOf(subject, PlaybackUsage.MEDIA)
         order.mapIndexed { index, usage ->
             val passStart = at + index * passStrideNanos()
-            Pass(usage, passStart, passStart + warmupNanos + CALIBRATION_GAP_NANOS)
+            Pass(
+                usage = usage,
+                startHostNanos = passStart,
+                chirpAtHostNanos = passStart + warmupNanos + CALIBRATION_GAP_NANOS,
+                // The subject's alone. Moving both would shift the pair together and measure the
+                // very same difference again, which would pass whatever the constant happened
+                // to be - the correction has to be tested where the product puts it.
+                leadNanos = if (usage == subject) appliedLeadNanos else 0L
+            )
         }
     }
 
@@ -137,7 +159,9 @@ class OutputLeadRunner(
             DriftController(),
             trimDeadbandFrames = SyncRenderer.TRIM_DEADBAND_FRAMES,
             playbackUsage = pass.usage
-        ) { System.nanoTime() }
+            // Held back exactly as HostSession holds it back, so a verification tests the
+            // correction where the product applies it rather than somewhere equivalent.
+        ) { System.nanoTime() - pass.leadNanos }
         renderer.endAt(pass.chirpAtHostNanos + chirpNanos() + CHIRP_DRAIN_NANOS)
         val thread = Thread({ renderer.run() }, "SoundMeshLeadRender").also { it.start() }
         warmUp(scheduler, pass)
@@ -206,6 +230,8 @@ class OutputLeadRunner(
     private fun json(result: OutputLeadResult, readings: List<OutputLeadReading>, frames: Int, startedAt: Long?): String =
         "{\"subject\":\"${subject.name}\",\"repeats\":$repeats," +
             "\"warmupNanos\":$warmupNanos,\"audioSource\":\"$audioSource\"," +
+            // Which arrangement produced this: a raw measurement, or a check of a stored answer.
+            "\"appliedLeadMicros\":${appliedLeadNanos / 1_000L}," +
             "\"recordingStartedAtHostNanos\":${startedAt ?: "null"},\"frames\":$frames," +
             "\"leadMicros\":${result.leadMicros ?: "null"}," +
             "\"usedReadings\":${result.usedReadings},\"spreadMicros\":${result.spreadMicros ?: "null"}," +

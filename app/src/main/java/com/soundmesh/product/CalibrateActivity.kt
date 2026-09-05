@@ -88,19 +88,26 @@ class CalibrateActivity : ComponentActivity() {
     private fun measure() {
         val subject = PlaybackUsage.fromName(intent.getStringExtra("subject") ?: PlaybackUsage.ACCESSIBILITY.name)
         val caseId = intent.getStringExtra("case") ?: OutputLeadRunner.DEFAULT_CASE_ID
+        // A verification replays the stored answer through the renderer that will use it, so what
+        // it reads is what is left over rather than the whole difference. Near zero means the
+        // constant is right; near twice its own size means its sign is not.
+        val verifying = intent.getBooleanExtra("verify", false)
         val run = OutputLeadRunner(
             runStore = RunStore(filesDir),
             caseId = caseId,
             subject = subject,
             repeats = intent.getIntExtra("repeats", OutputLeadRunner.DEFAULT_REPEATS),
             warmupNanos = intent.getIntExtra("warmup_seconds", 4).toLong() * 1_000_000_000L,
-            audioSource = CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
+            audioSource = CalibrationAudioSource.parse(intent.getStringExtra("audio_source")),
+            appliedLeadNanos = if (verifying) (StoredOutputLead(filesDir, subject).read() ?: 0L) * 1_000L else 0L
         ).run()
         // Written before anything is stored, so a refused run still leaves its evidence behind.
         File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(run.json)
         Log.i(LOG_TAG, run.json)
         val micros = run.result.leadMicros
-        if (micros != null && intent.getBooleanExtra("apply", true)) {
+        // A verification never stores: what it measured is a residual, and writing a residual where
+        // the constant lives would quietly halve the correction on every run after it.
+        if (micros != null && !verifying && intent.getBooleanExtra("apply", true)) {
             StoredOutputLead(filesDir, subject).write(micros)
         }
         handler.post {
