@@ -115,6 +115,21 @@ class OutputLeadRunnerTest {
         assertTrue(ProbeCase.isSafeCaseId(OutputLeadRunner.DEFAULT_CASE_ID))
     }
 
+    /**
+     * The run store creates the directory a case names and never clears it, so two features
+     * sharing a case id share a directory and the later one silently overwrites what the earlier
+     * left. The archive on the two handsets runs every letter from A to Z with numbers in the
+     * ones and tens - L1 to L9 among them - and an on-device calibration did land in runs/L1
+     * beside an alignment run's sync.json. Ninety is past the end of every recorded series.
+     */
+    @Test
+    fun theDefaultCaseSitsPastEverySeriesTheHarnessHasArchived() {
+        assertTrue(
+            "${OutputLeadRunner.DEFAULT_CASE_ID} could be an archived run's directory",
+            OutputLeadRunner.DEFAULT_CASE_ID.dropWhile { !it.isDigit() }.toInt() >= 90
+        )
+    }
+
     /** Media is the path everything else is measured against, so it cannot also be the subject. */
     @Test(expected = IllegalArgumentException::class)
     fun measuringMediaAgainstItselfIsRefused() {

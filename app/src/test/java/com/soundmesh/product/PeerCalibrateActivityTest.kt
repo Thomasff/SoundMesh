@@ -1,6 +1,7 @@
 package com.soundmesh.product
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -92,6 +93,21 @@ class PeerCalibrateActivityTest {
     fun aRunRecordsTheClockItWasScheduledAgainst() {
         assertTrue(source.contains("\\\"clock\\\":{"))
         assertTrue(source.contains("uncertaintyNanos"))
+    }
+
+    /**
+     * A case id is a directory the run store creates and never clears, so a measurement filed
+     * under an archived run's id overwrites whatever that run left behind. C1 did exactly that on
+     * the first hardware run: both handsets lost the calibration.wav an earlier alignment run had
+     * put in runs/C1. The archive numbers every letter in the ones and tens, so ninety and up is
+     * the first range nothing can be standing in.
+     */
+    @Test
+    fun theCasesSitPastEverySeriesTheHarnessHasArchived() {
+        val cases = Regex("const val CASE_(?:MEASURE|VERIFY) = \"([A-Z])([0-9]+)\"")
+            .findAll(source).map { it.groupValues[2].toInt() }.toList()
+        assertEquals(2, cases.size)
+        assertTrue("a case id could be an archived run's directory", cases.all { it >= 90 })
     }
 
     @Test

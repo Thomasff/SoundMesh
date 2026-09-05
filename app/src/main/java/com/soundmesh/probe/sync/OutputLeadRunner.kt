@@ -265,10 +265,13 @@ class OutputLeadRunner(
     companion object {
         /**
          * The case the recording is filed under, and it has to be one [RunStore] accepts:
-         * `[A-Z][0-9]+`, the harness's own shape. L for lead, and a series of its own so a
-         * calibration never lands on top of an archived alignment run.
+         * `[A-Z][0-9]+`, the harness's own shape. L for lead, and a number past the end of every
+         * archived series so a calibration never lands on top of an alignment run. L1 did not
+         * manage that - the archive holds L1 to L9 - and an on-device run left its own
+         * calibration.wav in runs/L1 beside a sync.json it did not write. RunStore only creates
+         * the directory; it never clears it, so a shared case id is a shared directory.
          */
-        const val DEFAULT_CASE_ID = "L1"
+        const val DEFAULT_CASE_ID = "L90"
 
         /**
          * Five, and the median of them. Three was tried on the two-handset ruler and was not

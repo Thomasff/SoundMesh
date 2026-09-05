@@ -354,9 +354,15 @@ class PeerCalibrateActivity : ComponentActivity() {
         const val LOG_TAG = "SoundMeshPeerCalibrate"
         const val ARTIFACT = "peer-calibration.json"
 
-        /** RunStore accepts `[A-Z][0-9]+`. C for calibration; the verification keeps its own. */
-        const val CASE_MEASURE = "C1"
-        const val CASE_VERIFY = "C2"
+        /**
+         * RunStore accepts `[A-Z][0-9]+` and never clears a directory it is handed, so a case id
+         * names a place on disk rather than a run. Every letter is already spoken for by an
+         * archived series, and C1 landed on top of one: the first hardware run overwrote the
+         * calibration.wav an earlier alignment run had left in runs/C1 on both handsets. Ninety
+         * and up is past the end of every series the harness has recorded.
+         */
+        const val CASE_MEASURE = "C90"
+        const val CASE_VERIFY = "C91"
 
         /** Next after AlignmentResultServer's 45125. */
         const val PLAN_PORT = 45126
