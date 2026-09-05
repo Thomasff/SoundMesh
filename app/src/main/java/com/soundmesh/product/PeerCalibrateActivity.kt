@@ -115,14 +115,18 @@ class PeerCalibrateActivity : ComponentActivity() {
     }
 
     /**
-     * Which side of the pair this handset is on.
+     * Which side of the pair this handset is on, or null if nobody has said yet.
      *
-     * A handset that scanned somebody's code follows them; one that has not is the handset whose
-     * code was scanned. Never null: a phone with no pairing is hosting and has nothing stored to
-     * say otherwise, and the sink path refuses on its own when it finds no pairing to read.
+     * Handed in rather than worked out, and deliberately not derived from the pairing file: both
+     * handsets in this room hold one, because they have each scanned the other at some point, so
+     * "has a scanned pairing" would have made both of them the sink and no run could start. The
+     * role is what this phone is being right now, which is the same question the home screen
+     * already asks - [HomeScreen]'s own comment says it is kept off disk because swapping the two
+     * and trying again is the most common thing anybody does - so this follows that answer instead
+     * of inventing a second one that could disagree with it.
      */
-    private fun role(): CalibrationRole =
-        if (PairedHost(filesDir).read() != null) CalibrationRole.SINK else CalibrationRole.HOST
+    private fun role(): CalibrationRole? =
+        CalibrationRole.entries.firstOrNull { it.name == intent.getStringExtra("role") }
 
     private fun begin(verifying: Boolean) {
         if (running) return
@@ -144,6 +148,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 when (role()) {
                     CalibrationRole.HOST -> measureAsHost()
                     CalibrationRole.SINK -> measureAsSink(verifying)
+                    null -> show(getString(R.string.pair_calibrate_no_role))
                 }
             }.onFailure {
                 Log.e(LOG_TAG, "the pair calibration did not finish", it)

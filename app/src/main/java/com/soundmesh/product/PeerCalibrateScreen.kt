@@ -22,10 +22,12 @@ import com.soundmesh.probe.R
 /**
  * What the pair calibration screen draws.
  *
- * [role] comes from the pairing rather than from a picker, so the screen tells the person which
- * handset they are holding instead of asking. A role chosen by hand is a role chosen wrong once,
- * and what that produces is a correction filed against the wrong peer - applied silently on every
- * later session with nothing in the result to notice it by.
+ * [role] is the role this phone is already being on the home screen, handed in rather than asked
+ * for again here. It cannot be worked out from the pairing file: two handsets that have each
+ * scanned the other both hold one, which would make both of them the sink. Null means nobody has
+ * said yet, and the screen says so rather than guessing - a guess here files the correction
+ * against the wrong peer, where it is applied silently on every later session with nothing in any
+ * result to notice it by.
  *
  * [stored] is the constant this handset already carries for that peer, and it is the difference
  * between offering to measure and offering to check.
@@ -68,7 +70,7 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 when (state.role) {
                     CalibrationRole.HOST -> stringResource(R.string.pair_calibrate_role_host)
                     CalibrationRole.SINK -> stringResource(R.string.pair_calibrate_role_sink)
-                    null -> stringResource(R.string.pair_calibrate_no_pairing)
+                    null -> stringResource(R.string.pair_calibrate_no_role)
                 },
                 style = MaterialTheme.typography.bodyMedium
             )

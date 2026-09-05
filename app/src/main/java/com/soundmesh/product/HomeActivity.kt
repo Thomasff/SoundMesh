@@ -145,7 +145,14 @@ class HomeActivity : ComponentActivity() {
         play = ::play,
         stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) },
         calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) },
-        pairCalibrate = { startActivity(Intent(this, PeerCalibrateActivity::class.java)) }
+        // The role travels with the intent: the pair calibration is directional, and this screen
+        // is where the person already said which direction this phone is being.
+        pairCalibrate = {
+            startActivity(
+                Intent(this, PeerCalibrateActivity::class.java)
+                    .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
+            )
+        }
     )
 
     /**

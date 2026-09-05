@@ -57,4 +57,19 @@ class PeerCalibrateActivityTest {
             source.contains("StoredCalibration(filesDir, StoredCalibration.ANONYMOUS_PEER)")
         )
     }
+
+    /**
+     * The role is handed in, never worked out from the pairing file. Both handsets in this room
+     * hold a scanned pairing - they have each scanned the other at some point - so "has a scanned
+     * pairing" makes both of them the sink and no run can start at all. Found by reading the two
+     * phones before the first run rather than by watching one fail.
+     */
+    @Test
+    fun theRoleIsToldToTheScreenRatherThanGuessedFromThePairingFile() {
+        assertTrue(source.contains("intent.getStringExtra(\"role\")"))
+        assertFalse(
+            "the role is derived from the pairing file, which both handsets of a pair can hold",
+            source.contains("if (PairedHost(filesDir).read() != null) CalibrationRole.SINK")
+        )
+    }
 }
