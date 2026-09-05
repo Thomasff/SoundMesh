@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -40,6 +41,9 @@ fun CalibrateScreen(state: CalibrateState, actions: CalibrateActions) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // Android 15 draws every app edge to edge, so without this the title sits under the
+            // status bar clock. Visible on the Magic6 and not on the X10, which is Android 10.
+            .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
