@@ -82,6 +82,16 @@ class HomeActions(
     val pairCalibrate: () -> Unit
 )
 
+/**
+ * Whether the pair calibration is worth offering yet.
+ *
+ * It runs one half on each handset, and which half this one plays is the single thing that screen
+ * cannot work out for itself - both phones of a pair hold a scanned pairing, so the file says
+ * nothing. Offered with no role picked, the button leads somewhere whose only message is "go back
+ * and pick one".
+ */
+internal fun offersPairCalibration(state: HomeState): Boolean = state.role != Role.NONE
+
 @Composable
 fun HomeScreen(state: HomeState, actions: HomeActions) {
     Column(
@@ -114,8 +124,10 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
         }
         // The other calibration: that one is this handset against itself, this one is this pair
         // against each other. Both are wanted before the first session rather than during one.
-        TextButton(onClick = actions.pairCalibrate) {
-            Text(stringResource(R.string.home_pair_calibrate))
+        if (offersPairCalibration(state)) {
+            TextButton(onClick = actions.pairCalibrate) {
+                Text(stringResource(R.string.home_pair_calibrate))
+            }
         }
     }
 }

@@ -53,8 +53,8 @@
     <string name="pair_calibrate_intro">两台手机的发声时刻差着一个固定的量，跟型号和系统有关。量出来记下，从机播放时就按它补偿，两台才真的齐。这是这一对手机的属性，所以两台都要在场，而且只对「这台放歌、那台跟着」这一个方向有效。</string>
     <string name="pair_calibrate_stored">已经测过：%1$.3f 毫秒（%2$d 次观测的平均）</string>
     <string name="pair_calibrate_unmeasured">还没测过。没测过就当作零来补，两台会差几十毫秒。</string>
-    <string name="pair_calibrate_role_host">这台出示过配对码，所以它是主机。按开始，然后去另一台上也按开始。</string>
-    <string name="pair_calibrate_role_sink">这台扫过配对码，所以它是从机。结果会记在这台上。请先在主机上按开始。</string>
+    <string name="pair_calibrate_role_host">这台现在是主机——在首页选的，随时可以换。按开始，然后去另一台上也按开始。</string>
+    <string name="pair_calibrate_role_sink">这台现在是从机——在首页选的，随时可以换。结果会记在这台上。请先在主机上按开始。</string>
     <string name="pair_calibrate_no_pairing">这台还没扫过另一台的配对码。先回首页扫一次。</string>
     <string name="pair_calibrate_no_role">先回首页选这台是主机还是从机。校准只对「这台放歌、那台跟着」这一个方向有效，所以它要知道现在是哪个方向。</string>
     <string name="pair_calibrate_run">开始测</string>
