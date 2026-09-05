@@ -126,6 +126,34 @@ class PeerCalibrateActivityTest {
         assertTrue(source.contains("requested !in setOf(CASE_MEASURE, CASE_VERIFY)"))
     }
 
+    /**
+     * CalibrationUpdate.usable lets a failed run through on purpose, and its own comment gives the
+     * reason: a pair that has never been calibrated sits tens of milliseconds out and fails every
+     * threshold, and it is precisely the run the loop has to adopt or no first correction can ever
+     * be made.
+     *
+     * That reason is spent the moment a constant exists. C1, the first hardware run, was FAIL and
+     * readable, and folding it moved a good constant from 34511 to 36962 - silently, with nothing
+     * in any later result to notice it by. The condition the comment already states is applied
+     * here rather than widened in core, where the harness's own 186 runs were taken under the
+     * present rule.
+     */
+    @Test
+    fun aFirstCalibrationIsAdoptedEvenThoughItCannotPass() {
+        assertTrue(foldsIntoStoredCalibration(observations = 0, passed = false))
+        assertTrue(foldsIntoStoredCalibration(observations = 0, passed = null))
+    }
+
+    @Test
+    fun aFailedRunNeverMovesAConstantThisHandsetAlreadyCarries() {
+        assertFalse(foldsIntoStoredCalibration(observations = 5, passed = false))
+        assertFalse(
+            "a run that could not say whether it passed is not a run that passed",
+            foldsIntoStoredCalibration(observations = 5, passed = null)
+        )
+        assertTrue(foldsIntoStoredCalibration(observations = 5, passed = true))
+    }
+
     @Test
     fun theRoleIsToldToTheScreenRatherThanGuessedFromThePairingFile() {
         assertTrue(source.contains("intent.getStringExtra(\"role\")"))

@@ -62,6 +62,24 @@ import java.io.File
  * Startable by name as well, with `auto`, because the first thing this has to do is agree with the
  * harness runs it replaces, and that comparison is driven over ADB.
  */
+/**
+ * Whether a finished run may move the correction this handset carries.
+ *
+ * [CalibrationUpdate.usable] admits a failed run on purpose, and its own comment gives the reason:
+ * a pair that has never been calibrated sits tens of milliseconds out, fails every threshold in
+ * the verdict, and is exactly the run the loop has to adopt or no first correction can ever be
+ * made. **That reason is spent the moment a constant exists.**
+ *
+ * C1, the first run on hardware, was such a run - FAIL, readable, and folded - and it moved a good
+ * constant from 34511 to 36962 with nothing in any later result to notice it by. The condition the
+ * comment already states is applied here rather than widened in [CalibrationUpdate], where the
+ * harness's 186 archived runs were all taken under the present rule.
+ *
+ * A run that cannot say whether it passed is not a run that passed.
+ */
+internal fun foldsIntoStoredCalibration(observations: Int, passed: Boolean?): Boolean =
+    observations == 0 || passed == true
+
 class PeerCalibrateActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var state by mutableStateOf(PeerCalibrateState())
@@ -328,6 +346,9 @@ class PeerCalibrateActivity : ComponentActivity() {
             val observed = reply.measuredOffsetMicros
                 ?: return show(getString(R.string.pair_calibrate_kept, run.refusal ?: "NOT_USABLE"))
             val observations = stored?.observations ?: 0
+            if (!foldsIntoStoredCalibration(observations, reply.passed)) {
+                return show(getString(R.string.pair_calibrate_not_folded))
+            }
             val folded = CalibrationUpdate.fold(appliedMicros, observations, observed)
                 ?: return show(getString(R.string.pair_calibrate_kept, "OFFSET_OUT_OF_RANGE"))
             StoredCalibration(filesDir, paired.hostId).write(folded, observations + 1)
