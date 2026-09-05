@@ -24,6 +24,7 @@ import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.CalibrationUpdate
+import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
@@ -49,9 +50,10 @@ import java.io.File
  * product's premise rules out. `SinkSession` only ever read this file; nothing in the product
  * could write it. This is what writes it.
  *
- * The role is not asked for. It comes from the pairing - the handset that showed the code hosts,
- * the one that scanned follows - because the correction is directional, and a role picked by hand
- * is a role picked wrong once, filed under the wrong peer, and applied silently ever after.
+ * The role is not asked for twice. It travels in from the home screen, which has already asked
+ * which side this phone is being, because the correction is directional and two answers to one
+ * question can disagree - and what a disagreement produces here is a correction filed under the
+ * wrong peer, applied silently ever after with nothing in any result to notice it by.
  *
  * Nothing starts on its own, on the same terms as [CalibrateActivity]: a calibration is a minute
  * of chirps that only works with two phones left alone in a quiet room, so the screen explains
@@ -244,11 +246,29 @@ class PeerCalibrateActivity : ComponentActivity() {
         val appliedMicros = stored?.micros ?: 0L
         val estimator = ClockOffsetEstimator()
         val clockClient = ClockSyncClient(paired.address, SyncActivity.CLOCK_PORT, estimator)
-        val clockThread = Thread({ clockClient.runFor(CLOCK_SECONDS) }, "SoundMeshPeerClock")
+        val clockThread =
+            Thread({ clockClient.runFor(CLOCK_SECONDS, CLOCK_INTERVAL_MILLIS) }, "SoundMeshPeerClock")
+        val clockStartedAt = System.nanoTime()
         clockThread.start()
         try {
-            val deadline = System.nanoTime() + CONVERGENCE_TIMEOUT_NANOS
+            show(getString(R.string.pair_calibrate_clock))
+            val deadline = clockStartedAt + CONVERGENCE_TIMEOUT_NANOS
             while (clockClient.currentEstimate() == null && System.nanoTime() < deadline) {
+                Thread.sleep(CONVERGENCE_POLL_MILLIS)
+            }
+            if (clockClient.currentEstimate() == null) {
+                return show(getString(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
+            }
+            // Having an estimate is not the same as having a settled one, and the first run on
+            // hardware cost exactly that difference. MIN_SAMPLES is the point the estimator will
+            // answer at, eight of a sixty-four wide window; the offset it answers with then is
+            // still moving as the window fills. C1 measured its five chirps against five different
+            // offsets spanning 8.1 ms, and the five alignment errors moved with them one for one.
+            //
+            // The harness never met this because it plays two minutes of audio between converging
+            // and chirping, which at its own two second cadence is exactly the window's worth of
+            // exchanges. This waits for the same thing directly instead of buying it by accident.
+            while (System.nanoTime() - clockStartedAt < CLOCK_FILL_NANOS) {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
             }
             val converged = clockClient.currentEstimate()
@@ -276,8 +296,13 @@ class PeerCalibrateActivity : ComponentActivity() {
                 },
                 offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos }
             ).run()
-            File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(run.json)
-            Log.i(LOG_TAG, run.json)
+            // Spliced in rather than passed to the runner: the clock belongs to this screen, and
+            // the reason to record it is that the constant is only as good as the offset the
+            // chirps were scheduled against. Without it, a run whose estimate was still moving
+            // reads exactly like a run whose room was noisy.
+            val json = withClock(run.json, converged, clockClient.currentEstimate())
+            File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(json)
+            Log.i(LOG_TAG, json)
             // Delivered even when there is nothing to deliver: the host waits on this message, so
             // an empty run and a dead sink look the same from an end of a socket that never opens.
             val reply = AlignmentResultClient(paired.address, SyncActivity.RESULT_PORT)
@@ -307,6 +332,19 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private fun storedCalibration(): Calibration? =
         PairedHost(filesDir).read()?.let { StoredCalibration(filesDir, it.hostId).read() }
+
+    /** The run's own report, with the clock it was scheduled against spliced beside it. */
+    private fun withClock(json: String, atStart: ClockEstimate?, atEnd: ClockEstimate?): String =
+        json.dropLast(1) +
+            ",\"clock\":{\"intervalMillis\":$CLOCK_INTERVAL_MILLIS," +
+            "\"windowSize\":${ClockOffsetEstimator.DEFAULT_WINDOW}," +
+            "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}}}"
+
+    private fun estimateJson(estimate: ClockEstimate?): String =
+        estimate?.let {
+            "{\"offsetNanos\":${it.offsetNanos},\"uncertaintyNanos\":${it.uncertaintyNanos}," +
+                "\"driftPpm\":${it.driftPpm},\"sampleCount\":${it.sampleCount}}"
+        } ?: "null"
 
     private fun show(text: String) {
         handler.post { state = state.copy(message = text) }
@@ -351,7 +389,37 @@ class PeerCalibrateActivity : ComponentActivity() {
         /** Long enough for the whole schedule; the exchange runs the length of the calibration. */
         const val CLOCK_SECONDS = 120
 
-        /** SyncActivity's own convergence bound. Eight samples at 2s is sixteen of these seconds. */
+        /**
+         * How often the clock is exchanged during a calibration, against the harness's own 2000.
+         *
+         * The estimator's window is sized in exchanges, not in seconds - sixty-four of them, of
+         * which the eight quietest are kept, because round trips on one link are bimodal and a
+         * quiet one is about an eighth of the traffic. Filling that window at the harness's cadence
+         * takes two minutes, which the harness pays for out of its audio segment and a calibration
+         * has no reason to pay at all.
+         *
+         * Sampling faster is safe for the quantity that matters here: the offset is the mean of the
+         * kept midpoints anchored at their centroid, never extrapolated, so a drift slope fitted
+         * over a shorter span cannot enter it - and the staleness that anchoring costs is half a
+         * window of real drift, which a shorter window makes smaller rather than larger. What it
+         * cannot rule out is quiet moments on the link being clustered in time, so that sixty-four
+         * exchanges over sixteen seconds meet fewer of them than sixty-four over two minutes. That
+         * shows up as a wider `uncertaintyNanos`, which every run now records for exactly this.
+         */
+        const val CLOCK_INTERVAL_MILLIS = 250L
+
+        /**
+         * How long the exchange runs before anything is scheduled against it: one window's worth.
+         *
+         * Derived rather than chosen - the window size times the cadence - because the property
+         * being waited for is structural. Below a full window the estimator is still answering
+         * from a growing population and its answer moves as it grows, which C1 measured at 8.1 ms
+         * across twenty seconds and paid for in the whole run.
+         */
+        const val CLOCK_FILL_NANOS =
+            ClockOffsetEstimator.DEFAULT_WINDOW * CLOCK_INTERVAL_MILLIS * 1_000_000L
+
+        /** SyncActivity's own convergence bound, and it is the first estimate this bounds. */
         const val CONVERGENCE_TIMEOUT_NANOS = 40_000_000_000L
 
         /** Far finer than the seconds convergence takes, and it costs nothing to wait this way. */

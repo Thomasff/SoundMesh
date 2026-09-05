@@ -64,6 +64,36 @@ class PeerCalibrateActivityTest {
      * pairing" makes both of them the sink and no run can start at all. Found by reading the two
      * phones before the first run rather than by watching one fail.
      */
+    /**
+     * Having a clock estimate is not the same as having a settled one. MIN_SAMPLES is only the
+     * point the estimator will answer at - eight of a sixty-four wide window - and the offset it
+     * answers with keeps moving as the window fills. C1, the first run on hardware, scheduled its
+     * five chirps against five different offsets spanning 8.1 ms, and its five alignment errors
+     * moved with them one for one; the constant it stored was 12.3 ms off the harness's.
+     *
+     * The wait is derived from the window rather than chosen, so it cannot drift away from the
+     * estimator it is waiting on.
+     */
+    @Test
+    fun theChirpsWaitForTheClockWindowToFillRatherThanForItsFirstAnswer() {
+        assertTrue(
+            "the run no longer waits a whole estimator window before scheduling anything",
+            source.contains("ClockOffsetEstimator.DEFAULT_WINDOW * CLOCK_INTERVAL_MILLIS")
+        )
+        assertTrue(source.contains("CLOCK_FILL_NANOS"))
+    }
+
+    /**
+     * The constant is only as good as the offset the chirps were scheduled against, so a run that
+     * does not record its clock cannot be told apart afterwards from one whose room was noisy.
+     * That is what C1 cost to find out by hand.
+     */
+    @Test
+    fun aRunRecordsTheClockItWasScheduledAgainst() {
+        assertTrue(source.contains("\\\"clock\\\":{"))
+        assertTrue(source.contains("uncertaintyNanos"))
+    }
+
     @Test
     fun theRoleIsToldToTheScreenRatherThanGuessedFromThePairingFile() {
         assertTrue(source.contains("intent.getStringExtra(\"role\")"))
