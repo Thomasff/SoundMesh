@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
@@ -58,13 +59,23 @@ class HomeActivity : ComponentActivity() {
      */
     private var awaitingSession = false
     private var ticks = 0
+
+    /** Built once: it settles whether this handset lets an app move that stream at all. */
+    private val accessibilityVolume by lazy { AccessibilityVolume(getSystemService(AudioManager::class.java)) }
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
             readSession()
             // Charge and heat move on the scale of minutes, so they are read every few seconds
             // rather than five times a second alongside the counters.
-            if (ticks++ % HEALTH_EVERY_TICKS == 0) state = state.copy(health = DeviceHealth.read(this@HomeActivity))
+            if (ticks++ % HEALTH_EVERY_TICKS == 0) {
+                state = state.copy(
+                    health = DeviceHealth.read(this@HomeActivity),
+                    // Whoever else moved it - a system panel, another app - the slider has to show
+                    // where the stream really is rather than where this screen last put it.
+                    accessibilityVolume = if (state.capturing) accessibilityVolume.read() else null
+                )
+            }
             handler.postDelayed(this, REFRESH_MILLIS)
         }
     }
@@ -102,7 +113,7 @@ class HomeActivity : ComponentActivity() {
             state = if (projection == null) {
                 state.copy(capturing = false, problem = R.string.capture_declined)
             } else {
-                state.copy(capturing = true, problem = null)
+                state.copy(capturing = true, problem = null, accessibilityVolume = accessibilityVolume.read())
             }
         }
         startService(
@@ -130,8 +141,21 @@ class HomeActivity : ComponentActivity() {
         captureAudio = ::captureAudio,
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
-        stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) }
+        stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) },
+        calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) },
+        setAccessibilityVolume = ::setAccessibilityVolume
     )
+
+    /**
+     * Moves the accessibility output's volume and shows the move at once.
+     *
+     * Read back rather than assumed: the platform clamps, and a slider left showing a level the
+     * stream does not hold would keep offering to set it again.
+     */
+    private fun setAccessibilityVolume(level: Int) {
+        runCatching { accessibilityVolume.set(level) }
+        state = state.copy(accessibilityVolume = accessibilityVolume.read())
+    }
 
     /**
      * Copies what was picked into this app's own directory, then decodes it once to find out
@@ -208,7 +232,7 @@ class HomeActivity : ComponentActivity() {
      */
     private fun releaseProjection() {
         if (!state.capturing) return
-        state = state.copy(capturing = false)
+        state = state.copy(capturing = false, accessibilityVolume = null)
         startService(Intent(this, SyncProjectionService::class.java).setAction(SyncProjectionService.ACTION_RELEASE))
     }
 

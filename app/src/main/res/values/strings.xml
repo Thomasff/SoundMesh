@@ -27,11 +27,30 @@
     <string name="capture_declined">没有拿到采集授权，或者授权已经被收回了。</string>
     <string name="song_unnamed">未命名</string>
 
-    <string name="calibrate_running">正在测这台手机自己的输出延迟。请把手机放在桌上别动，保持安静，大约一分半。</string>
+    <string name="home_calibrate">校准这台手机的输出延迟</string>
+
+    <string name="calibrate_title">输出延迟校准</string>
+    <string name="calibrate_what">这是在测什么</string>
+    <string name="calibrate_intro">这台手机采集别的 App 的声音时，只能用「无障碍」这条输出通道来放，而它和平时放音乐那条通道的发声时刻不一样。这个差要量出来补掉，否则两台手机对不齐。它是这台手机自己的属性，所以一台手机就能测，不需要另一台。</string>
+    <string name="calibrate_stored">已经测过：早 %1$.3f 毫秒</string>
+    <string name="calibrate_unmeasured">还没测过。没测过就当作零来补，这台手机当主机时会对不齐。</string>
+    <string name="calibrate_run">开始测</string>
+    <string name="calibrate_quiet">把手机放在桌上别碰，房间保持安静。会放大约一分半的提示音和啁啾声，手机要听见自己的声音才能测。</string>
+    <string name="calibrate_start">开始校准</string>
+    <string name="calibrate_verify">验证已经测过的结果</string>
+    <string name="calibrate_verify_hint">把已经记下的数装回去再测一遍。数是对的，就应该几乎什么都不剩。</string>
+    <string name="calibrate_result">结果</string>
+    <string name="calibrate_running">正在测。请把手机放在桌上别动，保持安静，大约一分半。</string>
     <string name="calibrate_done">测完了：这条输出比媒体输出早 %1$.3f 毫秒（%2$s），已经记下来了。</string>
+    <string name="calibrate_verified">验证完成：补偿之后还剩 %1$.3f 毫秒。越接近零，说明记下的数越准。</string>
     <string name="calibrate_refused">这次不算数，没有记下来：%1$s</string>
     <string name="calibrate_failed">校准没跑完：%1$s</string>
     <string name="calibrate_no_permission">没有录音权限就没法测，手机得听见自己的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
+
+    <string name="volume_title">无障碍音量</string>
+    <string name="volume_level">%1$d / %2$d</string>
+    <string name="volume_hint">采集播放走的是无障碍通道，不是媒体通道。放音的时候按音量键调的是媒体音量，够不到这里，所以要用这条。</string>
+    <string name="volume_locked">这台手机不允许 app 调无障碍音量，只能到系统设置里改。</string>
 
     <string name="pair_title">配对</string>
     <string name="pair_code">配对码</string>

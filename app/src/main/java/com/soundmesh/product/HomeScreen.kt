@@ -16,6 +16,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -59,7 +60,14 @@ data class HomeState(
     val sessionState: SessionState? = null,
     val failure: String? = null,
     val counters: List<Counter> = emptyList(),
-    val health: Health = Health(null, null, null, null)
+    val health: Health = Health(null, null, null, null),
+    /**
+     * The accessibility output's volume, on a host that is capturing and therefore heard on it.
+     *
+     * Null when nothing is being captured: that output carries nothing then, and a slider for a
+     * silent stream is a control with no effect to observe. See [AccessibilityVolume].
+     */
+    val accessibilityVolume: OutputVolume? = null
 )
 
 /** What the screen can ask for. Held as one object so a preview can hand it empty lambdas. */
@@ -69,7 +77,9 @@ class HomeActions(
     val captureAudio: () -> Unit,
     val scan: () -> Unit,
     val play: () -> Unit,
-    val stop: () -> Unit
+    val stop: () -> Unit,
+    val calibrate: () -> Unit,
+    val setAccessibilityVolume: (Int) -> Unit
 )
 
 @Composable
@@ -94,6 +104,39 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
                 Text(stringResource(R.string.role_change))
             }
         }
+        // Offered whatever this phone is being. The constant it measures belongs to the handset
+        // rather than to a role, and it is wanted before the first session rather than during one.
+        TextButton(onClick = actions.calibrate) {
+            Text(stringResource(R.string.home_calibrate))
+        }
+    }
+}
+
+/**
+ * The volume of the output a capturing host is heard on.
+ *
+ * Here rather than left to the system's own panel because the panel cannot reach it: with a session
+ * playing, the volume keys move the media stream. A listener found that out by hand, after
+ * reporting that the host sounded quiet.
+ */
+@Composable
+private fun AccessibilityVolumePanel(volume: OutputVolume, actions: HomeActions) {
+    Section(R.string.volume_title) {
+        if (!volume.settable) {
+            Text(stringResource(R.string.volume_locked), style = MaterialTheme.typography.bodyMedium)
+            return@Section
+        }
+        Text(
+            stringResource(R.string.volume_level, volume.level, volume.max),
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Slider(
+            value = volume.level.toFloat(),
+            onValueChange = { actions.setAccessibilityVolume(it.toInt()) },
+            valueRange = 0f..volume.max.toFloat(),
+            steps = (volume.max - 1).coerceAtLeast(0)
+        )
+        Text(stringResource(R.string.volume_hint), style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -141,6 +184,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
             Text(stringResource(R.string.song_capture_hint), style = MaterialTheme.typography.bodySmall)
         }
     }
+    state.accessibilityVolume?.let { AccessibilityVolumePanel(it, actions) }
     Section(R.string.pair_code) {
         if (state.pairingPayload == null) {
             Text(stringResource(R.string.pair_no_address))
@@ -241,7 +285,7 @@ private fun Reading(label: String, value: String) {
 }
 
 @Composable
-private fun Section(title: Int, content: @Composable () -> Unit) {
+internal fun Section(title: Int, content: @Composable () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),

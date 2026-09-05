@@ -7,10 +7,18 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.view.Gravity
 import android.view.WindowManager
-import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
@@ -28,70 +36,95 @@ import java.io.File
  * computer - so the measurement had to become something a phone does to itself. See
  * [OutputLeadRunner] for why one phone is enough.
  *
- * Startable by name as well as by button, because the first thing this has to do is agree with the
- * measurement it replaces: one handset already has a PC-measured answer, and a self-measurement
- * that disagrees with it is wrong rather than new.
+ * Nothing starts on its own. A calibration is ninety seconds of tones and chirps that only works in
+ * a quiet room with the phone left alone, so the screen explains itself and waits to be told - a
+ * button that began playing the moment it was tapped would spend most of its runs measuring
+ * somebody putting the phone down.
+ *
+ * Startable by name as well, with `auto`, because the first thing this had to do was agree with the
+ * measurement it replaces: one handset already had a PC-measured answer, and a self-measurement
+ * that disagreed with it would have been wrong rather than new.
  */
 class CalibrateActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
-    private lateinit var status: TextView
+    private var state by mutableStateOf(CalibrateState())
 
     /** One calibration at a time: two would share a microphone and a run directory. */
     @Volatile private var running = false
 
+    /** Set by the button that asked for the permission, so the run resumes once it is granted. */
+    private var verifyingAfterPermission = false
+
+    private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) start(verifyingAfterPermission)
+        else state = state.copy(message = getString(R.string.calibrate_no_permission))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The run is a minute of quiet room, and a screen that sleeps takes the CPU with it.
+        // The run is a minute and a half of quiet room, and a screen that sleeps takes the CPU too.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        status = TextView(this).apply {
-            gravity = Gravity.CENTER
-            textSize = 18f
-            setPadding(48, 48, 48, 48)
+        setContent {
+            val colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
+            MaterialTheme(colorScheme = colors) {
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    CalibrateScreen(
+                        state = state.copy(stored = storedMicros()),
+                        actions = CalibrateActions(
+                            calibrate = { begin(verifying = false) },
+                            verify = { begin(verifying = true) }
+                        )
+                    )
+                }
+            }
         }
-        setContentView(status)
-        start()
+        if (intent.getBooleanExtra("auto", false)) begin(intent.getBooleanExtra("verify", false))
     }
 
     /**
      * A second start reaches here rather than [onCreate], because this screen is singleTask.
      *
-     * Without it the screen sits on the last run's answer and measures nothing at all - which is
-     * how the second Magic6 reading was lost: `am start` returned success, the activity was
-     * already up, and three minutes of quiet room bought nothing. A person pressing calibrate
-     * twice would have seen exactly the same.
+     * Without it the screen sat on the last run's answer and measured nothing - which is how the
+     * Magic6's second reading was lost: `am start` reported success, the activity was already up,
+     * and three minutes of quiet room bought nothing at all.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        start()
+        if (intent.getBooleanExtra("auto", false)) begin(intent.getBooleanExtra("verify", false))
     }
 
-    private fun start() {
+    private fun begin(verifying: Boolean) {
         if (running) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            show(getString(R.string.calibrate_no_permission))
+            verifyingAfterPermission = verifying
+            askRecordAudio.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
+        start(verifying)
+    }
+
+    private fun start(verifying: Boolean) {
         running = true
-        show(getString(R.string.calibrate_running))
+        state = state.copy(running = true, message = getString(R.string.calibrate_running))
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
         Thread({
-            runCatching { measure() }.onFailure {
+            runCatching { measure(verifying) }.onFailure {
                 Log.e(LOG_TAG, "the calibration did not finish", it)
-                handler.post { show(getString(R.string.calibrate_failed, it.javaClass.simpleName)) }
+                show(getString(R.string.calibrate_failed, it.javaClass.simpleName))
             }
             running = false
+            handler.post { state = state.copy(running = false) }
         }, "SoundMeshCalibrate").start()
     }
 
-    private fun measure() {
+    private fun measure(verifying: Boolean) {
         val subject = PlaybackUsage.fromName(intent.getStringExtra("subject") ?: PlaybackUsage.ACCESSIBILITY.name)
         val caseId = intent.getStringExtra("case") ?: OutputLeadRunner.DEFAULT_CASE_ID
         // A verification replays the stored answer through the renderer that will use it, so what
         // it reads is what is left over rather than the whole difference. Near zero means the
         // constant is right; near twice its own size means its sign is not.
-        val verifying = intent.getBooleanExtra("verify", false)
         val run = OutputLeadRunner(
             runStore = RunStore(filesDir),
             caseId = caseId,
@@ -110,16 +143,26 @@ class CalibrateActivity : ComponentActivity() {
         if (micros != null && !verifying && intent.getBooleanExtra("apply", true)) {
             StoredOutputLead(filesDir, subject).write(micros)
         }
-        handler.post {
-            show(
-                if (micros == null) getString(R.string.calibrate_refused, run.result.refusal ?: "")
-                else getString(R.string.calibrate_done, micros / 1000.0, subject.name)
-            )
-        }
+        show(
+            when {
+                micros == null -> getString(R.string.calibrate_refused, run.result.refusal ?: "")
+                verifying -> getString(R.string.calibrate_verified, micros / 1000.0)
+                else -> getString(R.string.calibrate_done, micros / 1000.0, subject.name)
+            }
+        )
     }
 
+    /**
+     * The constant this handset is carrying, or null on one nobody has calibrated.
+     *
+     * Read on every recomposition rather than held: the run writes it from another thread, and a
+     * remembered copy would leave the screen announcing the answer it had before it measured.
+     */
+    private fun storedMicros(): Long? =
+        StoredOutputLead(filesDir, PlaybackUsage.ACCESSIBILITY).read()?.takeIf { it != 0L }
+
     private fun show(text: String) {
-        status.text = text
+        handler.post { state = state.copy(message = text) }
     }
 
     private companion object {

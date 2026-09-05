@@ -39,7 +39,7 @@ class CalibrateActivityTest {
     fun aCalibrationThatFailsLeavesTheAppStandingToSaySo() {
         assertTrue(
             "the calibration thread's body is no longer guarded, so a failure kills the process",
-            source.contains("runCatching { measure() }")
+            source.contains("runCatching { measure(")
         )
     }
 }
