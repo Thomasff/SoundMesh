@@ -1,6 +1,7 @@
 package com.soundmesh.product
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
@@ -35,6 +36,9 @@ class CalibrateActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var status: TextView
 
+    /** One calibration at a time: two would share a microphone and a run directory. */
+    @Volatile private var running = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // The run is a minute of quiet room, and a screen that sleeps takes the CPU with it.
@@ -45,31 +49,53 @@ class CalibrateActivity : ComponentActivity() {
             setPadding(48, 48, 48, 48)
         }
         setContentView(status)
+        start()
+    }
+
+    /**
+     * A second start reaches here rather than [onCreate], because this screen is singleTask.
+     *
+     * Without it the screen sits on the last run's answer and measures nothing at all - which is
+     * how the second Magic6 reading was lost: `am start` returned success, the activity was
+     * already up, and three minutes of quiet room bought nothing. A person pressing calibrate
+     * twice would have seen exactly the same.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        start()
+    }
+
+    private fun start() {
+        if (running) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             show(getString(R.string.calibrate_no_permission))
             return
         }
+        running = true
         show(getString(R.string.calibrate_running))
-        Thread(::measure, "SoundMeshCalibrate").start()
+        // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
+        // with it, and a calibration that vanishes tells whoever ran it nothing at all.
+        Thread({
+            runCatching { measure() }.onFailure {
+                Log.e(LOG_TAG, "the calibration did not finish", it)
+                handler.post { show(getString(R.string.calibrate_failed, it.javaClass.simpleName)) }
+            }
+            running = false
+        }, "SoundMeshCalibrate").start()
     }
 
     private fun measure() {
         val subject = PlaybackUsage.fromName(intent.getStringExtra("subject") ?: PlaybackUsage.ACCESSIBILITY.name)
-        val caseId = intent.getStringExtra("case") ?: DEFAULT_CASE
-        val run = runCatching {
-            OutputLeadRunner(
-                runStore = RunStore(filesDir),
-                caseId = caseId,
-                subject = subject,
-                repeats = intent.getIntExtra("repeats", OutputLeadRunner.DEFAULT_REPEATS),
-                warmupNanos = intent.getIntExtra("warmup_seconds", 4).toLong() * 1_000_000_000L,
-                audioSource = CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
-            ).run()
-        }.getOrElse {
-            Log.e(LOG_TAG, "the calibration did not finish", it)
-            handler.post { show(getString(R.string.calibrate_failed, it.javaClass.simpleName)) }
-            return
-        }
+        val caseId = intent.getStringExtra("case") ?: OutputLeadRunner.DEFAULT_CASE_ID
+        val run = OutputLeadRunner(
+            runStore = RunStore(filesDir),
+            caseId = caseId,
+            subject = subject,
+            repeats = intent.getIntExtra("repeats", OutputLeadRunner.DEFAULT_REPEATS),
+            warmupNanos = intent.getIntExtra("warmup_seconds", 4).toLong() * 1_000_000_000L,
+            audioSource = CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
+        ).run()
         // Written before anything is stored, so a refused run still leaves its evidence behind.
         File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(run.json)
         Log.i(LOG_TAG, run.json)
@@ -91,7 +117,6 @@ class CalibrateActivity : ComponentActivity() {
 
     private companion object {
         const val LOG_TAG = "SoundMeshCalibrate"
-        const val DEFAULT_CASE = "output-lead"
         const val ARTIFACT = "output-lead.json"
     }
 }

@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.probe.PlaybackUsage
+import com.soundmesh.probe.ProbeCase
 import com.soundmesh.probe.RunStore
 import java.io.File
 import java.nio.file.Files
@@ -70,6 +71,16 @@ class OutputLeadRunnerTest {
                 later.startHostNanos > earlier.chirpAtHostNanos + OutputLeadRunner.CHIRP_DRAIN_NANOS
             )
         }
+    }
+
+    /**
+     * The recording is written through the probe's own run store, and that store takes only the
+     * harness's case ids - `[A-Z][0-9]+`. A default it rejects throws on the recording thread,
+     * which is a whole process rather than a whole run.
+     */
+    @Test
+    fun theDefaultCaseIsOneTheRunStoreWillAccept() {
+        assertTrue(ProbeCase.isSafeCaseId(OutputLeadRunner.DEFAULT_CASE_ID))
     }
 
     /** Media is the path everything else is measured against, so it cannot also be the subject. */

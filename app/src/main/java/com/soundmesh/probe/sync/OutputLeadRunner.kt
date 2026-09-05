@@ -66,6 +66,16 @@ class OutputLeadRunner(
     /** One renderer report per pass, in the order the passes ran. */
     private val reports = mutableListOf<String>()
 
+    /**
+     * What the recording threw, if it threw.
+     *
+     * An uncaught throw on any thread takes the whole process with it, which on hardware looks
+     * like the app vanishing rather than like a calibration failing - and the first run of this
+     * did exactly that, on a case id the run store would not accept. Caught so that a recording
+     * that never opened reads as a refused measurement, which is what it is.
+     */
+    @Volatile private var recordingFailure: String? = null
+
     fun run(): OutputLeadRun {
         require(repeats >= 1) { "a calibration needs at least one repeat" }
         require(subject != PlaybackUsage.MEDIA) { "media is the path everything else is measured against" }
@@ -74,9 +84,17 @@ class OutputLeadRunner(
         val lastEnd = passes.last().chirpAtHostNanos + chirpNanos() + CHIRP_DRAIN_NANOS
         awaitHostInstant(passes.first().startHostNanos - RECORD_LEAD_NANOS)
         val recordSeconds = secondsUntil(lastEnd + RECORD_TAIL_NANOS)
-        val recording = Thread({ calibration.record(recordSeconds) }, "SoundMeshLeadRecord")
+        val recording = Thread({
+            runCatching { calibration.record(recordSeconds) }
+                .onFailure { recordingFailure = "${it.javaClass.simpleName}: ${it.message}" }
+        }, "SoundMeshLeadRecord")
         recording.start()
-        for (pass in passes) play(pass)
+        // Stopped rather than played out: without a recording every chirp after this is a minute
+        // of noise in someone's quiet room that nothing will ever read.
+        for (pass in passes) {
+            if (recordingFailure != null) break
+            play(pass)
+        }
         recording.join()
         return analyse(passes, calibration)
     }
@@ -161,6 +179,7 @@ class OutputLeadRunner(
      * that never played.
      */
     private fun analyse(passes: List<Pass>, calibration: CalibrationRunner): OutputLeadRun {
+        recordingFailure?.let { return failed("the recording failed: $it") }
         val startedAt = calibration.startedAtHostNanos
             ?: return failed("the recording never reported when it opened")
         val recorded = runCatching { WavFileReader.readMono(File(runStore.prepareRun(caseId), "calibration.wav")) }
@@ -218,6 +237,13 @@ class OutputLeadRunner(
     }
 
     companion object {
+        /**
+         * The case the recording is filed under, and it has to be one [RunStore] accepts:
+         * `[A-Z][0-9]+`, the harness's own shape. L for lead, and a series of its own so a
+         * calibration never lands on top of an archived alignment run.
+         */
+        const val DEFAULT_CASE_ID = "L1"
+
         /**
          * Five, and the median of them. Three was tried on the two-handset ruler and was not
          * enough: O60, O61 and O62 were the same binary run back to back without the phones being
