@@ -17,19 +17,41 @@ data class OutputVolume(val level: Int, val max: Int, val settable: Boolean)
  * leave this one wherever it happened to be. A listener reported the host sounding quiet and found
  * by hand that the panel was moving the wrong stream. This is the only control that answers that.
  *
- * Whether an ordinary app may set it is a per-device question rather than a documented one, so
- * [read] finds out by asking for the level that is already set. That is a no-op when it is allowed
- * and throws when it is not, which is an answer that costs the user nothing either way - the
- * alternative is a slider that looks live and silently does nothing.
+ * Whether an ordinary app may set it is a per-device question rather than a documented one, and it
+ * has to be answered by moving the stream and reading it back. Asking whether the call throws is
+ * not the same question and gets the wrong answer: on the X10 it throws nothing at all and changes
+ * nothing at all. Sixteen calls went through during one drag -
+ *
+ *     AudioManager: setStreamVolume 10 index: 6 flags: 0
+ *     ...
+ *     AudioManager: setStreamVolume 10 index: 12 flags: 0
+ *
+ * - and the stream stayed on 4 throughout. The platform accepts the call from an app that is not an
+ * accessibility service and silently drops it, so a slider driven by the no-throw answer looks live
+ * and does nothing, which is the one outcome this class exists to avoid.
  */
 class AccessibilityVolume(private val audio: AudioManager) {
     /**
-     * Asked once. [read] runs several times a minute while a capture is up, and a no-op write that
-     * often is still a write to a system-wide setting - which this has no business making a habit
-     * of. What it answers cannot change under a running app anyway.
+     * Asked once, by moving the stream one step and putting it straight back.
+     *
+     * Once because [read] runs several times a minute while a capture is up, and this probe writes
+     * - briefly, and to a system-wide setting. On a handset that ignores the write there is nothing
+     * to put back; on one that honours it the level is restored in the same breath, before anything
+     * is playing on that output. What it answers cannot change under a running app anyway.
      */
     private val settable: Boolean by lazy {
-        runCatching { set(audio.getStreamVolume(STREAM)) }.isSuccess
+        val before = audio.getStreamVolume(STREAM)
+        val max = audio.getStreamMaxVolume(STREAM)
+        val probe = if (before < max) before + 1 else before - 1
+        if (probe < 0 || probe > max) return@lazy false
+        runCatching {
+            try {
+                set(probe)
+                audio.getStreamVolume(STREAM) == probe
+            } finally {
+                set(before)
+            }
+        }.getOrDefault(false)
     }
 
     fun read(): OutputVolume =
