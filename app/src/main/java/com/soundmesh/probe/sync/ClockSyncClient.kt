@@ -8,6 +8,31 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 
 /**
+ * The estimate a run has in force, which a rejected cycle does not take away.
+ *
+ * [ClockOffsetEstimator.estimate] answers null for a window it will not stand behind - too few
+ * samples, or a slope past the plausibility guard, which is how a rogue exchange with the shortest
+ * round trip of all and an offset a hundred milliseconds out gets caught, since the best-of cut is
+ * bound to keep it. That is a reason to leave the previous answer standing, not to have no answer:
+ * writing the rejection through as a null sent the caller to its own fallback, which on
+ * 2026-09-08 was the estimate taken before the chirps began - fifty-four exchanges and twenty
+ * seconds earlier. The run's worst single point was 9.167 ms against a 3.0 gate; held instead, the
+ * same recording gives 2.156.
+ *
+ * tools/src/clock-replay.mjs has always modelled the run this way and says so in its own test.
+ * This is the half that was not true.
+ */
+internal class HeldEstimate {
+    @Volatile private var held: ClockEstimate? = null
+
+    fun offer(fresh: ClockEstimate?) {
+        if (fresh != null) held = fresh
+    }
+
+    fun current(): ClockEstimate? = held
+}
+
+/**
  * Asks the host for its clock on a schedule and feeds the answers to the estimator.
  * UDP rather than the audio connection: TCP retransmission and queueing would measure how long
  * a packet waited in a kernel buffer rather than how long the network took.
@@ -26,7 +51,7 @@ class ClockSyncClient(
     // (2s by default) leaves the reported offset off by at most driftPpm * cycle length: about
     // 1ms even at the estimator's 500ppm rejection ceiling, tens of microseconds at the drift a
     // real crystal shows - either way small next to the 5ms alignment budget this offset feeds.
-    @Volatile private var cachedEstimate: ClockEstimate? = null
+    private val cached = HeldEstimate()
 
     // Kept whole, not merely fed to the estimator and forgotten. The estimator holds a sliding
     // window and drops whatever falls out of it, so without this the exchanges a run was actually
@@ -51,8 +76,8 @@ class ClockSyncClient(
                         socket.send(DatagramPacket(request, request.size, address, port))
                         receiveMatchingReply(socket, sent)
                     }.getOrNull()?.let(::keep)
-                    val estimate = estimator.estimate(System.nanoTime())
-                    cachedEstimate = estimate
+                        val estimate = estimator.estimate(System.nanoTime())
+                    cached.offer(estimate)
                     estimate?.let { history.add(it) }
                     Thread.sleep(intervalMillis)
                 }
@@ -98,9 +123,10 @@ class ClockSyncClient(
 
     /**
      * The estimate as of the last exchange cycle, or null while the window is still filling.
-     * Cached rather than refit here - see [cachedEstimate].
+     * Cached rather than refit here - see the comment on [cached]. A rejected cycle leaves the
+     * previous answer standing rather than none; [HeldEstimate] says why.
      */
-    fun currentEstimate(): ClockEstimate? = cachedEstimate
+    fun currentEstimate(): ClockEstimate? = cached.current()
 
     /** Every exchange this run fed the estimator, in the order it fed them. Read once [runFor] has returned. */
     fun recordedExchanges(): List<ClockExchange> = exchanges.toList()

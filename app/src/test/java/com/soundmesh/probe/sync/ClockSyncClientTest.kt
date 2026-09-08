@@ -1,5 +1,6 @@
 package com.soundmesh.probe.sync
 
+import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockOffsetEstimator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -70,5 +71,41 @@ class ClockSyncClientTest {
 
         assertFalse("the loop ignored the interrupt and kept running", thread.isAlive)
         assertNull("the interrupt left the thread by throwing", thrown.get())
+    }
+
+    /**
+     * A cycle whose fit is rejected leaves the previous answer standing.
+     *
+     * tools/src/clock-replay.mjs already says the run behaves this way - its test reads "its cache
+     * keeps the last estimate that succeeded" - and the run did not: it wrote the rejection through
+     * as a null, and the caller's own fallback then reached past every good estimate of the last
+     * twenty seconds to the one taken before the chirps began. That is a divergence between the
+     * shipped run and the replay it is meant to be scored against, which is the one thing
+     * ClockReplayGoldenTest exists to prevent.
+     *
+     * It cost 7 ms on hardware: in the 17:44 run of 2026-09-08 the third chirp was emitted against
+     * an offset fifty-four exchanges stale, and the run's worst single point was 9.167 ms against a
+     * 3.0 gate. Held instead, the same recording gives 2.156 ms.
+     *
+     * The guard itself is right and stays: a rogue exchange with the shortest round trip of all and
+     * an offset a hundred milliseconds out is exactly what the best-of cut is bound to keep, and
+     * the slope is what catches it.
+     */
+    @Test
+    fun aRejectedCycleLeavesTheLastEstimateThatSucceededStanding() {
+        val held = HeldEstimate()
+        val first = ClockEstimate(offsetNanos = 5L, uncertaintyNanos = 1L, driftPpm = 0.1, sampleCount = 8)
+        val later = ClockEstimate(offsetNanos = 9L, uncertaintyNanos = 2L, driftPpm = 0.2, sampleCount = 8)
+
+        assertNull("nothing is in force before the first fit comes back", held.current())
+
+        held.offer(first)
+        assertEquals(first, held.current())
+
+        held.offer(null)
+        assertEquals("a rejected fit erased the answer in force", first, held.current())
+
+        held.offer(later)
+        assertEquals(later, held.current())
     }
 }
