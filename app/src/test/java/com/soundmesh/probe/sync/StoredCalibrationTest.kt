@@ -105,6 +105,57 @@ class StoredCalibrationTest {
         assertNull(StoredCalibration(directory, peer).read())
     }
 
+    /**
+     * The way out of a pair that has jammed.
+     *
+     * A run only folds into a constant that already exists when it passed, which stops a bad run
+     * making a good constant worse - but the first run is exempt, because a pair nobody has
+     * measured has to adopt something. So a first run that lands badly is stored whole, every
+     * later run then fails against it, and nothing in the loop can ever move it again.
+     *
+     * That is not a rare corner. Five verification runs on a good link on 2026-09-08 put the
+     * cluster mean at 0.624 ± 0.388 against a 1.0 gate: about one run in six crosses it on
+     * scatter alone, with nothing wrong. Forgetting is the only exit.
+     */
+    @Test
+    fun forgettingLeavesThePairUnmeasuredRatherThanAtZero() {
+        val directory = temporaryDir()
+        val stored = StoredCalibration(directory, peer)
+        stored.write(-34_773L, 4)
+
+        stored.forget()
+
+        assertNull("a forgotten pair still carries a correction", stored.read())
+    }
+
+    /** Forgetting is per pair, for the same reason the file is: one partner is not the other. */
+    @Test
+    fun forgettingOnePairLeavesTheOtherStanding() {
+        val directory = temporaryDir()
+        StoredCalibration(directory, peer).write(-34_773L, 4)
+        StoredCalibration(directory, otherPeer).write(-35_108L, 15)
+
+        StoredCalibration(directory, peer).forget()
+
+        assertNull(StoredCalibration(directory, peer).read())
+        assertEquals(Calibration(-35_108L, 15), StoredCalibration(directory, otherPeer).read())
+    }
+
+    /**
+     * The screen offers this whenever there is something to forget, and what is on screen can be
+     * one run behind what is on disk. Asking twice is not an error.
+     */
+    @Test
+    fun forgettingAPairThatWasNeverMeasuredChangesNothing() {
+        val directory = temporaryDir()
+        val stored = StoredCalibration(directory, peer)
+
+        stored.forget()
+        stored.forget()
+
+        assertNull(stored.read())
+    }
+
     @Test
     fun replacesTheCorrectionRatherThanAppendingToIt() {
         val directory = temporaryDir()

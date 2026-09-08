@@ -8,11 +8,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -42,11 +48,16 @@ data class PeerCalibrateState(
 
 class PeerCalibrateActions(
     val calibrate: () -> Unit,
-    val verify: () -> Unit
+    val verify: () -> Unit,
+    val forget: () -> Unit
 )
 
 @Composable
 fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions) {
+    // One tap of friction, because there is no undo and the constant on the other side of it is
+    // the average of every run so far. Local to the screen: nothing outside it needs to know that
+    // somebody is halfway through deciding.
+    var confirmingForget by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -113,8 +124,53 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                         stringResource(R.string.pair_calibrate_verify_hint),
                         style = MaterialTheme.typography.bodySmall
                     )
+                    // The only way back out of a pair that has jammed: a run folds into an
+                    // existing constant only when it passed, and the first run is exempt, so a
+                    // bad first run is stored whole and every later run then fails against it.
+                    // Offered under exactly the condition the verify button is, because both
+                    // mean the same thing - there is a stored constant, and this handset is the
+                    // side that carries it.
+                    OutlinedButton(
+                        onClick = { confirmingForget = true },
+                        enabled = !state.running,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.pair_calibrate_forget))
+                    }
+                    Text(
+                        stringResource(R.string.pair_calibrate_forget_hint),
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
+        }
+        if (confirmingForget && state.stored != null) {
+            AlertDialog(
+                onDismissRequest = { confirmingForget = false },
+                title = { Text(stringResource(R.string.pair_calibrate_forget_title)) },
+                text = {
+                    Text(
+                        stringResource(
+                            R.string.pair_calibrate_forget_body,
+                            state.stored / 1000.0,
+                            state.observations
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmingForget = false
+                        actions.forget()
+                    }) {
+                        Text(stringResource(R.string.pair_calibrate_forget_yes))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmingForget = false }) {
+                        Text(stringResource(R.string.pair_calibrate_forget_no))
+                    }
+                }
+            )
         }
         state.message?.let {
             Section(R.string.pair_calibrate_result) {

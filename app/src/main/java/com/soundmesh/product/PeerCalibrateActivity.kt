@@ -175,7 +175,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                         ),
                         actions = PeerCalibrateActions(
                             calibrate = { begin(verifying = false) },
-                            verify = { begin(verifying = true) }
+                            verify = { begin(verifying = true) },
+                            forget = { forget() }
                         )
                     )
                 }
@@ -458,6 +459,21 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private fun storedCalibration(): Calibration? =
         PairedHost(filesDir).read()?.let { StoredCalibration(filesDir, it.hostId).read() }
+
+    /**
+     * Drops this pair's constant, so the next run is adopted whole the way a first run is.
+     *
+     * Refused while a run is going, and that is not tidiness: the rule that decides whether a run
+     * may move the constant reads the observation count, and clearing it mid-run would turn the
+     * run in flight into a first run - adopted whether or not it passed.
+     */
+    private fun forget() {
+        if (running) return
+        PairedHost(filesDir).read()?.let { StoredCalibration(filesDir, it.hostId).forget() }
+        // Also what redraws the screen: the stored value is read from disk during composition,
+        // and the message is the state change that sends it back for a fresh look.
+        show(getString(R.string.pair_calibrate_forgotten))
+    }
 
     /** The run's own report, with the clock it was scheduled against spliced beside it. */
     private fun withClock(

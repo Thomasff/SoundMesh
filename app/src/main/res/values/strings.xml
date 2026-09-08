@@ -69,6 +69,13 @@
     <string name="pair_calibrate_host_done">这台是主机，测量结果记在另一台上。这一轮量到：偏差 %1$.3f 毫秒，两台间距约 %2$.2f 米。</string>
     <string name="pair_calibrate_done">测完了：这一对的偏差是 %1$.3f 毫秒，已经记下来（第 %2$d 次观测）。</string>
     <string name="pair_calibrate_slow_link">这个网络太慢，没法对齐：两台之间一来一回要 %1$.0f 毫秒，超过 %2$.0f 就对不准了。换成一台开热点、另一台连它，通常会好很多。</string>
+    <string name="pair_calibrate_forget">清除这一对的校准，重新开始</string>
+    <string name="pair_calibrate_forget_hint">如果第一轮就没测准，之后每一轮都会通不过，这个数就再也改不动了。清除之后，下一轮会像第一次那样整个采纳。</string>
+    <string name="pair_calibrate_forget_title">清除已经记下的校准？</string>
+    <string name="pair_calibrate_forget_body">现在记着的是 %1$.3f 毫秒，%2$d 次观测的平均。清了就没了，下一轮从头测，大约一分钟。</string>
+    <string name="pair_calibrate_forget_yes">清除</string>
+    <string name="pair_calibrate_forget_no">先不清</string>
+    <string name="pair_calibrate_forgotten">已经清除。下一轮会像第一次那样，整个采纳测到的结果。</string>
     <string name="pair_calibrate_verified">验证完成：补偿之后还剩 %1$.3f 毫秒。越接近零，说明记下的数越准。</string>
     <string name="pair_calibrate_kept">这一轮没算数，没有记下来：%1$s</string>
     <string name="pair_calibrate_not_folded">这一轮判定没通过，已经记下的数没有被改动。请在安静的环境里再测一次。</string>

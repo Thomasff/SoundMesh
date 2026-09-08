@@ -53,6 +53,26 @@ class StoredCalibration(private val directory: File, private val peerId: String)
         file().writeText("$micros $observations")
     }
 
+    /**
+     * Drops this pair's correction, leaving it as it was before the first run.
+     *
+     * The loop has no other way back. A run only folds into an existing constant when it passed,
+     * and the first run is exempt from that because a pair nobody has measured has to adopt
+     * something - so a first run that lands badly is stored whole and every later run then fails
+     * against it, with nothing able to move it again.
+     *
+     * How often a run lands badly with nothing wrong was measured rather than guessed: five
+     * verification runs on a good link on 2026-09-08 gave a cluster mean of 0.624 ± 0.388 against
+     * a 1.0 gate, so about one run in six crosses it on scatter alone.
+     *
+     * Deleting rather than writing a zero: zero is a correction, and a correction of zero is
+     * exactly what a mis-measured pair looks like. [read] already answers null for a pair nobody
+     * has measured, and that is the state this returns to.
+     */
+    fun forget() {
+        file().delete()
+    }
+
     private fun file() = File(directory, "$FILE_PREFIX$peerId")
 
     companion object {
