@@ -42,18 +42,32 @@ class ClockSyncClient(
             socket.soTimeout = SOCKET_TIMEOUT_MILLIS
             val deadline = System.nanoTime() + seconds * 1_000_000_000L
             var seq = 0
-            while (System.nanoTime() < deadline) {
-                val t1 = System.nanoTime()
-                val sent = seq++
-                val request = ClockPacket.encodeRequest(sent, t1)
-                runCatching {
-                    socket.send(DatagramPacket(request, request.size, address, port))
-                    receiveMatchingReply(socket, sent)
-                }.getOrNull()?.let(::keep)
-                val estimate = estimator.estimate(System.nanoTime())
-                cachedEstimate = estimate
-                estimate?.let { history.add(it) }
-                Thread.sleep(intervalMillis)
+            try {
+                while (System.nanoTime() < deadline) {
+                    val t1 = System.nanoTime()
+                    val sent = seq++
+                    val request = ClockPacket.encodeRequest(sent, t1)
+                    runCatching {
+                        socket.send(DatagramPacket(request, request.size, address, port))
+                        receiveMatchingReply(socket, sent)
+                    }.getOrNull()?.let(::keep)
+                    val estimate = estimator.estimate(System.nanoTime())
+                    cachedEstimate = estimate
+                    estimate?.let { history.add(it) }
+                    Thread.sleep(intervalMillis)
+                }
+            } catch (stopped: InterruptedException) {
+                // The interrupt is this loop's stop, and every caller uses it as one: it has no
+                // other. Left to propagate it leaves the runnable of whatever thread runs this by
+                // throwing, and an uncaught throw on any thread takes the process. The pair
+                // calibration screen interrupts in the finally that ends a run, so the process
+                // died there on every run - after the result on a good one, and before the screen
+                // could say why on a failed one, which is the one that cost a reason.
+                //
+                // The flag is put back rather than swallowed: a caller that loops around runFor is
+                // entitled to see that it was stopped. SinkSession.exchangeClock is such a caller
+                // and already clears it deliberately before rebuilding, for its own stated reason.
+                Thread.currentThread().interrupt()
             }
         }
         return history
