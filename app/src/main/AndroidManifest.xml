@@ -11,6 +11,10 @@
          does not apply to, so the lock may be unnecessary - held anyway because whether these
          vendor builds behave like the platform one is not something to learn from a failed run. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Calibration. WifiLock.acquire is guarded by this one, and without it the lock fails
+         silently - which would make a run read as evidence that power save does not matter when
+         the arm under test never ran. Normal permission; nothing is prompted for. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Reconnection. Section 11.2 asks for a network change to be detected rather than waited
          out; without this the only thing that notices a WiFi switch is a socket timeout. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

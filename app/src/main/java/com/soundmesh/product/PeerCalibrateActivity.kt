@@ -39,6 +39,8 @@ import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.PeerCalibrationRunner
+import com.soundmesh.probe.sync.holdingRadio
+import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
@@ -72,11 +74,13 @@ internal fun clockReportJson(
     intervalMillis: Long,
     windowSize: Int,
     bestCount: Int,
+    radioHeld: Boolean,
     atStart: ClockEstimate?,
     atEnd: ClockEstimate?,
     exchanges: List<ClockExchange>
 ): String =
     "{\"intervalMillis\":$intervalMillis,\"windowSize\":$windowSize,\"bestCount\":$bestCount," +
+        "\"radioHeld\":$radioHeld," +
         "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}," +
         "\"exchanges\":${exchangesJson(exchanges)}}"
 
@@ -125,6 +129,14 @@ class PeerCalibrateActivity : ComponentActivity() {
 
     /** One calibration at a time: two would share a microphone, a port and a run directory. */
     @Volatile private var running = false
+
+    /**
+     * Whether the WiFi radio was actually held out of power save for this run.
+     *
+     * On the record rather than assumed: the lock is best effort, and a run whose lock quietly did
+     * nothing looks exactly like a run that proves power save is irrelevant.
+     */
+    @Volatile private var radioHeld = false
 
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
@@ -204,10 +216,16 @@ class PeerCalibrateActivity : ComponentActivity() {
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
         Thread({
             runCatching {
-                when (role()) {
-                    CalibrationRole.HOST -> measureAsHost()
-                    CalibrationRole.SINK -> measureAsSink(verifying)
-                    null -> show(getString(R.string.pair_calibrate_no_role))
+                // Held across the whole run and on both sides. An access point buffers frames for
+                // a station that is asleep, and the reply half of an exchange is as much of the
+                // round trip as the request half - a host dozing costs the sink exactly the same
+                // milliseconds. Whether it was actually taken is recorded, not assumed.
+                holdingRadio(radioHoldOf(this), held = { radioHeld = it }) {
+                    when (role()) {
+                        CalibrationRole.HOST -> measureAsHost()
+                        CalibrationRole.SINK -> measureAsSink(verifying)
+                        null -> show(getString(R.string.pair_calibrate_no_role))
+                    }
                 }
             }.onFailure {
                 Log.e(LOG_TAG, "the pair calibration did not finish", it)
@@ -426,7 +444,7 @@ class PeerCalibrateActivity : ComponentActivity() {
     ): String = withClockReport(
         json,
         clockReportJson(
-            CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, atStart, atEnd, exchanges
+            CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, radioHeld, atStart, atEnd, exchanges
         )
     )
 

@@ -97,6 +97,7 @@ class PeerCalibrateActivityTest {
             intervalMillis = 250L,
             windowSize = 64,
             bestCount = 8,
+            radioHeld = true,
             atStart = ClockEstimate(offsetNanos = -5L, uncertaintyNanos = 7L, driftPpm = 1.5, sampleCount = 8),
             atEnd = null,
             exchanges = emptyList()
@@ -196,6 +197,7 @@ class PeerCalibrateActivityTest {
             intervalMillis = 250L,
             windowSize = 64,
             bestCount = 8,
+            radioHeld = true,
             atStart = null,
             atEnd = null,
             exchanges = listOf(ClockExchange(1, 2, 3, 4), ClockExchange(10, 20, 30, 40))
@@ -213,11 +215,28 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theReportSaysWhichEstimatorShapeTheRunUsed() {
-        val json = clockReportJson(250L, 64, 8, null, null, emptyList())
+        val json = clockReportJson(250L, 64, 8, true, null, null, emptyList())
 
         assertTrue(json.contains("\"windowSize\":64"))
         assertTrue(json.contains("\"bestCount\":8"))
         // A refused run records no exchanges and still has to parse.
         assertTrue(json.contains("\"exchanges\":[]"))
+    }
+
+    /**
+     * Whether the radio was actually held out of power save is on the record beside the numbers.
+     *
+     * The lock is best effort - it needs WAKE_LOCK and a vendor build that will hand one over - so
+     * a run whose lock quietly did nothing reads exactly like a run proving power save does not
+     * matter. The two have to be told apart afterwards, by somebody who was not in the room.
+     */
+    @Test
+    fun theReportSaysWhetherTheRadioWasActuallyHeld() {
+        assertTrue(
+            clockReportJson(250L, 64, 8, true, null, null, emptyList()).contains("\"radioHeld\":true")
+        )
+        assertTrue(
+            clockReportJson(250L, 64, 8, false, null, null, emptyList()).contains("\"radioHeld\":false")
+        )
     }
 }
