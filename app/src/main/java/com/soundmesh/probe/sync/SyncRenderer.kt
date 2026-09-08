@@ -22,6 +22,30 @@ import kotlin.math.PI
 import kotlin.math.cos
 
 /**
+ * What the output path this run actually got looks like, as the framework describes it.
+ *
+ * Every field here is a thing the framework decides rather than a thing this code asks for, and
+ * they are recorded because on 2026-09-08 the run-level alignment bias turned out to sit at one of
+ * two levels 0.87 ms apart, drawn afresh each run, with nothing in the report able to tell which.
+ * Twelve runs could establish that the two levels exist and not what distinguishes them - a sweep
+ * over the fields that were being recorded found nothing that survived the multiple comparisons.
+ * These are the ones the sweep had no access to.
+ */
+internal fun trackProfileJson(
+    minBufferBytes: Int,
+    requestedBufferBytes: Int,
+    bufferSizeFrames: Int,
+    bufferCapacityFrames: Int,
+    performanceMode: Int,
+    sampleRate: Int,
+    firstPendingFrames: Long?
+): String =
+    "{\"minBufferBytes\":$minBufferBytes,\"requestedBufferBytes\":$requestedBufferBytes," +
+        "\"bufferSizeFrames\":$bufferSizeFrames,\"bufferCapacityFrames\":$bufferCapacityFrames," +
+        "\"performanceMode\":$performanceMode,\"sampleRate\":$sampleRate," +
+        "\"firstPendingFrames\":${firstPendingFrames ?: "null"}}"
+
+/**
  * Feeds the scheduler's decisions to an AudioTrack and keeps playback on the shared timeline.
  * Output latency lives here: the scheduler is asked what should be leaving the speakers by the
  * time the bytes written now actually get there.
@@ -196,6 +220,21 @@ class SyncRenderer(
     @Volatile private var streamingEndStats: SchedulerStats? = null
     /** What the AudioTrack actually granted, and how deep the output really ran. Diagnostics only. */
     @Volatile private var trackBufferFrames = 0
+    /**
+     * The rest of what the framework granted, reported by [trackProfileJson].
+     *
+     * [firstPendingFrames] is the one that is not a build-time constant: the first depth the
+     * timestamp path ever returned, which is how far ahead of the speaker this run actually ran
+     * before any drift correction had happened. Whole-run extremes cannot answer that - they are
+     * dominated by the streaming segment - and the run-level bias this is here to identify is
+     * fixed before the first chirp.
+     */
+    @Volatile private var trackMinBufferBytes = 0
+    @Volatile private var trackRequestedBytes = 0
+    @Volatile private var trackCapacityFrames = 0
+    @Volatile private var trackPerformanceMode = 0
+    @Volatile private var trackSampleRate = 0
+    @Volatile private var firstPendingFrames: Long? = null
     @Volatile private var minPendingFrames = Long.MAX_VALUE
     @Volatile private var maxPendingFrames = Long.MIN_VALUE
     /**
@@ -303,6 +342,11 @@ class SyncRenderer(
             if (lowLatency) builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             track = builder.build()
             trackBufferFrames = track.bufferSizeInFrames
+            trackMinBufferBytes = minimum
+            trackRequestedBytes = maxOf(minimum, silence.size * 2)
+            trackCapacityFrames = track.bufferCapacityInFrames
+            trackPerformanceMode = track.performanceMode
+            trackSampleRate = track.sampleRate
             track.play()
             val timestamp = AudioTimestamp()
             var writtenFrames = 0L
@@ -536,6 +580,7 @@ class SyncRenderer(
      */
     private fun sampleDrift(track: AudioTrack, timestamp: AudioTimestamp, writtenFrames: Long, timelineNextHostNanos: Long) {
         val pendingFrames = pendingFrames(track, timestamp, writtenFrames) ?: return
+        if (firstPendingFrames == null) firstPendingFrames = pendingFrames
         if (pendingFrames < minPendingFrames) minPendingFrames = pendingFrames
         if (pendingFrames > maxPendingFrames) maxPendingFrames = pendingFrames
         val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, timelineNextHostNanos, SAMPLE_RATE)
@@ -693,6 +738,10 @@ class SyncRenderer(
             "\"timestampQueries\":$timestampQueries,\"timestampFailures\":$timestampFailures," +
             "\"pendingRejected\":$pendingRejected,\"depthFallbacks\":$depthFallbacks," +
             "\"lowLatency\":$lowLatency,\"playbackUsage\":\"${playbackUsage.name}\"," +
+            "\"trackProfile\":" + trackProfileJson(
+                trackMinBufferBytes, trackRequestedBytes, trackBufferFrames,
+                trackCapacityFrames, trackPerformanceMode, trackSampleRate, firstPendingFrames
+            ) + "," +
             "\"failureCode\":${failureCode?.let { "\"$it\"" } ?: "null"}}"
     }
 
