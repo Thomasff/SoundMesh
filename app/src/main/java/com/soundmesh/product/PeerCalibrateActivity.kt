@@ -25,6 +25,7 @@ import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ClockEstimate
+import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
@@ -41,6 +42,62 @@ import com.soundmesh.probe.sync.PeerCalibrationRunner
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
+
+/**
+ * Whether a finished run may move the correction this handset carries.
+ *
+ * [CalibrationUpdate.usable] admits a failed run on purpose, and its own comment gives the reason:
+ * a pair that has never been calibrated sits tens of milliseconds out, fails every threshold in
+ * the verdict, and is exactly the run the loop has to adopt or no first correction can ever be
+ * made. **That reason is spent the moment a constant exists.**
+ *
+ * C1, the first run on hardware, was such a run - FAIL, readable, and folded - and it moved a good
+ * constant from 34511 to 36962 with nothing in any later result to notice it by. The condition the
+ * comment already states is applied here rather than widened in [CalibrationUpdate], where the
+ * harness's 186 archived runs were all taken under the present rule.
+ *
+ * A run that cannot say whether it passed is not a run that passed.
+ */
+internal fun foldsIntoStoredCalibration(observations: Int, passed: Boolean?): Boolean =
+    observations == 0 || passed == true
+
+/**
+ * The clock layer of a peer calibration report.
+ *
+ * File scope so it can be judged on what it produces rather than on how its source reads. The
+ * assertion that went in the other way round here passed against an unrelated line while the
+ * feature it named was not wired up at all.
+ */
+internal fun clockReportJson(
+    intervalMillis: Long,
+    windowSize: Int,
+    bestCount: Int,
+    atStart: ClockEstimate?,
+    atEnd: ClockEstimate?,
+    exchanges: List<ClockExchange>
+): String =
+    "{\"intervalMillis\":$intervalMillis,\"windowSize\":$windowSize,\"bestCount\":$bestCount," +
+        "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}," +
+        "\"exchanges\":${exchangesJson(exchanges)}}"
+
+/** The run's own report with [clock] spliced in beside it, under the name the analysis reads. */
+internal fun withClockReport(runJson: String, clock: String): String =
+    runJson.dropLast(1) + ",\"clock\":" + clock + "}"
+
+/**
+ * Four timestamps per exchange, the same shape [SyncActivity] has always written.
+ *
+ * Kept the same on purpose: the harness's recorded runs and these are the same kind of evidence,
+ * and one replay script should read both.
+ */
+private fun exchangesJson(exchanges: List<ClockExchange>): String =
+    exchanges.joinToString(",", "[", "]") { "[${it.t1},${it.t2},${it.t3},${it.t4}]" }
+
+private fun estimateJson(estimate: ClockEstimate?): String =
+    estimate?.let {
+        "{\"offsetNanos\":${it.offsetNanos},\"uncertaintyNanos\":${it.uncertaintyNanos}," +
+            "\"driftPpm\":${it.driftPpm},\"sampleCount\":${it.sampleCount}}"
+    } ?: "null"
 
 /**
  * Measures the fixed offset between this handset and the one it is paired with, and stores it.
@@ -62,24 +119,6 @@ import java.io.File
  * Startable by name as well, with `auto`, because the first thing this has to do is agree with the
  * harness runs it replaces, and that comparison is driven over ADB.
  */
-/**
- * Whether a finished run may move the correction this handset carries.
- *
- * [CalibrationUpdate.usable] admits a failed run on purpose, and its own comment gives the reason:
- * a pair that has never been calibrated sits tens of milliseconds out, fails every threshold in
- * the verdict, and is exactly the run the loop has to adopt or no first correction can ever be
- * made. **That reason is spent the moment a constant exists.**
- *
- * C1, the first run on hardware, was such a run - FAIL, readable, and folded - and it moved a good
- * constant from 34511 to 36962 with nothing in any later result to notice it by. The condition the
- * comment already states is applied here rather than widened in [CalibrationUpdate], where the
- * harness's 186 archived runs were all taken under the present rule.
- *
- * A run that cannot say whether it passed is not a run that passed.
- */
-internal fun foldsIntoStoredCalibration(observations: Int, passed: Boolean?): Boolean =
-    observations == 0 || passed == true
-
 class PeerCalibrateActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var state by mutableStateOf(PeerCalibrateState())
@@ -331,7 +370,17 @@ class PeerCalibrateActivity : ComponentActivity() {
             // the reason to record it is that the constant is only as good as the offset the
             // chirps were scheduled against. Without it, a run whose estimate was still moving
             // reads exactly like a run whose room was noisy.
-            val json = withClock(run.json, converged, clockClient.currentEstimate())
+            // The clock's work is over - what is left is one socket exchange with the host - and
+            // recordedExchanges is documented to be read once runFor has returned. It is backed by
+            // a plain ArrayList the clock thread appends to, so reading it from here while that
+            // thread still runs is a race, and the harness avoids it by joining first (see
+            // SyncActivity, which builds its report after clockThread.join()). Stopped here rather
+            // than only in the finally so this side does the same.
+            clockThread.interrupt()
+            clockThread.join(CLOCK_JOIN_MILLIS)
+            val json = withClock(
+                run.json, estimator, converged, clockClient.currentEstimate(), clockClient.recordedExchanges()
+            )
             File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(json)
             Log.i(LOG_TAG, json)
             // Delivered even when there is nothing to deliver: the host waits on this message, so
@@ -368,17 +417,18 @@ class PeerCalibrateActivity : ComponentActivity() {
         PairedHost(filesDir).read()?.let { StoredCalibration(filesDir, it.hostId).read() }
 
     /** The run's own report, with the clock it was scheduled against spliced beside it. */
-    private fun withClock(json: String, atStart: ClockEstimate?, atEnd: ClockEstimate?): String =
-        json.dropLast(1) +
-            ",\"clock\":{\"intervalMillis\":$CLOCK_INTERVAL_MILLIS," +
-            "\"windowSize\":${ClockOffsetEstimator.DEFAULT_WINDOW}," +
-            "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}}}"
-
-    private fun estimateJson(estimate: ClockEstimate?): String =
-        estimate?.let {
-            "{\"offsetNanos\":${it.offsetNanos},\"uncertaintyNanos\":${it.uncertaintyNanos}," +
-                "\"driftPpm\":${it.driftPpm},\"sampleCount\":${it.sampleCount}}"
-        } ?: "null"
+    private fun withClock(
+        json: String,
+        estimator: ClockOffsetEstimator,
+        atStart: ClockEstimate?,
+        atEnd: ClockEstimate?,
+        exchanges: List<ClockExchange>
+    ): String = withClockReport(
+        json,
+        clockReportJson(
+            CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, atStart, atEnd, exchanges
+        )
+    )
 
     private fun show(text: String) {
         handler.post { state = state.copy(message = text) }
@@ -464,6 +514,15 @@ class PeerCalibrateActivity : ComponentActivity() {
 
         /** Far finer than the seconds convergence takes, and it costs nothing to wait this way. */
         const val CONVERGENCE_POLL_MILLIS = 50L
+
+        /**
+         * How long the run waits for the clock thread to notice it has been stopped.
+         *
+         * Bounded rather than open ended: the thread is inside a socket receive or a sleep, both of
+         * which end promptly, and a run that has already measured everything it came for should
+         * report it even if this one join is the thing that hangs.
+         */
+        const val CLOCK_JOIN_MILLIS = 2_000L
 
         /** The sink's correlation pass takes seconds; this bounds a sink that died mid-run. */
         const val RESULT_TIMEOUT_MILLIS = 120_000

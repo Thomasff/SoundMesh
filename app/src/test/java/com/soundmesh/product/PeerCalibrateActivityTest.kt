@@ -1,5 +1,7 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.ClockEstimate
+import com.soundmesh.core.ClockExchange
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -91,8 +93,22 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun aRunRecordsTheClockItWasScheduledAgainst() {
-        assertTrue(source.contains("\\\"clock\\\":{"))
-        assertTrue(source.contains("uncertaintyNanos"))
+        val clock = clockReportJson(
+            intervalMillis = 250L,
+            windowSize = 64,
+            bestCount = 8,
+            atStart = ClockEstimate(offsetNanos = -5L, uncertaintyNanos = 7L, driftPpm = 1.5, sampleCount = 8),
+            atEnd = null,
+            exchanges = emptyList()
+        )
+
+        assertTrue(clock.contains("\"offsetNanos\":-5"))
+        assertTrue(clock.contains("\"uncertaintyNanos\":7"))
+        // A run whose clock never settled has to say so rather than leave the field out, or the
+        // difference between "did not settle" and "an older report" is gone from the record.
+        assertTrue(clock.contains("\"atEnd\":null"))
+        // And the block has to arrive under the name the analysis reads it by.
+        assertTrue(withClockReport("{\"role\":\"SINK\"}", clock).contains("\"clock\":{"))
     }
 
     /**
@@ -161,5 +177,47 @@ class PeerCalibrateActivityTest {
             "the role is derived from the pairing file, which both handsets of a pair can hold",
             source.contains("if (PairedHost(filesDir).read() != null) CalibrationRole.SINK")
         )
+    }
+
+    /**
+     * A run carries every exchange its offset was fitted from.
+     *
+     * They are the expensive half to collect and the cheap half to store - tens of kilobytes
+     * against a 2.7 MB recording - and they are the only thing that lets a candidate estimator be
+     * scored offline on what a real run actually saw, rather than on a second run of the phones.
+     * [ClockSyncClient] has kept them all along and says in as many words that this is why; the
+     * harness has written them out since it existed. This path did not, so the two runs of
+     * 2026-09-08 that caught the offset walking 3.7 ms on a router threw away the only data that
+     * could tell a minimum filter from a mean of eight.
+     */
+    @Test
+    fun aRunCarriesEveryExchangeItsOffsetWasFittedFrom() {
+        val json = clockReportJson(
+            intervalMillis = 250L,
+            windowSize = 64,
+            bestCount = 8,
+            atStart = null,
+            atEnd = null,
+            exchanges = listOf(ClockExchange(1, 2, 3, 4), ClockExchange(10, 20, 30, 40))
+        )
+
+        assertTrue(
+            "the run cannot be replayed through another estimator: $json",
+            json.contains("\"exchanges\":[[1,2,3,4],[10,20,30,40]]")
+        )
+    }
+
+    /**
+     * The estimator's own shape travels with the exchanges. Replaying them through a candidate is
+     * only a comparison if what the run actually used is on the record beside them.
+     */
+    @Test
+    fun theReportSaysWhichEstimatorShapeTheRunUsed() {
+        val json = clockReportJson(250L, 64, 8, null, null, emptyList())
+
+        assertTrue(json.contains("\"windowSize\":64"))
+        assertTrue(json.contains("\"bestCount\":8"))
+        // A refused run records no exchanges and still has to parse.
+        assertTrue(json.contains("\"exchanges\":[]"))
     }
 }
