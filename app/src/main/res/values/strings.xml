@@ -78,7 +78,7 @@
     <string name="pair_calibrate_forgotten">已经清除。下一轮会像第一次那样，整个采纳测到的结果。</string>
     <string name="pair_calibrate_verified">验证完成：补偿之后还剩 %1$.3f 毫秒。越接近零，说明记下的数越准。</string>
     <string name="pair_calibrate_kept">这一轮没算数，没有记下来：%1$s</string>
-    <string name="pair_calibrate_not_folded">这一轮判定没通过，已经记下的数没有被改动。请在安静的环境里再测一次。</string>
+    <string name="pair_calibrate_not_folded">这一轮测出来的数离已经记下的差了 %1$.1f 毫秒，太远了，当成坏轮丢掉，记下的数没有被改动。请再测一次。</string>
     <string name="pair_calibrate_failed">对时没跑完：%1$s</string>
     <string name="pair_calibrate_no_permission">没有录音权限就没法测，手机得听见另一台的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
 

@@ -46,24 +46,51 @@ import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
+import kotlin.math.abs
+
+/**
+ * The furthest one run may move the pair's offset and still be an observation of it.
+ *
+ * The whole alignment budget. A run that says the constant belongs 5 ms from where it stands is
+ * not a noisy reading of the same quantity - it is a run that measured something else, most
+ * likely a correlator that took the wrong peak. C1 was such a run: 46766 against a standing
+ * 34511, folded, and it left the pair at 36962 with nothing in any later result to notice it by.
+ *
+ * The eighteen runs of 2026-09-08 measured the honest spread this has to admit: a run-level bias
+ * of mean 1.334 ms and sd 0.463, worst single residual 2.03. This leaves that 2.5x headroom.
+ */
+internal const val MAX_FOLD_STEP_MICROS = 5_000L
 
 /**
  * Whether a finished run may move the correction this handset carries.
  *
- * [CalibrationUpdate.usable] admits a failed run on purpose, and its own comment gives the reason:
- * a pair that has never been calibrated sits tens of milliseconds out, fails every threshold in
- * the verdict, and is exactly the run the loop has to adopt or no first correction can ever be
- * made. **That reason is spent the moment a constant exists.**
+ * The run is already known to be readable by the time this is asked - [CalibrationUpdate.measured]
+ * answers null otherwise, and [CalibrationUpdate.usable] says what readable means: a hole where a
+ * pair should be, or a scatter too wide for the model, and not being wrong. **Not being wrong is
+ * exactly what this must not test.**
  *
- * C1, the first run on hardware, was such a run - FAIL, readable, and folded - and it moved a good
- * constant from 34511 to 36962 with nothing in any later result to notice it by. The condition the
- * comment already states is applied here rather than widened in [CalibrationUpdate], where the
- * harness's 186 archived runs were all taken under the present rule.
+ * It used to test it. The condition here was [RunVerdict.passed], which contains
+ * `|cluster mean| <= 1.0`, so the admission read the very quantity the fold estimates. On
+ * 2026-09-08 eighteen runs in one unchanged configuration measured that quantity: one wide
+ * distribution, mean 1.334 ms and sd 0.463. Against a 1.0 gate that admits 23.6% of runs, and
+ * those runs have a mean of 0.728 - so the constant converged on 0.728, stayed 0.606 ms short of
+ * the truth, and no number of further runs could move it. Selecting on the estimated quantity
+ * biases the estimate; that is not a tuning problem, it is what the rule was.
  *
- * A run that cannot say whether it passed is not a run that passed.
+ * A window around the constant already held cuts both sides equally, so it does not. It still
+ * refuses C1, which is what the passed condition was added for.
+ *
+ * The first run is exempt for the reason [CalibrationUpdate.usable] gives: a pair nobody has
+ * measured sits tens of milliseconds out, and there is no constant for a window to be around.
+ * That is also the jam this leaves open, and [StoredCalibration.forget] is its exit.
+ *
+ * Recorded in docs/feasibility-results/on-device-calibration.md, section 19.
  */
-internal fun foldsIntoStoredCalibration(observations: Int, passed: Boolean?): Boolean =
-    observations == 0 || passed == true
+internal fun foldsIntoStoredCalibration(
+    observations: Int,
+    measuredMicros: Long,
+    estimateMicros: Long
+): Boolean = observations == 0 || abs(measuredMicros - estimateMicros) <= MAX_FOLD_STEP_MICROS
 
 /**
  * The clock layer of a peer calibration report.
@@ -439,8 +466,10 @@ class PeerCalibrateActivity : ComponentActivity() {
             val observed = reply.measuredOffsetMicros
                 ?: return show(getString(R.string.pair_calibrate_kept, run.refusal ?: "NOT_USABLE"))
             val observations = stored?.observations ?: 0
-            if (!foldsIntoStoredCalibration(observations, reply.passed)) {
-                return show(getString(R.string.pair_calibrate_not_folded))
+            if (!foldsIntoStoredCalibration(observations, observed, appliedMicros)) {
+                return show(
+                    getString(R.string.pair_calibrate_not_folded, (observed - appliedMicros) / 1000.0)
+                )
             }
             val folded = CalibrationUpdate.fold(appliedMicros, observations, observed)
                 ?: return show(getString(R.string.pair_calibrate_kept, "OFFSET_OUT_OF_RANGE"))

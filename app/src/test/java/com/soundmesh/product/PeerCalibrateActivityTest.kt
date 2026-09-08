@@ -158,19 +158,43 @@ class PeerCalibrateActivityTest {
      * present rule.
      */
     @Test
-    fun aFirstCalibrationIsAdoptedEvenThoughItCannotPass() {
-        assertTrue(foldsIntoStoredCalibration(observations = 0, passed = false))
-        assertTrue(foldsIntoStoredCalibration(observations = 0, passed = null))
+    fun aFirstCalibrationIsAdoptedHoweverFarOutItLands() {
+        assertTrue(foldsIntoStoredCalibration(observations = 0, measuredMicros = 46_766, estimateMicros = 0))
+    }
+
+    /**
+     * The run C1 was: 12.3 ms away from a constant of 34511, folded, and left the pair at 36962.
+     * A single run cannot move the pair's offset by more than the whole alignment budget, so a run
+     * that says it did is not an observation of the same constant.
+     */
+    @Test
+    fun aRunFurtherOutThanTheWholeAlignmentBudgetIsNotAnObservationOfThisPair() {
+        assertFalse(foldsIntoStoredCalibration(observations = 4, measuredMicros = 46_766, estimateMicros = 34_511))
+    }
+
+    /**
+     * The point of the whole rule, and what the eighteen runs of 2026-09-08 measured.
+     *
+     * The run-level bias is one wide distribution - mean 1.334 ms, sd 0.463 - against a verdict
+     * gate of 1.0, so admitting only runs the verdict passed admits 23.6% of them and those have a
+     * mean of 0.728. The constant then converges on 0.728 instead of 1.334 and stays 0.606 ms
+     * short of the truth however many runs are taken, because the admission was reading the very
+     * quantity being estimated. A window around the standing constant cuts both sides equally.
+     */
+    @Test
+    fun aRunTheVerdictFailedStillFoldsWhenItIsNearTheConstantAlreadyHeld() {
+        assertTrue(
+            "a 1.3 ms residual is what this pair measures, not a broken run",
+            foldsIntoStoredCalibration(observations = 5, measuredMicros = 35_845, estimateMicros = 34_511)
+        )
     }
 
     @Test
-    fun aFailedRunNeverMovesAConstantThisHandsetAlreadyCarries() {
-        assertFalse(foldsIntoStoredCalibration(observations = 5, passed = false))
-        assertFalse(
-            "a run that could not say whether it passed is not a run that passed",
-            foldsIntoStoredCalibration(observations = 5, passed = null)
-        )
-        assertTrue(foldsIntoStoredCalibration(observations = 5, passed = true))
+    fun theWindowCutsBothSidesEqually() {
+        assertTrue(foldsIntoStoredCalibration(observations = 5, measuredMicros = 4_999, estimateMicros = 0))
+        assertTrue(foldsIntoStoredCalibration(observations = 5, measuredMicros = -4_999, estimateMicros = 0))
+        assertFalse(foldsIntoStoredCalibration(observations = 5, measuredMicros = 5_001, estimateMicros = 0))
+        assertFalse(foldsIntoStoredCalibration(observations = 5, measuredMicros = -5_001, estimateMicros = 0))
     }
 
     @Test
