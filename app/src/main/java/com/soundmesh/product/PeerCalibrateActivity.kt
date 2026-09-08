@@ -20,15 +20,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.soundmesh.core.AlignmentPairing
+import com.soundmesh.core.AlignmentReading
 import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationRole
+import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
+import com.soundmesh.core.EmissionDeviation
 import com.soundmesh.core.LinkQuality
 import com.soundmesh.core.LinkSurvey
+import com.soundmesh.core.PairedAlignment
+import com.soundmesh.core.RunVerdict
 import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.AlignmentResultClient
@@ -115,6 +120,66 @@ internal fun clockReportJson(
         "\"radioHeld\":$radioHeld,\"link\":${linkJson(link)}," +
         "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}," +
         "\"exchanges\":${exchangesJson(exchanges)}}"
+
+/**
+ * The run as the two handsets together saw it, with each side's own emission beside it.
+ *
+ * Written by the host, because the host is the only place both halves exist: the sink's readings
+ * arrive over the socket and are combined here, and until now that combination was never written
+ * down at all - it produced one sentence on a screen and was gone. Every offline analysis of a
+ * peer run has had to re-combine the two files by hand.
+ *
+ * The emission block is what section 21 left standing. A run's combined error is
+ * `C + host emission - sink emission`, so its scatter never says which side moved; these two say.
+ * They are read from the recording each handset made of itself and again from the partner's, which
+ * is the check: a real emission event is seen by both microphones, and the two readings of one
+ * differ by a sd of 10.4 frames across 290 archived chirps against steps of 56.
+ *
+ * **Reported, never judged.** Removing a handset's emission jitter from the combined value cuts a
+ * run's scatter 0.704 -> 0.292 ms and the eighteen-run spread of cluster means only 0.488 -> 0.460,
+ * because five chirps already average the jitter out; and it moves the constant by 0.17 ms, which
+ * would be wrong to apply, since those steps are real sound leaving a real speaker. What it is for
+ * is telling a run scattered by a handset from a run scattered by a link or a room.
+ */
+internal fun pairedReportJson(
+    caseId: String,
+    hostId: String,
+    combined: PairedAlignment,
+    hostReadings: List<AlignmentReading>,
+    sinkReadings: List<AlignmentReading>,
+    intervalFrames: Int
+): String {
+    // The sink plays at the plan's instant and the host a stagger later, and first/second are
+    // ordered by arrival, so firstIndex is the sink's chirp in either recording. See
+    // CalibrationSchedule; reading it the other way round cost a day and a wrong attribution.
+    val hostOwn = EmissionDeviation.of(hostReadings.map { it.secondIndex }, intervalFrames)
+    val sinkOwn = EmissionDeviation.of(sinkReadings.map { it.firstIndex }, intervalFrames)
+    val hostSeenBySink = EmissionDeviation.of(sinkReadings.map { it.secondIndex }, intervalFrames)
+    val sinkSeenByHost = EmissionDeviation.of(hostReadings.map { it.firstIndex }, intervalFrames)
+    return "{\"role\":\"HOST\",\"caseId\":\"$caseId\",\"hostId\":\"$hostId\"," +
+        "\"failure\":${combined.failure?.let { "\"${it.name}\"" } ?: "null"}," +
+        "\"combinedMs\":${numbers(combined.pairs.map { it?.alignmentErrorMs })}," +
+        "\"separationMetres\":${numbers(combined.pairs.map { it?.separationMetres })}," +
+        "\"verdict\":${verdictJson(combined.verdict)}," +
+        "\"emission\":{\"hostMs\":${numbers(hostOwn)},\"sinkMs\":${numbers(sinkOwn)}," +
+        "\"hostSeenBySinkMs\":${numbers(hostSeenBySink)},\"sinkSeenByHostMs\":${numbers(sinkSeenByHost)}," +
+        "\"hostSpreadMs\":${number(EmissionDeviation.spreadMs(hostOwn))}," +
+        "\"sinkSpreadMs\":${number(EmissionDeviation.spreadMs(sinkOwn))}}}"
+}
+
+private fun verdictJson(verdict: RunVerdict?): String =
+    verdict?.let {
+        "{\"clusterMeanMs\":${number(it.clusterMeanMs)},\"clusterSdMs\":${number(it.clusterSdMs)}," +
+            "\"clusterCount\":${it.clusterCount},\"outliers\":${numbers(it.outliers)}," +
+            "\"maxAbsMs\":${number(it.maxAbsMs)},\"passed\":${it.passed}," +
+            "\"failures\":[${it.failures.joinToString(",") { failure -> "\"${failure.name}\"" }}]}"
+    } ?: "null"
+
+private fun numbers(values: List<Double?>): String = values.joinToString(",", "[", "]") { number(it) }
+
+/** Six decimals is a tenth of a microsecond; the quantities here are read in milliseconds. */
+private fun number(value: Double?): String =
+    value?.let { if (it.isFinite()) String.format(java.util.Locale.US, "%.6f", it) else "null" } ?: "null"
 
 /**
  * A run the link gate turned away, in the shape a finished run is already written in.
@@ -350,6 +415,20 @@ class PeerCalibrateActivity : ComponentActivity() {
                 } ?: getString(
                     R.string.pair_calibrate_kept,
                     combined.failure?.name ?: "NO_VERDICT"
+                )
+                // Filed here rather than after: this is the only point at which both halves of
+                // the run exist in one place, and before this the combination was never written
+                // down at all - one sentence on a screen, then gone.
+                fileAttempt(
+                    "HOST-${plan.caseId}-PAIRED",
+                    pairedReportJson(
+                        caseId = plan.caseId,
+                        hostId = plan.hostId,
+                        combined = combined,
+                        hostReadings = run.readings,
+                        sinkReadings = message.readings,
+                        intervalFrames = chirpIntervalFrames(plan.intervalNanos)
+                    )
                 )
                 CalibrationReply(
                     // Read through what the sink says it applied, never through this handset's
@@ -594,6 +673,16 @@ class PeerCalibrateActivity : ComponentActivity() {
          */
         const val CASE_MEASURE = "C90"
         const val CASE_VERIFY = "C91"
+
+        /**
+         * The plan's chirp interval in frames, which is the grid an emission is measured against.
+         *
+         * Derived from the plan rather than from [CHIRP_INTERVAL_NANOS]: the plan is what both
+         * handsets actually played to, and a host reading its own constant would answer for a
+         * schedule nobody followed if the two ever came apart.
+         */
+        fun chirpIntervalFrames(intervalNanos: Long): Int =
+            (intervalNanos * ChirpGenerator.SAMPLE_RATE / 1_000_000_000L).toInt()
 
         /** Next after AlignmentResultServer's 45125. */
         const val PLAN_PORT = 45126

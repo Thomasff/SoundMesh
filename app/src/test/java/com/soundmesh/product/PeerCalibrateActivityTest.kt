@@ -1,5 +1,9 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.AlignmentConfidence
+import com.soundmesh.core.AlignmentPairing
+import com.soundmesh.core.AlignmentReading
+import com.soundmesh.core.AlignmentResultMessage
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.LinkQuality
@@ -249,14 +253,97 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun everyAttemptIsAlsoFiledUnderANameNoLaterRunCanClaim() {
-        // Three call sites past the declaration: the host's run, the sink's run, and the run
-        // the link gate turned away.
-        assertEquals(3, source.split("fileAttempt(").size - 2)
+        // Four call sites past the declaration: the host's run, the sink's run, the run the link
+        // gate turned away, and the combined report the host writes once both halves are in.
+        assertEquals(4, source.split("fileAttempt(").size - 2)
         assertTrue(
             "filing a second copy of the evidence is what ends a finished run",
             source.contains("runCatching { PeerRunLog(")
         )
     }
+
+    /**
+     * The combined run, and each handset's own emission beside it.
+     *
+     * Both are new because neither existed. The combination was never written anywhere - it
+     * produced one sentence on a screen and was gone, so every offline analysis of a peer run has
+     * had to re-combine the two files by hand. And a run's combined error is
+     * `C + host emission - sink emission`, so its scatter alone never says which side moved: the
+     * 2026-09-08 18:29 run below scattered by 0.7 ms with the X10 stepping twice past a
+     * millisecond and the Magic6 holding to a tenth of one.
+     */
+    @Test
+    fun theCombinedRunSaysWhichHandsetsEmissionMoved() {
+        // 2026-09-08 18:29, X10 hosting, read out of the two archived reports.
+        val host = readingsAt(
+            first = listOf(263_432, 503_429, 743_435, 983_436, 1_223_432),
+            second = listOf(287_434, 527_435, 767_379, 1_007_436, 1_247_369)
+        )
+        val sink = readingsAt(
+            first = listOf(264_449, 504_440, 744_446, 984_448, 1_224_444),
+            second = listOf(288_480, 528_481, 768_425, 1_008_477, 1_248_410)
+        )
+        val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", 0L, sink))
+
+        val json = pairedReportJson("C91", "0123456789abcdef", combined, host, sink, 5 * 48_000)
+
+        // The X10 is the host here and it is the one that stepped.
+        assertTrue("the host's emission spread is missing: $json", json.contains("\"hostSpreadMs\":0.700"))
+        assertTrue("the sink's emission spread is missing: $json", json.contains("\"sinkSpreadMs\":0.074"))
+        // Read twice, once from each recording. That agreement is the check.
+        assertTrue(json.contains("\"hostSeenBySinkMs\":["))
+        assertTrue(json.contains("\"sinkSeenByHostMs\":["))
+        // And the combination itself, which nothing wrote down before.
+        assertTrue(json.contains("\"combinedMs\":["))
+        assertTrue(json.contains("\"clusterMeanMs\":"))
+        assertTrue(json.contains("\"maxAbsMs\":"))
+    }
+
+    /**
+     * The report carries what was measured, and the verdict is computed exactly as before. A
+     * correction that removed a handset's emission jitter would cut a run's scatter from 0.704 to
+     * 0.292 ms and the eighteen-run spread of cluster means only 0.488 to 0.460 - and would move
+     * the constant 0.17 ms, which those steps are real sound and have no business doing.
+     */
+    @Test
+    fun theEmissionIsReportedAndNeverJudged() {
+        val host = readingsAt(
+            first = listOf(263_432, 503_429, 743_435, 983_436, 1_223_432),
+            second = listOf(287_434, 527_435, 767_379, 1_007_436, 1_247_369)
+        )
+        val sink = readingsAt(
+            first = listOf(264_449, 504_440, 744_446, 984_448, 1_224_444),
+            second = listOf(288_480, 528_481, 768_425, 1_008_477, 1_248_410)
+        )
+        val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", 0L, sink))
+        val json = pairedReportJson("C91", "0123456789abcdef", combined, host, sink, 5 * 48_000)
+
+        assertEquals(
+            "the verdict in the report is not the verdict the run was judged by",
+            combined.verdict?.clusterMeanMs?.let { String.format(java.util.Locale.US, "%.6f", it) },
+            Regex("\"clusterMeanMs\":([-0-9.]+)").find(json)?.groupValues?.get(1)
+        )
+    }
+
+    /**
+     * Every reading trustworthy and no separation assumed: combineFacing removes the flight time
+     * by construction, which is why the runs pass 0.0 here.
+     */
+    private fun readingsAt(first: List<Int>, second: List<Int>): List<AlignmentReading> =
+        first.indices.map { repeat ->
+            val stagger = second[repeat] - first[repeat]
+            AlignmentReading(
+                firstIndex = first[repeat],
+                secondIndex = second[repeat],
+                measuredStaggerFrames = stagger,
+                alignmentErrorMs = (stagger - 24_000).toDouble() / 48_000 * 1000,
+                propagationCorrectionMs = 0.0,
+                separationMetres = 0.0,
+                confidence = AlignmentConfidence.OK,
+                ratios = listOf(9.0, 9.0),
+                atSearchEdge = listOf(false, false)
+            )
+        }
 
     @Test
     fun theRoleIsToldToTheScreenRatherThanGuessedFromThePairingFile() {
