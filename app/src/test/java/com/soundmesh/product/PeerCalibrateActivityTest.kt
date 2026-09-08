@@ -175,9 +175,9 @@ class PeerCalibrateActivityTest {
     /**
      * The point of the whole rule, and what the eighteen runs of 2026-09-08 measured.
      *
-     * The run-level bias is one wide distribution - mean 1.334 ms, sd 0.463 - against a verdict
-     * gate of 1.0, so admitting only runs the verdict passed admits 23.6% of them and those have a
-     * mean of 0.728. The constant then converges on 0.728 instead of 1.334 and stays 0.606 ms
+     * The run-level bias is one wide distribution - mean 1.444 ms, sd 0.488 - against a verdict
+     * gate of 1.0, so admitting only runs the verdict passed admits 18.2% of them and those have a
+     * mean of 0.734. The constant then converges on 0.734 instead of 1.444 and stays 0.710 ms
      * short of the truth however many runs are taken, because the admission was reading the very
      * quantity being estimated. A window around the standing constant cuts both sides equally.
      */
@@ -195,6 +195,67 @@ class PeerCalibrateActivityTest {
         assertTrue(foldsIntoStoredCalibration(observations = 5, measuredMicros = -4_999, estimateMicros = 0))
         assertFalse(foldsIntoStoredCalibration(observations = 5, measuredMicros = 5_001, estimateMicros = 0))
         assertFalse(foldsIntoStoredCalibration(observations = 5, measuredMicros = -5_001, estimateMicros = 0))
+    }
+
+    /**
+     * A run the link gate turns away leaves the exchanges it was turned away for.
+     *
+     * The refusal returns before the report is written, so until now every run on a link too slow
+     * to align on wrote nothing at all - the screen's one sentence was the whole record. What that
+     * cost is exact: of 66 archived runs carrying exchanges, the largest round trip median is
+     * 23.8 ms and the gate sits at 40, so the predictor has no variation at all in the range the
+     * threshold lives in. The gate was discarding the only data that could test the gate.
+     */
+    @Test
+    fun aRunTheLinkGateTurnedAwayLeavesTheExchangesItWasTurnedAwayFor() {
+        val json = refusedRunJson(
+            caseId = "C90",
+            refusal = "SLOW_LINK",
+            clock = clockReportJson(
+                250L, 64, 8, true,
+                LinkQuality(medianRoundTripNanos = 90_000_000L, p90RoundTripNanos = 152_000_000L, samples = 57),
+                null, null, listOf(ClockExchange(1, 2, 3, 4))
+            )
+        )
+
+        assertTrue("nothing says why this run stopped: $json", json.contains("\"refusal\":\"SLOW_LINK\""))
+        assertTrue("the link that refused it is not on the record", json.contains("\"medianRoundTripNanos\":90000000"))
+        assertTrue("the exchanges are gone, which is the whole point", json.contains("\"exchanges\":[[1,2,3,4]]"))
+        // Read by the same script a finished run is: empty pairs and a named refusal is what the
+        // runner already writes for a run that played and could not be correlated.
+        assertTrue(json.contains("\"pairs\":[]"))
+        assertTrue(json.contains("\"caseId\":\"C90\""))
+    }
+
+    /**
+     * The refusal is filed under the case the run would have been, and the run is stopped before
+     * its exchanges are read - recordedExchanges is documented to be read once runFor has returned.
+     */
+    @Test
+    fun theRefusedRunIsFiledRatherThanOnlyShownOnTheScreen() {
+        assertTrue("a refused run still writes nothing", source.contains("SINK-REFUSED"))
+        val gate = source.substringAfter("link?.takeIf { !it.usable }?.let {")
+        assertTrue(
+            "the exchanges are read while the clock thread is still appending to them",
+            gate.indexOf("clockThread.join(") < gate.indexOf("clockClient.recordedExchanges()")
+        )
+    }
+
+    /**
+     * A case id names a directory the run store only ever mkdirs, so a second run of the same
+     * case overwrites the first where it stands. In place, which is why nothing outside says so:
+     * the directory's mtime does not move either, and a listing afterwards still reads the day of
+     * the run that was lost. Four runs on 2026-09-08 went into one C91 and one survived.
+     */
+    @Test
+    fun everyAttemptIsAlsoFiledUnderANameNoLaterRunCanClaim() {
+        // Three call sites past the declaration: the host's run, the sink's run, and the run
+        // the link gate turned away.
+        assertEquals(3, source.split("fileAttempt(").size - 2)
+        assertTrue(
+            "filing a second copy of the evidence is what ends a finished run",
+            source.contains("runCatching { PeerRunLog(")
+        )
     }
 
     @Test

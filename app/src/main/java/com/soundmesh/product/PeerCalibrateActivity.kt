@@ -41,6 +41,7 @@ import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.PeerCalibrationRunner
+import com.soundmesh.probe.sync.PeerRunLog
 import com.soundmesh.probe.sync.holdingRadio
 import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.StoredCalibration
@@ -57,7 +58,7 @@ import kotlin.math.abs
  * 34511, folded, and it left the pair at 36962 with nothing in any later result to notice it by.
  *
  * The eighteen runs of 2026-09-08 measured the honest spread this has to admit: a run-level bias
- * of mean 1.334 ms and sd 0.463, worst single residual 2.03. This leaves that 2.5x headroom.
+ * of mean 1.444 ms and sd 0.488, worst run 2.231. This leaves that 2.2x headroom.
  */
 internal const val MAX_FOLD_STEP_MICROS = 5_000L
 
@@ -72,10 +73,11 @@ internal const val MAX_FOLD_STEP_MICROS = 5_000L
  * It used to test it. The condition here was [RunVerdict.passed], which contains
  * `|cluster mean| <= 1.0`, so the admission read the very quantity the fold estimates. On
  * 2026-09-08 eighteen runs in one unchanged configuration measured that quantity: one wide
- * distribution, mean 1.334 ms and sd 0.463. Against a 1.0 gate that admits 23.6% of runs, and
- * those runs have a mean of 0.728 - so the constant converged on 0.728, stayed 0.606 ms short of
- * the truth, and no number of further runs could move it. Selecting on the estimated quantity
- * biases the estimate; that is not a tuning problem, it is what the rule was.
+ * distribution, mean 1.444 ms and sd 0.488. Against a 1.0 gate that admits 18.2% of runs, and
+ * those runs have a mean of 0.734 - so the constant converged on 0.734, stayed 0.710 ms short of
+ * the truth, and no number of further runs could move it. Two of the eighteen passed, at a mean
+ * of 0.657, which is the same story counted rather than modelled. Selecting on the estimated
+ * quantity biases the estimate; that is not a tuning problem, it is what the rule was.
  *
  * A window around the constant already held cuts both sides equally, so it does not. It still
  * refuses C1, which is what the passed condition was added for.
@@ -113,6 +115,20 @@ internal fun clockReportJson(
         "\"radioHeld\":$radioHeld,\"link\":${linkJson(link)}," +
         "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}," +
         "\"exchanges\":${exchangesJson(exchanges)}}"
+
+/**
+ * A run the link gate turned away, in the shape a finished run is already written in.
+ *
+ * Empty pairs and a named refusal is exactly what [PeerCalibrationRunner] writes for a run that
+ * played and could not be read, so one replay script reads both. Until this existed a refused run
+ * wrote nothing at all: the refusal returns before the report is written, so every measurement of
+ * a link too slow to align on was discarded at the moment it was made, and the archive holds 66
+ * runs whose round trip median tops out at 23.8 ms against a gate set at 40. The gate was throwing
+ * away the only data that could say where the gate belongs.
+ */
+internal fun refusedRunJson(caseId: String, refusal: String, clock: String): String =
+    "{\"role\":\"SINK\",\"caseId\":\"$caseId\",\"pairs\":[],\"renderer\":null," +
+        "\"refusal\":\"$refusal\",\"clock\":$clock}"
 
 /** The run's own report with [clock] spliced in beside it, under the name the analysis reads. */
 internal fun withClockReport(runJson: String, clock: String): String =
@@ -320,6 +336,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             ).run()
             // Written before anything is answered, so a refused run still leaves its evidence.
             File(RunStore(filesDir).prepareRun(plan.caseId), ARTIFACT).writeText(run.json)
+            fileAttempt("HOST-${plan.caseId}", run.json)
             Log.i(LOG_TAG, run.json)
             var outcome = getString(R.string.pair_calibrate_kept, run.refusal ?: "ONE_SIDED_RUN")
             resultServer.awaitResult(RESULT_TIMEOUT_MILLIS) { message ->
@@ -399,17 +416,40 @@ class PeerCalibrateActivity : ComponentActivity() {
             // a two-way exchange carries is half the difference between the one way delays, which
             // is systematic - so the alternative to saying so here is fifty seconds of standing
             // still for a number nobody can read.
+            // Asked for by name: the host cannot tell a measurement from a check, and both landing
+            // in one directory cost the measurement's host half once already. Named before the
+            // gate rather than after it, so a refused run can say which one it would have been.
+            val caseId = if (verifying) CASE_VERIFY else CASE_MEASURE
             link = LinkSurvey.of(clockClient.recordedExchanges())
             link?.takeIf { !it.usable }?.let {
+                // Stopped before the exchanges are read, on the same terms as a finished run:
+                // recordedExchanges is documented to be read once runFor has returned, and what is
+                // being filed here is the whole record rather than the survey's summary of it.
+                clockThread.interrupt()
+                clockThread.join(CLOCK_JOIN_MILLIS)
+                fileAttempt(
+                    "SINK-REFUSED",
+                    refusedRunJson(
+                        caseId,
+                        SLOW_LINK,
+                        clockReportJson(
+                            CLOCK_INTERVAL_MILLIS,
+                            estimator.windowSize,
+                            estimator.bestCount,
+                            radioHeld,
+                            link,
+                            converged,
+                            clockClient.currentEstimate(),
+                            clockClient.recordedExchanges()
+                        )
+                    )
+                )
                 return show(getString(
                     R.string.pair_calibrate_slow_link,
                     it.medianRoundTripNanos / 1_000_000.0,
                     LinkSurvey.MAX_MEDIAN_ROUND_TRIP_NANOS / 1_000_000.0
                 ))
             }
-            // Asked for by name: the host cannot tell a measurement from a check, and both landing
-            // in one directory cost the measurement's host half once already.
-            val caseId = if (verifying) CASE_VERIFY else CASE_MEASURE
             val plan = CalibrationPlanClient(paired.address, PLAN_PORT).request(caseId)
             // The host id is the file name the correction is stored under. A plan from somebody
             // this handset never scanned would file the answer against the wrong peer, and every
@@ -453,6 +493,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 run.json, estimator, converged, clockClient.currentEstimate(), clockClient.recordedExchanges()
             )
             File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(json)
+            fileAttempt("SINK-$caseId", json)
             Log.i(LOG_TAG, json)
             // Delivered even when there is nothing to deliver: the host waits on this message, so
             // an empty run and a dead sink look the same from an end of a socket that never opens.
@@ -504,6 +545,21 @@ class PeerCalibrateActivity : ComponentActivity() {
         show(getString(R.string.pair_calibrate_forgotten))
     }
 
+    /**
+     * Keeps one more copy of what this attempt produced, under a name no later run can claim.
+     *
+     * A case id names a directory the run store never clears, so a second run of the same case
+     * overwrites the first where it stands - in place, which is why nothing outside says so: the
+     * directory's own mtime does not move either. See [PeerRunLog].
+     *
+     * Guarded rather than left to throw. This is a second copy of evidence, and a full disk
+     * turning a finished measurement into a vanished app would cost more than the copy is worth.
+     */
+    private fun fileAttempt(label: String, json: String) {
+        runCatching { PeerRunLog(filesDir).write(label, json, System.currentTimeMillis()) }
+            .onFailure { Log.e(LOG_TAG, "this attempt could not be filed under $label", it) }
+    }
+
     /** The run's own report, with the clock it was scheduled against spliced beside it. */
     private fun withClock(
         json: String,
@@ -525,6 +581,9 @@ class PeerCalibrateActivity : ComponentActivity() {
     private companion object {
         const val LOG_TAG = "SoundMeshPeerCalibrate"
         const val ARTIFACT = "peer-calibration.json"
+
+        /** Why a refused run was refused, in the field a finished run names its own refusal in. */
+        const val SLOW_LINK = "SLOW_LINK"
 
         /**
          * RunStore accepts `[A-Z][0-9]+` and never clears a directory it is handed, so a case id
