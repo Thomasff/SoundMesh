@@ -2,6 +2,7 @@ package com.soundmesh.product
 
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
+import com.soundmesh.core.LinkQuality
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -98,6 +99,7 @@ class PeerCalibrateActivityTest {
             windowSize = 64,
             bestCount = 8,
             radioHeld = true,
+            link = null,
             atStart = ClockEstimate(offsetNanos = -5L, uncertaintyNanos = 7L, driftPpm = 1.5, sampleCount = 8),
             atEnd = null,
             exchanges = emptyList()
@@ -198,6 +200,7 @@ class PeerCalibrateActivityTest {
             windowSize = 64,
             bestCount = 8,
             radioHeld = true,
+            link = null,
             atStart = null,
             atEnd = null,
             exchanges = listOf(ClockExchange(1, 2, 3, 4), ClockExchange(10, 20, 30, 40))
@@ -215,7 +218,7 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theReportSaysWhichEstimatorShapeTheRunUsed() {
-        val json = clockReportJson(250L, 64, 8, true, null, null, emptyList())
+        val json = clockReportJson(250L, 64, 8, true, null, null, null, emptyList())
 
         assertTrue(json.contains("\"windowSize\":64"))
         assertTrue(json.contains("\"bestCount\":8"))
@@ -233,10 +236,28 @@ class PeerCalibrateActivityTest {
     @Test
     fun theReportSaysWhetherTheRadioWasActuallyHeld() {
         assertTrue(
-            clockReportJson(250L, 64, 8, true, null, null, emptyList()).contains("\"radioHeld\":true")
+            clockReportJson(250L, 64, 8, true, null, null, null, emptyList()).contains("\"radioHeld\":true")
         )
         assertTrue(
-            clockReportJson(250L, 64, 8, false, null, null, emptyList()).contains("\"radioHeld\":false")
+            clockReportJson(250L, 64, 8, false, null, null, null, emptyList()).contains("\"radioHeld\":false")
         )
+    }
+
+    /**
+     * The link the run was spent on travels with the numbers it produced. A residual of 2.5 ms and
+     * a residual of 0.2 ms look like the same kind of fact until you can see that one was measured
+     * across a link whose median round trip was seven times the other's.
+     */
+    @Test
+    fun theReportSaysWhatLinkTheRunWasSpentOn() {
+        val json = clockReportJson(
+            250L, 64, 8, true,
+            LinkQuality(medianRoundTripNanos = 56_300_000L, p90RoundTripNanos = 137_900_000L, samples = 175),
+            null, null, emptyList()
+        )
+
+        assertTrue(json.contains("\"medianRoundTripNanos\":56300000"))
+        assertTrue(json.contains("\"p90RoundTripNanos\":137900000"))
+        assertTrue(json.contains("\"samples\":175"))
     }
 }

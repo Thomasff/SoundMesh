@@ -27,6 +27,8 @@ import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
+import com.soundmesh.core.LinkQuality
+import com.soundmesh.core.LinkSurvey
 import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.AlignmentResultClient
@@ -75,12 +77,13 @@ internal fun clockReportJson(
     windowSize: Int,
     bestCount: Int,
     radioHeld: Boolean,
+    link: LinkQuality?,
     atStart: ClockEstimate?,
     atEnd: ClockEstimate?,
     exchanges: List<ClockExchange>
 ): String =
     "{\"intervalMillis\":$intervalMillis,\"windowSize\":$windowSize,\"bestCount\":$bestCount," +
-        "\"radioHeld\":$radioHeld," +
+        "\"radioHeld\":$radioHeld,\"link\":${linkJson(link)}," +
         "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}," +
         "\"exchanges\":${exchangesJson(exchanges)}}"
 
@@ -96,6 +99,12 @@ internal fun withClockReport(runJson: String, clock: String): String =
  */
 private fun exchangesJson(exchanges: List<ClockExchange>): String =
     exchanges.joinToString(",", "[", "]") { "[${it.t1},${it.t2},${it.t3},${it.t4}]" }
+
+private fun linkJson(link: LinkQuality?): String =
+    link?.let {
+        "{\"medianRoundTripNanos\":${it.medianRoundTripNanos}," +
+            "\"p90RoundTripNanos\":${it.p90RoundTripNanos},\"samples\":${it.samples}}"
+    } ?: "null"
 
 private fun estimateJson(estimate: ClockEstimate?): String =
     estimate?.let {
@@ -137,6 +146,9 @@ class PeerCalibrateActivity : ComponentActivity() {
      * nothing looks exactly like a run that proves power save is irrelevant.
      */
     @Volatile private var radioHeld = false
+
+    /** What the link looked like when the clock had filled its window, or null if unmeasured. */
+    @Volatile private var link: LinkQuality? = null
 
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
@@ -354,6 +366,19 @@ class PeerCalibrateActivity : ComponentActivity() {
             }
             val converged = clockClient.currentEstimate()
                 ?: return show(getString(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
+            // Read before the chirps rather than after, because that is the only point at which
+            // knowing costs nothing. A link this slow cannot be aligned by any estimator - the bias
+            // a two-way exchange carries is half the difference between the one way delays, which
+            // is systematic - so the alternative to saying so here is fifty seconds of standing
+            // still for a number nobody can read.
+            link = LinkSurvey.of(clockClient.recordedExchanges())
+            link?.takeIf { !it.usable }?.let {
+                return show(getString(
+                    R.string.pair_calibrate_slow_link,
+                    it.medianRoundTripNanos / 1_000_000.0,
+                    LinkSurvey.MAX_MEDIAN_ROUND_TRIP_NANOS / 1_000_000.0
+                ))
+            }
             // Asked for by name: the host cannot tell a measurement from a check, and both landing
             // in one directory cost the measurement's host half once already.
             val caseId = if (verifying) CASE_VERIFY else CASE_MEASURE
@@ -444,7 +469,7 @@ class PeerCalibrateActivity : ComponentActivity() {
     ): String = withClockReport(
         json,
         clockReportJson(
-            CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, radioHeld, atStart, atEnd, exchanges
+            CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, radioHeld, link, atStart, atEnd, exchanges
         )
     )
 
