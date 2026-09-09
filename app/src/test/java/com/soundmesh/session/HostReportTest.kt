@@ -84,6 +84,35 @@ class HostReportTest {
     }
 
     /**
+     * A slider drawn where the source has read to runs a lead ahead of the music.
+     *
+     * 1.5 s ahead of a song, all the time, on every handset. It reads as the app being slightly
+     * out of step with itself, and there is nothing on the screen that would say why.
+     */
+    @Test
+    fun theSliderShowsWhereTheRoomIsAndNotWhereTheDecoderIs() {
+        assertEquals(8_500_000L, heardMicros(10_000_000L, 300_000_000L, 1_500_000L))
+    }
+
+    /**
+     * The first lead's worth of every song is a place the song has not reached yet.
+     *
+     * Left alone it is a negative position, and the thing that acts on it is a drag released
+     * there - which would ask the source to start from before the beginning.
+     */
+    @Test
+    fun theStartOfASongIsTheStart() {
+        assertEquals(0L, heardMicros(200_000L, 300_000_000L, 1_500_000L))
+    }
+
+    /** And the end is the end, whatever a container claims about its own length. */
+    @Test
+    fun aPositionPastTheEndIsTheEnd() {
+        assertEquals(5_000L, heardMicros(90_000_000L, 5_000L, 1_500_000L))
+        assertEquals(0L, heardMicros(90_000_000L, -1L, 1_500_000L))
+    }
+
+    /**
      * A folder is the one source that can lose part of itself and play on regardless.
      *
      * Nothing else would show it. The songs that did play are correct, the counters are correct,

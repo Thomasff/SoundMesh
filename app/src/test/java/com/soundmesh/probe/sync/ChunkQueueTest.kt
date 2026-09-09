@@ -195,6 +195,47 @@ class ChunkQueueTest {
         assertTrue(handedOver.get())
     }
 
+    /**
+     * A seek throws away three seconds of a song nobody is going to hear now.
+     *
+     * The queue is the deeper half of what is in flight - three seconds of decoded audio against
+     * the host's own 1.5 s of lead - so without this a listener dragging a slider would wait four
+     * and a half seconds to hear the new place, and hear the old one for all of it.
+     */
+    @Test
+    fun discardingThrowsAwayWhatWasDecodedAhead() {
+        val queue = queue()
+        queue.put(chunk(1))
+        queue.put(chunk(2))
+        assertEquals(2, queue.depth)
+        queue.discard()
+        assertEquals(0, queue.depth)
+    }
+
+    /** Discarding is not stopping: what the decoder hands over next is played as usual. */
+    @Test
+    fun aDiscardedQueueStillTakesWhatComesNext() {
+        val queue = queue()
+        queue.put(chunk(1))
+        queue.discard()
+        queue.put(chunk(9))
+        assertArrayEquals(chunk(9), queue.take())
+    }
+
+    /**
+     * The depth is how far ahead of the listener the decoder is, which is how a playhead is worked
+     * out: what has been decoded, less what is still waiting here.
+     */
+    @Test
+    fun theDepthIsHowMuchIsWaiting() {
+        val queue = queue()
+        assertEquals(0, queue.depth)
+        queue.put(chunk(1))
+        queue.put(chunk(2))
+        queue.take()
+        assertEquals(1, queue.depth)
+    }
+
     /** A thread that hands over [chunks] chunks, marked 0 upwards, one every [everyMillis]. */
     private fun feeding(queue: ChunkQueue, chunks: Int, everyMillis: Long): Thread {
         val thread = Thread {

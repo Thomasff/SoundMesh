@@ -17,10 +17,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -30,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.R
+import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.PairingCodeImage
 
 /** Which half of the pair this handset is being right now. Not kept across launches - see below. */
@@ -75,6 +80,13 @@ data class HomeState(
     val sessionState: SessionState? = null,
     val failure: String? = null,
     val counters: List<Counter> = emptyList(),
+    /**
+     * Where the room is in the song, or null when nothing can say.
+     *
+     * Null on a sink, on a capture, and on a song whose container does not give a length - a
+     * slider whose right-hand end is a guess is worse than no slider at all.
+     */
+    val playhead: Playhead? = null,
     val health: Health = Health(null, null, null, null),
     /**
      * The accessibility output's volume, on a host that is capturing and therefore heard on it.
@@ -103,6 +115,7 @@ class HomeActions(
     val play: () -> Unit,
     val stop: () -> Unit,
     val calibrate: () -> Unit,
+    val seek: (Long) -> Unit,
     val pairCalibrate: () -> Unit,
     val room: RoomActions
 )
@@ -281,6 +294,48 @@ private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolea
             Text(stringResource(R.string.play_stop))
         }
     }
+    state.playhead?.let { PlayheadPanel(it, actions.seek) }
+}
+
+/**
+ * Where the song is, and somewhere to drag it to.
+ *
+ * The position shown while a finger is down is the finger's, not the room's: a slider that snapped
+ * back to the music every time the screen refreshed would be one nobody could aim. The jump is
+ * asked for on release rather than as it moves, because each one empties every queue in the room
+ * and a drag across a five minute song would ask for a hundred of them.
+ *
+ * **It goes quiet for about a second and a half after a jump.** That is the lead every chunk is
+ * stamped with; the alternative was carrying on playing the old place for the same length of time,
+ * which sounds like the app ignoring the drag.
+ */
+@Composable
+private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    val duration = playhead.durationMicros.coerceAtLeast(1L)
+    val position = dragging ?: (playhead.positionMicros.toFloat() / duration)
+    Text(
+        stringResource(
+            R.string.play_position,
+            clockOf((position * duration).toLong()),
+            clockOf(playhead.durationMicros)
+        ),
+        style = MaterialTheme.typography.bodySmall
+    )
+    Slider(
+        value = position.coerceIn(0f, 1f),
+        onValueChange = { dragging = it },
+        onValueChangeFinished = {
+            dragging?.let { seek((it * duration).toLong()) }
+            dragging = null
+        }
+    )
+}
+
+/** Minutes and seconds, from microseconds. Hours are somebody else's problem. */
+private fun clockOf(micros: Long): String {
+    val seconds = (micros / 1_000_000L).coerceAtLeast(0L)
+    return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 }
 
 @Composable

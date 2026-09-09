@@ -94,6 +94,25 @@ class PlaybackScheduler(
         }
     }
 
+    /**
+     * Throws away everything queued, and answers how much that was.
+     *
+     * For a seek, which is the one thing that makes already-accepted audio wrong rather than
+     * early. Deliberately not decided here: this class is also the harness's, where a chirp is
+     * submitted with a sequence far above the streaming ones and streaming then resumes below it
+     * again. A rule inside [submit] that read a sequence going backwards as a jump would fire on
+     * every calibration run in the archive.
+     *
+     * [started] is left alone. A scheduler that has played is one whose silence should be written
+     * as silence rather than reported as Idle, and a seek does not change that.
+     */
+    @Synchronized
+    fun clear(): Int {
+        val had = queue.size
+        queue.clear()
+        return had
+    }
+
     @Synchronized
     fun poll(nowHostNanos: Long): PlaybackDecision {
         while (queue.isNotEmpty() && queue[0].playAtHostNanos < nowHostNanos) {

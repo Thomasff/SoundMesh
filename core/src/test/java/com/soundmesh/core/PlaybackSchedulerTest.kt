@@ -12,6 +12,51 @@ class PlaybackSchedulerTest {
 
     private fun scheduler() = PlaybackScheduler(framesPerChunk = framesPerChunk, capacityChunks = 4)
 
+    /**
+     * What a seek needs and nothing else has: audio already accepted has to be able to go away.
+     *
+     * Everything here is otherwise append-and-release, which is right for a stream that only ever
+     * moves forward. A listener dragging a progress bar is the one thing that makes what is
+     * already queued wrong rather than early - and it is queued on every handset in the room, not
+     * only the one being dragged.
+     */
+    @Test
+    fun clearingThrowsAwayWhatWasQueuedAndSaysHowMuch() {
+        val scheduler = scheduler()
+        scheduler.submit(chunk(0, 1_000))
+        scheduler.submit(chunk(1, 2_000))
+        assertEquals(2, scheduler.clear())
+        assertEquals(0, scheduler.stats().queued)
+    }
+
+    @Test
+    fun clearingAnEmptyQueueThrowsAwayNothing() {
+        assertEquals(0, scheduler().clear())
+    }
+
+    /**
+     * What was cleared is gone, not merely skipped: the instant it was due for belongs to the
+     * audio that replaced it, and a chunk that came back would be played over the top of it.
+     */
+    @Test
+    fun whatWasClearedDoesNotComeBack() {
+        val scheduler = scheduler()
+        scheduler.submit(chunk(0, 1_000))
+        scheduler.clear()
+        assertTrue(scheduler.poll(1_000) is PlaybackDecision.Idle)
+    }
+
+    /** Clearing is not stopping. The next chunk plays exactly as it would have. */
+    @Test
+    fun aClearedSchedulerStillPlaysWhatComesNext() {
+        val scheduler = scheduler()
+        scheduler.submit(chunk(0, 1_000))
+        scheduler.clear()
+        val next = chunk(0, 5_000)
+        scheduler.submit(next)
+        assertEquals(PlaybackDecision.Play(next), scheduler.poll(5_000))
+    }
+
     @Test
     fun waitsWhileTheFirstChunkIsStillInTheFuture() {
         val scheduler = scheduler()

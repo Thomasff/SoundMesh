@@ -9,6 +9,7 @@ import com.soundmesh.core.SessionState
 import com.soundmesh.core.SpatialField
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.sync.ChunkServer
+import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.SpatialFieldServer
 import com.soundmesh.probe.sync.SyncActivity
@@ -83,6 +84,19 @@ internal fun endOfAudioNanos(lastDueNanos: Long, nowNanos: Long): Long =
 
 /** No chunk has been produced yet, so there is no last one to play out. */
 internal const val NOTHING_PLAYED = Long.MIN_VALUE
+
+/**
+ * Where the room is in a song, given where the source has read to.
+ *
+ * A function of its values so it can be tested off a handset, like [endOfAudioNanos] above.
+ *
+ * Every chunk is stamped a lead into its own future, so what is being heard now was read from the
+ * source that long ago. Drawn at the source's own position instead, a slider sits a lead ahead of
+ * the music - and for the first 1.5 s of every song it would be showing a place the song has not
+ * reached, which is where the clamp comes in rather than as tidiness.
+ */
+internal fun heardMicros(sourceMicros: Long, durationMicros: Long, leadMicros: Long): Long =
+    (sourceMicros - leadMicros).coerceIn(0L, maxOf(0L, durationMicros))
 
 /**
  * The handset that holds the timeline: it decides when every chunk is heard and plays its own copy
@@ -162,6 +176,21 @@ class HostSession(
      */
     private val skippedSongs: () -> Int = { 0 },
     /**
+     * Asks the source to start again from an instant within what it is playing.
+     *
+     * Does nothing by default, which is the truthful answer for the two sources that cannot: the
+     * ruler's prefix is a loop with no notion of a place in a song, and a capture has no future to
+     * jump into.
+     */
+    private val seekSource: (Long) -> Unit = {},
+    /**
+     * Where the source has got to, before this session's own lead is taken off it.
+     *
+     * Null by default and null from a source that cannot say how long its audio is - a slider
+     * whose right-hand end is a guess is worse than no slider.
+     */
+    private val sourcePlayhead: () -> Playhead? = { null },
+    /**
      * Called once, from the producer's own thread, when the source has no more audio.
      *
      * A song that ends is not a session that fails, and it is not a session that keeps going
@@ -217,6 +246,9 @@ class HostSession(
     @Volatile private var maxBroadcastNanos = 0L
     @Volatile private var generated = 0
 
+    /** How many times the listener has jumped. Only ever compared with itself - see [generate]. */
+    @Volatile private var jumps = 0
+
     private var rendererThread: Thread? = null
     private var producerThread: Thread? = null
 
@@ -241,6 +273,40 @@ class HostSession(
     fun publishSpatialField(field: SpatialField) {
         spatialServer?.publish(field)
         renderer.applySpatialField(field)
+    }
+
+    /**
+     * Throws away everything in flight and starts the source again at [micros].
+     *
+     * Three places hold audio that is now wrong, and all three have to let go: the source's own
+     * decoded queue (three seconds), this handset's scheduler, and every sink's scheduler. The
+     * first two are done here; the sinks do it themselves when the sequence they are handed goes
+     * backwards, which is why [generate] starts counting again.
+     *
+     * One chunk can still slip through - the producer may be holding one it took before the
+     * source let go - and it is 20 ms of the old place, played inside the silence that follows.
+     * Chasing it would mean a lock between this thread and the producer's, on the path that feeds
+     * the room, to save something nobody can hear.
+     */
+    override fun seekTo(micros: Long) {
+        seekSource(micros)
+        val thrown = scheduler.clear()
+        jumps++
+        Log.i(LOG_TAG, "jumped to ${micros / 1000} ms; $thrown queued chunks were thrown away")
+    }
+
+    /**
+     * Where the room is in the song, which is behind where the source has read to by the lead.
+     *
+     * Every chunk is stamped 1.5 s into its own future, so what is being heard now was read from
+     * the source 1.5 s ago. A slider drawn at the source's own position would sit a second and a
+     * half ahead of the music and look like it was running fast.
+     */
+    override fun playhead(): Playhead? {
+        val source = sourcePlayhead() ?: return null
+        return source.copy(
+            positionMicros = heardMicros(source.positionMicros, source.durationMicros, LEAD_NANOS / 1_000L)
+        )
     }
 
     override fun state(): SessionState = flags.state()
@@ -309,15 +375,27 @@ class HostSession(
 
     private fun generate() {
         var sequence = 0
+        var jumpsSeen = jumps
         // The instant a chunk is due comes from here rather than from the clock, because once the
         // source is a capture the two are not the same thing: readChunk blocks until the recorder
         // has audio and hands it over on the recorder's own cadence, and stamping chunks with the
         // moment they happened to arrive put that cadence into the timeline for both handsets to
         // reproduce faithfully. See [ChunkTimeline] for what it cost and how it was measured.
-        val timeline = ChunkTimeline(SyncRenderer.FRAMES_PER_CHUNK, SyncRenderer.SAMPLE_RATE)
+        var timeline = ChunkTimeline(SyncRenderer.FRAMES_PER_CHUNK, SyncRenderer.SAMPLE_RATE)
         var lastDueNanos = NOTHING_PLAYED
         while (!flags.isStopped()) {
             val pcm = readChunk() ?: return endOfSong(lastDueNanos)
+            if (jumpsSeen != jumps) {
+                jumpsSeen = jumps
+                // A new grid, because the old one is a ruler laid down when the session started
+                // and this thread has just spent the length of a lead waiting for a decoder. Its
+                // next instant is in the past, and a chunk stamped there is one every handset
+                // throws away as late.
+                timeline = ChunkTimeline(SyncRenderer.FRAMES_PER_CHUNK, SyncRenderer.SAMPLE_RATE)
+                // And a fresh count, which is the whole of what tells the sinks to let go. See
+                // seekTo: nothing else is sent, and nothing else needs to be.
+                sequence = 0
+            }
             val dueNanos = timeline.accept(System.nanoTime()) + LEAD_NANOS
             lastDueNanos = dueNanos
             val chunk = AudioChunk(sequence, dueNanos, pcm)
@@ -325,7 +403,8 @@ class HostSession(
             chunkServer.broadcast(chunk)
             maxBroadcastNanos = maxOf(maxBroadcastNanos, System.nanoTime() - startedBroadcastAt)
             if (flags.state().mayEmit) scheduler.submit(chunk)
-            generated = sequence + 1
+            // Counted rather than read off the sequence, which now starts again at every jump.
+            generated++
             sequence++
             // Paced against the session's own start rather than the previous pass, so a slow pass
             // is absorbed instead of pushing every later chunk out by the same amount. Against the

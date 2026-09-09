@@ -24,6 +24,24 @@ class ChunkCutterTest {
         assertArrayEquals(counting(24).copyOfRange(16, 24), chunks[2])
     }
 
+    /**
+     * After a jump, what is held back is from where the listener just left.
+     *
+     * The seam that makes one song run into the next is the same seam that would put the last few
+     * milliseconds of the old position at the front of the new one.
+     */
+    @Test
+    fun whatIsHeldBackIsThrownAwayOnAJump() {
+        val cutter = ChunkCutter(chunkBytes)
+        cutter.cut(counting(5))
+        assertEquals(5, cutter.carried)
+        cutter.forget()
+        assertEquals(0, cutter.carried)
+        val chunks = cutter.cut(counting(8))
+        assertEquals(1, chunks.size)
+        assertArrayEquals(counting(8), chunks[0])
+    }
+
     /** One byte short is no chunk at all. A short chunk is a shorter twenty milliseconds. */
     @Test
     fun aPartOfAChunkIsHeldBackUntilTheRestArrives() {

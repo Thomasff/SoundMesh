@@ -59,6 +59,11 @@ class SessionService : Service() {
             ACTION_START_HOST -> startSession(intent, host = true)
             ACTION_START_SINK -> startSession(intent, host = false)
             ACTION_STOP -> stopSession()
+            // On the caller's thread, which is the main one, and deliberately: what it does is set
+            // a field and empty two queues. The waiting is the decoder's, on its own thread.
+            ACTION_SEEK -> runCatching {
+                ACTIVE?.seekTo(intent.getLongExtra(EXTRA_SEEK_MICROS, 0L))
+            }.onFailure { Log.e(LOG_TAG, "could not jump", it) }
         }
         return START_NOT_STICKY
     }
@@ -154,6 +159,8 @@ class SessionService : Service() {
             closeSource = source::close,
             lateChunks = source::lateChunks,
             skippedSongs = source::skippedSongs,
+            seekSource = source::seekTo,
+            sourcePlayhead = source::playhead,
             // The song is over, so the session is over: the service takes itself down exactly the
             // way the stop button does. Anything less leaves a foreground notification, a bound
             // set of sockets and an open AudioTrack behind a room that has gone quiet.
@@ -446,6 +453,16 @@ class SessionService : Service() {
         const val ACTION_START_HOST = "com.soundmesh.session.START_HOST"
         const val ACTION_START_SINK = "com.soundmesh.session.START_SINK"
         const val ACTION_STOP = "com.soundmesh.session.STOP"
+
+        /**
+         * Start playing from somewhere else in what is playing now.
+         *
+         * An action rather than a bound-service call for the same reason every other one is: the
+         * screen that holds the slider and the session that holds the source are in different
+         * lifetimes, and the session outlives the screen on purpose.
+         */
+        const val ACTION_SEEK = "com.soundmesh.session.SEEK"
+        const val EXTRA_SEEK_MICROS = "seek_micros"
         const val EXTRA_SOURCE_FILE = "source_file"
 
         /**

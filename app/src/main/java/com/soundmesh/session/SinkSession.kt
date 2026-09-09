@@ -9,6 +9,7 @@ import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.sync.ChunkClient
+import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.SpatialFieldClient
 import com.soundmesh.probe.sync.StoredCalibration
@@ -421,13 +422,41 @@ class SinkSession(
         clockThread?.interrupt()
     }
 
+    /**
+     * A sequence that went backwards is the host having jumped, and what is queued here is wrong.
+     *
+     * Nothing is sent to say so, and nothing needs to be: the sequence is the stream's own
+     * position counter and a stream position cannot go backwards for any other reason. What it
+     * buys over a field of its own is that an older build on the other end still plays - it hears
+     * a second and a half of where the song used to be, which is the behaviour this replaced,
+     * rather than a header it cannot parse.
+     *
+     * The rule lives here rather than in [PlaybackScheduler] because that class is also the
+     * harness's, where a chirp is submitted far above the streaming sequences and streaming then
+     * resumes below it again. There it would fire on every calibration run in the archive.
+     */
+    private var lastSequence = Int.MIN_VALUE
+
     private fun receive(chunk: AudioChunk) {
         val arrivedAt = System.nanoTime()
         lastArrivalNanos.set(arrivedAt)
         lastContactNanos.set(arrivedAt)
         flags.setLinkUp(true)
+        if (chunk.sequence < lastSequence) {
+            // Cleared whether or not this handset is emitting: a sink that lost the audio focus is
+            // still holding a queue, and it would play it out when the focus came back.
+            val thrown = scheduler.clear()
+            Log.i(LOG_TAG, "the host jumped; $thrown queued chunks were thrown away")
+        }
+        lastSequence = chunk.sequence
         if (flags.state().mayEmit) scheduler.submit(chunk)
     }
+
+    /** Nothing. A sink holds no source: the handset that does is the one that can jump. */
+    override fun seekTo(micros: Long) = Unit
+
+    /** Null. Positions are the source's, and a sink is handed instants instead. */
+    override fun playhead(): Playhead? = null
 
     /**
      * Keeps [SessionFlags] told what is true, at a cadence fast enough for the state a person sees.

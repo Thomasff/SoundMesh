@@ -26,6 +26,18 @@ class ChunkCutter(private val chunkBytes: Int) {
     internal val carried: Int get() = carry.size
 
     /** Every whole chunk this piece completes, in order. */
+    /**
+     * Throws away the part-chunk being held.
+     *
+     * For a seek, and only for a seek. What is held back is normally finished by whatever comes
+     * next, which is what makes one song run into the next without a join - but after a jump the
+     * bytes waiting here are from somewhere the listener has just left, and finishing the next
+     * chunk with them would put a few milliseconds of the old place at the front of the new one.
+     */
+    fun forget() {
+        carry = ByteArray(0)
+    }
+
     fun cut(pcm: ByteArray): List<ByteArray> {
         val bytes = if (carry.isEmpty()) pcm else carry + pcm
         val whole = bytes.size / chunkBytes

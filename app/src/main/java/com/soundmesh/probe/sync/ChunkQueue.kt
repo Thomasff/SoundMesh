@@ -79,6 +79,23 @@ internal class ChunkQueue(
         return ready.isNotEmpty()
     }
 
+    /**
+     * Throws away everything decoded but not yet handed over.
+     *
+     * The deeper half of what a seek has to get rid of: three seconds here against the host's own
+     * 1.5 s of lead. Without it a listener dragging a slider would wait four and a half seconds to
+     * hear the new place and hear the old one throughout.
+     */
+    fun discard() = ready.clear()
+
+    /**
+     * How many chunks are waiting, which is how far ahead of the listener the decoder is.
+     *
+     * Read to work out a playhead: what the decoder has reached, less what is still sitting here,
+     * is what the consumer is about to be handed.
+     */
+    val depth: Int get() = ready.size
+
     /** How many chunks the consumer had to wait for. Zero on a session that kept up. */
     fun lateChunks(): Int = lateChunks
 

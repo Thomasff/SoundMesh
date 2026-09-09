@@ -7,6 +7,15 @@ import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
 import com.soundmesh.core.StreamingResampler
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * Where a song is up to and how long it is, both in microseconds.
+ *
+ * [songIndex] because a folder's playhead has to say which song it is the playhead of - a slider
+ * that jumped back to the left without saying why is a slider that looks broken.
+ */
+data class Playhead(val songIndex: Int, val positionMicros: Long, val durationMicros: Long)
 
 /**
  * A song decoded a piece at a time, on its own thread, into a queue the renderer takes from.
@@ -43,6 +52,19 @@ class StreamingChunkSource private constructor(
 
     @Volatile private var skipped = 0
 
+    /**
+     * Where the listener asked to jump to, in microseconds within the song now playing.
+     *
+     * Read and taken by the decoder thread, written by whoever holds the slider. Null is nobody
+     * having asked, which is not the same as zero - zero is the start of the song, and somebody
+     * dragging a slider all the way left means it.
+     */
+    private val seekRequest = AtomicReference<Long?>(null)
+
+    @Volatile private var decodedMicros = 0L
+    @Volatile private var songMicros = 0L
+    @Volatile private var songIndex = 0
+
     private val thread = Thread({ run() }, "song-decoder")
 
     /** One full chunk, or null once this source is closed. Blocks while the decoder catches up. */
@@ -59,6 +81,38 @@ class StreamingChunkSource private constructor(
      * tracks the album has.
      */
     fun skippedSongs(): Int = skipped
+
+    /**
+     * Starts playing the song that is playing from [micros] instead.
+     *
+     * Returns as soon as it is asked for, not once it is heard: the decoder has to finish the pass
+     * it is in, and what was already handed to the room is somebody else's to throw away. Emptying
+     * the queue here is the deeper half of that - three seconds of decoded audio against the
+     * host's 1.5 s of lead.
+     */
+    fun seekTo(micros: Long) {
+        seekRequest.set(maxOf(0L, micros))
+        queue.discard()
+    }
+
+    /**
+     * Where the next chunk handed over sits in the song, or null before there is one.
+     *
+     * The decoder runs ahead, so what it has reached is not what anybody is about to hear: the
+     * difference is exactly what is still waiting in the queue. The host's own lead is not taken
+     * off here - that belongs to whoever knows what the lead is.
+     */
+    fun playhead(): Playhead? {
+        if (songMicros <= 0L) return null
+        // Within one song this is right to a chunk. **Across a song boundary it is not**: the
+        // length and the index belong to the song being decoded while the queue still holds three
+        // seconds of the one before it, so a folder's slider jumps to the next song a few seconds
+        // early. Carrying a position with every chunk through the queue would fix it, and it would
+        // cost that plumbing to move a slider by three seconds once a song. A jump asked for in
+        // that window lands in the song being decoded, which is the one the slider is showing.
+        val waiting = queue.depth * CHUNK_MICROS
+        return Playhead(songIndex, maxOf(0L, decodedMicros - waiting), songMicros)
+    }
 
     fun close() {
         queue.stop()
@@ -102,10 +156,12 @@ class StreamingChunkSource private constructor(
     private fun playThroughTheList() {
         var played = false
         var firstRefusal: Exception? = null
-        for (song in songs) {
-            if (queue.stopped) return
+        var index = 0
+        var from = 0L
+        while (index < songs.size && !queue.stopped) {
+            songIndex = index
             try {
-                play(song)
+                play(songs[index], from)
                 played = true
             } catch (interrupted: InterruptedException) {
                 // Closing, not failing. Passing over the rest of the folder would be the same
@@ -119,11 +175,25 @@ class StreamingChunkSource private constructor(
                 if (firstRefusal == null) firstRefusal = refused
                 Log.i(LOG_TAG, "a song in the folder was passed over: ${refused.message}")
             }
+            // A jump asked for while that song was playing is answered by opening the same song
+            // again at the place asked for. Anything else means the song is over.
+            //
+            // Opening rather than seeking the extractor in place, for the reason the folder gives:
+            // the converter holds sixteen samples either side of where it is and the codec holds
+            // whatever it has buffered, and both would have to be told - where opening again is
+            // the path a folder already takes every time it changes song.
+            val asked = seekRequest.getAndSet(null)
+            if (asked != null) {
+                from = asked
+            } else {
+                index++
+                from = 0L
+            }
         }
         if (!played) firstRefusal?.let { throw it }
     }
 
-    private fun play(song: Uri) {
+    private fun play(song: Uri, fromMicros: Long) {
         val extractor = MediaExtractor()
         try {
             // The address the system handed over rather than a path, so a song is read where it
@@ -142,6 +212,18 @@ class StreamingChunkSource private constructor(
             }
             if (track < 0 || format == null) throw SourceUnusable("SOURCE_FILE_NO_AUDIO")
             extractor.selectTrack(track)
+            // How long the song is, which is the only reason a slider can be drawn at all. A
+            // container that does not say leaves this at zero, and a playhead nobody can read is
+            // better than a slider whose right-hand end is a guess.
+            songMicros = runCatching { format.getLong(MediaFormat.KEY_DURATION) }.getOrDefault(0L)
+            if (fromMicros > 0L) {
+                // The nearest sync sample at or before the ask. A decoder handed a non-sync sample
+                // to start from produces noise until the next one arrives.
+                extractor.seekTo(fromMicros, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            }
+            // What is held back is from where the listener just left, and finishing the next chunk
+            // with it would put a few milliseconds of the old place at the front of the new one.
+            if (fromMicros > 0L) cutter.forget()
             val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
             try {
                 codec.configure(format, null, null, 0)
@@ -169,7 +251,11 @@ class StreamingChunkSource private constructor(
         var resampler: StreamingResampler? = null
         var converted = 0L
         var inputDone = false
-        while (!queue.stopped) {
+        // A jump ends this pass rather than being handled inside it. The converter is holding
+        // sixteen samples either side of where it is and the codec is holding whatever it has
+        // buffered; the caller opens the song again at the new place, which is the path a folder
+        // already takes every time it changes song.
+        while (!queue.stopped && seekRequest.get() == null) {
             if (!inputDone) {
                 val inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_MICROS)
                 if (inputIndex >= 0) {
@@ -199,6 +285,9 @@ class StreamingChunkSource private constructor(
                 buffer.position(info.offset)
                 buffer.get(bytes)
                 codec.releaseOutputBuffer(outputIndex, false)
+                // Where this buffer sits in the song. What the listener hears is behind it by
+                // whatever is still queued - see playhead().
+                decodedMicros = info.presentationTimeUs
                 // The sync API answers with the output format before the first output buffer, so
                 // this is unreachable in practice - which is exactly why it throws.
                 val stream = resampler ?: throw SourceUnusable("SOURCE_FILE_FORMAT_UNKNOWN")
@@ -211,7 +300,12 @@ class StreamingChunkSource private constructor(
         }
         // A song shorter than one chunk would otherwise be reopened hundreds of times a second,
         // which from outside is a decoder thread at full tilt and a room playing a stutter.
-        if (!queue.stopped && converted < CHUNK_BYTES) throw SourceUnusable("SOURCE_FILE_TOO_SHORT")
+        //
+        // Not on a jump: a listener who dragged the slider to the last second of a song has asked
+        // for less than a chunk of audio and is owed the next song, not a refusal.
+        if (!queue.stopped && seekRequest.get() == null && converted < CHUNK_BYTES) {
+            throw SourceUnusable("SOURCE_FILE_TOO_SHORT")
+        }
     }
 
     /** Queues every whole chunk this piece completes, waiting while the renderer catches up. */
@@ -235,6 +329,9 @@ class StreamingChunkSource private constructor(
          * more than that here would be a second copy of a queue that already exists downstream.
          */
         private const val READ_AHEAD_CHUNKS = 150
+
+        /** How long one chunk lasts, which is what a queued chunk is worth to a playhead. */
+        const val CHUNK_MICROS = SyncRenderer.FRAMES_PER_CHUNK * 1_000_000L / SyncRenderer.SAMPLE_RATE
 
         private val CHUNK_BYTES =
             SyncRenderer.FRAMES_PER_CHUNK * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE

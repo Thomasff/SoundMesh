@@ -1,6 +1,7 @@
 package com.soundmesh.session
 
 import com.soundmesh.core.SessionState
+import com.soundmesh.probe.sync.Playhead
 
 /**
  * A playback session that runs on its own threads until it is stopped.
@@ -63,6 +64,28 @@ interface SyncSession {
      * mean nothing about playback quality.
      */
     fun report(): String?
+
+    /**
+     * Starts playing from [micros] into whatever is playing now.
+     *
+     * Returns as soon as it is asked for rather than once it is heard. Everything in flight is
+     * thrown away - three seconds of decoded audio and 1.5 s of chunks already handed to the room
+     * - so the room goes quiet for about the length of the lead and then plays the new place.
+     * Silence rather than the old place: a room that carried on playing where it was for a second
+     * and a half after somebody dragged a slider is a room that looks broken.
+     *
+     * Declared on both roles rather than defaulted, for the reason [onNetworkChanged] gives.
+     */
+    fun seekTo(micros: Long)
+
+    /**
+     * How far into the song the room is, or null when nothing can say.
+     *
+     * Only a host can answer: it is the handset holding the source, and a sink is handed instants
+     * rather than positions. Null on a sink, and on a host whose source has no length to measure
+     * against - a container that does not say how long it is cannot be drawn as a slider.
+     */
+    fun playhead(): Playhead?
 
     /**
      * Told by the service that owns the audio focus, not asked for by the session.

@@ -162,6 +162,12 @@ class HomeActivity : ComponentActivity() {
         play = ::play,
         stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) },
         calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) },
+        // Told to the service rather than to the session directly: the session outlives this
+        // screen on purpose, and reaching into it from here would be the one place that assumed
+        // otherwise.
+        seek = { micros ->
+            startService(request(SessionService.ACTION_SEEK).putExtra(SessionService.EXTRA_SEEK_MICROS, micros))
+        },
         // The role travels with the intent: the pair calibration is directional, and this screen
         // is where the person already said which direction this phone is being.
         pairCalibrate = {
@@ -414,6 +420,7 @@ class HomeActivity : ComponentActivity() {
         state = state.copy(
             running = session != null,
             sessionState = session?.state(),
+            playhead = session?.playhead(),
             failure = if (awaitingSession) SessionService.FAILURE else null,
             counters = SessionReadout.counters(session?.report()),
             room = readRoom(session)
