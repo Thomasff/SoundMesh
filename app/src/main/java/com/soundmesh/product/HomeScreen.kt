@@ -67,7 +67,15 @@ data class HomeState(
      * Null when nothing is being captured: that output carries nothing then, and a level for a
      * silent stream is a number with nothing behind it. See [AccessibilityVolume].
      */
-    val hostOutputVolume: OutputVolume? = null
+    val hostOutputVolume: OutputVolume? = null,
+    /**
+     * The room's shape, on a host that is running one. Null everywhere else.
+     *
+     * Only the host draws: it is the handset that holds the timeline and the only one that knows
+     * who else is in the room. A sink is told the rule and has nothing to say about it, which is
+     * the same asymmetry the timeline itself has.
+     */
+    val room: RoomState? = null
 )
 
 /** What the screen can ask for. Held as one object so a preview can hand it empty lambdas. */
@@ -79,7 +87,8 @@ class HomeActions(
     val play: () -> Unit,
     val stop: () -> Unit,
     val calibrate: () -> Unit,
-    val pairCalibrate: () -> Unit
+    val pairCalibrate: () -> Unit,
+    val room: RoomActions
 )
 
 /**
@@ -112,6 +121,9 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
         }
         if (state.role != Role.NONE) {
             StatePanel(state)
+            // After the state and before the health numbers: it is a thing to play with while the
+            // room is playing, not a thing to set up before starting.
+            state.room?.let { SpatialPanel(it, actions.room) }
             HealthPanel(state.health)
             TextButton(onClick = { actions.pickRole(Role.NONE) }) {
                 Text(stringResource(R.string.role_change))

@@ -148,4 +148,18 @@
     <string name="counter_clock">时钟</string>
     <string name="counter_broadcast">最慢广播</string>
     <string name="counter_to_sinks">丢给从机</string>
+
+    <string name="room_title">房间摆位</string>
+    <string name="room_hint">拖动手机图标，摆成它们相对你的大致方位。中间那个点是你，不用拖；画多大都一样，只有方向算数。</string>
+    <string name="room_you">你</string>
+    <string name="room_this_phone">这台</string>
+    <string name="room_mode_rotate">旋转</string>
+    <string name="room_mode_pan">左右平移</string>
+    <string name="room_mode_split">拆声道</string>
+    <string name="room_mode_rotate_hint">声音绕着你转一圈，%1$d 秒一圈。</string>
+    <string name="room_mode_pan_hint">拖滑杆，声音在你左右之间移动。</string>
+    <string name="room_mode_split_hint">按摆位分左右声道：偏左的手机多出左声道，偏右的多出右声道。</string>
+    <string name="room_pan_left">左</string>
+    <string name="room_pan_right">右</string>
+    <string name="room_alone">还没有别的手机连上来。一台手机也能摆，但听不出方向。</string>
 </resources>

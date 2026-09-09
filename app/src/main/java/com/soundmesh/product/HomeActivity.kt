@@ -34,7 +34,10 @@ import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
+import com.soundmesh.core.SpatialField
+import com.soundmesh.session.HostSession
 import com.soundmesh.session.SessionService
+import com.soundmesh.session.SyncSession
 
 /**
  * The product's home, and the only screen a user who never attaches a cable ever sees.
@@ -152,8 +155,37 @@ class HomeActivity : ComponentActivity() {
                 Intent(this, PeerCalibrateActivity::class.java)
                     .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
             )
-        }
+        },
+        room = RoomActions(
+            moveIcon = { moved -> updateRoom { it.copy(icons = it.icons.map { icon ->
+                if (icon.peerId == moved.peerId) moved else icon
+            }) } },
+            pickMode = { mode -> updateRoom { it.copy(mode = mode) } },
+            setPan = { pan -> updateRoom { it.copy(pan = pan) } }
+        )
     )
+
+    /**
+     * Changes the drawing and tells the room about it in one step.
+     *
+     * Published on every touch rather than on letting go, because a rule is a function of the host
+     * instant and takes effect on the next chunk: the room follows a finger. There is no cost to
+     * publishing often - the control channel holds one rule and a new one replaces what is waiting
+     * rather than queueing behind it.
+     */
+    private fun updateRoom(change: (RoomState) -> RoomState) {
+        val room = change(state.room ?: return)
+        state = state.copy(room = room)
+        publish(room)
+    }
+
+    private fun publish(room: RoomState) {
+        val host = SessionService.ACTIVE as? HostSession ?: return
+        val layout = SpatialRoom.layoutOf(room.icons) ?: return
+        host.publishSpatialField(
+            SpatialField(room.mode, layout, pan = room.pan.toDouble().coerceIn(-1.0, 1.0))
+        )
+    }
 
     /**
      * Points this screen's volume keys at whichever output the host is being heard on.
@@ -313,8 +345,28 @@ class HomeActivity : ComponentActivity() {
             running = session != null,
             sessionState = session?.state(),
             failure = if (awaitingSession) SessionService.FAILURE else null,
-            counters = SessionReadout.counters(session?.report())
+            counters = SessionReadout.counters(session?.report()),
+            room = readRoom(session)
         )
+    }
+
+    /**
+     * The drawing brought up to date with who is in the room, keeping every icon already dragged.
+     *
+     * Read here rather than pushed because the roster has no event to push: a sink joins by
+     * opening a socket, and this loop is already asking the session how it is several times a
+     * second. Rebuilding the drawing from scratch each pass would throw away the listener's
+     * arrangement while they were still looking at it, which is what [SpatialRoom.reconciled] is.
+     *
+     * A room whose membership changed is published straight away, so a handset that just joined
+     * starts playing its own corner rather than the whole room flat until somebody moves a control.
+     */
+    private fun readRoom(session: SyncSession?): RoomState? {
+        val host = session as? HostSession ?: return null
+        val previous = state.room ?: RoomState(selfId = host.roomPeerIds().firstOrNull())
+        val icons = SpatialRoom.reconciled(previous.icons, host.roomPeerIds())
+        if (icons.map { it.peerId } == previous.icons.map { it.peerId }) return previous
+        return previous.copy(icons = icons).also(::publish)
     }
 
     override fun onResume() {
