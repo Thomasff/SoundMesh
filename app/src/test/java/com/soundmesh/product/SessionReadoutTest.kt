@@ -102,4 +102,16 @@ class SessionReadoutTest {
         assertTrue(labels.contains(R.string.counter_underruns))
         assertEquals("0", valueOf(sinkReport, R.string.counter_underruns))
     }
+
+    /**
+     * A sink is in nobody's room and sends audio to nobody, so it gets neither row. The rows are
+     * keyed off a field only a host writes, for the reason the rest of this file already gives:
+     * a row of zeroes reads as a host whose sinks all left.
+     */
+    @Test
+    fun aSinkIsInNoRoomAndCountsNoConnections() {
+        val labels = SessionReadout.counters(sinkReport).map { it.label }
+        assertFalse(labels.contains(R.string.counter_room))
+        assertFalse(labels.contains(R.string.counter_sinks))
+    }
 }

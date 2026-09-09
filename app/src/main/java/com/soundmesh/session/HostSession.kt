@@ -15,6 +15,44 @@ import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncRenderer
 
 /**
+ * The fields a host adds to its renderer's report.
+ *
+ * A function of its values rather than a method on the session, so that it can be tested at all: a
+ * started HostSession binds three sockets and its renderer opens an AudioTrack. Same shape and the
+ * same reason as trackProfileJson next door.
+ *
+ * [roomPeerIds] is the whole room with this handset first, while [sinks] counts open audio
+ * sockets, so a room where nobody has left has exactly one more name than it has connections.
+ *
+ * The two are gathered over different channels on purpose, and their disagreement is the only
+ * thing this host can say about a handset that left. A sink announces its name on the control
+ * channel and that name is held until a write to its socket fails - which happens when the
+ * listener next touches the drawing, and not before - so the roster is a record of who joined
+ * rather than of who is still here. The connection count is the live one, late by however long
+ * the kernel keeps retransmitting to a handset that walked out of the network, measured at 26.9
+ * seconds. What neither can say is *which* handset stopped listening: chunks travel over
+ * anonymous sockets, which is why the roster had to be built on a separate channel at all.
+ */
+internal fun hostReportFields(
+    maxBroadcastNanos: Long,
+    generated: Int,
+    droppedToSinks: Int,
+    sinks: Int,
+    roomPeerIds: List<String>,
+    unnamedSinks: Int
+): String =
+    "\"maxBroadcastNanos\":$maxBroadcastNanos,\"generated\":$generated" +
+        ",\"droppedToSinks\":$droppedToSinks,\"sinks\":$sinks" +
+        // Whole names rather than the four characters a screen shows. This report is also written
+        // to a file that a later run reads, and a prefix cannot be matched back against a stored
+        // calibration or a stored separation, which are kept under the whole name.
+        ",\"roomPeerIds\":\"${roomPeerIds.joinToString(",")}\"" +
+        // A handset that could not say its name gets no rule and is in no drawing, which from the
+        // room looks like one phone quietly staying flat. A build speaking another version would
+        // do it to all of them at once, and only this says so.
+        ",\"unnamedSinks\":$unnamedSinks"
+
+/**
  * The handset that holds the timeline: it decides when every chunk is heard and plays its own copy
  * alongside the sinks.
  *
@@ -150,13 +188,14 @@ class HostSession(
     // like a session that played nothing rather than one that has not begun.
     override fun report(): String? {
         if (flags.state() == SessionState.IDLE) return null
-        return renderer.report(null).dropLast(1) +
-            ",\"maxBroadcastNanos\":$maxBroadcastNanos,\"generated\":$generated" +
-            ",\"droppedToSinks\":${chunkServer.droppedChunks()}" +
-            // A handset that could not say its name gets no rule and is in no drawing, which from
-            // the room looks like one phone quietly staying flat. A build speaking another version
-            // would do it to all of them at once, and only this says so.
-            ",\"unnamedSinks\":${spatialServer?.unnamedSinks() ?: 0}}"
+        return renderer.report(null).dropLast(1) + "," + hostReportFields(
+            maxBroadcastNanos = maxBroadcastNanos,
+            generated = generated,
+            droppedToSinks = chunkServer.droppedChunks(),
+            sinks = chunkServer.clientCount(),
+            roomPeerIds = roomPeerIds(),
+            unnamedSinks = spatialServer?.unnamedSinks() ?: 0
+        ) + "}"
     }
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)

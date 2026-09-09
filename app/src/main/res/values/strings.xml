@@ -148,6 +148,8 @@
     <string name="counter_clock">时钟</string>
     <string name="counter_broadcast">最慢广播</string>
     <string name="counter_to_sinks">丢给从机</string>
+    <string name="counter_room">房间里（本机在前）</string>
+    <string name="counter_sinks">从机（在收/报过名）</string>
 
     <string name="room_title">房间摆位</string>
     <string name="room_hint">拖动手机图标，摆成它们相对你的大致方位。中间那个点是你，不用拖；画多大都一样，只有方向算数。</string>

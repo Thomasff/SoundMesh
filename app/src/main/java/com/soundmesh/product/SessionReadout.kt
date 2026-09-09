@@ -40,6 +40,31 @@ object SessionReadout {
             rows += Counter(R.string.counter_rediscoveries, "${whole(report, "rediscoveries") ?: 0}")
             rows += Counter(R.string.counter_clock, clock(report))
         }
+        // A host's own, and the only rows that say anything about the other handsets rather than
+        // about this one. Keyed off the connection count and not off the roster, because a host
+        // with no name of its own has connections and no roster at all: the number it knows still
+        // gets a row, and the room it does not have does not get an empty one.
+        whole(report, "sinks")?.let { sinks ->
+            val room = text(report, "roomPeerIds")
+                ?.split(",")
+                ?.filter { it.isNotEmpty() }
+                .orEmpty()
+            // The same four characters the drawing labels its icons with, so one screen's "3f2a"
+            // is the other screen's "3f2a". (The pair calibration screen shows six; the two have
+            // never been reconciled, and one is a prefix of the other.)
+            if (room.isNotEmpty()) {
+                rows += Counter(R.string.counter_room, room.joinToString(" ") { it.take(NAME_CHARS) })
+            }
+            // Two numbers, and neither is a reading on its own: how many sockets are open says
+            // nothing about how many were expected, and how many announced themselves says nothing
+            // about how many are still listening. It is their disagreement that says a handset
+            // left. It cannot say which one - the audio sockets carry no name - so this is a
+            // prompt to look at the phones rather than an answer about them.
+            rows += Counter(
+                R.string.counter_sinks,
+                if (room.isEmpty()) "$sinks" else "$sinks/${room.size - 1}"
+            )
+        }
         // A host's own. The slowest broadcast is the counter that would say the per-sink queues had
         // stopped absorbing a peer that vanished without closing its socket - it read 26,953 ms the
         // day before those queues existed.
@@ -71,4 +96,7 @@ object SessionReadout {
         Regex("\"$name\":\"([^\"]*)\"").find(report)?.groupValues?.get(1)
 
     private const val CHUNK_MILLIS = 20
+
+    /** How much of a handset's name is enough to tell two phones apart in one room. */
+    private const val NAME_CHARS = 4
 }
