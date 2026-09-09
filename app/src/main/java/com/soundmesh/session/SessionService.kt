@@ -204,6 +204,11 @@ class SessionService : Service() {
             address, port, peerId!!, filesDir,
             deadbandFrames(intent), trimFrames(intent),
             resolveHost = { addressOf(peerId) },
+            // Down the same path the stop button takes, so a session that ended itself writes its
+            // report, gives back the audio focus and takes its notification away exactly as one
+            // somebody stopped does. Before this, a host that stopped left this phone holding all
+            // three until it was picked up.
+            onHostGone = { stopSession() },
             // This handset's own name, not the host's. The same identity a peer files this phone's
             // calibration under, so an icon dragged in one session means the same phone in the next.
             spatialId = HostIdentity(filesDir).current()

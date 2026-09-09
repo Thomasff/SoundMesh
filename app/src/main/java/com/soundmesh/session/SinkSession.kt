@@ -21,6 +21,27 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
+ * Whether a sink should stop dialling a host that is not coming back.
+ *
+ * A session used to dial for ever, so a host that stopped left this handset holding an AudioTrack,
+ * a foreground notification and a wakelock, writing silence, until somebody picked the phone up
+ * and stopped it by hand. There is no message that says the host has gone - a stopped host, a host
+ * whose battery died and a host carried out of range all look the same from here - so the only
+ * honest reading is how long it has been since there was one.
+ *
+ * [everConnected] is the whole of the care this needs. A session that has never reached its host
+ * is not one that lost it: somebody who pressed play here and is still walking to the other phone
+ * has lost nothing, and the host opens its file before it binds anything, so the first connection
+ * has always been allowed to arrive whenever it arrives.
+ */
+internal fun hostIsGone(
+    everConnected: Boolean,
+    nowNanos: Long,
+    lastContactNanos: Long,
+    budgetNanos: Long
+): Boolean = everConnected && nowNanos - lastContactNanos > budgetNanos
+
+/**
  * The handset that follows: it converts the host's instants into its own clock and plays what
  * arrives at the instant it was told to.
  *
@@ -58,6 +79,16 @@ class SinkSession(
      * Null - the default - means no spatial control channel is dialled and no gain is ever applied.
      */
     private val spatialId: String? = null,
+    /**
+     * Called once, from the connection thread, when this session gives up on a host that has gone.
+     *
+     * A lambda for the same reason [resolveHost] is one: tearing a session down means releasing
+     * the audio focus, withdrawing the notification and stopping a service, none of which this
+     * class can reach. What it does before calling this is mark itself stopped, so that a caller
+     * which has not been taught to pass anything still gets the part that matters - a renderer
+     * that stops writing silence into a room nobody is in.
+     */
+    private val onHostGone: () -> Unit = {},
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val estimator = ClockOffsetEstimator()
@@ -85,6 +116,16 @@ class SinkSession(
 
     /** When the most recent chunk arrived, in local time, for the link watchdog below. */
     private val lastArrivalNanos = AtomicLong(0L)
+
+    /**
+     * When this handset last had its host at all: a chunk arrived, or a connection was accepted.
+     *
+     * Deliberately not [lastArrivalNanos], which [onNetworkChanged] clears so that the watchdog
+     * stops trusting a chunk that came over a network this phone has left. Clearing this one there
+     * too would make every WiFi change read as "the host has been gone since the session started",
+     * and [hostIsGone] would end the session on the spot - the one moment it must not.
+     */
+    private val lastContactNanos = AtomicLong(0L)
 
     /** Set by [onNetworkChanged], cleared by the connection loop once it has acted on it. */
     private val rediscoverRequested = AtomicBoolean(false)
@@ -129,6 +170,14 @@ class SinkSession(
     /** Whether a connection has ever been made, so the first one is not counted as a return. */
     private var connected = false
 
+    /**
+     * Whether this session ended itself because its host went away.
+     *
+     * On the record, because from outside it is indistinguishable from a session somebody stopped:
+     * both end with a quiet phone. Only this says which of the two happened.
+     */
+    @Volatile private var hostGone = false
+
     private var clockThread: Thread? = null
     private var rendererThread: Thread? = null
     private var watchdogThread: Thread? = null
@@ -152,6 +201,7 @@ class SinkSession(
         ",\"reconnects\":${reconnects.get()}" +
             ",\"rediscoveries\":${rediscoveries.get()}" +
             ",\"clockHealth\":\"${clockHealth ?: "NONE"}\"" +
+            ",\"hostGone\":$hostGone" +
             ",\"worstUncertaintyNanos\":$worstUncertaintyNanos"
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
@@ -194,6 +244,10 @@ class SinkSession(
 
     override fun start() {
         flags.markStarted()
+        // Started now rather than left at zero: the budget is measured from the last time there
+        // was a host, and before the first connection there has to be some instant to measure
+        // from. It is never read until a connection has been made - see [hostIsGone].
+        lastContactNanos.set(System.nanoTime())
         flags.setClockConverged(false)
         flags.setLinkUp(false)
         clockThread = guarded("SoundMeshSinkClock", ::exchangeClock)
@@ -277,6 +331,15 @@ class SinkSession(
                 rediscoverRequested.set(true)
             }
             releaseClients()
+            if (hostIsGone(connected, System.nanoTime(), lastContactNanos.get(), HOST_GONE_NANOS)) {
+                Log.i(LOG_TAG, "the host has been gone too long; this session is ending itself")
+                hostGone = true
+                // Marked before the callback, and not left to it: this is what stops the renderer
+                // writing silence, and it has to happen even for a caller that passed nothing.
+                flags.markStopped()
+                onHostGone()
+                break
+            }
         }
         releaseClients()
     }
@@ -306,6 +369,10 @@ class SinkSession(
             return false
         }
         chunkClient = client
+        // A host that accepted a connection is a host that is here, whether or not a chunk has
+        // come through it yet. Its own server is closed while no session is running, so an accept
+        // cannot come from a handset that has stopped.
+        lastContactNanos.set(System.nanoTime())
         // Dialled after the audio and allowed to fail on its own. A host running a build with no
         // control channel refuses this connection, and a session that gave up there would trade a
         // room playing in step for a room not playing at all.
@@ -355,7 +422,9 @@ class SinkSession(
     }
 
     private fun receive(chunk: AudioChunk) {
-        lastArrivalNanos.set(System.nanoTime())
+        val arrivedAt = System.nanoTime()
+        lastArrivalNanos.set(arrivedAt)
+        lastContactNanos.set(arrivedAt)
         flags.setLinkUp(true)
         if (flags.state().mayEmit) scheduler.submit(chunk)
     }
@@ -445,6 +514,17 @@ class SinkSession(
          * two or three attempts - and short enough that nobody waits out a stale lease by hand.
          */
         const val DIAL_FAILURES_BEFORE_REDISCOVERY = 20
+
+        /**
+         * How long a sink keeps looking for a host that has gone quiet before it ends itself.
+         *
+         * Generous on purpose. Everything shorter than this is what the reconnection loop is for,
+         * and the cost of waiting is a phone playing silence, while the cost of being too eager is
+         * a room that stops because somebody walked between two rooms. A minute is several
+         * rediscovery cycles - twenty dials of half a second each, then a look on the network -
+         * so a host that moved has been searched for properly before this gives up on it.
+         */
+        const val HOST_GONE_NANOS = 60_000_000_000L
 
         /** Between a clock client that ended and its replacement, so a stuck one cannot spin. */
         const val REBUILD_PAUSE_MILLIS = 200L
