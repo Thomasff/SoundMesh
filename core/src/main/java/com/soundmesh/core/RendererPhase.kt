@@ -122,3 +122,30 @@ fun nextPhaseState(
  */
 fun driftIntervalNanos(phase: RendererPhase, chunkNanos: Long, trackingNanos: Long): Long =
     if (phase == RendererPhase.ACQUIRING) chunkNanos else trackingNanos
+
+/**
+ * How long a run has spent in ACQUIRING altogether, including the acquisition still under way.
+ *
+ * The count exists because `reacquisitions` alone cannot price the fallback. Twenty of them in a
+ * twenty-minute run says the fallback fired; it does not say whether that cost four seconds or
+ * four minutes of the fast, per-chunk correction cadence - and that cadence edits a frame in the
+ * waveform up to fifty times a second, so the price is the thing worth knowing. Until now the only
+ * way to it was dividing `driftSamples` by the difference between the two cadences, which assumes
+ * ACQUIRING samples at exactly one per chunk. That assumption has never been checked, and this
+ * measures the quantity directly instead of resting on it.
+ *
+ * [completedNanos] is the sum of the windows that have already converged, added at the instant
+ * each one did. [currentStartNanos] is null before the first chunk pinned the timeline, when
+ * nothing has been acquiring yet; [currentConvergedNanos] is null while the current window is
+ * still running, which is how both long sessions ended on the tablet - reporting that window as
+ * zero would understate exactly the runs that spend the most time acquiring.
+ */
+fun acquiringTotalNanos(
+    completedNanos: Long,
+    currentStartNanos: Long?,
+    currentConvergedNanos: Long?,
+    nowNanos: Long
+): Long {
+    if (currentStartNanos == null || currentConvergedNanos != null) return completedNanos
+    return completedNanos + (nowNanos - currentStartNanos)
+}

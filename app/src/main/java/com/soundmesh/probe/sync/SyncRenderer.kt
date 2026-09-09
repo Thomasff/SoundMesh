@@ -14,6 +14,7 @@ import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
 import com.soundmesh.core.StereoGain
+import com.soundmesh.core.acquiringTotalNanos
 import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.extrapolatedPlaybackFrames
 import com.soundmesh.core.nextPhaseState
@@ -22,6 +23,7 @@ import com.soundmesh.core.playbackErrorFrames
 import com.soundmesh.core.releaseTrimFrames
 import com.soundmesh.probe.PlaybackUsage
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 
 /**
@@ -137,6 +139,10 @@ class SyncRenderer(
      * ordinary jitter; that says nothing about whether the production threshold is right, but it is
      * the only way to watch the transition run on a device. Echoed into [report] so an artifact
      * always says which threshold produced it.
+     *
+     * Those eight runs each played five seconds. On twenty-minute runs the fallback fires 20 to 36
+     * times, once every 32 to 55 seconds of TRACKING, so at the production threshold it is the
+     * steady state rather than an exception - see [completedAcquiringNanos] for what that costs.
      */
     private val reacquireThresholdFrames: Int = REACQUIRE_THRESHOLD_FRAMES,
     /**
@@ -210,6 +216,33 @@ class SyncRenderer(
      * alone reads TRACKING in both cases. Emitted by [report].
      */
     @Volatile private var reacquisitions = 0
+    /**
+     * What each fallback cost, beside how many there were.
+     *
+     * [completedAcquiringNanos] carries the windows that have already converged; [report] adds the
+     * one still running through [acquiringTotalNanos]. Twenty fallbacks in a twenty-minute run
+     * price out very differently at four seconds each and at forty, and the fast cadence they
+     * switch on edits a frame in the waveform up to fifty times a second.
+     *
+     * [reacquisitionErrorSumFrames] is the filtered error each fallback fired at, summed;
+     * against [reacquisitions] it gives the mean excursion. That mean is what separates a slow
+     * ramp out of the deadband from a step: landing near [REACQUIRE_THRESHOLD_FRAMES] says the
+     * error crept over it, while twice the threshold says something moved it in one go.
+     * [maxFilteredErrorMagnitudeFrames] holds the run's worst, which lastFilteredErrorFrames
+     * cannot report - it is one sample, and on a run ending mid-acquisition it is one taken while
+     * the error was already being worked off.
+     *
+     * One thing to subtract before reading a sink's reported acquiringNanos. A sink outlives its
+     * host by SinkSession's host-gone budget, and across that whole tail nothing is queued, so the
+     * loop writes blind silence - which advances the timeline by exactly the frames it writes,
+     * leaving the error where it was, while applyPendingAdjust never runs because it runs only on
+     * a Play. An acquisition in progress when the host stopped therefore cannot converge and holds
+     * for the entire tail. On the measured runs that tail was 61.9s against 169s of real
+     * acquisition, so it is not a rounding error. silenceFrames says how long it was.
+     */
+    @Volatile private var completedAcquiringNanos = 0L
+    @Volatile private var reacquisitionErrorSumFrames = 0L
+    @Volatile private var maxFilteredErrorMagnitudeFrames = 0
     /**
      * How often a released chunk had to be trimmed, and by how much at worst. This is the release
      * phase made directly observable: before the trim existed the same quantity was silently
@@ -692,6 +725,8 @@ class SyncRenderer(
         val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, timelineNextHostNanos, SAMPLE_RATE)
         val decision = drift.observe(errorFrames)
         lastFilteredError = decision.filteredErrorFrames
+        val magnitude = abs(decision.filteredErrorFrames)
+        if (magnitude > maxFilteredErrorMagnitudeFrames) maxFilteredErrorMagnitudeFrames = magnitude
         driftSamples++
         pendingAdjustFrames = decision.adjustFrames
         val wasAcquiring = phaseState.phase == RendererPhase.ACQUIRING
@@ -704,12 +739,16 @@ class SyncRenderer(
         val isAcquiring = phaseState.phase == RendererPhase.ACQUIRING
         if (wasAcquiring && !isAcquiring) {
             acquisitionConvergedAtHostNanos = hostNanosNow()
+            // Banked at the instant it converged, so the running total never has to reconstruct a
+            // window whose start has since been overwritten by the next fallback.
+            completedAcquiringNanos += acquisitionConvergedAtHostNanos - acquisitionStartHostNanos
         } else if (!wasAcquiring && isAcquiring) {
             // Fallen back. The acquisition window has to be restarted, not extended: leaving the
             // old converged instant in place would have acquisitionDurationNanos() keep reporting
             // the first acquisition's duration while a second one is actually running, and moving
             // only the start would make it negative against that stale end.
             reacquisitions++
+            reacquisitionErrorSumFrames += magnitude
             acquisitionStartHostNanos = hostNanosNow()
             acquisitionConvergedAtHostNanos = UNDEFINED
         }
@@ -838,6 +877,14 @@ class SyncRenderer(
             "\"adjustments\":$adjustments,\"driftSamples\":$driftSamples," +
             "\"lastFilteredErrorFrames\":$lastFilteredError,\"phase\":\"${phaseState.phase}\"," +
             "\"reacquisitions\":$reacquisitions," +
+            "\"acquiringNanos\":${acquiringTotalNanos(
+                completedAcquiringNanos,
+                acquisitionStartHostNanos.takeIf { it != UNDEFINED },
+                acquisitionConvergedAtHostNanos.takeIf { it != UNDEFINED },
+                hostNanosNow()
+            )}," +
+            "\"reacquisitionErrorSumFrames\":$reacquisitionErrorSumFrames," +
+            "\"maxFilteredErrorMagnitudeFrames\":$maxFilteredErrorMagnitudeFrames," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
             "\"trimmedFrames\":$trimmedFrames,\"trackUnderruns\":$trackUnderruns," +
             "\"silenceWrites\":$silenceWrites,\"maxSilenceFrames\":$maxSilenceFrames," +

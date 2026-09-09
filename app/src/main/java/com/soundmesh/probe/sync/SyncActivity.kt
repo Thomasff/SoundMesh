@@ -273,11 +273,16 @@ class SyncActivity : Activity() {
      *
      * Read off the intent for one reason: the production threshold sits far above the drift-sample
      * noise floor, so it fires only on a real slip, and across eight two-handset runs it fired
-     * exactly zero times. Eight clean runs with `reacquisitions == 0` say the fallback was never
-     * executed - not that it works. Lowering the threshold below the noise floor makes ordinary
-     * jitter trip it, which is the only way to watch the transition actually run on a handset.
-     * A non-positive value would make every sample a slip and pin the loop in ACQUIRING forever,
-     * so it falls back to the default rather than being honoured.
+     * exactly zero times - so lowering it below the noise floor was the only way to watch the
+     * transition run on a handset at all. A non-positive value would make every sample a slip and
+     * pin the loop in ACQUIRING forever, so it falls back to the default rather than being
+     * honoured.
+     *
+     * Those eight runs did not show the fallback is rare. Each played five seconds of audio, which
+     * is not long enough to finish the first acquisition, let alone leave it: their
+     * adjustments/driftSamples ratio is 11-24%, against 84-98% on a twenty-minute run. Three
+     * twenty-minute runs fired the fallback 20, 35 and 36 times. A zero across runs that never
+     * reached the regime is not evidence about the regime.
      */
     /**
      * Which capture path this run asks the calibration recording to open, defaulting to the MIC

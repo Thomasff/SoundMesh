@@ -170,4 +170,35 @@ class RendererPhaseTest {
         // second puts convergence of a one-chunk release-phase error back at ~16 minutes.
         assertTrue(acquiringInterval < trackingInterval)
     }
+
+    @Test
+    fun countsTheAcquisitionStillRunningRatherThanWaitingForItToConverge() {
+        // A run that ends mid-reacquisition - which is how the pad ended both long sessions -
+        // would otherwise report the acquisition as costing nothing at all.
+        val total = acquiringTotalNanos(
+            completedNanos = 0L, currentStartNanos = 1_000L, currentConvergedNanos = null, nowNanos = 1_500L
+        )
+
+        assertEquals(500L, total)
+    }
+
+    @Test
+    fun countsNothingBeforeTheFirstChunkHasPinnedTheTimeline() {
+        val total = acquiringTotalNanos(
+            completedNanos = 0L, currentStartNanos = null, currentConvergedNanos = null, nowNanos = 9_000L
+        )
+
+        assertEquals(0L, total)
+    }
+
+    @Test
+    fun doesNotCountAConvergedWindowASecondTime() {
+        // The window was added to the running total the instant it converged, so counting it
+        // again here would double every acquisition but the last.
+        val total = acquiringTotalNanos(
+            completedNanos = 500L, currentStartNanos = 1_000L, currentConvergedNanos = 1_500L, nowNanos = 9_000L
+        )
+
+        assertEquals(500L, total)
+    }
 }
