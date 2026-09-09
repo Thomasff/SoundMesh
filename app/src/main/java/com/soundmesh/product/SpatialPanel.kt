@@ -14,6 +14,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -105,6 +106,18 @@ private fun RoomDrawing(state: RoomState, actions: RoomActions) {
     // Which icon the finger picked up, held for the whole gesture. Re-choosing the nearest icon on
     // every drag event would let a fast drag hand itself to whichever one it passed over.
     var dragging by remember { mutableStateOf<String?>(null) }
+    // The gesture below is a coroutine keyed on who is in the room, so it outlives every
+    // recomposition that only moved somebody - and it closes over the room as it was when that
+    // coroutine started. Read directly, `state` inside the gesture is the room from before the
+    // first drag: a finger reaching for the icon it can see was matched against where the icons
+    // used to be, so it picked up whichever handset used to be nearest and that handset jumped
+    // across the room to a touch that was nowhere near it. Both halves of what a listener reports
+    // as "the icon at the edge will not be picked up" come from this one line.
+    //
+    // Read through here rather than added to the key: the key restarts the gesture, and a key
+    // that moves would cancel the drag that is moving it.
+    val room by rememberUpdatedState(state)
+    val onRoom by rememberUpdatedState(actions)
     val measurer = rememberTextMeasurer()
     val listener = MaterialTheme.colorScheme.onSurfaceVariant
     val outline = MaterialTheme.colorScheme.outlineVariant
@@ -118,14 +131,14 @@ private fun RoomDrawing(state: RoomState, actions: RoomActions) {
             .pointerInput(state.icons.map { it.peerId }) {
                 detectDragGestures(
                     onDragStart = { at ->
-                        dragging = nearestPeerId(state.icons, at.x / size.width, at.y / size.height)
+                        dragging = nearestPeerId(room.icons, at.x / size.width, at.y / size.height)
                     },
                     onDragEnd = { dragging = null },
                     onDragCancel = { dragging = null }
                 ) { change, _ ->
                     change.consume()
                     val held = dragging ?: return@detectDragGestures
-                    actions.moveIcon(
+                    onRoom.moveIcon(
                         SpatialRoom.clamped(
                             RoomIcon(
                                 held,
