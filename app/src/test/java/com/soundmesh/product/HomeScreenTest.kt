@@ -1,8 +1,10 @@
 package com.soundmesh.product
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -43,5 +45,23 @@ class HomeScreenTest {
             assertFalse("$name explains the role by the pairing code: $text", text.contains("扫过"))
             assertFalse("$name explains the role by the pairing code: $text", text.contains("出示过"))
         }
+    }
+    /**
+     * The gesture a listener did not mean to make. A Material slider reports a touch on the track
+     * exactly as it reports a drag, and the touch lands the value wherever the finger was - so a
+     * sleeve across the screen used to buy a real jump and a second and a half of silence in every
+     * handset in the room. What separates the two is whether the finger went anywhere.
+     */
+    @Test
+    fun aTouchThatWentNowhereIsNotAJump() {
+        assertNull(draggedTo(landedAt = 0.62f, leftAt = 0.62f))
+        assertNull(draggedTo(landedAt = 0.62f, leftAt = 0.625f))
+    }
+
+    /** And the other half, or the control would be a decoration. */
+    @Test
+    fun aFingerThatTravelledIsAJumpToWhereItStopped() {
+        assertEquals(0.9f, draggedTo(landedAt = 0.2f, leftAt = 0.9f))
+        assertEquals(0.1f, draggedTo(landedAt = 0.8f, leftAt = 0.1f))
     }
 }

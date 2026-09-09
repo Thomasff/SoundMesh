@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlin.math.abs
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -312,6 +313,11 @@ private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolea
 @Composable
 private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
+    // Where the finger first landed, which is what tells a drag from a brush. A Material slider
+    // treats a touch anywhere on the track as a complete gesture and reports it the same way it
+    // reports a drag, so a sleeve across the screen used to buy a real jump and a second and a
+    // half of silence in every handset in the room.
+    var landedAt by remember { mutableStateOf<Float?>(null) }
     val duration = playhead.durationMicros.coerceAtLeast(1L)
     val position = dragging ?: (playhead.positionMicros.toFloat() / duration)
     Text(
@@ -324,13 +330,41 @@ private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit) {
     )
     Slider(
         value = position.coerceIn(0f, 1f),
-        onValueChange = { dragging = it },
+        onValueChange = {
+            if (landedAt == null) landedAt = it
+            dragging = it
+        },
         onValueChangeFinished = {
-            dragging?.let { seek((it * duration).toLong()) }
+            val from = landedAt
+            val to = dragging
+            if (from != null && to != null) {
+                draggedTo(from, to)?.let { seek((it * duration).toLong()) }
+            }
+            landedAt = null
             dragging = null
         }
     )
 }
+
+/**
+ * Where a slider gesture is asking the song to go, or null when it was not asking.
+ *
+ * A Material slider cannot tell the caller whether the finger moved: a touch on the track is a
+ * whole gesture, reported exactly as a drag is, and it lands the value wherever the finger was.
+ * That is right for a control somebody is aiming at and wrong for one somebody is listening past -
+ * every jump empties every queue in the room and costs about a second and a half of silence, so a
+ * sleeve across the screen was buying the loudest thing the screen can do.
+ *
+ * The rule is that a gesture has to have gone somewhere. [MIN_DRAG] is a fraction of the track
+ * rather than of the song, because it is describing a finger and not a piece of music - a hundredth
+ * of a phone's width is under two millimetres, well inside what a deliberate drag covers and
+ * outside what a touch that meant to be still does.
+ */
+internal fun draggedTo(landedAt: Float, leftAt: Float): Float? =
+    if (abs(leftAt - landedAt) < MIN_DRAG) null else leftAt
+
+/** How far a finger has to travel before the room is asked to jump. */
+internal const val MIN_DRAG = 0.01f
 
 /** Minutes and seconds, from microseconds. Hours are somebody else's problem. */
 private fun clockOf(micros: Long): String {
@@ -343,7 +377,9 @@ private fun StatePanel(state: HomeState) {
     Section(R.string.state_title) {
         Text(
             if (!state.running && state.failure != null) {
-                stringResource(R.string.state_failed, state.failure)
+                StateWording.failure(state.failure)
+                    ?.let { stringResource(it) }
+                    ?: stringResource(R.string.state_failed, state.failure)
             } else {
                 stringResource(StateWording.of(state.sessionState))
             },

@@ -29,6 +29,24 @@ object StateWording {
     }
 
     /**
+     * A failure code in words, or null when the code itself is the best that can be said.
+     *
+     * The one code that has words is the one that reached a user as `BindException`: the clock
+     * port is held by whichever of the two features got there first, and calibration and a session
+     * are both entitled to it. Nothing about the collision is wrong - they are not meant to run at
+     * once - but the name of a Java class is not a thing to hand somebody standing in a room with
+     * three handsets. Anything else keeps the code, which is at least searchable.
+     *
+     * Returning null rather than a fallback string, so the caller keeps the code in the message it
+     * already had, and so a test can tell "no words for this" from "these words".
+     */
+    @StringRes
+    fun failure(code: String?): Int? = when (code) {
+        "BindException" -> R.string.failure_port_in_use
+        else -> null
+    }
+
+    /**
      * The platform's thermal ladder, in words.
      *
      * Section 11.2 asks for heat to be shown honestly and nothing more - no throttling of our own,

@@ -475,6 +475,13 @@ class PeerCalibrateActivity : ComponentActivity() {
             clockServer.start()
             resultServer.start()
             planServer.start()
+            // Said out loud at both ends, because these three are the same ports a session wants
+            // and the second feature to ask is refused with nothing but a Java class name. A user
+            // hit exactly that: calibration finished at 21:35 and a session still could not bind
+            // at 21:38, and there was no way afterwards to tell whether the stop button had been
+            // pressed at all. These two lines make the next occurrence answerable.
+            Log.i(LOG_TAG, "the calibration servers are up: clock ${SyncActivity.CLOCK_PORT}, " +
+                "result ${SyncActivity.RESULT_PORT}, plan $PLAN_PORT")
             // Opened once and held across every round, which is the whole of what one press
             // serving several handsets amounts to: they used to be opened and closed around a
             // single round, so the second sink to press start found nothing listening at all.
@@ -493,6 +500,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             planServer.stop()
             resultServer.stop()
             clockServer.stop()
+            Log.i(LOG_TAG, "the calibration servers are down; the clock port is free again")
         }
     }
 

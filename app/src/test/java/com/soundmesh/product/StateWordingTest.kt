@@ -3,6 +3,8 @@ package com.soundmesh.product
 import com.soundmesh.core.SessionState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class StateWordingTest {
@@ -20,6 +22,26 @@ class StateWordingTest {
     @Test
     fun noSessionReadsAsIdleRatherThanBlank() {
         assertNotEquals(0, StateWording.of(null))
+    }
+
+    /**
+     * The code that reached a user on a real handset. Calibration and a session both want the
+     * clock port, and the one that arrives second is told so by a Java class name.
+     */
+    @Test
+    fun aPortCollisionIsSaidInWordsRatherThanAsAClassName() {
+        assertNotEquals(0, StateWording.failure("BindException"))
+        assertNotNull(StateWording.failure("BindException"))
+    }
+
+    /**
+     * The other half, and the reason this returns null instead of a fallback string: a code with
+     * no words has to stay visible as a code, because that is what makes it findable.
+     */
+    @Test
+    fun aCodeWithNoWordsKeepsBeingTheCode() {
+        assertNull(StateWording.failure("SocketTimeoutException"))
+        assertNull(StateWording.failure(null))
     }
 
     /** Seven of them, and the ladder is the platform's rather than ours. */
