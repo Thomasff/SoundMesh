@@ -13,6 +13,7 @@ import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
+import com.soundmesh.core.StereoGain
 import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.extrapolatedPlaybackFrames
 import com.soundmesh.core.nextPhaseState
@@ -69,12 +70,47 @@ internal fun spatialShaped(
     playAtHostNanos: Long,
     payload: ByteArray,
     field: SpatialField?,
-    peerId: String?
+    peerId: String?,
+    wasUnder: SpatialField? = null
 ): ByteArray {
     if (field == null || peerId == null) return payload
     if (sequence >= SyncRenderer.CHIRP_SEQUENCE_BASE) return payload
     if (!field.layout.contains(peerId)) return payload
-    return SpatialShaper.shape(payload, field, peerId, playAtHostNanos, SyncRenderer.SAMPLE_RATE)
+    return SpatialShaper.shape(
+        payload,
+        field,
+        peerId,
+        playAtHostNanos,
+        SyncRenderer.SAMPLE_RATE,
+        from = cameFrom(wasUnder, field, peerId, playAtHostNanos)
+    )
+}
+
+/**
+ * Where the room was a moment ago, when that is not where this rule says it is.
+ *
+ * Null whenever the previous chunk was already under this same rule, which is every chunk of
+ * ordinary playback - the law is continuous, so its value at this chunk's first instant is exactly
+ * where the previous chunk left off and the ramp needs no help.
+ *
+ * The three cases that are not that: the first rule arriving at a handset that has been playing
+ * unshaped, a rule being replaced by a different one, and an icon being dragged - which publishes a
+ * new rule several times a second. In all three the gain steps rather than moves, and the step is
+ * the whole gain: up to unity, sixty times the 1.64% a chunk edge is worth. That is the one the
+ * room can hear, and it is what a listener reported as a noise in the first second of a session.
+ *
+ * Unity for the handset that was playing under no rule at all, because that is what it was heard
+ * at. A handset the old rule did not name is the same case.
+ */
+private fun cameFrom(
+    wasUnder: SpatialField?,
+    now: SpatialField,
+    peerId: String,
+    playAtHostNanos: Long
+): StereoGain? {
+    if (wasUnder === now) return null
+    if (wasUnder == null || !wasUnder.layout.contains(peerId)) return StereoGain(1.0, 1.0)
+    return wasUnder.gainAt(peerId, playAtHostNanos)
 }
 
 /**
@@ -157,6 +193,11 @@ class SyncRenderer(
     // Which arm ran. A spatial run and a flat one are the same binary, the same log and the same
     // duration; without this the only thing that tells them apart is a pair of ears.
     @Volatile private var spatialChunks = 0
+
+    // Which rule the last chunk was actually heard under, so a new one can be ramped away from it
+    // rather than stepped into. Null means the last chunk went out unshaped - at unity - which is
+    // true both before any rule arrives and for a chirp, which is never shaped.
+    private var shapedUnder: SpatialField? = null
     @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
     @Volatile private var failureCode: String? = null
@@ -428,13 +469,19 @@ class SyncRenderer(
                         // without moving the instant any surviving frame lands on, so frame j of
                         // this payload is heard at playAtHostNanos + j/SAMPLE_RATE either way.
                         val adjusted = applyPendingAdjust(decision.chunk.pcm)
+                        // Read once: it is written from another thread, and a rule that changed
+                        // between the shaping and the remembering would leave the next chunk
+                        // ramping away from a rule that was never applied.
+                        val rule = spatialField
                         val payload = spatialShaped(
                             decision.chunk.sequence,
                             decision.chunk.playAtHostNanos,
                             adjusted,
-                            spatialField,
-                            spatialPeerId
+                            rule,
+                            spatialPeerId,
+                            wasUnder = shapedUnder
                         )
+                        shapedUnder = if (payload !== adjusted) rule else null
                         // Against the adjusted array, not against the chunk: applyPendingAdjust returns a
                         // fresh array too, and a dropped frame counting as a shaped chunk would
                         // make the tally say the spatial arm ran on a run where it never did.

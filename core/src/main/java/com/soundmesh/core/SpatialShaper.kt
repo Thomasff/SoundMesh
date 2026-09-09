@@ -34,12 +34,20 @@ object SpatialShaper {
     private const val BYTES_PER_SAMPLE = 2
     private const val BYTES_PER_FRAME = CHANNELS * BYTES_PER_SAMPLE
 
+    /**
+     * [from] is the gain the previous chunk was heard ending at, when that is not the gain this
+     * rule gives this instant - a rule arriving, a rule being replaced, an icon being dragged. The
+     * law is still a function of the host instant; what this argument says is where the room was
+     * coming from, which the law cannot know because the previous chunk was under a different law
+     * or under none. Null means the two agree, which is every chunk of ordinary playback.
+     */
     fun shape(
         pcm: ByteArray,
         field: SpatialField,
         peerId: String,
         startHostNanos: Long,
-        sampleRate: Int
+        sampleRate: Int,
+        from: StereoGain? = null
     ): ByteArray {
         require(sampleRate > 0) { "frames need a rate to become instants: $sampleRate" }
         require(pcm.size % BYTES_PER_FRAME == 0) {
@@ -49,7 +57,7 @@ object SpatialShaper {
         if (frames == 0) return ByteArray(0)
         // Throws for a handset the drawing does not name. The renderer decides what to do about
         // that; silently returning silence here would empty a handset for a reason nobody can see.
-        val begin = field.gainAt(peerId, startHostNanos)
+        val begin = from ?: field.gainAt(peerId, startHostNanos)
         val spanNanos = frames.toLong() * 1_000_000_000L / sampleRate
         val end = field.gainAt(peerId, startHostNanos + spanNanos)
 
