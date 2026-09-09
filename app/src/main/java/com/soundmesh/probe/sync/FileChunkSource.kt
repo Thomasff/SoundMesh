@@ -26,11 +26,21 @@ import java.io.File
  * short of [pcm]. Held as a length rather than trimmed off with a copy because a whole song is
  * tens of megabytes and the tail being dropped is under four kilobytes of it.
  */
-class FileChunkSource private constructor(private val pcm: ByteArray, private val length: Int) {
+class FileChunkSource internal constructor(private val pcm: ByteArray, private val length: Int) {
     private var position = 0
 
     /** The decoded audio, in whole chunks - what the run report says it is playing. */
     val chunkCount: Int get() = length / CHUNK_BYTES
+
+    /**
+     * Another reader over the same decoded audio, starting at the beginning.
+     *
+     * The audio is the expensive thing and the position is not, so this is what makes a decoded
+     * song reusable: see [DecodedSong]. The array is shared rather than copied because nothing
+     * here ever writes to it, and copying it would spend the seventy-odd megabytes this exists to
+     * avoid spending twice.
+     */
+    fun rewound(): FileChunkSource = FileChunkSource(pcm, length)
 
     /** One full chunk, wrapping back to the start when it runs out. */
     fun readChunk(): ByteArray {

@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.soundmesh.probe.R
 import com.soundmesh.session.CAPTURING_HOST_STREAM
+import com.soundmesh.probe.sync.DecodedSong
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.HostPairingCode
@@ -225,6 +226,10 @@ class HomeActivity : ComponentActivity() {
         state = state.copy(checking = true, problem = null, songName = null)
         Thread({
             val chosen = ChosenSource(getExternalFilesDir(null) ?: filesDir)
+            // Before the copy, not after the decode. What is held describes the file that is about
+            // to be written over, and a pick that fails partway would otherwise leave the previous
+            // song held against the new file - which plays the old song and says nothing.
+            DecodedSong.forget()
             val outcome = runCatching {
                 contentResolver.openInputStream(uri).use { input ->
                     requireNotNull(input) { "no stream" }
@@ -234,7 +239,9 @@ class HomeActivity : ComponentActivity() {
                 // The whole song, the same way the session will read it: what this is verifying is
                 // that this file plays, and a check that only ever read the first minute would
                 // pass a song that is refused for its length or breaks in its second half.
-                FileChunkSource.openWhole(chosen.file())
+                // Kept rather than dropped. This decode is the slow part of choosing a song, and
+                // pressing play used to pay for the identical one all over again.
+                DecodedSong.keep(chosen.file(), whole = true, source = FileChunkSource.openWhole(chosen.file()))
                 Log.i(LOG_TAG, "the chosen song was read in ${(System.nanoTime() - started) / 1_000_000} ms")
                 displayName(uri)
             }

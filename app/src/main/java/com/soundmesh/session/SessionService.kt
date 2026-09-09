@@ -21,6 +21,7 @@ import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureChunkSource
+import com.soundmesh.probe.sync.DecodedSong
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.PeerDiscovery
@@ -110,11 +111,13 @@ class SessionService : Service() {
         // here and gets the 60 s every archived report was written against; the product asks for
         // the song, because a minute of it on a loop is not what anyone chose the file for.
         val file = File(getExternalFilesDir(null), name)
-        val source = if (intent.getBooleanExtra(EXTRA_WHOLE_SOURCE, false)) {
-            FileChunkSource.openWhole(file)
-        } else {
-            FileChunkSource.open(file)
-        }
+        val whole = intent.getBooleanExtra(EXTRA_WHOLE_SOURCE, false)
+        // Whoever chose this song already waited for it to be decoded, and this is that decoding.
+        // Asked for by the same two things that decided it - the file and how much of it - so a
+        // caller wanting the prefix cannot be handed the whole song, which would silently move a
+        // measurement onto the other arm.
+        val source = DecodedSong.take(file, whole)
+            ?: if (whole) FileChunkSource.openWhole(file) else FileChunkSource.open(file)
         advertise()
         return HostSession(
             source::readChunk, deadbandFrames(intent), trimFrames(intent),
