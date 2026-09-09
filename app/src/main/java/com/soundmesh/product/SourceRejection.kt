@@ -15,6 +15,7 @@ import com.soundmesh.probe.R
 object SourceRejection {
     @StringRes
     fun of(code: String?): Int = when (code) {
+        "SOURCE_FOLDER_EMPTY" -> R.string.source_folder_empty
         "SOURCE_FILE_MISSING" -> R.string.source_missing
         "SOURCE_FILE_NO_AUDIO" -> R.string.source_no_audio
         "SOURCE_FILE_TOO_SHORT" -> R.string.source_too_short

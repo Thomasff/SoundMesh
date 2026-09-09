@@ -40,7 +40,8 @@ internal fun hostReportFields(
     sinks: Int,
     roomPeerIds: List<String>,
     unnamedSinks: Int,
-    lateChunks: Int
+    lateChunks: Int,
+    skippedSongs: Int
 ): String =
     "\"maxBroadcastNanos\":$maxBroadcastNanos,\"generated\":$generated" +
         ",\"droppedToSinks\":$droppedToSinks,\"sinks\":$sinks" +
@@ -55,7 +56,10 @@ internal fun hostReportFields(
         // The renderer waiting on a source that decodes while it plays. Nothing else says it: the
         // 1.5 s lead and the scheduler's three seconds absorb a burst completely, so a decoder
         // that fell behind and caught up again leaves no other mark anywhere in a run.
-        ",\"lateChunks\":$lateChunks"
+        ",\"lateChunks\":$lateChunks" +
+        // Songs in a folder that would not play. A folder plays on without them and sounds exactly
+        // like a folder that never held them.
+        ",\"skippedSongs\":$skippedSongs"
 
 /**
  * The host instant at which a song that has just run out has finished being heard.
@@ -151,6 +155,13 @@ class HostSession(
      */
     private val lateChunks: () -> Int = { 0 },
     /**
+     * How many songs a folder held that would not play.
+     *
+     * A function for the same reason [lateChunks] is, and zero by default for the same reason: a
+     * source that is one song has nothing to pass over, and a capture has no list at all.
+     */
+    private val skippedSongs: () -> Int = { 0 },
+    /**
      * Called once, from the producer's own thread, when the source has no more audio.
      *
      * A song that ends is not a session that fails, and it is not a session that keeps going
@@ -245,7 +256,8 @@ class HostSession(
             sinks = chunkServer.clientCount(),
             roomPeerIds = roomPeerIds(),
             unnamedSinks = spatialServer?.unnamedSinks() ?: 0,
-            lateChunks = lateChunks()
+            lateChunks = lateChunks(),
+            skippedSongs = skippedSongs()
         ) + "}"
     }
 

@@ -2,8 +2,11 @@ package com.soundmesh.product
 
 import java.io.File
 
-/** Where a song lives and what it is called, which are the two things a screen and a decoder want. */
-data class Chosen(val uri: String, val name: String)
+/** One song, or a folder of them. What is stored for a folder is the folder, never its contents. */
+enum class ChosenKind { SONG, FOLDER }
+
+/** Where music lives and what it is called: the two things a screen and a decoder want. */
+data class Chosen(val kind: ChosenKind, val uri: String, val name: String)
 
 /**
  * [chosen] unless this app has lost the permission to open it.
@@ -35,20 +38,24 @@ class ChosenSource(private val directory: File) {
     /**
      * What was chosen, or null if nothing was - including a record only half written.
      *
-     * The address is the first line because a URI cannot contain a raw line break and a display
-     * name can: providers hand back names that people typed.
+     * The name is last because a URI cannot contain a raw line break and a display name can:
+     * providers hand back names that people typed. A kind this build does not know reads as
+     * nothing chosen, which is what a downgrade should look like.
      */
     fun chosen(): Chosen? {
         val stored = runCatching { File(directory, CHOSEN_FILE).readText() }.getOrNull() ?: return null
-        val split = stored.indexOf('\n')
-        if (split <= 0) return null
-        val uri = stored.substring(0, split)
-        val name = stored.substring(split + 1)
-        return if (name.isEmpty()) null else Chosen(uri, name)
+        val firstBreak = stored.indexOf('\n')
+        if (firstBreak <= 0) return null
+        val secondBreak = stored.indexOf('\n', firstBreak + 1)
+        if (secondBreak < 0) return null
+        val kind = ChosenKind.entries.firstOrNull { it.name == stored.substring(0, firstBreak) } ?: return null
+        val uri = stored.substring(firstBreak + 1, secondBreak)
+        val name = stored.substring(secondBreak + 1)
+        return if (uri.isEmpty() || name.isEmpty()) null else Chosen(kind, uri, name)
     }
 
-    fun remember(uri: String, displayName: String) {
-        File(directory, CHOSEN_FILE).writeText("$uri\n$displayName")
+    fun remember(kind: ChosenKind, uri: String, displayName: String) {
+        File(directory, CHOSEN_FILE).writeText("${kind.name}\n$uri\n$displayName")
     }
 
     fun forget() {

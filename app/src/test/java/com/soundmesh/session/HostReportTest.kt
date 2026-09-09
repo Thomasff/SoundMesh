@@ -26,7 +26,7 @@ class HostReportTest {
     private val near = "0918273645abcdef"
     private val far = "1122334455667788"
 
-    private fun report(sinks: Int, room: List<String>, lateChunks: Int = 0): String =
+    private fun report(sinks: Int, room: List<String>, lateChunks: Int = 0, skippedSongs: Int = 0): String =
         "{" + hostReportFields(
             maxBroadcastNanos = 1_000_000L,
             generated = 3_010,
@@ -34,7 +34,8 @@ class HostReportTest {
             sinks = sinks,
             roomPeerIds = room,
             unnamedSinks = 0,
-            lateChunks = lateChunks
+            lateChunks = lateChunks,
+            skippedSongs = skippedSongs
         ) + "}"
 
     private fun valueOf(report: String, label: Int): String =
@@ -80,6 +81,25 @@ class HostReportTest {
     fun aHostSaysHowOftenItWaitedForItsSource() {
         val text = report(sinks = 1, room = listOf(host, near), lateChunks = 7)
         assertEquals("7", valueOf(text, R.string.counter_source_late))
+    }
+
+    /**
+     * A folder is the one source that can lose part of itself and play on regardless.
+     *
+     * Nothing else would show it. The songs that did play are correct, the counters are correct,
+     * and a folder missing its fourth track sounds exactly like a folder that never held one - so
+     * the listener's only other evidence is knowing how many tracks the album has.
+     */
+    @Test
+    fun aHostSaysHowManySongsItCouldNotPlay() {
+        val text = report(sinks = 1, room = listOf(host, near), skippedSongs = 2)
+        assertEquals("2", valueOf(text, R.string.counter_songs_skipped))
+    }
+
+    /** And says zero on a folder that played whole, for the same reason the other one does. */
+    @Test
+    fun aHostThatSkippedNothingStillSaysSo() {
+        assertEquals("0", valueOf(report(sinks = 1, room = listOf(host, near)), R.string.counter_songs_skipped))
     }
 
     /** Zero is a reading. A row that appeared only on a bad session could not be watched. */

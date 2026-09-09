@@ -19,6 +19,8 @@
     <string name="song_title">歌曲</string>
     <string name="song_none">还没选歌</string>
     <string name="song_choose">选择歌曲</string>
+    <string name="song_choose_folder">选文件夹</string>
+    <string name="song_folder_chosen">文件夹：%1$s</string>
     <string name="song_checking">正在检查这首歌…</string>
     <string name="song_capture">采集这台手机正在放的音乐</string>
     <string name="song_capturing">采集这台手机正在放的声音</string>
@@ -132,6 +134,7 @@
     <string name="thermal_unknown">读不出来</string>
 
     <string name="source_missing">文件不见了，重新选一首</string>
+    <string name="source_folder_empty">这个文件夹里没有能放的歌</string>
     <string name="source_no_audio">这个文件里没有音轨</string>
     <string name="source_too_short">这首歌太短，不到一个数据块</string>
     <string name="source_stalled">解码卡住了，换一首试试</string>
@@ -152,6 +155,7 @@
     <string name="counter_clock">时钟</string>
     <string name="counter_broadcast">最慢广播</string>
     <string name="counter_source_late">等音源（次）</string>
+    <string name="counter_songs_skipped">跳过（首）</string>
     <string name="counter_to_sinks">丢给从机</string>
     <string name="counter_room">房间里（本机在前）</string>
     <string name="counter_sinks">从机（在收/报过名）</string>

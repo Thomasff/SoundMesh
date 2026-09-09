@@ -53,6 +53,14 @@ data class HomeState(
      */
     val songUri: String? = null,
     /**
+     * Whether that address is a folder rather than one song.
+     *
+     * The screen shows both the same way - a name - because from where a listener stands they are
+     * the same choice. What it changes is which extra the service is handed, and that a folder's
+     * songs are read at the moment play is pressed rather than at the moment it was picked.
+     */
+    val songIsFolder: Boolean = false,
+    /**
      * Whether the host will stream what this phone is playing instead of a file it was handed.
      *
      * True only once the consent dialog has been answered and the projection exists, because a
@@ -89,6 +97,7 @@ data class HomeState(
 class HomeActions(
     val pickRole: (Role) -> Unit,
     val chooseSong: () -> Unit,
+    val chooseFolder: () -> Unit,
     val captureAudio: () -> Unit,
     val scan: () -> Unit,
     val play: () -> Unit,
@@ -192,6 +201,10 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
             when {
                 state.checking -> stringResource(R.string.song_checking)
                 state.capturing -> stringResource(R.string.song_capturing)
+                // A folder named 夜曲 and a song named 夜曲 read identically otherwise, and the
+                // difference is what happens for the next hour.
+                state.songName != null && state.songIsFolder ->
+                    stringResource(R.string.song_folder_chosen, state.songName)
                 state.songName != null -> state.songName
                 else -> stringResource(R.string.song_none)
             },
@@ -206,6 +219,9 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
         }
         OutlinedButton(onClick = actions.chooseSong, enabled = !state.checking) {
             Text(stringResource(R.string.song_choose))
+        }
+        OutlinedButton(onClick = actions.chooseFolder, enabled = !state.checking) {
+            Text(stringResource(R.string.song_choose_folder))
         }
         OutlinedButton(onClick = actions.captureAudio, enabled = !state.checking && !state.capturing) {
             Text(stringResource(R.string.song_capture))

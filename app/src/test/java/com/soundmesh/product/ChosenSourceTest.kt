@@ -20,9 +20,9 @@ class ChosenSourceTest {
 
     @Test
     fun whatWasChosenSurvivesBeingWrittenAndReadBack() {
-        ChosenSource(folder.root).remember("content://media/external/audio/91", "夜曲.mp3")
+        ChosenSource(folder.root).remember(ChosenKind.SONG, "content://media/external/audio/91", "夜曲.mp3")
         assertEquals(
-            Chosen("content://media/external/audio/91", "夜曲.mp3"),
+            Chosen(ChosenKind.SONG, "content://media/external/audio/91", "夜曲.mp3"),
             ChosenSource(folder.root).chosen()
         )
     }
@@ -35,7 +35,7 @@ class ChosenSourceTest {
      */
     @Test
     fun halfOfARecordIsNothingChosen() {
-        File(folder.root, ChosenSource.CHOSEN_FILE).writeText("content://media/external/audio/91")
+        File(folder.root, ChosenSource.CHOSEN_FILE).writeText("SONG\ncontent://media/external/audio/91")
         assertNull(ChosenSource(folder.root).chosen())
     }
 
@@ -45,17 +45,38 @@ class ChosenSourceTest {
         assertNull(ChosenSource(folder.root).chosen())
     }
 
+    @Test
+    fun aFolderComesBackAsAFolder() {
+        ChosenSource(folder.root).remember(ChosenKind.FOLDER, "content://tree/primary%3AMusic", "夜曲专辑")
+        assertEquals(
+            Chosen(ChosenKind.FOLDER, "content://tree/primary%3AMusic", "夜曲专辑"),
+            ChosenSource(folder.root).chosen()
+        )
+    }
+
+    /**
+     * A record written by a build that knew a kind this one does not reads as nothing chosen.
+     *
+     * Which is what going backwards should look like. Guessing at it - taking the address and
+     * assuming it names one song - is how a folder gets played as though it were a file.
+     */
+    @Test
+    fun aKindThisBuildDoesNotKnowIsNothingChosen() {
+        File(folder.root, ChosenSource.CHOSEN_FILE).writeText("PLAYLIST\ncontent://f/1\n夜曲")
+        assertNull(ChosenSource(folder.root).chosen())
+    }
+
     /** Providers are free to hand back names people typed, and people type all sorts of things. */
     @Test
     fun aNameWithALineBreakInItComesBackWhole() {
-        ChosenSource(folder.root).remember("content://f/1", "live\nat home.mp3")
+        ChosenSource(folder.root).remember(ChosenKind.SONG, "content://f/1", "live\nat home.mp3")
         assertEquals("live\nat home.mp3", ChosenSource(folder.root).chosen()?.name)
     }
 
     @Test
     fun forgettingLeavesNothingChosen() {
         val chosen = ChosenSource(folder.root)
-        chosen.remember("content://f/1", "夜曲.mp3")
+        chosen.remember(ChosenKind.SONG, "content://f/1", "夜曲.mp3")
         chosen.forget()
         assertNull(chosen.chosen())
     }
@@ -92,14 +113,14 @@ class ChosenSourceTest {
      */
     @Test
     fun aSongThisAppMayNoLongerOpenIsNotOnOffer() {
-        val chosen = Chosen("content://f/1", "夜曲.mp3")
+        val chosen = Chosen(ChosenKind.SONG, "content://f/1", "夜曲.mp3")
         assertNull(stillPermitted(chosen, listOf("content://f/2")))
         assertNull(stillPermitted(chosen, emptyList()))
     }
 
     @Test
     fun aSongThisAppStillHoldsIsOnOffer() {
-        val chosen = Chosen("content://f/1", "夜曲.mp3")
+        val chosen = Chosen(ChosenKind.SONG, "content://f/1", "夜曲.mp3")
         assertEquals(chosen, stillPermitted(chosen, listOf("content://f/2", "content://f/1")))
     }
 
@@ -112,7 +133,7 @@ class ChosenSourceTest {
     @Test
     fun cleaningUpDoesNotForgetWhatIsChosenNow() {
         val chosen = ChosenSource(folder.root)
-        chosen.remember("content://f/1", "夜曲.mp3")
+        chosen.remember(ChosenKind.SONG, "content://f/1", "夜曲.mp3")
         chosen.discardTheOldCopy()
         assertEquals("夜曲.mp3", chosen.chosen()?.name)
     }

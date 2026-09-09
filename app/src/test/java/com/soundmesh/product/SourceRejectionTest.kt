@@ -5,8 +5,9 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class SourceRejectionTest {
-    /** The seven SourceUnusable throws, spelled exactly as the two file sources spell them. */
+    /** The eight SourceUnusable throws, spelled exactly as the two file sources spell them. */
     private val codes = listOf(
+        "SOURCE_FOLDER_EMPTY",
         "SOURCE_FILE_MISSING",
         "SOURCE_FILE_NO_AUDIO",
         "SOURCE_FILE_TOO_SHORT",

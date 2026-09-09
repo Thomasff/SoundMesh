@@ -1,4 +1,4 @@
-package com.soundmesh.product
+package com.soundmesh.probe.sync
 
 /**
  * One playable thing, named the way the listener's own file manager names it.

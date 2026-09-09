@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
 import android.view.WindowManager
@@ -27,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.soundmesh.probe.R
 import com.soundmesh.session.CAPTURING_HOST_STREAM
+import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.HostPairingCode
@@ -86,7 +88,17 @@ class HomeActivity : ComponentActivity() {
     }
 
     private val chooseSong = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) adopt(uri)
+        if (uri != null) adopt(ChosenKind.SONG, uri)
+    }
+
+    /**
+     * A folder, granted once and read again every time play is pressed.
+     *
+     * A tree rather than a multi-select of files, because what a person means by "play this album"
+     * is the folder and not the twelve files that were in it this afternoon.
+     */
+    private val chooseFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) adopt(ChosenKind.FOLDER, uri)
     }
 
     // Asked for rather than required. A session runs either way; without it the ongoing
@@ -144,6 +156,7 @@ class HomeActivity : ComponentActivity() {
     private val actions = HomeActions(
         pickRole = { role -> state = state.copy(role = role, problem = null); readPairing() },
         chooseSong = { releaseProjection(); chooseSong.launch(arrayOf(AUDIO_MIME)) },
+        chooseFolder = { releaseProjection(); chooseFolder.launch(null) },
         captureAudio = ::captureAudio,
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
@@ -232,7 +245,7 @@ class HomeActivity : ComponentActivity() {
      * playing rather than while it is being chosen. What that bought is a song of any length at
      * all, and a wait of well under a second instead of fifteen.
      */
-    private fun adopt(uri: Uri) {
+    private fun adopt(kind: ChosenKind, uri: Uri) {
         state = state.copy(checking = true, problem = null, songName = null)
         Thread({
             val chosen = ChosenSource(getExternalFilesDir(null) ?: filesDir)
@@ -247,15 +260,21 @@ class HomeActivity : ComponentActivity() {
                 val started = System.nanoTime()
                 // Opened exactly the way the session will open it, and closed again: the codes it
                 // throws are the ones the screen already knows how to say.
-                StreamingChunkSource.open(this, uri).close()
-                Log.i(LOG_TAG, "the chosen song was opened in ${(System.nanoTime() - started) / 1_000_000} ms")
-                displayName(uri)
+                StreamingChunkSource.open(this, songsOf(kind, uri)).close()
+                Log.i(LOG_TAG, "what was chosen opened in ${(System.nanoTime() - started) / 1_000_000} ms")
+                if (kind == ChosenKind.FOLDER) folderName(uri) else displayName(uri)
             }
             handler.post {
                 outcome
                     .onSuccess { name ->
-                        chosen.remember(uri.toString(), name)
-                        state = state.copy(checking = false, songName = name, songUri = uri.toString(), problem = null)
+                        chosen.remember(kind, uri.toString(), name)
+                        state = state.copy(
+                            checking = false,
+                            songName = name,
+                            songUri = uri.toString(),
+                            songIsFolder = kind == ChosenKind.FOLDER,
+                            problem = null
+                        )
                     }
                     .onFailure { error ->
                         Log.i(LOG_TAG, "the chosen song was refused", error)
@@ -301,6 +320,30 @@ class HomeActivity : ComponentActivity() {
     }
 
     /** What the picker's provider calls the file, or a fallback rather than an empty line. */
+    /**
+     * What the session will be handed, read now so that choosing a folder can fail here.
+     *
+     * The session reads the folder again for itself when play is pressed - this listing is for the
+     * check, not for the playing, and a folder that changed in between is the truth about the
+     * folder rather than a disagreement worth preventing.
+     */
+    private fun songsOf(kind: ChosenKind, uri: Uri): List<Uri> =
+        if (kind == ChosenKind.SONG) listOf(uri)
+        else FolderSongs.of(this, uri).map { Uri.parse(it.uri) }
+
+    /**
+     * A folder's own name, which is not a column any provider offers on a tree.
+     *
+     * The document id it is built from is a provider's own string - "primary:Music/夜曲" on the
+     * usual one - so the last segment is the folder as the listener sees it, and anything else is
+     * shown whole rather than guessed at.
+     */
+    private fun folderName(tree: Uri): String {
+        val id = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull()
+        val name = id?.substringAfterLast('/')?.substringAfterLast(':')
+        return name?.takeIf { it.isNotBlank() } ?: getString(R.string.song_unnamed)
+    }
+
     private fun displayName(uri: Uri): String {
         val name = runCatching {
             contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
@@ -322,7 +365,11 @@ class HomeActivity : ComponentActivity() {
                     .putExtra(SessionService.EXTRA_CAPTURE_SOURCE, true)
             } else {
                 request(SessionService.ACTION_START_HOST)
-                    .putExtra(SessionService.EXTRA_SOURCE_URI, state.songUri ?: return)
+                    .putExtra(
+                        if (state.songIsFolder) SessionService.EXTRA_SOURCE_FOLDER
+                        else SessionService.EXTRA_SOURCE_URI,
+                        state.songUri ?: return
+                    )
             }
             Role.SINK -> state.paired?.let { code ->
                 request(SessionService.ACTION_START_SINK)
@@ -356,7 +403,8 @@ class HomeActivity : ComponentActivity() {
             paired = PairedHost(filesDir).read(),
             pairingPayload = HostPairingCode.of(HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT),
             songName = chosen?.name,
-            songUri = chosen?.uri
+            songUri = chosen?.uri,
+            songIsFolder = chosen?.kind == ChosenKind.FOLDER
         )
     }
 

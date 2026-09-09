@@ -36,10 +36,12 @@ import com.soundmesh.core.StreamingResampler
  */
 class StreamingChunkSource private constructor(
     private val context: Context,
-    private val song: Uri
+    private val songs: List<Uri>
 ) {
     private val queue = ChunkQueue(READ_AHEAD_CHUNKS, POLL_MILLIS, STARVED_MILLIS)
     private val cutter = ChunkCutter(CHUNK_BYTES)
+
+    @Volatile private var skipped = 0
 
     private val thread = Thread({ run() }, "song-decoder")
 
@@ -49,6 +51,15 @@ class StreamingChunkSource private constructor(
     /** How many chunks the renderer had to wait for. Zero on a session that kept up. */
     fun lateChunks(): Int = queue.lateChunks()
 
+    /**
+     * Songs that would not play and were passed over.
+     *
+     * The one mark they leave anywhere. A folder plays on without them and sounds exactly like a
+     * folder that never held them, so the listener's only other evidence is remembering how many
+     * tracks the album has.
+     */
+    fun skippedSongs(): Int = skipped
+
     fun close() {
         queue.stop()
         thread.interrupt()
@@ -57,19 +68,14 @@ class StreamingChunkSource private constructor(
 
     private fun run() {
         try {
-            play(song)
-            // Once, and then the song is over. It used to start again here, which is what the
-            // whole-buffer source does by resetting a read position - and from a room that is a
-            // song with no end and no way to reach one short of stopping the session.
+            playThroughTheList()
+            // Once each, and then there is no more. It used to start the one song again here,
+            // which is what the whole-buffer source does by resetting a read position - and from
+            // a room that was a song with no end and no way to reach one short of stopping.
             //
             // Stopping the queue is not emptying it: what is already decoded is still handed over,
             // and the consumer is answered with null only once it runs out. That is how the host
-            // learns the difference between a song that ended and a source that broke.
-            //
-            // This is the one place a folder of songs would answer differently, and opening the
-            // next file rather than seeking back is what makes that the same code: the next song
-            // may be at another rate entirely, so it would need its own decoder and its own
-            // converter regardless.
+            // learns the difference between a list that ended and a source that broke.
             queue.stop()
         } catch (interrupted: InterruptedException) {
             Log.i(LOG_TAG, "the decoder was asked to stop")
@@ -77,6 +83,44 @@ class StreamingChunkSource private constructor(
             Log.e(LOG_TAG, "the decoder stopped", error)
             queue.fail(error)
         }
+    }
+
+    /**
+     * Each song in turn, opening the next one where the last one ended.
+     *
+     * Opening rather than seeking is what lets a folder be the same code as a single song: the
+     * next song may be at another sample rate entirely, so it needs its own extractor, its own
+     * decoder and its own converter whatever else is true. What carries across the seam is the
+     * queue and the cutter, so the last part-chunk of one song is finished by the first bytes of
+     * the next and the timeline never sees a join at all.
+     *
+     * **A song that will not play is passed over rather than fatal.** One unreadable file in a
+     * folder of two hundred is not a reason to stop the evening. The exception is a list where
+     * nothing played: then the first refusal is thrown, because that is a person who chose
+     * something and got silence, and the code they need is the one the first song gave.
+     */
+    private fun playThroughTheList() {
+        var played = false
+        var firstRefusal: Exception? = null
+        for (song in songs) {
+            if (queue.stopped) return
+            try {
+                play(song)
+                played = true
+            } catch (interrupted: InterruptedException) {
+                // Closing, not failing. Passing over the rest of the folder would be the same
+                // outward behaviour and would take several seconds of opening files to get there.
+                throw interrupted
+            } catch (refused: Exception) {
+                // Anything, not only a SourceUnusable. A song that was deleted after the folder
+                // was listed arrives as an IOException, and it is exactly as skippable as one that
+                // will not decode - the listener's folder is missing a track either way.
+                skipped++
+                if (firstRefusal == null) firstRefusal = refused
+                Log.i(LOG_TAG, "a song in the folder was passed over: ${refused.message}")
+            }
+        }
+        if (!played) firstRefusal?.let { throw it }
     }
 
     private fun play(song: Uri) {
@@ -203,8 +247,12 @@ class StreamingChunkSource private constructor(
          * throws, instead of a session that starts and then stops for reasons nobody sees. It
          * costs one chunk's worth of decoding, which is well under a millisecond of work.
          */
-        fun open(context: Context, song: Uri): StreamingChunkSource {
-            val source = StreamingChunkSource(context, song)
+        fun open(context: Context, songs: List<Uri>): StreamingChunkSource {
+            // A folder whose songs are all sub-folders, or one that was emptied between being
+            // chosen and being played. Refused here rather than started, because a session that
+            // begins and immediately ends is a stop nobody asked for and nobody can explain.
+            if (songs.isEmpty()) throw SourceUnusable("SOURCE_FOLDER_EMPTY")
+            val source = StreamingChunkSource(context, songs)
             source.thread.start()
             val arrived = source.queue.awaitFirst(STARVED_MILLIS)
             source.queue.failure()?.let {

@@ -23,6 +23,7 @@ import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureChunkSource
 import com.soundmesh.probe.sync.FileChunkSource
+import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.PeerDiscovery
@@ -105,7 +106,14 @@ class SessionService : Service() {
 
     private fun openHost(intent: Intent): SyncSession {
         if (intent.getBooleanExtra(EXTRA_CAPTURE_SOURCE, false)) return openCapturingHost(intent)
-        intent.getStringExtra(EXTRA_SOURCE_URI)?.let { return openStreamingHost(Uri.parse(it), intent) }
+        intent.getStringExtra(EXTRA_SOURCE_FOLDER)?.let {
+            val folder = Uri.parse(it)
+            // Listed here rather than carried in the intent. Two hundred addresses is a few tens
+            // of kilobytes and two thousand is not, and an intent too large for a binder
+            // transaction takes the process with it - a crash for owning a big music folder.
+            return openStreamingHost(FolderSongs.of(this, folder).map { song -> Uri.parse(song.uri) }, intent)
+        }
+        intent.getStringExtra(EXTRA_SOURCE_URI)?.let { return openStreamingHost(listOf(Uri.parse(it)), intent) }
         val name = intent.getStringExtra(EXTRA_SOURCE_FILE)
             ?: throw IllegalArgumentException("missing source file")
         if (!SAFE_SOURCE_FILE.matches(name)) throw IllegalArgumentException("unusable source file name")
@@ -135,8 +143,8 @@ class SessionService : Service() {
      * takes an address the system granted and validates nothing, because there is nothing here to
      * validate - the grant is the permission, and a URI this app was not given cannot be opened.
      */
-    private fun openStreamingHost(song: Uri, intent: Intent): SyncSession {
-        val source = StreamingChunkSource.open(this, song)
+    private fun openStreamingHost(songs: List<Uri>, intent: Intent): SyncSession {
+        val source = StreamingChunkSource.open(this, songs)
         advertise()
         return HostSession(
             // Null is the song having ended, which the session plays out and then acts on.
@@ -145,6 +153,7 @@ class SessionService : Service() {
             trimFrames = trimFrames(intent),
             closeSource = source::close,
             lateChunks = source::lateChunks,
+            skippedSongs = source::skippedSongs,
             // The song is over, so the session is over: the service takes itself down exactly the
             // way the stop button does. Anything less leaves a foreground notification, a bound
             // set of sockets and an open AudioTrack behind a room that has gone quiet.
@@ -446,6 +455,13 @@ class SessionService : Service() {
          * ruler's own path would then have had to keep answering.
          */
         const val EXTRA_SOURCE_URI = "source_uri"
+
+        /**
+         * A folder, as the tree address the listener granted. Its songs are read when the session
+         * opens rather than when the folder was chosen, so a song added this afternoon plays
+         * tonight without anybody choosing anything again.
+         */
+        const val EXTRA_SOURCE_FOLDER = "source_folder"
         const val EXTRA_HOST_ADDRESS = "host_address"
         const val EXTRA_CHUNK_PORT = "chunk_port"
         const val EXTRA_PEER_ID = "peer_id"
