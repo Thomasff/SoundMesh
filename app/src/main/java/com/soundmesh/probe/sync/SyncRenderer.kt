@@ -11,6 +11,8 @@ import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
 import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStats
+import com.soundmesh.core.SpatialField
+import com.soundmesh.core.SpatialShaper
 import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.extrapolatedPlaybackFrames
 import com.soundmesh.core.nextPhaseState
@@ -44,6 +46,36 @@ internal fun trackProfileJson(
         "\"bufferSizeFrames\":$bufferSizeFrames,\"bufferCapacityFrames\":$bufferCapacityFrames," +
         "\"performanceMode\":$performanceMode,\"sampleRate\":$sampleRate," +
         "\"firstPendingFrames\":${firstPendingFrames ?: "null"}}"
+
+/**
+ * One chunk of PCM as the spatial rule wants it heard, or the chunk itself when no rule applies.
+ *
+ * Kept out of [SyncRenderer] so it can be tested without an AudioTrack, the same reason
+ * [trackProfileJson] sits out here. The gain law is core's; what is decided here is which chunks
+ * it is allowed near.
+ *
+ * Chirp chunks are never shaped. The chirp is the instrument every alignment number is measured
+ * with, and a gain on it moves the correlation peak and the between-handset ratios the verdict is
+ * read from - while sounding like a room working correctly. This is the same exemption the trim
+ * deadband and the splice fade already take, for the same reason.
+ *
+ * A handset the drawing does not name plays on unshaped rather than going silent. Absence means a
+ * stale rule or a bug, and the two answers are not symmetric: playing on is the room behaving as
+ * it did before spatial audio existed, while a silent handset is one dropping out of a room the
+ * listener is still looking at, with nothing on screen saying why.
+ */
+internal fun spatialShaped(
+    sequence: Int,
+    playAtHostNanos: Long,
+    payload: ByteArray,
+    field: SpatialField?,
+    peerId: String?
+): ByteArray {
+    if (field == null || peerId == null) return payload
+    if (sequence >= SyncRenderer.CHIRP_SEQUENCE_BASE) return payload
+    if (!field.layout.contains(peerId)) return payload
+    return SpatialShaper.shape(payload, field, peerId, playAtHostNanos, SyncRenderer.SAMPLE_RATE)
+}
 
 /**
  * Feeds the scheduler's decisions to an AudioTrack and keeps playback on the shared timeline.
@@ -107,11 +139,24 @@ class SyncRenderer(
      * something a later reader should have to infer from the build.
      */
     private val playbackUsage: PlaybackUsage = PlaybackUsage.MEDIA,
+    /**
+     * Which handset in a spatial drawing this renderer is. Null - the default - means no spatial
+     * rule can apply here at all, which is what every run before spatial audio existed did and
+     * what the measurement runs keep doing.
+     */
+    private val spatialPeerId: String? = null,
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
+    // Written from whichever thread the rule arrived on and read by the render loop. A rule is a
+    // whole object replaced at once, never edited in place, so a reader sees either the old room
+    // or the new one and never a room half way between two drawings.
+    @Volatile private var spatialField: SpatialField? = null
     @Volatile private var untilHostNanos = Long.MIN_VALUE
     @Volatile private var adjustments = 0
+    // Which arm ran. A spatial run and a flat one are the same binary, the same log and the same
+    // duration; without this the only thing that tells them apart is a pair of ears.
+    @Volatile private var spatialChunks = 0
     @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
     @Volatile private var failureCode: String? = null
@@ -379,7 +424,21 @@ class SyncRenderer(
                             acquisitionStartHostNanos = hostNanosNow()
                             nextDriftCheckHostNanos = hostNanosNow()
                         }
-                        val payload = applyPendingAdjust(decision.chunk.pcm)
+                        // Shaped before the trim, not after: a trim shortens what is written
+                        // without moving the instant any surviving frame lands on, so frame j of
+                        // this payload is heard at playAtHostNanos + j/SAMPLE_RATE either way.
+                        val adjusted = applyPendingAdjust(decision.chunk.pcm)
+                        val payload = spatialShaped(
+                            decision.chunk.sequence,
+                            decision.chunk.playAtHostNanos,
+                            adjusted,
+                            spatialField,
+                            spatialPeerId
+                        )
+                        // Against the adjusted array, not against the chunk: applyPendingAdjust returns a
+                        // fresh array too, and a dropped frame counting as a shaped chunk would
+                        // make the tally say the spatial arm ran on a run where it never did.
+                        if (payload !== adjusted) spatialChunks++
                         // Whatever of this chunk is already in the past is dropped rather than
                         // written late (see releaseTrimFrames). Clamped against the payload
                         // because applyPendingAdjust may have shortened it by a frame.
@@ -678,6 +737,17 @@ class SyncRenderer(
         ((pcm[at].toInt() and 0xFF) or (pcm[at + 1].toInt() shl 8)).toShort().toInt()
 
     /**
+     * Puts a new spatial rule in force from the next chunk written.
+     *
+     * Nothing here decides when it takes effect on the timeline, because the rule is a function of
+     * the host instant and the instants are already in the chunks. Called from whichever thread
+     * the rule arrived on. Null puts the room back to flat.
+     */
+    fun applySpatialField(field: SpatialField?) {
+        spatialField = field
+    }
+
+    /**
      * The exception the render loop died of, if any. Exposed on its own (not just inside
      * [report]'s JSON) so the caller can surface it at the top level of sync.json: the renderer is
      * the only source of the calibration chirp now, so a renderer that threw must not read back as
@@ -738,6 +808,8 @@ class SyncRenderer(
             "\"timestampQueries\":$timestampQueries,\"timestampFailures\":$timestampFailures," +
             "\"pendingRejected\":$pendingRejected,\"depthFallbacks\":$depthFallbacks," +
             "\"lowLatency\":$lowLatency,\"playbackUsage\":\"${playbackUsage.name}\"," +
+            "\"spatialPeerId\":${spatialPeerId?.let { "\"$it\"" } ?: "null"}," +
+            "\"spatialChunks\":$spatialChunks," +
             "\"trackProfile\":" + trackProfileJson(
                 trackMinBufferBytes, trackRequestedBytes, trackBufferFrames,
                 trackCapacityFrames, trackPerformanceMode, trackSampleRate, firstPendingFrames
