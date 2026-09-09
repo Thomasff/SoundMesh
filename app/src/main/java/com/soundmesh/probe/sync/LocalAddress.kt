@@ -17,8 +17,12 @@ import java.net.NetworkInterface
  * over mDNS.
  */
 object LocalAddress {
-    /** Interface names one handset reaches another over. Mobile data is private too, hence names. */
-    private val WIRELESS = listOf("wlan", "ap", "swlan", "p2p", "eth")
+    /**
+     * Interface names one handset reaches another over. Mobile data is private too, hence names.
+     * Matched as prefixes, so `softap` has to be listed beside `ap`: this tablet calls its access
+     * point `softap0`, which `ap` does not begin, and a host that cannot name itself shows no code.
+     */
+    private val WIRELESS = listOf("wlan", "ap", "softap", "swlan", "p2p", "eth")
 
     /** Every interface name and IPv4 address this handset currently has up. */
     fun own(): List<Pair<String, String>> = runCatching {

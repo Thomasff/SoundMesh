@@ -21,6 +21,16 @@ class LocalAddressTest {
     }
 
     /**
+     * The HONOR Pad V9 names its access point interface `softap0`, and when the tablet is the
+     * host that is the only interface it has up. `ap` as a prefix matches `ap0` and misses this
+     * one, so the tablet could not name itself and showed no code at all.
+     */
+    @Test
+    fun acceptsTheTabletsAccessPointInterface() {
+        assertEquals("10.214.89.253", LocalAddress.choose(listOf("softap0" to "10.214.89.253")))
+    }
+
+    /**
      * The same refusal discovery makes when two hosts answer. The wrong pick produces a code that
      * scans cleanly and then connects to nothing, with nothing in the run to say why.
      */
