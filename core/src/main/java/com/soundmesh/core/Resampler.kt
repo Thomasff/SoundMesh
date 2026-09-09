@@ -106,7 +106,7 @@ object Resampler {
      * ceiling: everything the source actually carries is below it, and the room left over is
      * what lets a filter this short stay flat across the band.
      */
-    private fun bank(inRate: Int, outRate: Int): FloatArray {
+    internal fun bank(inRate: Int, outRate: Int): FloatArray {
         val cutoff = ROLLOFF * minOf(1.0, outRate.toDouble() / inRate)
         val bank = FloatArray(PHASES * TAPS)
         val row = DoubleArray(TAPS)
@@ -129,10 +129,13 @@ object Resampler {
 
     private fun blackman(u: Double): Double = 0.42 + 0.5 * cos(PI * u) + 0.08 * cos(2.0 * PI * u)
 
-    private const val CHANNELS = 2
+    // Shared with StreamingResampler, which renders this same filter one piece at a time. The
+    // bank in particular: a bank designed even slightly differently would still pass every test
+    // that says a tone keeps its pitch, so there must not be a second one.
+    internal const val CHANNELS = 2
     private const val BYTES_PER_SAMPLE = 2
-    private const val TAPS = 32
-    private const val HALF = TAPS / 2
-    private const val PHASES = 512
+    internal const val TAPS = 32
+    internal const val HALF = TAPS / 2
+    internal const val PHASES = 512
     private const val ROLLOFF = 0.90
 }
