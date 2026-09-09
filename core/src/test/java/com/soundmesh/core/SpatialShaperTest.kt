@@ -43,10 +43,12 @@ class SpatialShaperTest {
     }
 
     /**
-     * The reason this class interpolates at all. A gain held constant across a chunk and stepped
-     * at its edge puts a discontinuity into the music every 20 ms - inaudible as a change in
-     * loudness, audible as a tick, and the ticks arrive at a fixed 50 Hz, which is exactly the
-     * kind of artefact a listener reports as a buzz rather than as a fault in the panning.
+     * What this class interpolates for. A gain held constant across a chunk and stepped at its
+     * edge puts a discontinuity into the music every 20 ms, at a fixed 50 Hz. At the default six
+     * second period that discontinuity was measured at 1.64% of full scale at its worst, and was
+     * not audible to a listener looking for it - so this test does not guard an audible fault
+     * today. It guards the shape of the code that keeps the fault proportional to the source's
+     * speed, which is the only reason a faster circuit stays safe.
      *
      * So the property is not "the gain moves" but "the join between two chunks is no coarser than
      * the ramp inside one". A stepped implementation has no ramp inside a chunk at all, which

@@ -12,10 +12,18 @@ import kotlin.math.roundToInt
  * instant any surviving frame lands on, so the mapping here stays right on a trimmed chunk.
  *
  * The gain ramps across the chunk rather than being held. A held gain steps at every chunk edge,
- * and at 20 ms a chunk that is a discontinuity 50 times a second: not heard as the loudness being
- * slightly wrong, which it would be, but as a tick at a fixed rate. Two evaluations and a linear
- * interpolation cost nothing next to that - and the ramp is a straight line through an arc of
- * about a degree, so the error against evaluating per frame is far below one sample count.
+ * and at 20 ms a chunk that is a discontinuity 50 times a second.
+ *
+ * How loud that step is was argued when this was written and measured afterwards, and the
+ * argument was wrong. Over a whole circuit the largest edge is 1.64% of full scale, -36 dB,
+ * 200 ms in; a listener told to listen for it, on two handset speakers, against music, at the
+ * default six second period, could not hear it. So the ramp is not buying an audible tick back.
+ * What it is buying is that the step is proportional to how fast the source travels: a one
+ * second circuit makes the same edge 10%, -20 dB, which is a different question. Two evaluations
+ * and a linear interpolation cost nothing next to the per-frame multiply that has to happen
+ * anyway, so the insurance is kept at a price of about nothing - and the ramp is a straight line
+ * through an arc of about a degree, so the error against evaluating per frame is far below one
+ * sample count.
  *
  * The chunk handed in is not written into. On a run with no pending frame adjustment the renderer
  * passes the AudioChunk's own array straight through, and that array may still be wanted by
