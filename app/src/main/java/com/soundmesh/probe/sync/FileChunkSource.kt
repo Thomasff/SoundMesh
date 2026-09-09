@@ -81,7 +81,7 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
          * A source that already is 48 kHz stereo comes back out of [Resampler] as the same bytes.
          * That is what keeps every archived alignment run comparable with the ones after this.
          */
-        fun open(file: File): FileChunkSource = read(file, PREFIX_SECONDS, refuseLonger = false)
+        fun open(file: File): FileChunkSource = read(file, whole = false)
 
         /**
          * The whole song rather than its first minute, refused outright if it will not fit.
@@ -91,10 +91,9 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
          * 400 s run of a 214 s song would otherwise stop playing halfway through the schedule.
          * What a measurement is made against should not change because a product feature landed.
          */
-        fun openWhole(file: File): FileChunkSource =
-            read(file, SourceBudget.MAX_WHOLE_SECONDS, refuseLonger = true)
+        fun openWhole(file: File): FileChunkSource = read(file, whole = true)
 
-        private fun read(file: File, seconds: Int, refuseLonger: Boolean): FileChunkSource {
+        private fun read(file: File, whole: Boolean): FileChunkSource {
             if (!file.isFile) throw SourceUnusable("SOURCE_FILE_MISSING")
             val extractor = MediaExtractor()
             try {
@@ -110,12 +109,7 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
                     }
                 }
                 if (track < 0 || format == null) throw SourceUnusable("SOURCE_FILE_NO_AUDIO")
-                // Refused here rather than after decoding: the length is declared in the container
-                // and costs nothing to read, and the alternative is someone watching a progress
-                // spinner for the whole of a song that was never going to be played.
-                if (refuseLonger && SourceBudget.tooLong(declaredMicros(format))) {
-                    throw SourceUnusable("SOURCE_FILE_TOO_LONG")
-                }
+                val seconds = if (whole) allowedSeconds(format) else PREFIX_SECONDS
                 extractor.selectTrack(track)
                 val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
                 try {
@@ -147,9 +141,9 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
             // run it long. The sync API answers before the first output buffer, so the provisional
             // figure never gets to bound anything.
             var limit = seconds * SyncRenderer.SAMPLE_RATE * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
-            // Sized for the song rather than for the ceiling: asking for a whole song allows
-            // seven minutes, and reserving all of that for a three minute one costs 50 MB that
-            // the conversion is about to want.
+            // Sized for the song rather than for the ceiling: a whole song is allowed anything
+            // from under four minutes to eleven depending on its rate, and reserving the ceiling
+            // for a three minute one costs tens of megabytes that the conversion is about to want.
             val decoded = ByteArrayOutputStream(expected(limit, declaredMicros))
             val info = MediaCodec.BufferInfo()
             val deadline = System.nanoTime() + seconds * DECODE_BUDGET_MILLIS_PER_SECOND * 1_000_000L
@@ -237,6 +231,49 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
             val bytes = seconds * SyncRenderer.SAMPLE_RATE * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
             return minOf(limit.toLong(), maxOf(bytes, CHUNK_BYTES.toLong())).toInt()
         }
+
+        /**
+         * How long a whole song of this format may be, refusing this one outright if it is longer.
+         *
+         * The two answers are the same question asked of the same three declared fields, which is
+         * why they are worked out in one place: a refusal at one length and a decode that stops at
+         * another is a song that plays with its end missing and nothing on screen to say so.
+         *
+         * Refused here rather than after decoding, because the length costs nothing to read and
+         * the alternative is someone watching a progress spinner for the whole of a song that was
+         * never going to be played.
+         */
+        private fun allowedSeconds(format: MediaFormat): Int {
+            val rate = declaredRate(format)
+            val channels = declaredChannels(format)
+            if (SourceBudget.tooLong(declaredMicros(format), rate, channels)) {
+                throw SourceUnusable("SOURCE_FILE_TOO_LONG")
+            }
+            return SourceBudget.maxSeconds(rate, channels)
+        }
+
+        /**
+         * The rate the container declares, or the dearest one allowed when it declares none.
+         *
+         * Silence is not a licence to assume the cheap case. 96 kHz is the most any usable format
+         * can cost a second, so guessing it can only shorten what gets decoded, and shortening is
+         * the direction that cannot run the heap out. A container this vague declares no duration
+         * either, so nothing is refused on the strength of the guess - it only bounds the read.
+         */
+        private fun declaredRate(format: MediaFormat): Int =
+            if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                format.getInteger(MediaFormat.KEY_SAMPLE_RATE).takeIf { it > 0 } ?: MAX_SAMPLE_RATE
+            } else {
+                MAX_SAMPLE_RATE
+            }
+
+        /** The same, for the channel count. Zero means undeclared, which [SourceBudget] prices. */
+        private fun declaredChannels(format: MediaFormat): Int =
+            if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            } else {
+                0
+            }
 
         /** What the container says the song lasts, in MediaFormat's own microseconds. */
         private fun declaredMicros(format: MediaFormat): Long? =
