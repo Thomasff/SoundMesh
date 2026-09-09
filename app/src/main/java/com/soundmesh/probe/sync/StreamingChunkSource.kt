@@ -1,11 +1,12 @@
 package com.soundmesh.probe.sync
 
+import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.net.Uri
 import android.util.Log
 import com.soundmesh.core.StreamingResampler
-import java.io.File
 
 /**
  * A song decoded a piece at a time, on its own thread, into a queue the renderer takes from.
@@ -33,7 +34,10 @@ import java.io.File
  * them is the only difference that matters between playing a file and playing what another app is
  * playing: a file can be read ahead of where the listener is, and a live capture cannot.
  */
-class StreamingChunkSource private constructor(private val song: File) {
+class StreamingChunkSource private constructor(
+    private val context: Context,
+    private val song: Uri
+) {
     private val queue = ChunkQueue(READ_AHEAD_CHUNKS, POLL_MILLIS, STARVED_MILLIS)
     private val cutter = ChunkCutter(CHUNK_BYTES)
 
@@ -75,10 +79,13 @@ class StreamingChunkSource private constructor(private val song: File) {
         }
     }
 
-    private fun play(file: File) {
+    private fun play(song: Uri) {
         val extractor = MediaExtractor()
         try {
-            extractor.setDataSource(file.absolutePath)
+            // The address the system handed over rather than a path, so a song is read where it
+            // lies. Copying it here first is what this used to do, and what a folder of two
+            // hundred songs made impossible.
+            extractor.setDataSource(context, song, null)
             var track = -1
             var format: MediaFormat? = null
             for (index in 0 until extractor.trackCount) {
@@ -196,9 +203,8 @@ class StreamingChunkSource private constructor(private val song: File) {
          * throws, instead of a session that starts and then stops for reasons nobody sees. It
          * costs one chunk's worth of decoding, which is well under a millisecond of work.
          */
-        fun open(file: File): StreamingChunkSource {
-            if (!file.isFile) throw SourceUnusable("SOURCE_FILE_MISSING")
-            val source = StreamingChunkSource(file)
+        fun open(context: Context, song: Uri): StreamingChunkSource {
+            val source = StreamingChunkSource(context, song)
             source.thread.start()
             val arrived = source.queue.awaitFirst(STARVED_MILLIS)
             source.queue.failure()?.let {

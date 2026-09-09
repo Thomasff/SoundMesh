@@ -208,18 +208,23 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
-     * Copies what was picked into this app's own directory, then starts playing it to nobody to
-     * find out whether it can be played at all.
+     * Holds on to what was picked, then starts playing it to nobody to find out whether it can be
+     * played at all.
      *
-     * Copying rather than handing the service a content Uri: the service takes a bare file name
-     * under the external files directory and the sources take a File, and both of them are shared
-     * with the harness that every alignment measurement was taken through. One copy of a few
-     * megabytes buys the product the same already-measured path instead of a second one.
+     * It used to copy the file into this app's own directory first, because the service took a
+     * bare name under that directory and the sources took a File - the same path the harness that
+     * every alignment measurement was taken through still uses. A folder of two hundred songs is
+     * what ended that: the product hands over the address the system granted, and the ruler keeps
+     * its file and its name check untouched.
+     *
+     * The permission has to be persisted here and nowhere else. Without it the grant lasts as long
+     * as this process does, so the song somebody chose last night is one this app may no longer
+     * open - a refusal at play time, for a file that is still sitting where they left it.
      *
      * Asking here rather than at play time is the other half: a refusal found when the service
      * fails to start would put the reason three layers away from the moment a person chose the
-     * file. The thread is now here for the copy - the check itself answers as soon as there is one
-     * chunk, where it used to convert the entire song first.
+     * file. The check answers as soon as there is one chunk, where it used to convert the entire
+     * song first.
      *
      * **It is a weaker check than it was, and deliberately.** Reading the whole song proved the
      * whole song decodes; opening a stream proves the container, the track, the codec and the
@@ -232,27 +237,30 @@ class HomeActivity : ComponentActivity() {
         Thread({
             val chosen = ChosenSource(getExternalFilesDir(null) ?: filesDir)
             val outcome = runCatching {
-                contentResolver.openInputStream(uri).use { input ->
-                    requireNotNull(input) { "no stream" }
-                    chosen.file().outputStream().use { input.copyTo(it) }
-                }
+                // Not fatal, and it is the one call here that can refuse for reasons that have
+                // nothing to do with the song: a provider that granted read but not a persistable
+                // read throws. Without it the song plays now and is gone after a restart, which is
+                // a far smaller loss than refusing a file that decodes perfectly well.
+                runCatching {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }.onFailure { Log.i(LOG_TAG, "this song's permission cannot be held past today", it) }
                 val started = System.nanoTime()
                 // Opened exactly the way the session will open it, and closed again: the codes it
                 // throws are the ones the screen already knows how to say.
-                StreamingChunkSource.open(chosen.file()).close()
+                StreamingChunkSource.open(this, uri).close()
                 Log.i(LOG_TAG, "the chosen song was opened in ${(System.nanoTime() - started) / 1_000_000} ms")
                 displayName(uri)
             }
             handler.post {
                 outcome
                     .onSuccess { name ->
-                        chosen.remember(name)
-                        state = state.copy(checking = false, songName = name, problem = null)
+                        chosen.remember(uri.toString(), name)
+                        state = state.copy(checking = false, songName = name, songUri = uri.toString(), problem = null)
                     }
                     .onFailure { error ->
                         Log.i(LOG_TAG, "the chosen song was refused", error)
                         chosen.forget()
-                        state = state.copy(checking = false, songName = null, problem = SourceRejection.of(error.message))
+                        state = state.copy(checking = false, songName = null, songUri = null, problem = SourceRejection.of(error.message))
                     }
             }
         }, "SoundMeshChooseSong").start()
@@ -314,8 +322,7 @@ class HomeActivity : ComponentActivity() {
                     .putExtra(SessionService.EXTRA_CAPTURE_SOURCE, true)
             } else {
                 request(SessionService.ACTION_START_HOST)
-                    .putExtra(SessionService.EXTRA_SOURCE_FILE, ChosenSource.FILE_NAME)
-                    .putExtra(SessionService.EXTRA_WHOLE_SOURCE, true)
+                    .putExtra(SessionService.EXTRA_SOURCE_URI, state.songUri ?: return)
             }
             Role.SINK -> state.paired?.let { code ->
                 request(SessionService.ACTION_START_SINK)
@@ -337,10 +344,19 @@ class HomeActivity : ComponentActivity() {
 
     /** What the scanner left behind, and what a peer would have to scan to reach this handset. */
     private fun readPairing() {
+        val store = ChosenSource(getExternalFilesDir(null) ?: filesDir)
+        // Every resume, because a permission can be taken away between two of them - and because
+        // this is also the first resume after an upgrade, which is when the old copy is still
+        // sitting in this app's directory being as large as somebody's song.
+        store.discardTheOldCopy()
+        val held = runCatching { contentResolver.persistedUriPermissions.map { it.uri.toString() } }
+            .getOrDefault(emptyList())
+        val chosen = stillPermitted(store.chosen(), held)
         state = state.copy(
             paired = PairedHost(filesDir).read(),
             pairingPayload = HostPairingCode.of(HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT),
-            songName = ChosenSource(getExternalFilesDir(null) ?: filesDir).name()
+            songName = chosen?.name,
+            songUri = chosen?.uri
         )
     }
 

@@ -46,6 +46,13 @@ data class HomeState(
     val role: Role = Role.NONE,
     val songName: String? = null,
     /**
+     * Where that song lives, which is what the service is handed when play is pressed.
+     *
+     * Beside the name rather than fetched again at that moment: the name on screen and the song
+     * that starts have to be the same one, and re-reading is how they come apart.
+     */
+    val songUri: String? = null,
+    /**
      * Whether the host will stream what this phone is playing instead of a file it was handed.
      *
      * True only once the consent dialog has been answered and the projection exists, because a

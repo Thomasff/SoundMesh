@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
@@ -104,15 +105,15 @@ class SessionService : Service() {
 
     private fun openHost(intent: Intent): SyncSession {
         if (intent.getBooleanExtra(EXTRA_CAPTURE_SOURCE, false)) return openCapturingHost(intent)
+        intent.getStringExtra(EXTRA_SOURCE_URI)?.let { return openStreamingHost(Uri.parse(it), intent) }
         val name = intent.getStringExtra(EXTRA_SOURCE_FILE)
             ?: throw IllegalArgumentException("missing source file")
         if (!SAFE_SOURCE_FILE.matches(name)) throw IllegalArgumentException("unusable source file name")
-        // The prefix unless asked otherwise. A run driven by run-session.mjs passes nothing
-        // here and gets the 60 s every archived report was written against; the product asks for
-        // the song, because a minute of it on a loop is not what anyone chose the file for.
-        val file = File(getExternalFilesDir(null), name)
-        if (intent.getBooleanExtra(EXTRA_WHOLE_SOURCE, false)) return openStreamingHost(file, intent)
-        val source = FileChunkSource.open(file)
+        // The ruler, and only the ruler: a file pushed here by name, read as the 60 s prefix every
+        // archived report was written against, looping. The product used to arrive here too, with
+        // an extra asking for the whole song; it now arrives at the line above with an address
+        // instead, so nothing a product feature wants can reach this line any more.
+        val source = FileChunkSource.open(File(getExternalFilesDir(null), name))
         advertise()
         return HostSession(
             source::readChunk, deadbandFrames(intent), trimFrames(intent),
@@ -130,10 +131,12 @@ class SessionService : Service() {
      *
      * The prefix path above is untouched and stays that way: it is what every archived alignment
      * measurement was made through, and what a measurement is made against should not change
-     * because a product feature landed.
+     * because a product feature landed. It keeps its own extra and its own name check; this one
+     * takes an address the system granted and validates nothing, because there is nothing here to
+     * validate - the grant is the permission, and a URI this app was not given cannot be opened.
      */
-    private fun openStreamingHost(file: File, intent: Intent): SyncSession {
-        val source = StreamingChunkSource.open(file)
+    private fun openStreamingHost(song: Uri, intent: Intent): SyncSession {
+        val source = StreamingChunkSource.open(this, song)
         advertise()
         return HostSession(
             // Null is the song having ended, which the session plays out and then acts on.
@@ -435,12 +438,19 @@ class SessionService : Service() {
         const val ACTION_START_SINK = "com.soundmesh.session.START_SINK"
         const val ACTION_STOP = "com.soundmesh.session.STOP"
         const val EXTRA_SOURCE_FILE = "source_file"
+
+        /**
+         * The song, as the address the system granted this app rather than a name under its own
+         * directory. Its presence is what picks the streaming source, so the two file paths are
+         * told apart by which extra arrived rather than by a flag beside one of them - a flag the
+         * ruler's own path would then have had to keep answering.
+         */
+        const val EXTRA_SOURCE_URI = "source_uri"
         const val EXTRA_HOST_ADDRESS = "host_address"
         const val EXTRA_CHUNK_PORT = "chunk_port"
         const val EXTRA_PEER_ID = "peer_id"
         const val EXTRA_DEADBAND_FRAMES = "deadband_frames"
         const val EXTRA_TRIM_FRAMES = "trim_frames"
-        const val EXTRA_WHOLE_SOURCE = "whole_source"
         const val EXTRA_CAPTURE_SOURCE = "capture_source"
 
         /**
