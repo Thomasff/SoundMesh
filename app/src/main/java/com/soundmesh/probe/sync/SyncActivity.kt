@@ -1307,6 +1307,9 @@ class SyncActivity : Activity() {
         /** Where the host takes delivery of the sink's own reading of the run. */
         const val RESULT_PORT = 45125
 
+        /** Where the host publishes the spatial rule the room is playing under. */
+        const val SPATIAL_PORT = 45126
+
         /**
          * How long the host waits for that delivery.
          *
