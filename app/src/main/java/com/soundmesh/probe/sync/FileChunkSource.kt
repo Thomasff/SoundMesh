@@ -199,7 +199,7 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
          * refused rather than folded down, the same way [CaptureChunkSource] refuses a mono
          * fallback - a surround mix guessed into two channels is not what the file said.
          */
-        private fun requireUsableFormat(format: MediaFormat) {
+        internal fun requireUsableFormat(format: MediaFormat) {
             val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
             val encoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
