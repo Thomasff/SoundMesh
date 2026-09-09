@@ -27,8 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.soundmesh.probe.R
 import com.soundmesh.session.CAPTURING_HOST_STREAM
-import com.soundmesh.probe.sync.DecodedSong
-import com.soundmesh.probe.sync.FileChunkSource
+import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
@@ -209,40 +208,39 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
-     * Copies what was picked into this app's own directory, then decodes it once to find out
-     * whether it can be played at all.
+     * Copies what was picked into this app's own directory, then starts playing it to nobody to
+     * find out whether it can be played at all.
      *
      * Copying rather than handing the service a content Uri: the service takes a bare file name
-     * under the external files directory and [FileChunkSource] takes a File, and both of them are
-     * shared with the harness that every alignment measurement was taken through. One copy of a few
+     * under the external files directory and the sources take a File, and both of them are shared
+     * with the harness that every alignment measurement was taken through. One copy of a few
      * megabytes buys the product the same already-measured path instead of a second one.
      *
-     * Decoding here rather than at play time is the other half: a refusal found when the service
+     * Asking here rather than at play time is the other half: a refusal found when the service
      * fails to start would put the reason three layers away from the moment a person chose the
-     * file. It also runs the whole conversion, which is the slow part and the reason this thread
-     * exists - what it cost is logged, because the wait is a person's to sit through.
+     * file. The thread is now here for the copy - the check itself answers as soon as there is one
+     * chunk, where it used to convert the entire song first.
+     *
+     * **It is a weaker check than it was, and deliberately.** Reading the whole song proved the
+     * whole song decodes; opening a stream proves the container, the track, the codec and the
+     * output format, and stops there. A file that breaks in its second half now fails while it is
+     * playing rather than while it is being chosen. What that bought is a song of any length at
+     * all, and a wait of well under a second instead of fifteen.
      */
     private fun adopt(uri: Uri) {
         state = state.copy(checking = true, problem = null, songName = null)
         Thread({
             val chosen = ChosenSource(getExternalFilesDir(null) ?: filesDir)
-            // Before the copy, not after the decode. What is held describes the file that is about
-            // to be written over, and a pick that fails partway would otherwise leave the previous
-            // song held against the new file - which plays the old song and says nothing.
-            DecodedSong.forget()
             val outcome = runCatching {
                 contentResolver.openInputStream(uri).use { input ->
                     requireNotNull(input) { "no stream" }
                     chosen.file().outputStream().use { input.copyTo(it) }
                 }
                 val started = System.nanoTime()
-                // The whole song, the same way the session will read it: what this is verifying is
-                // that this file plays, and a check that only ever read the first minute would
-                // pass a song that is refused for its length or breaks in its second half.
-                // Kept rather than dropped. This decode is the slow part of choosing a song, and
-                // pressing play used to pay for the identical one all over again.
-                DecodedSong.keep(chosen.file(), whole = true, source = FileChunkSource.openWhole(chosen.file()))
-                Log.i(LOG_TAG, "the chosen song was read in ${(System.nanoTime() - started) / 1_000_000} ms")
+                // Opened exactly the way the session will open it, and closed again: the codes it
+                // throws are the ones the screen already knows how to say.
+                StreamingChunkSource.open(chosen.file()).close()
+                Log.i(LOG_TAG, "the chosen song was opened in ${(System.nanoTime() - started) / 1_000_000} ms")
                 displayName(uri)
             }
             handler.post {

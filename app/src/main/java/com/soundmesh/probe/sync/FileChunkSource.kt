@@ -5,17 +5,18 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import com.soundmesh.core.Resampler
-import com.soundmesh.core.SourceBudget
 import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
- * Decodes an audio file once, up front, and hands it out as chunks on a loop.
+ * Decodes the first minute of an audio file, up front, and hands it out as chunks on a loop.
  *
  * Decoding into memory rather than streaming keeps every decoder call out of the host's real-time
- * loop: once the file is open, [readChunk] is arithmetic over a byte array. How much gets decoded
- * is the difference between the two entry points, and it is the only difference: [open] takes the
- * 60 s prefix every archived alignment measurement was made with, [openWhole] takes the song.
+ * loop: once the file is open, [readChunk] is arithmetic over a byte array. What that costs is a
+ * ceiling on the length, which is why the product plays a song through [StreamingChunkSource]
+ * instead. This is the harness's path and it stays as it is: a report says `sourceChunks` and the
+ * archive compares that number across 186 measurements, and what a measurement is made against
+ * should not change because a product feature landed.
  *
  * The seam where the audio wraps is a waveform discontinuity, and it is left in on purpose. Both
  * handsets emit it from the same chunk at the same instant, so it is a shared transient - far
@@ -26,21 +27,11 @@ import java.io.File
  * short of [pcm]. Held as a length rather than trimmed off with a copy because a whole song is
  * tens of megabytes and the tail being dropped is under four kilobytes of it.
  */
-class FileChunkSource internal constructor(private val pcm: ByteArray, private val length: Int) {
+class FileChunkSource private constructor(private val pcm: ByteArray, private val length: Int) {
     private var position = 0
 
     /** The decoded audio, in whole chunks - what the run report says it is playing. */
     val chunkCount: Int get() = length / CHUNK_BYTES
-
-    /**
-     * Another reader over the same decoded audio, starting at the beginning.
-     *
-     * The audio is the expensive thing and the position is not, so this is what makes a decoded
-     * song reusable: see [DecodedSong]. The array is shared rather than copied because nothing
-     * here ever writes to it, and copying it would spend the seventy-odd megabytes this exists to
-     * avoid spending twice.
-     */
-    fun rewound(): FileChunkSource = FileChunkSource(pcm, length)
 
     /** One full chunk, wrapping back to the start when it runs out. */
     fun readChunk(): ByteArray {
@@ -81,19 +72,9 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
          * A source that already is 48 kHz stereo comes back out of [Resampler] as the same bytes.
          * That is what keeps every archived alignment run comparable with the ones after this.
          */
-        fun open(file: File): FileChunkSource = read(file, whole = false)
+        fun open(file: File): FileChunkSource = read(file)
 
-        /**
-         * The whole song rather than its first minute, refused outright if it will not fit.
-         *
-         * The harness keeps [open] and its 60 s for two reasons that outlive any one run: a report
-         * says `sourceChunks` and the archive compares that number across 186 measurements, and a
-         * 400 s run of a 214 s song would otherwise stop playing halfway through the schedule.
-         * What a measurement is made against should not change because a product feature landed.
-         */
-        fun openWhole(file: File): FileChunkSource = read(file, whole = true)
-
-        private fun read(file: File, whole: Boolean): FileChunkSource {
+        private fun read(file: File): FileChunkSource {
             if (!file.isFile) throw SourceUnusable("SOURCE_FILE_MISSING")
             val extractor = MediaExtractor()
             try {
@@ -109,13 +90,12 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
                     }
                 }
                 if (track < 0 || format == null) throw SourceUnusable("SOURCE_FILE_NO_AUDIO")
-                val seconds = if (whole) allowedSeconds(format) else PREFIX_SECONDS
                 extractor.selectTrack(track)
                 val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
                 try {
                     codec.configure(format, null, null, 0)
                     codec.start()
-                    val prefix = decodePrefix(extractor, codec, seconds, declaredMicros(format))
+                    val prefix = decodePrefix(extractor, codec, PREFIX_SECONDS, declaredMicros(format))
                     val pcm = Resampler.toStereo(
                         prefix.pcm, prefix.sampleRate, prefix.channels, SyncRenderer.SAMPLE_RATE
                     )
@@ -141,9 +121,9 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
             // run it long. The sync API answers before the first output buffer, so the provisional
             // figure never gets to bound anything.
             var limit = seconds * SyncRenderer.SAMPLE_RATE * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
-            // Sized for the song rather than for the ceiling: a whole song is allowed anything
-            // from under four minutes to eleven depending on its rate, and reserving the ceiling
-            // for a three minute one costs tens of megabytes that the conversion is about to want.
+            // Sized for the song rather than for the minute asked for: a song shorter than the
+            // prefix reserves only its own length, and reserving the whole minute for it costs
+            // megabytes that the conversion is about to want.
             val decoded = ByteArrayOutputStream(expected(limit, declaredMicros))
             val info = MediaCodec.BufferInfo()
             val deadline = System.nanoTime() + seconds * DECODE_BUDGET_MILLIS_PER_SECOND * 1_000_000L
@@ -231,49 +211,6 @@ class FileChunkSource internal constructor(private val pcm: ByteArray, private v
             val bytes = seconds * SyncRenderer.SAMPLE_RATE * SyncRenderer.CHANNELS * BYTES_PER_SAMPLE
             return minOf(limit.toLong(), maxOf(bytes, CHUNK_BYTES.toLong())).toInt()
         }
-
-        /**
-         * How long a whole song of this format may be, refusing this one outright if it is longer.
-         *
-         * The two answers are the same question asked of the same three declared fields, which is
-         * why they are worked out in one place: a refusal at one length and a decode that stops at
-         * another is a song that plays with its end missing and nothing on screen to say so.
-         *
-         * Refused here rather than after decoding, because the length costs nothing to read and
-         * the alternative is someone watching a progress spinner for the whole of a song that was
-         * never going to be played.
-         */
-        private fun allowedSeconds(format: MediaFormat): Int {
-            val rate = declaredRate(format)
-            val channels = declaredChannels(format)
-            if (SourceBudget.tooLong(declaredMicros(format), rate, channels)) {
-                throw SourceUnusable("SOURCE_FILE_TOO_LONG")
-            }
-            return SourceBudget.maxSeconds(rate, channels)
-        }
-
-        /**
-         * The rate the container declares, or the dearest one allowed when it declares none.
-         *
-         * Silence is not a licence to assume the cheap case. 96 kHz is the most any usable format
-         * can cost a second, so guessing it can only shorten what gets decoded, and shortening is
-         * the direction that cannot run the heap out. A container this vague declares no duration
-         * either, so nothing is refused on the strength of the guess - it only bounds the read.
-         */
-        private fun declaredRate(format: MediaFormat): Int =
-            if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                format.getInteger(MediaFormat.KEY_SAMPLE_RATE).takeIf { it > 0 } ?: MAX_SAMPLE_RATE
-            } else {
-                MAX_SAMPLE_RATE
-            }
-
-        /** The same, for the channel count. Zero means undeclared, which [SourceBudget] prices. */
-        private fun declaredChannels(format: MediaFormat): Int =
-            if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
-                format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-            } else {
-                0
-            }
 
         /** What the container says the song lasts, in MediaFormat's own microseconds. */
         private fun declaredMicros(format: MediaFormat): Long? =

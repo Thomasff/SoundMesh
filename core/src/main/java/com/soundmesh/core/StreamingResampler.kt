@@ -5,10 +5,11 @@ import kotlin.math.roundToInt
 /**
  * The same conversion [Resampler] does, fed in pieces instead of all at once.
  *
- * A whole song has to be in memory before [Resampler.toStereo] can be called, and that is the
- * only reason there is a ceiling on how long a song may be at all - see [SourceBudget]. Handing
- * the decoder's output over piece by piece removes the ceiling: what is held here is the filter's
- * own reach plus whatever piece is in hand, whatever the song turns out to be.
+ * A whole song has to be in memory before [Resampler.toStereo] can be called, and that was the
+ * only reason there was ever a ceiling on how long a song could be: the whole of it plus its
+ * conversion had to fit in what a phone gives one app, which came to six minutes of 44.1 kHz
+ * stereo. Handing the decoder's output over piece by piece removes the ceiling entirely - what is
+ * held here is the filter's own reach plus whatever piece is in hand, whatever the song is.
  *
  * **The output has to be the same song, byte for byte.** Every archived alignment measurement was
  * made against audio that came out of [Resampler], and the numbers are compared across 186 of

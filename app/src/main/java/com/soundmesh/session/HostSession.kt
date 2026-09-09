@@ -39,7 +39,8 @@ internal fun hostReportFields(
     droppedToSinks: Int,
     sinks: Int,
     roomPeerIds: List<String>,
-    unnamedSinks: Int
+    unnamedSinks: Int,
+    lateChunks: Int
 ): String =
     "\"maxBroadcastNanos\":$maxBroadcastNanos,\"generated\":$generated" +
         ",\"droppedToSinks\":$droppedToSinks,\"sinks\":$sinks" +
@@ -50,7 +51,11 @@ internal fun hostReportFields(
         // A handset that could not say its name gets no rule and is in no drawing, which from the
         // room looks like one phone quietly staying flat. A build speaking another version would
         // do it to all of them at once, and only this says so.
-        ",\"unnamedSinks\":$unnamedSinks"
+        ",\"unnamedSinks\":$unnamedSinks" +
+        // The renderer waiting on a source that decodes while it plays. Nothing else says it: the
+        // 1.5 s lead and the scheduler's three seconds absorb a burst completely, so a decoder
+        // that fell behind and caught up again leaves no other mark anywhere in a run.
+        ",\"lateChunks\":$lateChunks"
 
 /**
  * The handset that holds the timeline: it decides when every chunk is heard and plays its own copy
@@ -112,6 +117,16 @@ class HostSession(
      * a session that ended without releasing them leaves the phone recording.
      */
     private val closeSource: () -> Unit = {},
+    /**
+     * How often the source made this session wait for audio it had not produced yet.
+     *
+     * A function rather than a number, because it is read when the report is written and a count
+     * taken at construction would say zero for the life of the session. Zero by default, which is
+     * the truthful answer for the two sources that do not queue anything: a prefix already in
+     * memory hands over a chunk the instant it is asked, and a capture has no future to read
+     * ahead into, so neither can be behind.
+     */
+    private val lateChunks: () -> Int = { 0 },
     /**
      * This handset's own name, and with it whether the room can have a shape at all.
      *
@@ -194,7 +209,8 @@ class HostSession(
             droppedToSinks = chunkServer.droppedChunks(),
             sinks = chunkServer.clientCount(),
             roomPeerIds = roomPeerIds(),
-            unnamedSinks = spatialServer?.unnamedSinks() ?: 0
+            unnamedSinks = spatialServer?.unnamedSinks() ?: 0,
+            lateChunks = lateChunks()
         ) + "}"
     }
 

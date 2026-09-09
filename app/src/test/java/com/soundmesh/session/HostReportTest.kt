@@ -25,18 +25,39 @@ class HostReportTest {
     private val near = "0918273645abcdef"
     private val far = "1122334455667788"
 
-    private fun report(sinks: Int, room: List<String>): String =
+    private fun report(sinks: Int, room: List<String>, lateChunks: Int = 0): String =
         "{" + hostReportFields(
             maxBroadcastNanos = 1_000_000L,
             generated = 3_010,
             droppedToSinks = 0,
             sinks = sinks,
             roomPeerIds = room,
-            unnamedSinks = 0
+            unnamedSinks = 0,
+            lateChunks = lateChunks
         ) + "}"
 
     private fun valueOf(report: String, label: Int): String =
         SessionReadout.counters(report).first { it.label == label }.value
+
+    /**
+     * The one mark a source that fell behind leaves anywhere.
+     *
+     * A host reads a chunk 1.5 s before it is heard and the scheduler holds three seconds more,
+     * so a decoder that stumbled and caught up again changes no other number in the run - not the
+     * timeline, not the trims, not what anybody heard. Without this the only visible version of
+     * that fault is the one that never recovers.
+     */
+    @Test
+    fun aHostSaysHowOftenItWaitedForItsSource() {
+        val text = report(sinks = 1, room = listOf(host, near), lateChunks = 7)
+        assertEquals("7", valueOf(text, R.string.counter_source_late))
+    }
+
+    /** Zero is a reading. A row that appeared only on a bad session could not be watched. */
+    @Test
+    fun aHostThatNeverWaitedStillSaysSo() {
+        assertEquals("0", valueOf(report(sinks = 1, room = listOf(host, near)), R.string.counter_source_late))
+    }
 
     /** The host first, because that is the order the drawing is in and the order a listener reads. */
     @Test

@@ -71,6 +71,7 @@ object SessionReadout {
         whole(report, "maxBroadcastNanos")?.let {
             rows += Counter(R.string.counter_broadcast, millis(it, 0))
             rows += Counter(R.string.counter_to_sinks, "${whole(report, "droppedToSinks") ?: 0}")
+            rows += Counter(R.string.counter_source_late, "${whole(report, "lateChunks") ?: 0}")
         }
         return rows
     }

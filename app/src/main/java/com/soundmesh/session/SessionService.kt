@@ -21,9 +21,9 @@ import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureChunkSource
-import com.soundmesh.probe.sync.DecodedSong
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.HostIdentity
+import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.PeerDiscovery
 import com.soundmesh.probe.sync.StoredOutputLead
 import com.soundmesh.probe.sync.SyncActivity
@@ -111,16 +111,39 @@ class SessionService : Service() {
         // here and gets the 60 s every archived report was written against; the product asks for
         // the song, because a minute of it on a loop is not what anyone chose the file for.
         val file = File(getExternalFilesDir(null), name)
-        val whole = intent.getBooleanExtra(EXTRA_WHOLE_SOURCE, false)
-        // Whoever chose this song already waited for it to be decoded, and this is that decoding.
-        // Asked for by the same two things that decided it - the file and how much of it - so a
-        // caller wanting the prefix cannot be handed the whole song, which would silently move a
-        // measurement onto the other arm.
-        val source = DecodedSong.take(file, whole)
-            ?: if (whole) FileChunkSource.openWhole(file) else FileChunkSource.open(file)
+        if (intent.getBooleanExtra(EXTRA_WHOLE_SOURCE, false)) return openStreamingHost(file, intent)
+        val source = FileChunkSource.open(file)
         advertise()
         return HostSession(
             source::readChunk, deadbandFrames(intent), trimFrames(intent),
+            spatialId = HostIdentity(filesDir).current()
+        )
+    }
+
+    /**
+     * The product's host: the song, decoded a piece at a time while it plays.
+     *
+     * Reading it whole first is what used to put a ceiling on how long a song could be, and the
+     * ceiling was memory rather than taste - the whole of it plus its conversion had to fit in
+     * what a phone gives one app. Here the decoder runs a fixed three seconds ahead and no
+     * further, so length stops being anybody's business but the file's.
+     *
+     * The prefix path above is untouched and stays that way: it is what every archived alignment
+     * measurement was made through, and what a measurement is made against should not change
+     * because a product feature landed.
+     */
+    private fun openStreamingHost(file: File, intent: Intent): SyncSession {
+        val source = StreamingChunkSource.open(file)
+        advertise()
+        return HostSession(
+            // Null is the source having been closed, which only stop() does. Reaching here any
+            // other way is a session with no producer, and the same throw the capture path uses
+            // is what marks it stopped rather than leaving it saying PLAYING to nobody.
+            readChunk = { source.readChunk() ?: throw IllegalStateException("the song ended") },
+            deadbandFrames = deadbandFrames(intent),
+            trimFrames = trimFrames(intent),
+            closeSource = source::close,
+            lateChunks = source::lateChunks,
             spatialId = HostIdentity(filesDir).current()
         )
     }
