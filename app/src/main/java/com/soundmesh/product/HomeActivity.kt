@@ -32,6 +32,7 @@ import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
+import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
 import com.soundmesh.core.SpatialField
@@ -366,7 +367,12 @@ class HomeActivity : ComponentActivity() {
         val previous = state.room ?: RoomState(selfId = host.roomPeerIds().firstOrNull())
         val icons = SpatialRoom.reconciled(previous.icons, host.roomPeerIds())
         if (icons.map { it.peerId } == previous.icons.map { it.peerId }) return previous
-        return previous.copy(icons = icons).also(::publish)
+        // Read here and not every pass: these come off disk, and this loop runs five times a
+        // second. The roster changing is the only thing that can bring a new one into play.
+        val measured = icons.mapNotNull { icon ->
+            StoredSeparation(filesDir, icon.peerId).read()?.let { icon.peerId to it }
+        }.toMap()
+        return previous.copy(icons = icons, measuredMetres = measured).also(::publish)
     }
 
     override fun onResume() {

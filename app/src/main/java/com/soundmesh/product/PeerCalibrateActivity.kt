@@ -51,6 +51,7 @@ import com.soundmesh.probe.sync.PeerRunLog
 import com.soundmesh.probe.sync.holdingRadio
 import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.StoredCalibration
+import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
 import kotlin.math.abs
@@ -434,11 +435,13 @@ class PeerCalibrateActivity : ComponentActivity() {
                 }
                 val combined = AlignmentPairing.combine(plan.caseId, run.readings, message)
                 outcome = combined.verdict?.clusterMeanMs?.let { mean ->
-                    getString(
-                        R.string.pair_calibrate_host_done,
-                        mean,
-                        combined.pairs.filterNotNull().map { it.separationMetres }.average()
-                    )
+                    val metres = combined.pairs.filterNotNull().map { it.separationMetres }.average()
+                    // Kept rather than only shown. It has had no consumer until now - every gain
+                    // depends on direction alone - and the one it has is not scaling anything: it
+                    // is the only thing that can catch two icons dragged onto the wrong phones.
+                    // Guarded, because a room screen's check is not worth a failed calibration.
+                    runCatching { StoredSeparation(filesDir, sinkId).write(metres) }
+                    getString(R.string.pair_calibrate_host_done, mean, metres)
                 } ?: getString(
                     R.string.pair_calibrate_kept,
                     combined.failure?.name ?: "NO_VERDICT"

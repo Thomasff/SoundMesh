@@ -54,6 +54,22 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
         if (state.icons.size < 2) {
             Text(stringResource(R.string.room_alone), style = MaterialTheme.typography.bodySmall)
         }
+        // Said quietly and never acted on. The measurement cannot know which side is left, so it
+        // can never correct a drawing - only point at two icons and ask whether they are the right
+        // way round. Acting on it would be the app overruling the one thing only a person knows.
+        state.selfId?.let { self ->
+            RoomCheck.contradiction(state.icons, self, state.measuredMetres)?.let { (farther, nearer) ->
+                Text(
+                    stringResource(
+                        R.string.room_disagrees,
+                        farther.take(4),
+                        nearer.take(4)
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
         ModePicker(state, actions)
         if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
     }
@@ -67,6 +83,14 @@ data class RoomState(
     val pan: Float = 0f,
     /** Which icon is this phone, so a listener can tell which one is in their hand. */
     val selfId: String? = null,
+    /**
+     * How far this handset measured itself from each peer it has calibrated with, in metres.
+     *
+     * Read when the roster changes rather than every pass: it comes off disk, and the roster is
+     * re-read five times a second. Empty is the ordinary state - a pair nobody has calibrated has
+     * no measurement, and neither has a room whose phones have only ever met this one.
+     */
+    val measuredMetres: Map<String, Double> = emptyMap(),
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt()
 )
 
