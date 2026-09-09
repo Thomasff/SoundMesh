@@ -135,4 +135,80 @@ class OutputLeadRunnerTest {
     fun measuringMediaAgainstItselfIsRefused() {
         OutputLeadRunner(RunStore(directory), "test", PlaybackUsage.MEDIA).run()
     }
+    /**
+     * A repeatability run plays one path twice, so the two halves of a repeat are the same path
+     * and can only be told apart by which half they are. The analysis used to pick them by
+     * matching on the path, which would hand back the same pass for both and read the difference
+     * of a chirp with itself - zero, every repeat, with nothing to notice it by.
+     */
+    @Test
+    fun thePassesOfARepeatAreToldApartByRoleRatherThanByPath() {
+        val passes = OutputLeadRunner(
+            runStore = RunStore(directory),
+            caseId = "test",
+            subject = PlaybackUsage.MEDIA,
+            repeats = 3,
+            samePath = true
+        ).plan(0L)
+
+        assertTrue("a repeatability run plays one path", passes.all { it.usage == PlaybackUsage.MEDIA })
+        for (pair in passes.chunked(2)) {
+            assertEquals(1, pair.count { it.isSubject })
+            assertTrue(
+                "the two halves of a repeat landed on one pass",
+                pair.first { !it.isSubject }.chirpAtHostNanos != pair.first { it.isSubject }.chirpAtHostNanos
+            )
+        }
+    }
+
+    /** Which half goes first still alternates, so anything drifting between a pair does not survive. */
+    @Test
+    fun theHalfThatGoesFirstStillAlternatesWhenBothPlayOnePath() {
+        val firsts = OutputLeadRunner(
+            runStore = RunStore(directory),
+            caseId = "test",
+            subject = PlaybackUsage.MEDIA,
+            repeats = 4,
+            samePath = true
+        ).plan(0L).chunked(2).map { it.first().isSubject }
+
+        assertEquals(listOf(false, true, false, true), firsts)
+    }
+
+    /**
+     * A correction belongs to a path, and this run is not about a path. Applying one would move
+     * one of two passes that are meant to be the same arrangement.
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun aRepeatabilityRunWillNotCarryACorrection() {
+        OutputLeadRunner(
+            runStore = RunStore(directory),
+            caseId = "test",
+            subject = PlaybackUsage.MEDIA,
+            samePath = true,
+            appliedLeadNanos = 19_482_000L
+        ).run()
+    }
+
+    /** The other direction: an ordinary lead run cannot quietly become a repeatability one. */
+    @Test(expected = IllegalArgumentException::class)
+    fun aRepeatabilityRunOnAPathOtherThanTheReferenceIsRefused() {
+        OutputLeadRunner(
+            runStore = RunStore(directory),
+            caseId = "test",
+            subject = PlaybackUsage.ACCESSIBILITY,
+            samePath = true
+        ).run()
+    }
+
+    /**
+     * Its recording must not land in the lead runs' directory: RunStore only creates a case
+     * directory and never clears it, so a shared case id is a shared directory.
+     */
+    @Test
+    fun theRepeatabilityCaseIsItsOwn() {
+        assertTrue(OutputLeadRunner.SAME_PATH_CASE_ID != OutputLeadRunner.DEFAULT_CASE_ID)
+        RunStore(directory).prepareRun(OutputLeadRunner.SAME_PATH_CASE_ID)
+    }
+
 }

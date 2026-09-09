@@ -16,6 +16,15 @@ import java.io.File
 /** One playback pass: a single output path, warmed up and then made to emit one chirp. */
 internal data class Pass(
     val usage: PlaybackUsage,
+    /**
+     * Which half of the pair this is, kept apart from [usage] because the two can be the same.
+     *
+     * The analysis used to pick the two passes of a repeat by matching on [usage], which works
+     * for as long as the reference and the subject are different paths. A repeatability run plays
+     * the reference path twice, and matching on the path would then hand the same pass back for
+     * both halves and read a difference of a chirp with itself: zero, every repeat, silently.
+     */
+    val isSubject: Boolean,
     val startHostNanos: Long,
     val chirpAtHostNanos: Long,
     /**
@@ -61,6 +70,26 @@ class OutputLeadRunner(
     private val caseId: String,
     private val subject: PlaybackUsage,
     private val repeats: Int = DEFAULT_REPEATS,
+    /**
+     * Whether both passes of a repeat play the reference path.
+     *
+     * Then the run measures nothing about the output paths - the two are the same path - and
+     * everything about what happens **between** the two passes: each one builds its own renderer,
+     * scheduler and AudioTrack, warms it, emits one chirp and tears it down. So each reading is
+     * the difference of two acquisitions of the same path, centred on zero, and its scatter is
+     * the size of one acquisition's emission step.
+     *
+     * That is the quantity roadmap item 7 is after. The pair's run-level bias moves 0.389 ms
+     * between runs after the per-chirp jitter is accounted for, and nothing recorded in a paired
+     * run can say which handset's emission moved - the four arrivals determine the difference of
+     * the two emissions and never either one (section 23). This measures one handset's own step
+     * directly, out of one recording, with no second device, no network and no clock: the
+     * recording's own opening instant is common to both passes and cancels in the subtraction,
+     * which is this class's whole premise already.
+     *
+     * It stores nothing, and [com.soundmesh.product.CalibrateActivity] refuses to store from it.
+     */
+    private val samePath: Boolean = false,
     private val warmupNanos: Long = WARMUP_NANOS,
     private val audioSource: CalibrationAudioSource = CalibrationAudioSource.MIC,
     private val minimumReadings: Int = DEFAULT_MINIMUM_READINGS,
@@ -92,7 +121,14 @@ class OutputLeadRunner(
 
     fun run(): OutputLeadRun {
         require(repeats >= 1) { "a calibration needs at least one repeat" }
-        require(subject != PlaybackUsage.MEDIA) { "media is the path everything else is measured against" }
+        if (samePath) {
+            require(subject == PlaybackUsage.MEDIA) { "a repeatability run plays the reference path twice" }
+            // A correction belongs to a path, and this run is not about a path. Applying one here
+            // would move one of two passes that are meant to be the same arrangement twice over.
+            require(appliedLeadNanos == 0L) { "a repeatability run has no correction to verify" }
+        } else {
+            require(subject != PlaybackUsage.MEDIA) { "media is the path everything else is measured against" }
+        }
         val passes = plan(System.nanoTime() + START_LEAD_NANOS)
         val calibration = CalibrationRunner(runStore, caseId, audioSource) { System.nanoTime() }
         val lastEnd = passes.last().chirpAtHostNanos + chirpNanos() + CHIRP_DRAIN_NANOS
@@ -122,18 +158,21 @@ class OutputLeadRunner(
      */
     internal fun plan(startHostNanos: Long): List<Pass> = (0 until repeats).flatMap { repeat ->
         val at = startHostNanos + repeat * repeatStrideNanos()
-        // Media first on even repeats, the subject first on odd ones.
-        val order = if (repeat % 2 == 0) listOf(PlaybackUsage.MEDIA, subject) else listOf(subject, PlaybackUsage.MEDIA)
-        order.mapIndexed { index, usage ->
+        // Media first on even repeats, the subject first on odd ones. Ordered by which half of
+        // the pair a pass is rather than by which path it plays, because a repeatability run
+        // plays one path twice and the two halves would otherwise be indistinguishable.
+        val order = if (repeat % 2 == 0) listOf(false, true) else listOf(true, false)
+        order.mapIndexed { index, isSubject ->
             val passStart = at + index * passStrideNanos()
             Pass(
-                usage = usage,
+                usage = if (isSubject) subject else PlaybackUsage.MEDIA,
+                isSubject = isSubject,
                 startHostNanos = passStart,
                 chirpAtHostNanos = passStart + warmupNanos + CALIBRATION_GAP_NANOS,
                 // The subject's alone. Moving both would shift the pair together and measure the
                 // very same difference again, which would pass whatever the constant happened
                 // to be - the correction has to be tested where the product puts it.
-                leadNanos = if (usage == subject) appliedLeadNanos else 0L
+                leadNanos = if (isSubject) appliedLeadNanos else 0L
             )
         }
     }
@@ -214,11 +253,15 @@ class OutputLeadRunner(
                 recorded = recorded,
                 reference = reference,
                 recordingStartedAtHostNanos = startedAt,
-                referenceChirpAtHostNanos = pair.first { it.usage == PlaybackUsage.MEDIA }.chirpAtHostNanos,
-                subjectChirpAtHostNanos = pair.first { it.usage == subject }.chirpAtHostNanos
+                referenceChirpAtHostNanos = pair.first { !it.isSubject }.chirpAtHostNanos,
+                subjectChirpAtHostNanos = pair.first { it.isSubject }.chirpAtHostNanos
             )
         }
-        val result = OutputLeadAnalysis.combine(readings, minimumReadings, maximumSpreadMicros)
+        // The spread cap exists to keep a scattered run from being stored as a constant. A
+        // repeatability run stores nothing and its scatter is the answer, so refusing it for
+        // being wide would throw away exactly the runs worth reading.
+        val cap = if (samePath) Long.MAX_VALUE else maximumSpreadMicros
+        val result = OutputLeadAnalysis.combine(readings, minimumReadings, cap)
         return OutputLeadRun(result, readings, json(result, readings, recorded.size, startedAt))
     }
 
@@ -228,7 +271,7 @@ class OutputLeadRunner(
     }
 
     private fun json(result: OutputLeadResult, readings: List<OutputLeadReading>, frames: Int, startedAt: Long?): String =
-        "{\"subject\":\"${subject.name}\",\"repeats\":$repeats," +
+        "{\"subject\":\"${subject.name}\",\"samePath\":$samePath,\"repeats\":$repeats," +
             "\"warmupNanos\":$warmupNanos,\"audioSource\":\"$audioSource\"," +
             // Which arrangement produced this: a raw measurement, or a check of a stored answer.
             "\"appliedLeadMicros\":${appliedLeadNanos / 1_000L}," +
@@ -272,6 +315,16 @@ class OutputLeadRunner(
          * the directory; it never clears it, so a shared case id is a shared directory.
          */
         const val DEFAULT_CASE_ID = "L90"
+
+        /**
+         * Where a repeatability run's recording goes, apart from the lead runs.
+         *
+         * [RunStore] only creates the case directory and never clears it, so a shared case id is
+         * a shared directory - which is how an on-device run once left its calibration.wav in
+         * runs/L1 beside a sync.json it had not written. These two answer different questions and
+         * do not belong in one place.
+         */
+        const val SAME_PATH_CASE_ID = "L95"
 
         /**
          * Five, and the median of them. Three was tried on the two-handset ruler and was not

@@ -42,6 +42,7 @@
     <string name="calibrate_result">结果</string>
     <string name="calibrate_running">正在测。请把手机放在桌上别动，保持安静，大约一分半。</string>
     <string name="calibrate_done">测完了：这条输出比媒体输出早 %1$.3f 毫秒（%2$s），已经记下来了。</string>
+    <string name="calibrate_repeatability">重复性测量完成（诊断用，什么都没记下）：中位数 %1$.3f 毫秒，极差 %2$.3f 毫秒，%3$d 对可读。</string>
     <string name="calibrate_verified">验证完成：补偿之后还剩 %1$.3f 毫秒。越接近零，说明记下的数越准。</string>
     <string name="calibrate_refused">这次不算数，没有记下来：%1$s</string>
     <string name="calibrate_failed">校准没跑完：%1$s</string>

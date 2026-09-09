@@ -121,8 +121,16 @@ class CalibrateActivity : ComponentActivity() {
     }
 
     private fun measure(verifying: Boolean) {
-        val subject = PlaybackUsage.fromName(intent.getStringExtra("subject") ?: CAPTURING_HOST_USAGE.name)
-        val caseId = intent.getStringExtra("case") ?: OutputLeadRunner.DEFAULT_CASE_ID
+        // A repeatability run plays the reference path on both passes, so it measures nothing
+        // about the paths and everything about the acquisition between them - roadmap item 7,
+        // section 23. Driven over adb because it is a diagnostic and not a thing to offer on a
+        // screen: `am start -e same_path true -e repeats 20`.
+        val samePath = intent.getBooleanExtra("same_path", false)
+        val subject =
+            if (samePath) PlaybackUsage.MEDIA
+            else PlaybackUsage.fromName(intent.getStringExtra("subject") ?: CAPTURING_HOST_USAGE.name)
+        val caseId = intent.getStringExtra("case")
+            ?: if (samePath) OutputLeadRunner.SAME_PATH_CASE_ID else OutputLeadRunner.DEFAULT_CASE_ID
         // A verification replays the stored answer through the renderer that will use it, so what
         // it reads is what is left over rather than the whole difference. Near zero means the
         // constant is right; near twice its own size means its sign is not.
@@ -133,20 +141,30 @@ class CalibrateActivity : ComponentActivity() {
             repeats = intent.getIntExtra("repeats", OutputLeadRunner.DEFAULT_REPEATS),
             warmupNanos = intent.getIntExtra("warmup_seconds", 4).toLong() * 1_000_000_000L,
             audioSource = CalibrationAudioSource.parse(intent.getStringExtra("audio_source")),
-            appliedLeadNanos = if (verifying) (StoredOutputLead(filesDir, subject).read() ?: 0L) * 1_000L else 0L
+            samePath = samePath,
+            appliedLeadNanos =
+                if (verifying && !samePath) (StoredOutputLead(filesDir, subject).read() ?: 0L) * 1_000L else 0L
         ).run()
         // Written before anything is stored, so a refused run still leaves its evidence behind.
         File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(run.json)
         Log.i(LOG_TAG, run.json)
         val micros = run.result.leadMicros
         // A verification never stores: what it measured is a residual, and writing a residual where
-        // the constant lives would quietly halve the correction on every run after it.
-        if (micros != null && !verifying && intent.getBooleanExtra("apply", true)) {
+        // the constant lives would quietly halve the correction on every run after it. Nor does a
+        // repeatability run, and for a blunter reason: its subject is the reference path, so what
+        // it reads is near zero by construction and storing it would wipe the media constant.
+        if (micros != null && !verifying && !samePath && intent.getBooleanExtra("apply", true)) {
             StoredOutputLead(filesDir, subject).write(micros)
         }
         show(
             when {
                 micros == null -> getString(R.string.calibrate_refused, run.result.refusal ?: "")
+                samePath -> getString(
+                    R.string.calibrate_repeatability,
+                    micros / 1000.0,
+                    (run.result.spreadMicros ?: 0L) / 1000.0,
+                    run.result.usedReadings
+                )
                 verifying -> getString(R.string.calibrate_verified, micros / 1000.0)
                 else -> getString(R.string.calibrate_done, micros / 1000.0, subject.name)
             }
