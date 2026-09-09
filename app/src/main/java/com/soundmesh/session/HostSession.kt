@@ -6,9 +6,11 @@ import com.soundmesh.core.ChunkTimeline
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.SessionState
+import com.soundmesh.core.SpatialField
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.sync.ChunkServer
 import com.soundmesh.probe.sync.ClockSyncServer
+import com.soundmesh.probe.sync.SpatialFieldServer
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncRenderer
 
@@ -72,6 +74,14 @@ class HostSession(
      * a session that ended without releasing them leaves the phone recording.
      */
     private val closeSource: () -> Unit = {},
+    /**
+     * This handset's own name, and with it whether the room can have a shape at all.
+     *
+     * Null - the default - means no spatial control channel is bound and no gain is ever applied,
+     * which is what every session before spatial audio did. Passed rather than read from disk here
+     * because this class holds no Context and no directory; the service that owns both hands it in.
+     */
+    private val spatialId: String? = null,
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
@@ -90,8 +100,13 @@ class HostSession(
         DriftController(deadbandFrames),
         trimDeadbandFrames = trimFrames,
         playbackUsage = playbackUsage,
+        spatialPeerId = spatialId,
         hostNanosNow = { System.nanoTime() - outputLeadNanos }
     )
+
+    // Null when this session has no name of its own: an unbound port rather than an idle one, so a
+    // build without the feature is not listening on 45126 either.
+    private val spatialServer = spatialId?.let { SpatialFieldServer(SyncActivity.SPATIAL_PORT) }
     // How long the slowest call to broadcast took, and how many chunks the source produced.
     //
     // Instrumentation rather than a health counter, and it earned its place: it is what measured
@@ -106,6 +121,29 @@ class HostSession(
     private var rendererThread: Thread? = null
     private var producerThread: Thread? = null
 
+    /**
+     * Who is in the room: this handset first, then whoever has connected and said their name.
+     *
+     * The order is the drawing's order and it puts the host first deliberately - a listener who
+     * drags an icon has to be able to tell which one is the phone in their hand, and the only
+     * thing distinguishing them is which one this list names first.
+     */
+    fun roomPeerIds(): List<String> =
+        listOfNotNull(spatialId) + (spatialServer?.peerIds() ?: emptyList())
+
+    /**
+     * Makes [field] the rule the whole room plays under, this handset included.
+     *
+     * No instant is passed and none is needed: the rule is a function of the host instant and the
+     * instants are already in the chunks, so every handset starts obeying it on the same chunk
+     * without anybody being told when. The sinks are told first only because their copy has a
+     * network between it and the speaker.
+     */
+    fun publishSpatialField(field: SpatialField) {
+        spatialServer?.publish(field)
+        renderer.applySpatialField(field)
+    }
+
     override fun state(): SessionState = flags.state()
 
     // Null before start(): the renderer exists but has never run, and a report of zeroes reads
@@ -114,7 +152,11 @@ class HostSession(
         if (flags.state() == SessionState.IDLE) return null
         return renderer.report(null).dropLast(1) +
             ",\"maxBroadcastNanos\":$maxBroadcastNanos,\"generated\":$generated" +
-            ",\"droppedToSinks\":${chunkServer.droppedChunks()}}"
+            ",\"droppedToSinks\":${chunkServer.droppedChunks()}" +
+            // A handset that could not say its name gets no rule and is in no drawing, which from
+            // the room looks like one phone quietly staying flat. A build speaking another version
+            // would do it to all of them at once, and only this says so.
+            ",\"unnamedSinks\":${spatialServer?.unnamedSinks() ?: 0}}"
     }
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
@@ -132,6 +174,9 @@ class HostSession(
     override fun start() {
         clockServer.start()
         chunkServer.start()
+        // Not fatal. A room that cannot be shaped is still a room playing in step, and refusing to
+        // start a session over a garnish would be the wrong trade by a wide margin.
+        runCatching { spatialServer?.start() }
         // No end instant is known, so the renderer is given one it cannot reach and stop() moves it
         // back to now. endAt is @Volatile precisely so it can be moved from another thread.
         renderer.endAt(Long.MAX_VALUE)
@@ -196,6 +241,7 @@ class HostSession(
         rendererThread = null
         runCatching { chunkServer.stop() }
         runCatching { clockServer.stop() }
+        runCatching { spatialServer?.stop() }
         runCatching { closeSource() }
     }
 

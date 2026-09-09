@@ -116,7 +116,10 @@ class SessionService : Service() {
             FileChunkSource.open(file)
         }
         advertise()
-        return HostSession(source::readChunk, deadbandFrames(intent), trimFrames(intent))
+        return HostSession(
+            source::readChunk, deadbandFrames(intent), trimFrames(intent),
+            spatialId = HostIdentity(filesDir).current()
+        )
     }
 
     /**
@@ -155,7 +158,8 @@ class SessionService : Service() {
             trimFrames = trimFrames(intent),
             playbackUsage = CAPTURING_HOST_USAGE,
             outputLeadNanos = (lead ?: 0L) * 1_000L,
-            closeSource = source::close
+            closeSource = source::close,
+            spatialId = HostIdentity(filesDir).current()
         )
     }
 
@@ -199,7 +203,10 @@ class SessionService : Service() {
         return SinkSession(
             address, port, peerId!!, filesDir,
             deadbandFrames(intent), trimFrames(intent),
-            resolveHost = { addressOf(peerId) }
+            resolveHost = { addressOf(peerId) },
+            // This handset's own name, not the host's. The same identity a peer files this phone's
+            // calibration under, so an icon dragged in one session means the same phone in the next.
+            spatialId = HostIdentity(filesDir).current()
         )
     }
 

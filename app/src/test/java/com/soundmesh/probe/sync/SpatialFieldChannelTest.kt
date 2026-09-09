@@ -17,19 +17,22 @@ import java.util.concurrent.atomic.AtomicReference
 class SpatialFieldChannelTest {
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
 
+    private val here = "a1b2c3d4e5f60718"
+    private val there = "0918273645abcdef"
+
     private fun field(mode: SpatialMode) = SpatialField(
         mode = mode,
         layout = SpatialLayout(
             listOf(
-                SpatialPosition("a1b2c3d4e5f60718", -1.0, 0.5),
-                SpatialPosition("0918273645abcdef", 1.0, 0.5)
+                SpatialPosition(here, -1.0, 0.5),
+                SpatialPosition(there, 1.0, 0.5)
             )
         )
     )
 
     /** Polls rather than sleeps a fixed span: delivery crosses two threads and a socket. */
     private fun awaitTrue(what: String, test: () -> Boolean) {
-        val deadline = System.nanoTime() + 5_000_000_000L
+        val deadline = System.nanoTime() + 6_000_000_000L
         while (System.nanoTime() < deadline) {
             if (test()) return
             Thread.sleep(5L)
@@ -42,7 +45,7 @@ class SpatialFieldChannelTest {
         val port = freePort()
         val server = SpatialFieldServer(port)
         val seen = AtomicReference<SpatialField?>(null)
-        val client = SpatialFieldClient("127.0.0.1", port) { seen.set(it) }
+        val client = SpatialFieldClient("127.0.0.1", port, here) { seen.set(it) }
         server.start()
         try {
             client.start()
@@ -68,7 +71,7 @@ class SpatialFieldChannelTest {
         val port = freePort()
         val server = SpatialFieldServer(port)
         val seen = AtomicReference<SpatialField?>(null)
-        val client = SpatialFieldClient("127.0.0.1", port) { seen.set(it) }
+        val client = SpatialFieldClient("127.0.0.1", port, here) { seen.set(it) }
         server.start()
         try {
             server.publish(field(SpatialMode.SPLIT))
@@ -92,7 +95,7 @@ class SpatialFieldChannelTest {
         val port = freePort()
         val listener = ServerSocket(port)
         val seen = AtomicReference<SpatialField?>(null)
-        val client = SpatialFieldClient("127.0.0.1", port) { seen.set(it) }
+        val client = SpatialFieldClient("127.0.0.1", port, here) { seen.set(it) }
         try {
             val accepted = Thread {
                 listener.accept().use { socket ->
@@ -150,6 +153,7 @@ class SpatialFieldChannelTest {
         server.start()
         try {
             val socket = Socket("127.0.0.1", port)
+            socket.getOutputStream().apply { write(SpatialFrame.encode(here)); flush() }
             awaitTrue("the sink to connect") { server.clientCount() == 1 }
             socket.close()
 
@@ -157,6 +161,80 @@ class SpatialFieldChannelTest {
                 server.publish(field(SpatialMode.ROTATE))
                 server.clientCount() == 0
             }
+        } finally {
+            server.stop()
+        }
+    }
+/**
+     * What the roster is for. Chunks travel over anonymous sockets, so before the announce the
+     * host could count its sinks and not name one - and an icon that is not a particular handset
+     * is an icon dragging moves nothing in particular.
+     */
+    @Test
+    fun theHostLearnsTheNameOfEverySinkThatJoined() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        val first = SpatialFieldClient("127.0.0.1", port, here) {}
+        val second = SpatialFieldClient("127.0.0.1", port, there) {}
+        server.start()
+        try {
+            first.start()
+            second.start()
+
+            awaitTrue("both sinks to be named") { server.peerIds().size == 2 }
+            assertEquals(setOf(here, there), server.peerIds().toSet())
+        } finally {
+            first.stop()
+            second.stop()
+            server.stop()
+        }
+    }
+
+    /**
+     * A sink that says nothing usable is let go rather than kept as an anonymous socket the host
+     * would have to send rules to without being able to draw it. Counted, because from the room
+     * this looks like one handset quietly not joining in - and a build speaking another version
+     * would do it to every handset at once.
+     */
+    @Test
+    fun aSinkThatNeverSaysItsNameIsLetGoAndCounted() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        server.start()
+        try {
+            val socket = Socket("127.0.0.1", port)
+            socket.getOutputStream().apply { write(SpatialFrame.encode("not-a-host-id")); flush() }
+
+            awaitTrue("the nameless sink to be let go") { server.unnamedSinks() == 1 }
+            assertEquals(0, server.clientCount())
+            socket.close()
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun aHandsetWithoutAUsableNameOfItsOwnRefusesToJoin() {
+        val thrown = runCatching { SpatialFieldClient("127.0.0.1", 1, "nope") {} }
+
+        assertTrue(thrown.exceptionOrNull() is IllegalArgumentException)
+    }
+/**
+     * The other half of the same guarantee, and the one that leaks rather than misbehaves: a sink
+     * that connects and then says nothing at all would park a thread and hold a socket the roster
+     * never learned about, so stop() would not close it either.
+     */
+    @Test
+    fun aSinkThatConnectsAndSaysNothingIsLetGoToo() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        server.start()
+        try {
+            val socket = Socket("127.0.0.1", port)
+
+            awaitTrue("the silent sink to be let go") { server.unnamedSinks() == 1 }
+            assertEquals(0, server.clientCount())
+            socket.close()
         } finally {
             server.stop()
         }

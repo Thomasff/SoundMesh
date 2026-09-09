@@ -1,5 +1,6 @@
 package com.soundmesh.probe.sync
 
+import com.soundmesh.core.HostId
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialFieldCodec
 import java.io.InputStream
@@ -68,13 +69,24 @@ internal object SpatialFrame {
  * seconds. This is published from whichever thread the listener touched, so blocking it would
  * freeze the screen rather than the audio, which is no better.
  *
+ * Each sink says its own name as it connects, and that is the only reason the host knows who is
+ * in the room: chunks travel over anonymous sockets, so before this the host could count its sinks
+ * and not name one of them. A drawing has to name them - an icon has to be a particular handset,
+ * or dragging it moves nothing in particular. Naming by arrival order was the alternative and it
+ * is worse than no names at all: a reconnection renumbers the room silently, which is exactly the
+ * failure the drawing is checked against a measured distance to catch.
+ *
+ * A sink that connects and never says its name gets no rule. It is in no drawing either, so there
+ * is nothing to send it, and holding the accept thread until it speaks would let one silent sink
+ * keep every other handset out of the room.
+ *
  * The queue holds one rule, and a new one replaces what is waiting rather than queueing behind
  * it. That is the opposite of [ChunkServer]'s rule, for a plain reason: an audio chunk that missed
  * its instant is worthless and so is the next one, while for a rule the newest is exactly the one
  * wanted and everything before it is superseded.
  */
 class SpatialFieldServer(private val port: Int) {
-    private class Client(val socket: Socket, val stream: OutputStream) {
+    private class Client(val socket: Socket, val stream: OutputStream, val peerId: String) {
         val outbox = ArrayBlockingQueue<ByteArray>(1)
 
         fun offerLatest(frame: ByteArray) {
@@ -90,6 +102,7 @@ class SpatialFieldServer(private val port: Int) {
     @Volatile private var current: ByteArray? = null
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
+    @Volatile private var unnamedSinks = 0
 
     fun start() {
         // Bound on the caller's thread for the reason ChunkServer.start states: a stop() landing
@@ -103,10 +116,10 @@ class SpatialFieldServer(private val port: Int) {
                     while (running) {
                         val socket = bound.accept()
                         socket.tcpNoDelay = true
-                        val client = Client(socket, socket.getOutputStream().buffered())
-                        current?.let { client.offerLatest(it) }
-                        clients.add(client)
-                        Thread({ serve(client) }, "SoundMeshSpatialSend").start()
+                        // The name is read on the new thread, not here: a sink that connects and
+                        // then says nothing would otherwise hold the accept loop for as long as it
+                        // stayed connected, and no other handset could join behind it.
+                        Thread({ serve(socket) }, "SoundMeshSpatialSend").start()
                     }
                 }
             }
@@ -122,7 +135,26 @@ class SpatialFieldServer(private val port: Int) {
         }
     }
 
-    private fun serve(client: Client) {
+    private fun serve(socket: Socket) {
+        val client = runCatching {
+            // Bounded, or a sink that connects and then says nothing parks this thread and holds
+            // the socket for the life of the process: it is in no roster, so stop() does not close
+            // it either. Cleared afterwards, because a named sink is expected to stay quiet.
+            socket.soTimeout = ANNOUNCE_TIMEOUT_MILLIS
+            val announced = SpatialFrame.read(socket.getInputStream().buffered())
+            socket.soTimeout = 0
+            if (!HostId.isValid(announced)) null
+            else Client(socket, socket.getOutputStream().buffered(), announced!!)
+        }.getOrNull()
+        if (client == null) {
+            runCatching { socket.close() }
+            unnamedSinks++
+            return
+        }
+        clients.add(client)
+        // After the name, not before: the roster is what a drawing is made of, so the first rule a
+        // sink is told is one that could have been drawn knowing it was here.
+        current?.let { client.offerLatest(it) }
         runCatching {
             client.socket.use {
                 while (running) {
@@ -139,6 +171,17 @@ class SpatialFieldServer(private val port: Int) {
 
     fun clientCount(): Int = clients.size
 
+    /** Who is in the room, as the sinks named themselves. The host is not in here; it is the host. */
+    fun peerIds(): List<String> = synchronized(clients) { clients.map { it.peerId } }
+
+    /**
+     * Sinks that connected without a usable name, and were let go.
+     *
+     * A count rather than a silence, because from the room this looks like one handset simply not
+     * joining in - and a build speaking another version would do it to every handset at once.
+     */
+    fun unnamedSinks(): Int = unnamedSinks
+
     fun stop() {
         running = false
         runCatching { server?.close() }
@@ -151,6 +194,9 @@ class SpatialFieldServer(private val port: Int) {
     private companion object {
         /** How often a sender wakes to notice the session ended. Short next to a person's patience. */
         const val POLL_MILLIS = 200L
+
+        /** How long a sink has to say its name. Long next to a LAN, short next to a person. */
+        const val ANNOUNCE_TIMEOUT_MILLIS = 2_000
     }
 }
 
@@ -169,8 +215,14 @@ class SpatialFieldServer(private val port: Int) {
 class SpatialFieldClient(
     private val hostAddress: String,
     private val port: Int,
+    /** This handset's own name, which is how the host can put an icon for it on the drawing. */
+    private val peerId: String,
     private val onField: (SpatialField) -> Unit
 ) {
+    init {
+        require(HostId.isValid(peerId)) { "a handset joins a room under its own name" }
+    }
+
     @Volatile private var socket: Socket? = null
     @Volatile private var running = false
     @Volatile private var unreadable = 0
@@ -179,6 +231,9 @@ class SpatialFieldClient(
         // Connected on the caller's thread for the reason ChunkClient.start states.
         val connected = Socket(hostAddress, port)
         connected.tcpNoDelay = true
+        // Said before anything is expected back: the host holds no rule for a handset it cannot
+        // name, so this is what makes the connection worth having rather than a greeting.
+        connected.getOutputStream().apply { write(SpatialFrame.encode(peerId)); flush() }
         socket = connected
         running = true
         Thread {

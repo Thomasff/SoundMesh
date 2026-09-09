@@ -10,6 +10,7 @@ import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.sync.ChunkClient
 import com.soundmesh.probe.sync.ClockSyncClient
+import com.soundmesh.probe.sync.SpatialFieldClient
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncRenderer
@@ -50,6 +51,13 @@ class SinkSession(
      * which leaves the address alone - a failed search is not evidence that the host moved.
      */
     private val resolveHost: () -> String? = { null },
+    /**
+     * This handset's own name, which is a different thing from [peerId]: that one names the host
+     * this session follows, this one names the icon on the host's drawing that is this phone.
+     *
+     * Null - the default - means no spatial control channel is dialled and no gain is ever applied.
+     */
+    private val spatialId: String? = null,
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val estimator = ClockOffsetEstimator()
@@ -105,8 +113,18 @@ class SinkSession(
         DriftController(deadbandFrames),
         trimDeadbandFrames = trimFrames,
         offsetNanosNow = { latestEstimate()?.offsetNanos ?: 0L },
+        spatialPeerId = spatialId,
         hostNanosNow = ::hostNanosNow
     )
+
+    // Rebuilt with the chunk client and null between connections, because it is the same host on
+    // the same address and an outage that took one took the other.
+    @Volatile private var spatialClient: SpatialFieldClient? = null
+
+    // Rules that arrived and could not be read, carried across reconnections. Non-zero means the
+    // two handsets are running different builds, which otherwise presents as this phone alone
+    // ignoring the room's shape - and nobody looks at one silent feature to find a version skew.
+    private val unreadableRules = AtomicInteger(0)
 
     /** Whether a connection has ever been made, so the first one is not counted as a return. */
     private var connected = false
@@ -130,6 +148,7 @@ class SinkSession(
 
     /** What the session survived, which no counter of the renderer's can show. */
     private fun sessionCounters(): String =
+        ",\"unreadableSpatialRules\":${unreadableRules.get() + (spatialClient?.unreadableRules() ?: 0)}" +
         ",\"reconnects\":${reconnects.get()}" +
             ",\"rediscoveries\":${rediscoveries.get()}" +
             ",\"clockHealth\":\"${clockHealth ?: "NONE"}\"" +
@@ -257,10 +276,26 @@ class SinkSession(
                 failures = 0
                 rediscoverRequested.set(true)
             }
-            runCatching { chunkClient?.stop() }
-            chunkClient = null
+            releaseClients()
         }
+        releaseClients()
+    }
+
+    /**
+     * Lets go of one connection's clients, keeping what the next one cannot rebuild.
+     *
+     * The unreadable-rule count is carried over rather than dropped with the client that counted
+     * it: a version skew produces one such rule per connection, and a session that reconnects
+     * eleven times would otherwise report the last one and read as almost healthy.
+     */
+    private fun releaseClients() {
         runCatching { chunkClient?.stop() }
+        chunkClient = null
+        spatialClient?.let {
+            unreadableRules.addAndGet(it.unreadableRules())
+            runCatching { it.stop() }
+        }
+        spatialClient = null
     }
 
     /** One attempt. The caller's loop is the retry, so a host that is not up yet costs one sleep. */
@@ -271,6 +306,13 @@ class SinkSession(
             return false
         }
         chunkClient = client
+        // Dialled after the audio and allowed to fail on its own. A host running a build with no
+        // control channel refuses this connection, and a session that gave up there would trade a
+        // room playing in step for a room not playing at all.
+        spatialClient = spatialId?.let { name ->
+            SpatialFieldClient(address, SyncActivity.SPATIAL_PORT, name, renderer::applySpatialField)
+                .takeIf { runCatching { it.start() }.isSuccess }
+        }
         // Counted after the first, so the number reads as "times this session came back" rather
         // than "times it connected", which is one larger and means something else.
         if (connected) reconnects.incrementAndGet()
@@ -367,6 +409,7 @@ class SinkSession(
         // the renderer's own wait loop to end it instead.
         runCatching { renderer.endAt(hostNanosNow()) }
         runCatching { chunkClient?.stop() }
+        runCatching { spatialClient?.stop() }
         // runFor sleeps between exchanges and has no stop of its own; the interrupt lands in that
         // sleep and unwinds through the socket's own close.
         clockThread?.interrupt()
