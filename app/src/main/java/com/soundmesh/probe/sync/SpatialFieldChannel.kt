@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.core.HostId
+import com.soundmesh.core.NowPlayingCodec
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialFieldCodec
 import java.io.InputStream
@@ -87,11 +88,17 @@ internal object SpatialFrame {
  */
 class SpatialFieldServer(private val port: Int) {
     private class Client(val socket: Socket, val stream: OutputStream, val peerId: String) {
-        val outbox = ArrayBlockingQueue<ByteArray>(1)
+        val rules = ArrayBlockingQueue<ByteArray>(1)
 
-        fun offerLatest(frame: ByteArray) {
-            outbox.clear()
-            outbox.offer(frame)
+        // A slot of its own rather than a second entry in the rules' one. The rules' queue holds
+        // exactly one because a newer rule supersedes the one waiting - and a song name supersedes
+        // nothing. Sharing the slot would mean a song changing while somebody drags an icon
+        // silently throws that drawing away, which is the drag doing nothing for no visible reason.
+        val songs = ArrayBlockingQueue<ByteArray>(1)
+
+        fun offerLatest(into: ArrayBlockingQueue<ByteArray>, frame: ByteArray) {
+            into.clear()
+            into.offer(frame)
         }
     }
 
@@ -100,6 +107,11 @@ class SpatialFieldServer(private val port: Int) {
     // Read on the accept thread and written from the listener's, so the newest rule reaches a sink
     // that connects while nobody is touching anything.
     @Volatile private var current: ByteArray? = null
+
+    // Remembered on the same terms as the rule, and for the same reason: a handset that joins
+    // between two songs would otherwise show nothing until the next one started, which on a
+    // seventeen minute song is a long time to look broken.
+    @Volatile private var currentSong: ByteArray? = null
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
     @Volatile private var unnamedSinks = 0
@@ -131,7 +143,23 @@ class SpatialFieldServer(private val port: Int) {
         val frame = SpatialFrame.encode(SpatialFieldCodec.encode(field))
         current = frame
         synchronized(clients) {
-            for (client in clients) client.offerLatest(frame)
+            for (client in clients) client.offerLatest(client.rules, frame)
+        }
+    }
+
+    /**
+     * Says which song the room is playing, from now until the next one.
+     *
+     * Guarded rather than allowed to throw: a name is the one thing on this channel that comes
+     * from outside - a file somebody put in a folder - and a name this refuses is not a reason for
+     * a session to end. The room keeps playing without it, which is what every build before this
+     * one did.
+     */
+    fun publishNowPlaying(name: String) {
+        val frame = runCatching { SpatialFrame.encode(NowPlayingCodec.encode(name)) }.getOrNull() ?: return
+        currentSong = frame
+        synchronized(clients) {
+            for (client in clients) client.offerLatest(client.songs, frame)
         }
     }
 
@@ -170,14 +198,19 @@ class SpatialFieldServer(private val port: Int) {
         for (old in replaced) runCatching { old.socket.close() }
         // After the name, not before: the roster is what a drawing is made of, so the first rule a
         // sink is told is one that could have been drawn knowing it was here.
-        current?.let { client.offerLatest(it) }
+        current?.let { client.offerLatest(client.rules, it) }
+        currentSong?.let { client.offerLatest(client.songs, it) }
         runCatching {
             client.socket.use {
                 while (running) {
-                    // Polled with a timeout rather than taken, so a session that stops while every
-                    // queue is empty still ends these threads.
-                    val frame = client.outbox.poll(POLL_MILLIS, TimeUnit.MILLISECONDS) ?: continue
-                    client.stream.write(frame)
+                    // The rules are waited on and the song is taken if it happens to be there:
+                    // one wait covers both, and a name arriving up to a poll late is a name on a
+                    // screen, not an instant to be met.
+                    val rule = client.rules.poll(POLL_MILLIS, TimeUnit.MILLISECONDS)
+                    val song = client.songs.poll()
+                    if (rule == null && song == null) continue
+                    rule?.let { client.stream.write(it) }
+                    song?.let { client.stream.write(it) }
                     client.stream.flush()
                 }
             }
@@ -233,6 +266,16 @@ class SpatialFieldClient(
     private val port: Int,
     /** This handset's own name, which is how the host can put an icon for it on the drawing. */
     private val peerId: String,
+    /**
+     * Which song the room is playing. Default empty, because the channel existed to carry rules
+     * and a caller that only wants those should not have to say so.
+     *
+     * **Before [onField], not after, and that is load bearing.** Every existing caller passes the
+     * rule handler as a trailing lambda, so a new last parameter silently rebinds all of them to
+     * the new one. Here the two have different types and the compiler said so; had they matched,
+     * it would have compiled and quietly wired the wrong handler in every call site at once.
+     */
+    private val onNowPlaying: (String) -> Unit = {},
     private val onField: (SpatialField) -> Unit
 ) {
     init {
@@ -258,8 +301,16 @@ class SpatialFieldClient(
                     val stream = connected.getInputStream().buffered()
                     while (running) {
                         val text = SpatialFrame.read(stream) ?: break
-                        val field = runCatching { SpatialFieldCodec.decode(text) }.getOrNull()
-                        if (field == null) unreadable++ else onField(field)
+                        // Which kind by its first word. A build that had never heard of the second
+                        // kind counted it here as unreadable and carried on, which is what makes
+                        // adding one safe: an older handset loses the name and keeps the music.
+                        if (NowPlayingCodec.looksLikeOne(text)) {
+                            val name = runCatching { NowPlayingCodec.decode(text) }.getOrNull()
+                            if (name == null) unreadable++ else onNowPlaying(name)
+                        } else {
+                            val field = runCatching { SpatialFieldCodec.decode(text) }.getOrNull()
+                            if (field == null) unreadable++ else onField(field)
+                        }
                     }
                 }
             }

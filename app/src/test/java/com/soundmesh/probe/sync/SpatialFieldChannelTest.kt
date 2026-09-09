@@ -315,4 +315,101 @@ class SpatialFieldChannelTest {
             server.stop()
         }
     }
+    /**
+     * A sink that joins between two songs still learns which one is playing.
+     *
+     * The same property the rule has, and needed for the same reason but more so: a rule changes
+     * when somebody touches the screen, and a song changes once every few minutes. A handset that
+     * connected just after a song started and was told nothing would sit there naming nothing for
+     * the length of a song - seventeen minutes, on the file this was tested against.
+     */
+    @Test
+    fun aSinkThatJoinsBetweenSongsIsStillToldWhichOneIsPlaying() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        val playing = AtomicReference<String?>(null)
+        val client = SpatialFieldClient("127.0.0.1", port, here, onNowPlaying = { playing.set(it) }) {}
+        server.start()
+        try {
+            // Said before anybody is listening, which is the case under test.
+            server.publishNowPlaying("倔强.mp3")
+            client.start()
+
+            awaitTrue("the name to arrive") { playing.get() != null }
+            assertEquals("倔强.mp3", playing.get())
+        } finally {
+            client.stop()
+            server.stop()
+        }
+    }
+
+    /**
+     * The rule and the name are remembered separately, so a sink that missed both is told both.
+     *
+     * This is the deterministic half of "one does not throw the other away". The other half - two
+     * published a moment apart while a sink is already connected - **cannot be tested from out
+     * here**, and a test that looked like it was is worse than none: the first attempt published a
+     * rule and a name back to back and asserted both arrived, and it passed just as happily with
+     * the two sharing one slot, because the sender thread drains within microseconds of the first
+     * publish and the collision window is never open when the test looks. What is pinned here is
+     * the storage, which is the part a mutation can actually reach.
+     */
+    @Test
+    fun aSinkThatMissedBothIsToldBoth() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        val seen = AtomicReference<SpatialField?>(null)
+        val playing = AtomicReference<String?>(null)
+        server.start()
+        try {
+            // Both before anybody is listening, so neither can be delivered as it is published.
+            server.publish(field(SpatialMode.SPLIT))
+            server.publishNowPlaying("和你一样.mp3")
+            val client = SpatialFieldClient(
+                "127.0.0.1", port, here, onNowPlaying = { playing.set(it) }
+            ) { seen.set(it) }
+            try {
+                client.start()
+
+                awaitTrue("the name to arrive") { playing.get() != null }
+                awaitTrue("the rule to arrive") { seen.get() != null }
+                assertEquals("和你一样.mp3", playing.get())
+                assertEquals(SpatialMode.SPLIT, seen.get()!!.mode)
+            } finally {
+                client.stop()
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset on an older build is told a message it has never heard of, and keeps playing.
+     *
+     * This is what makes a second kind of message on this channel safe to add at all: the reader
+     * already had one place where a message it cannot read is counted and stepped over, so the
+     * failure mode was designed before the feature was.
+     */
+    @Test
+    fun aMessageAReaderDoesNotKnowIsCountedRatherThanFatal() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        val seen = AtomicReference<SpatialField?>(null)
+        // No onNowPlaying, which is exactly the shape of a caller written before this existed.
+        val client = SpatialFieldClient("127.0.0.1", port, here) { seen.set(it) }
+        server.start()
+        try {
+            client.start()
+            awaitTrue("the sink to connect") { server.clientCount() == 1 }
+            server.publishNowPlaying("倔强.mp3")
+            server.publish(field(SpatialMode.ROTATE))
+
+            // The rule still arrives, which is the half that matters: the name was stepped over.
+            awaitTrue("the rule to arrive after an unknown message") { seen.get() != null }
+            assertEquals(SpatialMode.ROTATE, seen.get()!!.mode)
+        } finally {
+            client.stop()
+            server.stop()
+        }
+    }
 }

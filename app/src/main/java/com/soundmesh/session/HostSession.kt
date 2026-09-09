@@ -210,6 +210,14 @@ class HostSession(
      * because this class holds no Context and no directory; the service that owns both hands it in.
      */
     private val spatialId: String? = null,
+    /**
+     * What the songs this session was opened with are called, in the order they play.
+     *
+     * Empty - the default - is every source that is not a list of files: a capture of another app,
+     * and the ruler's own fixed-name runs. A room playing one of those is told no name, which is
+     * what every build before this one did for all of them.
+     */
+    private val songNames: List<String> = emptyList(),
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
@@ -249,6 +257,10 @@ class HostSession(
     /** How many times the listener has jumped. Only ever compared with itself - see [generate]. */
     @Volatile private var jumps = 0
 
+    // Which song the room has already been told about. Written by the producer thread, read by
+    // the screen, so volatile rather than plain.
+    @Volatile private var announcedSong = -1
+
     private var rendererThread: Thread? = null
     private var producerThread: Thread? = null
 
@@ -261,6 +273,30 @@ class HostSession(
      */
     fun roomPeerIds(): List<String> =
         listOfNotNull(spatialId) + (spatialServer?.peerIds() ?: emptyList())
+
+    /**
+     * Tells the room which song it is on, when that has changed since the last time it was told.
+     *
+     * Called once a chunk, which is fifty times a second, and is an int compare on all but one of
+     * them. The alternative was to notice the change where the songs are read, which is a decoder
+     * on its own thread inside the source - and the source is the one part of this that a
+     * measurement run also uses.
+     *
+     * **It is the song being decoded, not the song being heard.** The queue holds about three
+     * seconds, so the name changes that far ahead of the music, in the same window and for exactly
+     * the same reason the slider jumps early across a song boundary. Fixing it means carrying a
+     * position with every chunk through the queue; the cost of not fixing it is three seconds of a
+     * wrong name, once a song.
+     *
+     * Named from the list this session was opened with, so an index the list does not reach says
+     * nothing rather than guessing - a source that is not a folder has no names at all.
+     */
+    private fun sayWhatIsPlaying() {
+        val at = sourcePlayhead()?.songIndex ?: return
+        if (at == announcedSong) return
+        announcedSong = at
+        songNames.getOrNull(at)?.let { name -> spatialServer?.publishNowPlaying(name) }
+    }
 
     /**
      * Makes [field] the rule the whole room plays under, this handset included.
@@ -308,6 +344,8 @@ class HostSession(
             positionMicros = heardMicros(source.positionMicros, source.durationMicros, LEAD_NANOS / 1_000L)
         )
     }
+
+    override fun nowPlaying(): String? = songNames.getOrNull(announcedSong)
 
     override fun state(): SessionState = flags.state()
 
@@ -385,6 +423,7 @@ class HostSession(
         var lastDueNanos = NOTHING_PLAYED
         while (!flags.isStopped()) {
             val pcm = readChunk() ?: return endOfSong(lastDueNanos)
+            sayWhatIsPlaying()
             if (jumpsSeen != jumps) {
                 jumpsSeen = jumps
                 // A new grid, because the old one is a ruler laid down when the session started

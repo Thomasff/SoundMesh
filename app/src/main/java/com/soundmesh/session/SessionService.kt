@@ -116,7 +116,10 @@ class SessionService : Service() {
             // Listed here rather than carried in the intent. Two hundred addresses is a few tens
             // of kilobytes and two thousand is not, and an intent too large for a binder
             // transaction takes the process with it - a crash for owning a big music folder.
-            return openStreamingHost(FolderSongs.of(this, folder).map { song -> Uri.parse(song.uri) }, intent)
+            // The names travel beside the addresses rather than being read back off them: a
+            // provider's address for a file is not its name, and the order is decided here.
+            val songs = FolderSongs.of(this, folder)
+            return openStreamingHost(songs.map { Uri.parse(it.uri) }, intent, songs.map { it.name })
         }
         intent.getStringExtra(EXTRA_SOURCE_URI)?.let { return openStreamingHost(listOf(Uri.parse(it)), intent) }
         val name = intent.getStringExtra(EXTRA_SOURCE_FILE)
@@ -148,7 +151,11 @@ class SessionService : Service() {
      * takes an address the system granted and validates nothing, because there is nothing here to
      * validate - the grant is the permission, and a URI this app was not given cannot be opened.
      */
-    private fun openStreamingHost(songs: List<Uri>, intent: Intent): SyncSession {
+    private fun openStreamingHost(
+        songs: List<Uri>,
+        intent: Intent,
+        names: List<String> = emptyList()
+    ): SyncSession {
         val source = StreamingChunkSource.open(this, songs)
         advertise()
         return HostSession(
@@ -165,7 +172,8 @@ class SessionService : Service() {
             // way the stop button does. Anything less leaves a foreground notification, a bound
             // set of sockets and an open AudioTrack behind a room that has gone quiet.
             onEnded = { stopSession() },
-            spatialId = HostIdentity(filesDir).current()
+            spatialId = HostIdentity(filesDir).current(),
+            songNames = names
         )
     }
 

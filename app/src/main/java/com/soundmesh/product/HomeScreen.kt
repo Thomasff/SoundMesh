@@ -88,6 +88,14 @@ data class HomeState(
      * slider whose right-hand end is a guess is worse than no slider at all.
      */
     val playhead: Playhead? = null,
+    /**
+     * What the room is playing, by name, or null when nothing has said.
+     *
+     * On every handset rather than only the one holding the songs, which is the whole of why it is
+     * sent: from across a room the sinks are the phones you can see, and until now the only thing
+     * any of them could tell you was that a session was running.
+     */
+    val nowPlaying: String? = null,
     val health: Health = Health(null, null, null, null),
     /**
      * The accessibility output's volume, on a host that is capturing and therefore heard on it.
@@ -294,6 +302,9 @@ private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolea
         OutlinedButton(onClick = actions.stop, enabled = state.running, modifier = Modifier.weight(1f)) {
             Text(stringResource(R.string.play_stop))
         }
+    }
+    state.nowPlaying?.let {
+        Text(stringResource(R.string.now_playing, it), style = MaterialTheme.typography.bodyMedium)
     }
     state.playhead?.let { PlayheadPanel(it, actions.seek) }
 }

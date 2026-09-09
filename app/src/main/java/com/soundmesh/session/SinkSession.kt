@@ -163,6 +163,9 @@ class SinkSession(
     // the same address and an outage that took one took the other.
     @Volatile private var spatialClient: SpatialFieldClient? = null
 
+    // The last name the host said. Written from the channel thread, read by the screen.
+    @Volatile private var playing: String? = null
+
     // Rules that arrived and could not be read, carried across reconnections. Non-zero means the
     // two handsets are running different builds, which otherwise presents as this phone alone
     // ignoring the room's shape - and nobody looks at one silent feature to find a version skew.
@@ -378,7 +381,13 @@ class SinkSession(
         // control channel refuses this connection, and a session that gave up there would trade a
         // room playing in step for a room not playing at all.
         spatialClient = spatialId?.let { name ->
-            SpatialFieldClient(address, SyncActivity.SPATIAL_PORT, name, renderer::applySpatialField)
+            SpatialFieldClient(
+                address,
+                SyncActivity.SPATIAL_PORT,
+                name,
+                onNowPlaying = { playing = it },
+                renderer::applySpatialField
+            )
                 .takeIf { runCatching { it.start() }.isSuccess }
         }
         // Counted after the first, so the number reads as "times this session came back" rather
@@ -457,6 +466,13 @@ class SinkSession(
 
     /** Null. Positions are the source's, and a sink is handed instants instead. */
     override fun playhead(): Playhead? = null
+
+    /**
+     * Held rather than derived. A sink has no list of songs and no position in one; this is the
+     * last thing the host said, and it survives a reconnection because the host re-sends it to
+     * every connection as it registers.
+     */
+    override fun nowPlaying(): String? = playing
 
     /**
      * Keeps [SessionFlags] told what is true, at a cadence fast enough for the state a person sees.

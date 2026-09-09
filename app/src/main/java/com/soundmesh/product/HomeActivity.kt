@@ -432,6 +432,7 @@ class HomeActivity : ComponentActivity() {
             running = session != null,
             sessionState = session?.state(),
             playhead = session?.playhead(),
+            nowPlaying = session?.nowPlaying(),
             failure = if (awaitingSession) SessionService.FAILURE else null,
             counters = SessionReadout.counters(session?.report()),
             room = readRoom(session)

@@ -88,6 +88,16 @@ interface SyncSession {
     fun playhead(): Playhead?
 
     /**
+     * What the room is playing, by name, or null when nothing has said.
+     *
+     * Both halves can answer this one, which is the difference between it and [playhead]: the host
+     * knows because it opened the list, and a sink knows because it was told. Null on a source that
+     * has no names - a capture of another app, the ruler's own runs - and on a sink whose host is
+     * an older build, which sends nothing and is not an error.
+     */
+    fun nowPlaying(): String? = null
+
+    /**
      * Told by the service that owns the audio focus, not asked for by the session.
      *
      * A session that lost the focus stays wired up - its clock keeps exchanging, its link keeps
