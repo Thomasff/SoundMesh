@@ -25,6 +25,7 @@ import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.ChirpGenerator
+import com.soundmesh.core.HostId
 import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
@@ -144,6 +145,7 @@ internal fun clockReportJson(
 internal fun pairedReportJson(
     caseId: String,
     hostId: String,
+    sinkId: String,
     combined: PairedAlignment,
     hostReadings: List<AlignmentReading>,
     sinkReadings: List<AlignmentReading>,
@@ -157,6 +159,7 @@ internal fun pairedReportJson(
     val hostSeenBySink = EmissionDeviation.of(sinkReadings.map { it.secondIndex }, intervalFrames)
     val sinkSeenByHost = EmissionDeviation.of(hostReadings.map { it.firstIndex }, intervalFrames)
     return "{\"role\":\"HOST\",\"caseId\":\"$caseId\",\"hostId\":\"$hostId\"," +
+        "\"sinkId\":\"$sinkId\"," +
         "\"failure\":${combined.failure?.let { "\"${it.name}\"" } ?: "null"}," +
         "\"combinedMs\":${numbers(combined.pairs.map { it?.alignmentErrorMs })}," +
         "\"separationMetres\":${numbers(combined.pairs.map { it?.separationMetres })}," +
@@ -372,15 +375,25 @@ class PeerCalibrateActivity : ComponentActivity() {
             clockServer.start()
             resultServer.start()
             planServer.start()
-            val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS) { requested ->
+            // Which handset this round is with. Set on the accept, because that is the only
+            // moment it is known, and every file this run writes is named with it.
+            var servedSink: String? = null
+            val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS) { request ->
                 // The case names a directory RunStore will create, and it arrived over a socket.
                 // Only the two this handset runs are honoured; anything else ends the run here
                 // rather than at the run store.
-                if (requested !in setOf(CASE_MEASURE, CASE_VERIFY)) {
-                    throw IllegalArgumentException("not a case this handset runs: $requested")
+                if (request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY)) {
+                    throw IllegalArgumentException("not a case this handset runs: ${request.caseId}")
                 }
+                // The sink's name arrived over the same socket and names files on this side too.
+                // Checked for shape here rather than trusted from where it came, on the same terms
+                // as every other id that reaches a file name.
+                if (!HostId.isValid(request.sinkId)) {
+                    throw IllegalArgumentException("not a handset name: ${request.sinkId}")
+                }
+                servedSink = request.sinkId
                 CalibrationPlan(
-                    caseId = requested,
+                    caseId = request.caseId,
                     hostId = hostId,
                     // Far enough out to cover the warm-up and the gap the sink has yet to start.
                     firstChirpAtHostNanos = System.nanoTime() + PLAN_LEAD_NANOS,
@@ -391,6 +404,10 @@ class PeerCalibrateActivity : ComponentActivity() {
             } ?: return show(
                 getString(R.string.pair_calibrate_failed, planServer.failureCode ?: "PLAN_LOST")
             )
+            // Non-null by construction: awaitRequest answers a plan only once planFor has run.
+            val sinkId = servedSink ?: return show(
+                getString(R.string.pair_calibrate_failed, "PLAN_UNSIGNED")
+            )
             show(getString(R.string.pair_calibrate_running))
             val run = PeerCalibrationRunner(
                 runStore = RunStore(filesDir),
@@ -400,11 +417,21 @@ class PeerCalibrateActivity : ComponentActivity() {
                 hostNanosNow = { System.nanoTime() }
             ).run()
             // Written before anything is answered, so a refused run still leaves its evidence.
-            File(RunStore(filesDir).prepareRun(plan.caseId), ARTIFACT).writeText(run.json)
-            fileAttempt("HOST-${plan.caseId}", run.json)
+            // Named with the peer, not just the case: a case id names a directory this only ever
+            // mkdirs, so a second sink measured on this host landed on the first one's file and
+            // the directory's own mtime did not move to say so.
+            File(RunStore(filesDir).prepareRun(plan.caseId), hostArtifact(sinkId)).writeText(run.json)
+            fileAttempt("HOST-${plan.caseId}-$sinkId", run.json)
             Log.i(LOG_TAG, run.json)
             var outcome = getString(R.string.pair_calibrate_kept, run.refusal ?: "ONE_SIDED_RUN")
             resultServer.awaitResult(RESULT_TIMEOUT_MILLIS) { message ->
+                // The delivery is signed, and this host waits on one socket that any handset in
+                // the room still holding a plan can reach. Combining a stranger's readings would
+                // not make a worse number, it would make a number about a pair that never ran.
+                if (message.sinkId != sinkId) {
+                    outcome = getString(R.string.pair_calibrate_wrong_sink, shortName(message.sinkId))
+                    return@awaitResult CalibrationReply(null, null, null)
+                }
                 val combined = AlignmentPairing.combine(plan.caseId, run.readings, message)
                 outcome = combined.verdict?.clusterMeanMs?.let { mean ->
                     getString(
@@ -420,10 +447,11 @@ class PeerCalibrateActivity : ComponentActivity() {
                 // the run exist in one place, and before this the combination was never written
                 // down at all - one sentence on a screen, then gone.
                 fileAttempt(
-                    "HOST-${plan.caseId}-PAIRED",
+                    "HOST-${plan.caseId}-$sinkId-PAIRED",
                     pairedReportJson(
                         caseId = plan.caseId,
                         hostId = plan.hostId,
+                        sinkId = sinkId,
                         combined = combined,
                         hostReadings = run.readings,
                         sinkReadings = message.readings,
@@ -441,6 +469,10 @@ class PeerCalibrateActivity : ComponentActivity() {
                     passed = combined.verdict?.passed
                 )
             }
+            // Kept on the screen rather than replacing what the last sink said. A host that
+            // measures two handsets in a row has two answers, and the pair of them is the whole
+            // point of measuring the second one.
+            record(sinkId, outcome)
             show(outcome)
         } finally {
             planServer.stop()
@@ -459,6 +491,9 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun measureAsSink(verifying: Boolean) {
         val paired = PairedHost(filesDir).read()
             ?: return show(getString(R.string.pair_calibrate_no_pairing))
+        // The name this handset answers to, which it signs both of its messages with. The same
+        // name a host uses for itself: it is what this phone is called, not what role it is in.
+        val sinkId = HostIdentity(filesDir).current()
         val stored = StoredCalibration(filesDir, paired.hostId).read()
         val appliedMicros = stored?.micros ?: 0L
         val estimator = ClockOffsetEstimator()
@@ -529,7 +564,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                     LinkSurvey.MAX_MEDIAN_ROUND_TRIP_NANOS / 1_000_000.0
                 ))
             }
-            val plan = CalibrationPlanClient(paired.address, PLAN_PORT).request(caseId)
+            val plan = CalibrationPlanClient(paired.address, PLAN_PORT).request(caseId, sinkId)
             // The host id is the file name the correction is stored under. A plan from somebody
             // this handset never scanned would file the answer against the wrong peer, and every
             // later session would apply it with nothing in the result to notice it by.
@@ -577,7 +612,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // Delivered even when there is nothing to deliver: the host waits on this message, so
             // an empty run and a dead sink look the same from an end of a socket that never opens.
             val reply = AlignmentResultClient(paired.address, SyncActivity.RESULT_PORT)
-                .exchange(plan.caseId, appliedMicros, run.readings)
+                .exchange(plan.caseId, sinkId, appliedMicros, run.readings)
             // A verification measures the residual left after the stored constant is applied.
             // Writing a residual where the constant lives would halve the correction every time.
             if (verifying) return show(
@@ -634,6 +669,34 @@ class PeerCalibrateActivity : ComponentActivity() {
      * Guarded rather than left to throw. This is a second copy of evidence, and a full disk
      * turning a finished measurement into a vanished app would cost more than the copy is worth.
      */
+    /**
+     * The file the host's own half of a run goes in, under the peer it ran with.
+     *
+     * [sinkId] has been through [HostId.isValid] by the time it reaches here, which is what makes
+     * it safe in a file name: it arrived over a socket, and hexadecimal of a fixed length cannot
+     * hold a path segment.
+     */
+    private fun hostArtifact(sinkId: String): String = "peer-calibration-$sinkId.json"
+
+    /** Enough of a handset's name to tell two apart in a room, for a screen a person reads. */
+    private fun shortName(sinkId: String): String = sinkId.take(SHORT_NAME_LENGTH)
+
+    /**
+     * Adds one sink's answer to what the screen shows, replacing that sink's previous one.
+     *
+     * Kept apart by the whole name and shown by the short one. Matching on what is displayed
+     * would fold two handsets sharing six hexadecimal characters into one line, which is a rare
+     * accident with no symptom - the second measurement would simply appear to be the first's.
+     */
+    private fun record(sinkId: String, outcome: String) {
+        handler.post {
+            state = state.copy(
+                outcomes = state.outcomes.filterNot { it.sinkId == sinkId } +
+                    SinkOutcome(sinkId = sinkId, name = shortName(sinkId), text = outcome)
+            )
+        }
+    }
+
     private fun fileAttempt(label: String, json: String) {
         runCatching { PeerRunLog(filesDir).write(label, json, System.currentTimeMillis()) }
             .onFailure { Log.e(LOG_TAG, "this attempt could not be filed under $label", it) }
@@ -685,6 +748,9 @@ class PeerCalibrateActivity : ComponentActivity() {
             (intervalNanos * ChirpGenerator.SAMPLE_RATE / 1_000_000_000L).toInt()
 
         /** Next after AlignmentResultServer's 45125. */
+        /** Six hexadecimal characters: 24 bits, read by a person to tell two phones apart. */
+        const val SHORT_NAME_LENGTH = 6
+
         const val PLAN_PORT = 45126
 
         /** How long the host holds the screen open waiting for somebody to pick up the other phone. */

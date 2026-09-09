@@ -43,8 +43,19 @@ data class PeerCalibrateState(
     val running: Boolean = false,
     val message: String? = null,
     val stored: Long? = null,
-    val observations: Int = 0
+    val observations: Int = 0,
+    val outcomes: List<SinkOutcome> = emptyList()
 )
+
+/**
+ * What one sink's round came to, kept beside the others rather than replacing them.
+ *
+ * A host measures one sink per press, so a pair of handsets takes two presses and the answer to
+ * the first is gone by the end of the second - which is exactly the comparison somebody pressed
+ * twice to make. [name] is the short form shown; [sinkId] is the whole one, and the two are kept
+ * apart because rows must be told apart by the name that cannot collide.
+ */
+data class SinkOutcome(val sinkId: String, val name: String, val text: String)
 
 class PeerCalibrateActions(
     val calibrate: () -> Unit,
@@ -172,9 +183,18 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 }
             )
         }
-        state.message?.let {
+        if (state.message != null || state.outcomes.isNotEmpty()) {
             Section(R.string.pair_calibrate_result) {
-                Text(it, style = MaterialTheme.typography.bodyLarge)
+                state.message?.let {
+                    Text(it, style = MaterialTheme.typography.bodyLarge)
+                }
+                // Only the host ever fills this: the sink measures one host and says so above.
+                state.outcomes.forEach {
+                    Text(
+                        stringResource(R.string.pair_calibrate_sink_line, it.name, it.text),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         }
     }

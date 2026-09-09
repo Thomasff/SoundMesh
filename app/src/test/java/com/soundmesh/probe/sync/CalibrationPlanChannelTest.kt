@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.core.CalibrationPlan
+import com.soundmesh.core.CalibrationRequest
 import java.net.ServerSocket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -11,6 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CalibrationPlanChannelTest {
+    private val SINK = "a1b2c3d4e5f60718"
+
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
 
     private fun planAt(atHostNanos: Long) = CalibrationPlan(
@@ -30,7 +33,7 @@ class CalibrationPlanChannelTest {
         try {
             val plan = planAt(100_000_000_000L)
             val received = ArrayBlockingQueue<CalibrationPlan>(1)
-            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request("C90")) }.start()
+            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request("C90", SINK)) }.start()
 
             val served = server.awaitRequest(5_000) { plan }
 
@@ -57,7 +60,7 @@ class CalibrationPlanChannelTest {
         try {
             Thread.sleep(100)
             val received = ArrayBlockingQueue<CalibrationPlan>(1)
-            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request("C90")) }.start()
+            Thread { received.put(CalibrationPlanClient("127.0.0.1", port).request("C90", SINK)) }.start()
 
             val served = server.awaitRequest(5_000) { planAt(System.nanoTime()) }
 
@@ -101,15 +104,15 @@ class CalibrationPlanChannelTest {
         val server = CalibrationPlanServer(port)
         server.start()
         try {
-            val asked = ArrayBlockingQueue<String>(1)
-            Thread { CalibrationPlanClient("127.0.0.1", port).request("C91") }.start()
+            val asked = ArrayBlockingQueue<CalibrationRequest>(1)
+            Thread { CalibrationPlanClient("127.0.0.1", port).request("C91", SINK) }.start()
 
-            val served = server.awaitRequest(5_000) { requested ->
-                asked.put(requested)
-                planAt(100_000_000_000L).copy(caseId = requested)
+            val served = server.awaitRequest(5_000) { request ->
+                asked.put(request)
+                planAt(100_000_000_000L).copy(caseId = request.caseId)
             }
 
-            assertEquals("C91", asked.poll(5, TimeUnit.SECONDS))
+            assertEquals(CalibrationRequest("C91", SINK), asked.poll(5, TimeUnit.SECONDS))
             assertEquals("C91", served?.caseId)
         } finally {
             server.stop()
@@ -127,10 +130,10 @@ class CalibrationPlanChannelTest {
         val server = CalibrationPlanServer(port)
         server.start()
         try {
-            Thread { runCatching { CalibrationPlanClient("127.0.0.1", port).request("Z9") } }.start()
+            Thread { runCatching { CalibrationPlanClient("127.0.0.1", port).request("Z9", SINK) } }.start()
 
-            val served = server.awaitRequest(5_000) { requested ->
-                require(requested == "C90") { "not a case this handset runs: $requested" }
+            val served = server.awaitRequest(5_000) { request ->
+                require(request.caseId == "C90") { "not a case this handset runs: ${request.caseId}" }
                 planAt(100_000_000_000L)
             }
 

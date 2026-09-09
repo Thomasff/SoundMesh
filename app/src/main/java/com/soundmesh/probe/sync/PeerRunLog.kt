@@ -62,6 +62,14 @@ class PeerRunLog(private val filesDir: File) {
         const val DIRECTORY = "peer-runs"
 
         /** Long enough for a role and a case id, short enough that the timestamp still reads. */
-        const val MAX_LABEL_LENGTH = 32
+        /**
+         * Long enough for a role, a case and a sixteen-character peer name with dashes between.
+         *
+         * It was 32, which fits a label naming only what kind of run it was. Once a host serves
+         * more than one sink the peer's name belongs in the label too, and a cap that silently
+         * refused it would send the signature back to the JSON body where a directory listing
+         * cannot see it.
+         */
+        const val MAX_LABEL_LENGTH = 48
     }
 }

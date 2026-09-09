@@ -3,6 +3,11 @@ package com.soundmesh.core
 /**
  * One handset's whole reading of one run, as it travels to the handset that combines the two.
  *
+ * [sinkId] rides along so the receiver can check that this is the handset it served. The host
+ * hands out one plan per press and then waits on a single socket, so any handset in the room that
+ * still holds a plan can be the one that arrives - and a reading combined against the wrong peer
+ * is not a worse number, it is a number about a pair that never ran.
+ *
  * [appliedOffsetMicros] rides along because the correction is cumulative: what this handset
  * measured is the residual left over on top of what it was already correcting by, and only the
  * sender knows what it actually applied. The receiver could read its own copy of the same launch
@@ -11,6 +16,7 @@ package com.soundmesh.core
  */
 data class AlignmentResultMessage(
     val caseId: String,
+    val sinkId: String,
     val appliedOffsetMicros: Long,
     val readings: List<AlignmentReading>
 )
@@ -76,17 +82,21 @@ object CalibrationReplyCodec {
  */
 object AlignmentResultCodec {
     const val MAGIC = "soundmesh-alignment"
-    const val VERSION = 2
+    const val VERSION = 3
 
     private const val FIELDS_PER_READING = 11
     private const val NULL = "null"
 
-    fun encode(caseId: String, appliedOffsetMicros: Long, readings: List<AlignmentReading>): String {
-        require(caseId.isNotEmpty() && caseId.none { it.isWhitespace() }) {
-            "caseId must be non-empty and carry no whitespace: it is a header field"
-        }
+    fun encode(
+        caseId: String,
+        sinkId: String,
+        appliedOffsetMicros: Long,
+        readings: List<AlignmentReading>
+    ): String {
+        requireHeaderField(caseId, "caseId")
+        requireHeaderField(sinkId, "sinkId")
         val lines = ArrayList<String>(readings.size + 1)
-        lines.add("$MAGIC $VERSION $caseId $appliedOffsetMicros ${readings.size}")
+        lines.add("$MAGIC $VERSION $caseId $sinkId $appliedOffsetMicros ${readings.size}")
         for (reading in readings) {
             lines.add(
                 listOf(
@@ -118,12 +128,13 @@ object AlignmentResultCodec {
         val lines = text.split("\n").map { it.removeSuffix("\r") }
         require(lines.isNotEmpty()) { "empty alignment result" }
         val header = lines[0].split(" ")
-        require(header.size == 5 && header[0] == MAGIC) { "not an alignment result: ${lines[0]}" }
+        require(header.size == 6 && header[0] == MAGIC) { "not an alignment result: ${lines[0]}" }
         require(header[1] == VERSION.toString()) { "unsupported alignment result version: ${header[1]}" }
         val caseId = header[2]
-        val appliedOffsetMicros = header[3].toLongOrNull()
-            ?: throw IllegalArgumentException("unreadable applied offset: ${header[3]}")
-        val count = header[4].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[4]}")
+        val sinkId = header[3]
+        val appliedOffsetMicros = header[4].toLongOrNull()
+            ?: throw IllegalArgumentException("unreadable applied offset: ${header[4]}")
+        val count = header[5].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[5]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "alignment result promised $count readings and carried ${lines.size - 1}"
@@ -145,7 +156,13 @@ object AlignmentResultCodec {
                 atSearchEdge = listOf(fields[9].toBooleanOrNullable(), fields[10].toBooleanOrNullable())
             )
         }
-        return AlignmentResultMessage(caseId, appliedOffsetMicros, readings)
+        return AlignmentResultMessage(caseId, sinkId, appliedOffsetMicros, readings)
+    }
+
+    private fun requireHeaderField(value: String, name: String) {
+        require(value.isNotEmpty() && value.none { it.isWhitespace() }) {
+            "$name must be non-empty and carry no whitespace: it is a header field"
+        }
     }
 
     private fun Any?.orNull(): String = this?.toString() ?: NULL

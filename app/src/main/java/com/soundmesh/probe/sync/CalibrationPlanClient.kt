@@ -2,6 +2,7 @@ package com.soundmesh.probe.sync
 
 import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationPlanCodec
+import com.soundmesh.core.CalibrationRequest
 import java.net.Socket
 
 /**
@@ -12,17 +13,22 @@ import java.net.Socket
  */
 class CalibrationPlanClient(private val hostAddress: String, private val port: Int) {
     /**
-     * Asks for [caseId], the case both handsets will file this run under.
+     * Asks for [caseId], the case both handsets will file this run under, as [sinkId].
      *
-     * It travels from here because only this side knows what kind of run it is: the host serves
-     * whoever asks and cannot tell a measurement from a check. A host that assumed put both kinds
-     * in one directory, where the later silently overwrote the earlier.
+     * The case travels from here because only this side knows what kind of run it is: the host
+     * serves whoever asks and cannot tell a measurement from a check. A host that assumed put both
+     * kinds in one directory, where the later silently overwrote the earlier.
+     *
+     * The name travels for the same reason one dimension over. The host writes its own half of the
+     * run under the peer it ran with, and it has no other way to learn which peer that was: a
+     * second sink measured on the same host would land on the first one's file.
      */
-    fun request(caseId: String): CalibrationPlan =
+    fun request(caseId: String, sinkId: String): CalibrationPlan =
         Socket(hostAddress, port).use { socket ->
             socket.soTimeout = REPLY_TIMEOUT_MILLIS
             socket.getOutputStream().apply {
-                write(caseId.toByteArray(Charsets.UTF_8))
+                val ask = CalibrationPlanCodec.encodeRequest(CalibrationRequest(caseId, sinkId))
+                write(ask.toByteArray(Charsets.UTF_8))
                 flush()
             }
             // The half-close is what tells the host the ask is complete; without it both ends wait.

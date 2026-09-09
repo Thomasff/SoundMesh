@@ -11,6 +11,8 @@ import java.net.ServerSocket
 import java.net.Socket
 
 class AlignmentResultChannelTest {
+    private val SINK = "a1b2c3d4e5f60718"
+
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
 
     private fun reading(errorMs: Double?) = AlignmentReading(
@@ -34,7 +36,9 @@ class AlignmentResultChannelTest {
             val readings = listOf(reading(-0.198), reading(null), reading(2.177))
             val answered = java.util.concurrent.ArrayBlockingQueue<CalibrationReply>(1)
             Thread {
-                answered.put(AlignmentResultClient("127.0.0.1", port).exchange("O40", -34_957L, readings))
+                answered.put(
+                    AlignmentResultClient("127.0.0.1", port).exchange("O40", SINK, -34_957L, readings)
+                )
             }.start()
 
             val message = server.awaitResult(5_000) { CalibrationReply(-34_773L, 184L, true) }

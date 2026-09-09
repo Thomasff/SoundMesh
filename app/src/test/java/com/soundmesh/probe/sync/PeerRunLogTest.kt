@@ -47,9 +47,21 @@ class PeerRunLogTest {
     fun aLabelThatWouldLeaveTheDirectoryIsRefused() {
         val log = PeerRunLog(temporaryDir())
 
-        for (unusable in listOf("../escape", "SINK/C90", "", "a".repeat(33))) {
+        for (unusable in listOf("../escape", "SINK/C90", "", "a".repeat(49))) {
             assertThrows(IllegalArgumentException::class.java) { log.write(unusable, "{}", 1L) }
         }
+    }
+
+    /**
+     * Once a host serves more than one sink, the peer's name belongs in the label - a directory
+     * listing is where somebody looks first, and a signature only in the JSON body is not there.
+     * The longest of them is what the cap has to admit.
+     */
+    @Test
+    fun aLabelNamingACaseAndAPeerFits() {
+        val log = PeerRunLog(temporaryDir())
+
+        assertTrue(log.write("HOST-MEASURE-a1b2c3d4e5f60718-PAIRED", "{}", 1L).isFile)
     }
 
     @Test

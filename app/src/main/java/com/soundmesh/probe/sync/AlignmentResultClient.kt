@@ -20,11 +20,17 @@ class AlignmentResultClient(private val hostAddress: String, private val port: I
      * Half-closes rather than closes: the half-close is what marks the end of the readings, and
      * the answer comes back down the same socket. Throws if any of it fails.
      */
-    fun exchange(caseId: String, appliedOffsetMicros: Long, readings: List<AlignmentReading>): CalibrationReply =
+    fun exchange(
+        caseId: String,
+        sinkId: String,
+        appliedOffsetMicros: Long,
+        readings: List<AlignmentReading>
+    ): CalibrationReply =
         Socket(hostAddress, port).use { socket ->
             socket.soTimeout = REPLY_TIMEOUT_MILLIS
             socket.getOutputStream().apply {
-                write(AlignmentResultCodec.encode(caseId, appliedOffsetMicros, readings).toByteArray(Charsets.UTF_8))
+                val delivery = AlignmentResultCodec.encode(caseId, sinkId, appliedOffsetMicros, readings)
+                write(delivery.toByteArray(Charsets.UTF_8))
                 flush()
             }
             socket.shutdownOutput()

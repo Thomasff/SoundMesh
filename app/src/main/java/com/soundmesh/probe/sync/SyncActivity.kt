@@ -910,8 +910,14 @@ class SyncActivity : Activity() {
             // from the host's end of a socket that never opens, and they are not the same.
             val ownAlignment = calibration?.let { readOwnAlignment(caseId, it, chirpAt) }
             val exchange = runCatching {
-                AlignmentResultClient(address, RESULT_PORT)
-                    .exchange(caseId, resolvedOffset.micros, ownAlignment?.readings ?: emptyList())
+                AlignmentResultClient(address, RESULT_PORT).exchange(
+                    caseId,
+                    // The name this handset answers to, the same one it uses when it is the host.
+                    // It is what this phone is called, not what role it is in.
+                    HostIdentity(filesDir).current(),
+                    resolvedOffset.micros,
+                    ownAlignment?.readings ?: emptyList()
+                )
             }
             val resultDelivery = exchange.exceptionOrNull()?.javaClass?.simpleName
             // The loop closes here, and it closes by averaging rather than by replacing. Stored

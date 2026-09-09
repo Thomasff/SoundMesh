@@ -5,6 +5,8 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AlignmentResultCodecTest {
+    private val SINK = "a1b2c3d4e5f60718"
+
     private fun readable(errorMs: Double) = AlignmentReading(
         firstIndex = 48000,
         secondIndex = 72010,
@@ -33,7 +35,7 @@ class AlignmentResultCodecTest {
     fun roundTripsAWholeRunUnchanged() {
         val readings = listOf(readable(-0.198), unreadable, readable(2.177))
 
-        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", -34_957L, readings))
+        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", SINK, -34_957L, readings))
 
         assertEquals("O40", message.caseId)
         assertEquals(readings, message.readings)
@@ -45,7 +47,7 @@ class AlignmentResultCodecTest {
      */
     @Test
     fun roundTripsARunWithNoReadings() {
-        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", -34_957L, emptyList()))
+        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", SINK, -34_957L, emptyList()))
 
         assertEquals("O40", message.caseId)
         assertEquals(emptyList<AlignmentReading>(), message.readings)
@@ -56,14 +58,14 @@ class AlignmentResultCodecTest {
     fun roundTripsAnInfiniteRatio() {
         val reading = readable(0.0).copy(ratios = listOf(Double.POSITIVE_INFINITY, 12.0))
 
-        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", 0L, listOf(reading)))
+        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", SINK, 0L, listOf(reading)))
 
         assertEquals(listOf(reading), message.readings)
     }
 
     @Test
     fun rejectsAnUnknownVersion() {
-        val text = AlignmentResultCodec.encode("O40", 0L, listOf(readable(0.1))).replace("alignment 2 ", "alignment 3 ")
+        val text = AlignmentResultCodec.encode("O40", SINK, 0L, listOf(readable(0.1))).replace("alignment 3 ", "alignment 4 ")
 
         assertThrows(IllegalArgumentException::class.java) { AlignmentResultCodec.decode(text) }
     }
@@ -71,16 +73,36 @@ class AlignmentResultCodecTest {
     /** A truncated stream must fail loudly rather than combine against the pairs that did arrive. */
     @Test
     fun rejectsFewerReadingsThanTheHeaderPromises() {
-        val text = AlignmentResultCodec.encode("O40", 0L, listOf(readable(0.1), readable(0.2)))
+        val text = AlignmentResultCodec.encode("O40", SINK, 0L, listOf(readable(0.1), readable(0.2)))
             .lines().dropLast(1).joinToString("\n")
 
         assertThrows(IllegalArgumentException::class.java) { AlignmentResultCodec.decode(text) }
     }
 
+    /**
+     * The host waits on one socket and any handset in the room still holding a plan can reach it,
+     * so a delivery that does not say who sent it cannot be checked against who was served.
+     */
+    @Test
+    fun carriesTheNameOfTheHandsetThatSentIt() {
+        val message = AlignmentResultCodec.decode(
+            AlignmentResultCodec.encode("O40", SINK, 0L, listOf(readable(0.1)))
+        )
+
+        assertEquals(SINK, message.sinkId)
+    }
+
+    @Test
+    fun rejectsASinkIdThatWouldBreakTheHeader() {
+        assertThrows(IllegalArgumentException::class.java) {
+            AlignmentResultCodec.encode("O40", "a1b2 c3d4", 0L, listOf(readable(0.1)))
+        }
+    }
+
     @Test
     fun rejectsACaseIdThatWouldBreakTheHeader() {
         assertThrows(IllegalArgumentException::class.java) {
-            AlignmentResultCodec.encode("O40 extra", 0L, listOf(readable(0.1)))
+            AlignmentResultCodec.encode("O40 extra", SINK, 0L, listOf(readable(0.1)))
         }
     }
 
@@ -91,7 +113,7 @@ class AlignmentResultCodecTest {
      */
     @Test
     fun carriesTheCorrectionTheSenderHadAlreadyApplied() {
-        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", -34_957L, listOf(readable(0.1))))
+        val message = AlignmentResultCodec.decode(AlignmentResultCodec.encode("O40", SINK, -34_957L, listOf(readable(0.1))))
 
         assertEquals(-34_957L, message.appliedOffsetMicros)
     }

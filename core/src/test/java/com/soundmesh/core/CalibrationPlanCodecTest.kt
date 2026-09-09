@@ -56,4 +56,33 @@ class CalibrationPlanCodecTest {
             CalibrationPlanCodec.encode(plan.copy(hostId = ""))
         }
     }
+
+    @Test
+    fun roundTripsTheAskUnchanged() {
+        val request = CalibrationRequest(caseId = "MEASURE", sinkId = "a1b2c3d4e5f60718")
+
+        assertEquals(request, CalibrationPlanCodec.decodeRequest(CalibrationPlanCodec.encodeRequest(request)))
+    }
+
+    /**
+     * A sink from before the ask carried a name sends a bare case id. Filling one in - "unknown",
+     * or the only sink this host has ever served - files the run against a peer it was not
+     * measured with, and nothing in any later result could notice.
+     */
+    @Test
+    fun refusesAnAskThatDoesNotSayWhoIsAsking() {
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationPlanCodec.decodeRequest("MEASURE")
+        }
+    }
+
+    @Test
+    fun refusesAnAskWhoseFieldsWouldShift() {
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationPlanCodec.encodeRequest(CalibrationRequest("MEA SURE", "a1b2c3d4e5f60718"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationPlanCodec.encodeRequest(CalibrationRequest("MEASURE", ""))
+        }
+    }
 }

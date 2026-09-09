@@ -19,6 +19,8 @@ import org.junit.Test
  * otherwise have had to teach, and each carries the reason it is here.
  */
 class PeerCalibrateActivityTest {
+    private val SINK_ID = "a1b2c3d4e5f60718"
+
     private val source =
         File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8)
 
@@ -146,8 +148,72 @@ class PeerCalibrateActivityTest {
             "the host plans the measurement case whatever the sink asked for",
             source.contains("caseId = CASE_MEASURE")
         )
-        assertTrue(source.contains("requested !in setOf(CASE_MEASURE, CASE_VERIFY)"))
+        assertTrue(source.contains("request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY)"))
     }
+    /**
+     * A case id names a directory the run store only ever mkdirs, so two runs of one case land on
+     * one file - which is the failure the case id itself was added to stop, one dimension over.
+     * With two sinks the case is the same and the peer is not, so the peer has to be in the name:
+     * a host that measured the X10 and then the tablet wrote the tablet's half over the X10's, in
+     * place, leaving a directory whose own mtime did not move to say it had happened.
+     */
+    @Test
+    fun aSecondSinkDoesNotLandOnTheFirstOnesFile() {
+        assertTrue(
+            "the host's own half is written under a name that does not say which peer it ran with",
+            source.contains("prepareRun(plan.caseId), hostArtifact(sinkId)")
+        )
+        assertTrue(source.contains("hostArtifact(sinkId: String): String = \"peer-calibration-\$sinkId.json\""))
+        assertTrue(source.contains("fileAttempt(\"HOST-\${plan.caseId}-\$sinkId\", run.json)"))
+        assertTrue(source.contains("\"HOST-\${plan.caseId}-\$sinkId-PAIRED\""))
+    }
+
+    /**
+     * The name reaches a file name on this side, and it arrived over a socket. Checked for shape
+     * rather than trusted from where it came, on the same terms as the case beside it - and it has
+     * to be checked before it is kept, not after.
+     */
+    @Test
+    fun aPeerNameThatCouldNameAPathIsRefusedBeforeItIsKept() {
+        val gate = source.indexOf("HostId.isValid(request.sinkId)")
+        val kept = source.indexOf("servedSink = request.sinkId")
+
+        assertTrue("the sink's name is never checked for shape", gate >= 0)
+        assertTrue("the name is kept before it is checked", gate < kept)
+    }
+
+    /**
+     * The host hands out one plan and then waits on one socket that any handset in the room still
+     * holding a plan can reach. Combining a stranger's readings does not make a worse number, it
+     * makes a number about a pair that never ran - and the fold on the other side would take it.
+     */
+    @Test
+    fun aResultFromAHandsetThisRoundDidNotServeIsNotCombined() {
+        val check = source.indexOf("message.sinkId != sinkId")
+        val combine = source.indexOf("AlignmentPairing.combine(")
+
+        assertTrue("the delivery is never checked against the handset that was served", check >= 0)
+        assertTrue("the readings are combined before it is known whose they are", check < combine)
+        assertTrue(
+            "a stranger's delivery is answered with a correction",
+            source.contains("return@awaitResult CalibrationReply(null, null, null)")
+        )
+    }
+
+    /**
+     * Two handsets measured on one host is two answers, and the pair of them is the whole reason
+     * somebody pressed the button twice. A screen that only ever holds the last one throws away
+     * the comparison at the moment it becomes possible.
+     */
+    @Test
+    fun eachSinksAnswerIsKeptBesideTheOthersRatherThanReplacingThem() {
+        assertTrue(source.contains("record(sinkId, outcome)"))
+        assertTrue(
+            "rows are told apart by the whole name, because the short one can collide",
+            source.contains("state.outcomes.filterNot { it.sinkId == sinkId }")
+        )
+    }
+
 
     /**
      * CalibrationUpdate.usable lets a failed run through on purpose, and its own comment gives the
@@ -283,9 +349,9 @@ class PeerCalibrateActivityTest {
             first = listOf(264_449, 504_440, 744_446, 984_448, 1_224_444),
             second = listOf(288_480, 528_481, 768_425, 1_008_477, 1_248_410)
         )
-        val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", 0L, sink))
+        val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", SINK_ID, 0L, sink))
 
-        val json = pairedReportJson("C91", "0123456789abcdef", combined, host, sink, 5 * 48_000)
+        val json = pairedReportJson("C91", "0123456789abcdef", SINK_ID, combined, host, sink, 5 * 48_000)
 
         // The X10 is the host here and it is the one that stepped.
         assertTrue("the host's emission spread is missing: $json", json.contains("\"hostSpreadMs\":0.700"))
@@ -315,8 +381,8 @@ class PeerCalibrateActivityTest {
             first = listOf(264_449, 504_440, 744_446, 984_448, 1_224_444),
             second = listOf(288_480, 528_481, 768_425, 1_008_477, 1_248_410)
         )
-        val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", 0L, sink))
-        val json = pairedReportJson("C91", "0123456789abcdef", combined, host, sink, 5 * 48_000)
+        val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", SINK_ID, 0L, sink))
+        val json = pairedReportJson("C91", "0123456789abcdef", SINK_ID, combined, host, sink, 5 * 48_000)
 
         assertEquals(
             "the verdict in the report is not the verdict the run was judged by",

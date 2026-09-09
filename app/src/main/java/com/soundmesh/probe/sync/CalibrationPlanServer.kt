@@ -2,6 +2,7 @@ package com.soundmesh.probe.sync
 
 import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationPlanCodec
+import com.soundmesh.core.CalibrationRequest
 import java.net.ServerSocket
 import java.net.SocketTimeoutException
 
@@ -35,12 +36,18 @@ class CalibrationPlanServer(private val port: Int) {
      * it is a lambda: a plan names instants a few seconds out in the host's clock, so one minted
      * while waiting for somebody to pick up the other phone would already be in the past.
      *
-     * It is handed the case the sink asked for. That name reaches a run store which will create
-     * whatever directory it is given, so [planFor] is expected to refuse one it does not run by
-     * throwing IllegalArgumentException - reported apart from a garbled request, because the two
-     * mean different things to whoever reads the failure.
+     * It is handed the whole ask: the case, and the name of the handset asking. Both reach a file
+     * name on this side - the case a run store which will create whatever directory it is given,
+     * the sink name the file this host's own half of the run is written to - so [planFor] is
+     * expected to refuse either by throwing IllegalArgumentException. That is reported apart from
+     * an ask this server could not read at all, because the two mean different things to whoever
+     * reads the failure: one is a handset this host declines to serve, the other is a build that
+     * does not speak this version.
      */
-    fun awaitRequest(timeoutMillis: Int, planFor: (String) -> CalibrationPlan): CalibrationPlan? {
+    fun awaitRequest(
+        timeoutMillis: Int,
+        planFor: (CalibrationRequest) -> CalibrationPlan
+    ): CalibrationPlan? {
         val bound = server ?: run {
             failureCode = "PLAN_UNBOUND"
             return null
@@ -49,9 +56,16 @@ class CalibrationPlanServer(private val port: Int) {
             bound.soTimeout = timeoutMillis
             bound.accept().use { socket ->
                 socket.soTimeout = timeoutMillis
-                // The sink writes the case it wants and half-closes to mark the request complete.
-                val requested = String(socket.getInputStream().readBytes(), Charsets.UTF_8).trim()
-                val plan = planFor(requested)
+                // The sink writes what it wants and half-closes to mark the request complete.
+                val asked = String(socket.getInputStream().readBytes(), Charsets.UTF_8).trim()
+                val request = try {
+                    CalibrationPlanCodec.decodeRequest(asked)
+                } catch (unreadable: IllegalArgumentException) {
+                    // Rewrapped so it cannot be mistaken for [planFor] declining to serve: both
+                    // arrive here as IllegalArgumentException and they are different answers.
+                    throw GarbledRequest(unreadable)
+                }
+                val plan = planFor(request)
                 socket.getOutputStream().apply {
                     write(CalibrationPlanCodec.encode(plan).toByteArray(Charsets.UTF_8))
                     flush()
@@ -61,6 +75,7 @@ class CalibrationPlanServer(private val port: Int) {
         }.onFailure {
             failureCode = when (it) {
                 is SocketTimeoutException -> "PLAN_TIMEOUT"
+                is GarbledRequest -> "PLAN_GARBLED"
                 is IllegalArgumentException -> "PLAN_REFUSED"
                 else -> "PLAN_UNREADABLE"
             }
@@ -71,4 +86,7 @@ class CalibrationPlanServer(private val port: Int) {
         runCatching { server?.close() }
         server = null
     }
+
+    /** An ask this server could not read, as opposed to one the host declined to serve. */
+    private class GarbledRequest(cause: Throwable) : RuntimeException(cause)
 }
