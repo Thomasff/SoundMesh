@@ -6,8 +6,6 @@ import android.media.MediaFormat
 import android.util.Log
 import com.soundmesh.core.StreamingResampler
 import java.io.File
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.TimeUnit
 
 /**
  * A song decoded a piece at a time, on its own thread, into a queue the renderer takes from.
@@ -26,52 +24,29 @@ import java.util.concurrent.TimeUnit
  * Three seconds of them are absorbed here before anything reaches the timeline, and the host's
  * own 1.5 s lead absorbs more after that.
  *
+ * The waiting itself is [ChunkQueue], split off by what can be looked at away from a handset:
+ * what is left here is codec and can only be watched on a phone, while how long to wait, when to
+ * give up, and what counts as falling behind are arithmetic over a queue and have tests. That
+ * line is drawn where this code has already had a bug.
+ *
  * [CaptureChunkSource] is the same shape - a producer that blocks - and the difference between
  * them is the only difference that matters between playing a file and playing what another app is
  * playing: a file can be read ahead of where the listener is, and a live capture cannot.
  */
 class StreamingChunkSource private constructor(private val song: File) {
-    private val ready = ArrayBlockingQueue<ByteArray>(READ_AHEAD_CHUNKS)
+    private val queue = ChunkQueue(READ_AHEAD_CHUNKS, POLL_MILLIS, STARVED_MILLIS)
     private val cutter = ChunkCutter(CHUNK_BYTES)
-
-    @Volatile private var stopping = false
-    @Volatile private var failure: Throwable? = null
-    @Volatile private var everDelivered = false
-    @Volatile private var lateChunks = 0
 
     private val thread = Thread({ run() }, "song-decoder")
 
     /** One full chunk, or null once this source is closed. Blocks while the decoder catches up. */
-    fun readChunk(): ByteArray? {
-        var waitedMillis = 0L
-        while (true) {
-            val chunk = ready.poll(POLL_MILLIS, TimeUnit.MILLISECONDS)
-            if (chunk != null) {
-                everDelivered = true
-                return chunk
-            }
-            failure?.let { throw it }
-            if (stopping) return null
-            // Once per wait, not once per poll, and never for the first chunk of all: waiting for
-            // that one is the session starting rather than the decoder falling behind, and a
-            // counter that reads one on every healthy session is a counter nobody looks at twice.
-            if (waitedMillis == 0L && everDelivered) lateChunks++
-            waitedMillis += POLL_MILLIS
-            // A decoder that has produced nothing for this long is not going to. Left to run, it
-            // would hold the host's producer thread in here for the rest of the session while the
-            // room played out its 1.5 s of lead and then went quiet, with the session still
-            // calling itself PLAYING.
-            if (waitedMillis > STARVED_MILLIS) {
-                throw IllegalStateException("the decoder has produced nothing for $STARVED_MILLIS ms")
-            }
-        }
-    }
+    fun readChunk(): ByteArray? = queue.take()
 
     /** How many chunks the renderer had to wait for. Zero on a session that kept up. */
-    fun lateChunks(): Int = lateChunks
+    fun lateChunks(): Int = queue.lateChunks()
 
     fun close() {
-        stopping = true
+        queue.stop()
         thread.interrupt()
         runCatching { thread.join(JOIN_MILLIS) }
     }
@@ -83,14 +58,14 @@ class StreamingChunkSource private constructor(private val song: File) {
             // a folder of songs, and reopening rather than seeking is what makes that the same
             // code: the next song may be at another rate entirely, so it would need its own
             // decoder and its own converter regardless.
-            while (!stopping) {
+            while (!queue.stopped) {
                 play(song)
             }
         } catch (interrupted: InterruptedException) {
             Log.i(LOG_TAG, "the decoder was asked to stop")
         } catch (error: Throwable) {
             Log.e(LOG_TAG, "the decoder stopped", error)
-            failure = error
+            queue.fail(error)
         }
     }
 
@@ -137,7 +112,7 @@ class StreamingChunkSource private constructor(private val song: File) {
         var resampler: StreamingResampler? = null
         var converted = 0L
         var inputDone = false
-        while (!stopping) {
+        while (!queue.stopped) {
             if (!inputDone) {
                 val inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_MICROS)
                 if (inputIndex >= 0) {
@@ -179,12 +154,12 @@ class StreamingChunkSource private constructor(private val song: File) {
         }
         // A song shorter than one chunk would otherwise be reopened hundreds of times a second,
         // which from outside is a decoder thread at full tilt and a room playing a stutter.
-        if (!stopping && converted < CHUNK_BYTES) throw SourceUnusable("SOURCE_FILE_TOO_SHORT")
+        if (!queue.stopped && converted < CHUNK_BYTES) throw SourceUnusable("SOURCE_FILE_TOO_SHORT")
     }
 
     /** Queues every whole chunk this piece completes, waiting while the renderer catches up. */
     private fun hand(pcm: ByteArray): Long {
-        cutter.cut(pcm).forEach { ready.put(it) }
+        cutter.cut(pcm).forEach { queue.put(it) }
         return pcm.size.toLong()
     }
 
@@ -219,21 +194,16 @@ class StreamingChunkSource private constructor(private val song: File) {
             if (!file.isFile) throw SourceUnusable("SOURCE_FILE_MISSING")
             val source = StreamingChunkSource(file)
             source.thread.start()
-            val deadline = System.nanoTime() + STARVED_MILLIS * 1_000_000L
-            while (source.ready.isEmpty() && source.failure == null) {
-                if (System.nanoTime() > deadline) {
-                    source.close()
-                    throw SourceUnusable("SOURCE_FILE_DECODE_STALLED")
-                }
-                Thread.sleep(FIRST_CHUNK_POLL_MILLIS)
-            }
-            source.failure?.let {
+            val arrived = source.queue.awaitFirst(STARVED_MILLIS)
+            source.queue.failure()?.let {
                 source.close()
                 throw it
             }
+            if (!arrived) {
+                source.close()
+                throw SourceUnusable("SOURCE_FILE_DECODE_STALLED")
+            }
             return source
         }
-
-        private const val FIRST_CHUNK_POLL_MILLIS = 5L
     }
 }
