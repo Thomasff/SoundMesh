@@ -104,6 +104,38 @@ class SongOrderTest {
         )
     }
 
+    /**
+     * The six names off a real handset, and the order the file manager beside it showed.
+     *
+     * Compared by code unit these come out 倔强 / 和你一样 / 追梦赤子心 / 闪耀 - stable,
+     * reproducible, and an order nobody can predict, because it is where the characters happen to
+     * sit in Unicode rather than how they sound. What is fixed here is that rule, not the exact
+     * sequence: the collation is the runtime's, and this JVM is not guaranteed to hold the same
+     * table as a handset's ICU.
+     */
+    @Test
+    fun chineseNamesReadInPinyinOrderRatherThanCodeUnitOrder() {
+        assertEquals(
+            listOf("和你一样.mp3", "倔强.mp3", "闪耀.mp3", "追梦赤子心.mp3"),
+            names(file("倔强.mp3"), file("闪耀.mp3"), file("追梦赤子心.mp3"), file("和你一样.mp3"))
+        )
+    }
+
+    /**
+     * Latin names come before Chinese ones, and that is not the defect above.
+     *
+     * Written down because it looks like one twice over. A file named zzz- was once predicted to
+     * sort last among Chinese names and did not, which is what surfaced the code-unit ordering -
+     * but moving to a collator does not change this half, and should not: Latin script precedes
+     * Han in the collation, and it is what the file manager next to the app does. The test exists
+     * so the next person to see zzz- at the top does not "fix" it back.
+     */
+    @Test
+    fun aLatinNameComesBeforeTheChineseOnesAndThatIsDeliberate() {
+        val ordered = names(file("倔强.mp3"), file("和你一样.mp3"), file("zzz.mp3"))
+        assertEquals("zzz.mp3", ordered.first())
+    }
+
     /** A number inside a name is a number wherever it sits, not only at the front. */
     @Test
     fun aNumberLaterInTheNameCountsToo() {

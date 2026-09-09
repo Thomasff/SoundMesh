@@ -1,5 +1,8 @@
 package com.soundmesh.probe.sync
 
+import java.text.Collator
+import java.util.Locale
+
 /**
  * One playable thing, named the way the listener's own file manager names it.
  *
@@ -19,8 +22,14 @@ data class Song(val uri: String, val name: String, val mimeType: String?)
  * is only wrong to somebody who knows the album.
  */
 object SongOrder {
-    /** The songs among [entries], in the order they should play. */
-    fun of(entries: List<Song>): List<Song> = entries.filter(::isSong).sortedWith(BY_NAME)
+    /**
+     * The songs among [entries], in the order they should play.
+     *
+     * The collator is built here rather than held as a constant because it is not safe to share
+     * between threads, and one per sort costs nothing next to reading a folder.
+     */
+    fun of(entries: List<Song>): List<Song> =
+        entries.filter(::isSong).sortedWith(byName(Collator.getInstance(Locale.CHINA)))
 
     /**
      * The type if the provider gave a usable one, the extension if it did not.
@@ -51,14 +60,33 @@ object SongOrder {
      * folder still plays, in an order that looks deliberate. Padding is not part of the number
      * either - a folder holding both "02" and "3" is one somebody ripped twice.
      */
-    private val BY_NAME = Comparator<Song> { left, right ->
-        val ordered = compareNaturally(left.name, right.name)
+    private fun byName(collator: Collator) = Comparator<Song> { left, right ->
+        val ordered = compareNaturally(left.name, right.name, collator)
         // Names differing only in case still need one definite answer, or a folder plays in a
         // different sequence each time it is opened and nothing on screen could explain why.
         if (ordered != 0) ordered else left.name.compareTo(right.name)
     }
 
-    private fun compareNaturally(left: String, right: String): Int {
+    /**
+     * Runs of digits compare as numbers; everything between them compares the way a Chinese
+     * reader expects.
+     *
+     * The text used to be walked one character at a time and compared by code unit, which for
+     * Latin names is alphabetical and for Chinese ones is not order at all - it is the order the
+     * characters happen to sit at in Unicode. A folder of six songs came out as
+     * 倔强 / 和你一样 / 追梦赤子心 / 闪耀 where the file manager beside it read
+     * 和你一样 / 倔强 / 闪耀 / 追梦赤子心. Both are stable and reproducible; only one of them is
+     * an order anybody can predict. The same code-unit rule is why a file named zzz- sorted third
+     * rather than last in a folder of Chinese names: ASCII comes before every CJK character.
+     *
+     * Whole runs rather than single characters, because a collator's answer for one character is
+     * not the same question - the sound of a name is a property of the word.
+     *
+     * A limit worth knowing: the collation here is the runtime's, and the JVM this is tested on
+     * and the ICU on a handset are not guaranteed to be the same table. The test below fixes the
+     * mechanism - pinyin rather than code units - not the exact sequence a device will produce.
+     */
+    private fun compareNaturally(left: String, right: String, collator: Collator): Int {
         var l = 0
         var r = 0
         while (l < left.length && r < right.length) {
@@ -70,13 +98,21 @@ object SongOrder {
                 l = leftEnd
                 r = rightEnd
             } else {
-                val ordered = left[l].lowercaseChar().compareTo(right[r].lowercaseChar())
+                val leftEnd = textEnd(left, l)
+                val rightEnd = textEnd(right, r)
+                val ordered = collator.compare(left.substring(l, leftEnd), right.substring(r, rightEnd))
                 if (ordered != 0) return ordered
-                l++
-                r++
+                l = leftEnd
+                r = rightEnd
             }
         }
         return (left.length - l).compareTo(right.length - r)
+    }
+
+    private fun textEnd(text: String, from: Int): Int {
+        var end = from
+        while (end < text.length && !text[end].isDigit()) end++
+        return end
     }
 
     private fun digitsEnd(text: String, from: Int): Int {
