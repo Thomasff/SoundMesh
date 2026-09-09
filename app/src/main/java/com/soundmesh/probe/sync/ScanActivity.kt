@@ -3,6 +3,8 @@ package com.soundmesh.probe.sync
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.LinearLayout
@@ -43,6 +45,17 @@ class ScanActivity : ComponentActivity() {
     
     private var camera: ProcessCameraProvider? = null
 
+    private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * Closes this screen a moment after a code is read.
+     *
+     * One object rather than a fresh lambda per scan, so that [beginScanning] can take it back off
+     * the queue: a scanner re-armed inside the pause would otherwise be shut by the finish the
+     * previous scan had already posted, which looks like a camera that closes itself at random.
+     */
+    private val finishAfterScan = Runnable { finish() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         previewView = PreviewView(this)
@@ -77,6 +90,7 @@ class ScanActivity : ComponentActivity() {
     }
 
     private fun beginScanning() {
+        handler.removeCallbacks(finishAfterScan)
         scanned.set(false)
         say("SCANNING")
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -97,6 +111,7 @@ class ScanActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacks(finishAfterScan)
         analysis.shutdown()
     }
 
@@ -146,6 +161,17 @@ class ScanActivity : ComponentActivity() {
             PairedHost(filesDir).write(code)
             runOnUiThread { camera?.unbindAll() }
             say("SCANNED ${code.hostId} at ${code.address}:${code.chunkPort}")
+            // Scanning is the one act in this system that needs a hand on the phone, and it is
+            // done once. Leaving somebody on a dead preview to find the back button is the part of
+            // it they should not have to think about.
+            //
+            // Not at once, though: the line above names the handset that was paired, and a screen
+            // that vanishes before it can be read leaves exactly the doubt it exists to remove.
+            //
+            // Nothing driven over ADB is watching this screen - scan-pair polls the pairing file,
+            // which is written above - so finishing costs the tools nothing and saves them a
+            // camera left running on a phone about to be measured in a quiet room.
+            handler.postDelayed(finishAfterScan, SCANNED_LINGER_MILLIS)
         } finally {
             image.close()
         }
@@ -155,5 +181,8 @@ class ScanActivity : ComponentActivity() {
 
     private companion object {
         const val CAMERA_REQUEST = 1
+
+        /** Long enough to read one line off a screen somebody is already holding up. */
+        const val SCANNED_LINGER_MILLIS = 1_500L
     }
 }
