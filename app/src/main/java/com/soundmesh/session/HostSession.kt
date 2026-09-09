@@ -58,6 +58,29 @@ internal fun hostReportFields(
         ",\"lateChunks\":$lateChunks"
 
 /**
+ * The host instant at which a song that has just run out has finished being heard.
+ *
+ * A function of its values rather than a method on the session, so that it can be tested at all -
+ * the same reason, and the same shape, as hostReportFields above.
+ *
+ * The number that matters is that this is **not** now. Every chunk is stamped 1.5 s into its own
+ * future and the sinks are holding their copies of those same instants, so a session that ended
+ * the renderer the moment its source ran dry would cut a second and a half off the end of every
+ * song, on every handset at once, and would sound exactly like somebody pressing stop early.
+ * Nothing downstream would report it: the chunks were generated, broadcast and scheduled, and the
+ * counters would say so.
+ *
+ * [NOTHING_PLAYED] is a source that ended before its first chunk. The file sources refuse that at
+ * the moment the song is chosen, so this is here only so that a source which ever did would end
+ * the session rather than name an instant a quarter of a millennium ago.
+ */
+internal fun endOfAudioNanos(lastDueNanos: Long, nowNanos: Long): Long =
+    if (lastDueNanos == NOTHING_PLAYED) nowNanos else lastDueNanos + SyncRenderer.CHUNK_NANOS
+
+/** No chunk has been produced yet, so there is no last one to play out. */
+internal const val NOTHING_PLAYED = Long.MIN_VALUE
+
+/**
  * The handset that holds the timeline: it decides when every chunk is heard and plays its own copy
  * alongside the sinks.
  *
@@ -67,10 +90,10 @@ internal fun hostReportFields(
  *
  * [readChunk] supplies one chunk of PCM per call and is asked for the next one only when the
  * timeline is ready for it, so a source may block in it for as long as a chunk lasts without
- * costing anything.
+ * costing anything. Null from it is the song reaching its end - see [onEnded].
  */
 class HostSession(
-    private val readChunk: () -> ByteArray,
+    private val readChunk: () -> ByteArray?,
     /**
      * How far the drift loop lets the write position wander before it corrects it.
      *
@@ -127,6 +150,18 @@ class HostSession(
      * ahead into, so neither can be behind.
      */
     private val lateChunks: () -> Int = { 0 },
+    /**
+     * Called once, from the producer's own thread, when the source has no more audio.
+     *
+     * A song that ends is not a session that fails, and it is not a session that keeps going
+     * either: the renderer would write silence to an open AudioTrack until somebody pressed stop,
+     * and the screen would go on saying PLAYING. Whoever owns the session is the only one who can
+     * take it down, so it is told.
+     *
+     * Default does nothing, which is the right answer for the two sources that never end: the
+     * ruler's prefix wraps to its own first chunk forever, and a capture has no end to reach.
+     */
+    private val onEnded: () -> Unit = {},
     /**
      * This handset's own name, and with it whether the room can have a shape at all.
      *
@@ -268,9 +303,12 @@ class HostSession(
         // moment they happened to arrive put that cadence into the timeline for both handsets to
         // reproduce faithfully. See [ChunkTimeline] for what it cost and how it was measured.
         val timeline = ChunkTimeline(SyncRenderer.FRAMES_PER_CHUNK, SyncRenderer.SAMPLE_RATE)
+        var lastDueNanos = NOTHING_PLAYED
         while (!flags.isStopped()) {
-            val pcm = readChunk()
-            val chunk = AudioChunk(sequence, timeline.accept(System.nanoTime()) + LEAD_NANOS, pcm)
+            val pcm = readChunk() ?: return endOfSong(lastDueNanos)
+            val dueNanos = timeline.accept(System.nanoTime()) + LEAD_NANOS
+            lastDueNanos = dueNanos
+            val chunk = AudioChunk(sequence, dueNanos, pcm)
             val startedBroadcastAt = System.nanoTime()
             chunkServer.broadcast(chunk)
             maxBroadcastNanos = maxOf(maxBroadcastNanos, System.nanoTime() - startedBroadcastAt)
@@ -285,6 +323,27 @@ class HostSession(
             val sleepNanos = (timeline.nextDueNanos() ?: System.nanoTime()) - System.nanoTime()
             if (sleepNanos > 0) Thread.sleep(sleepNanos / 1_000_000, (sleepNanos % 1_000_000).toInt())
         }
+    }
+
+    /**
+     * The song ran out: play what is already scheduled, then end.
+     *
+     * Every chunk is stamped 1.5 s into its own future and the sinks are holding their copies of
+     * those same instants, so ending the renderer here and now would cut off audio that has
+     * already been handed out. Cutting it off is precisely what the stop button does, and a song
+     * reaching its last bar should not sound like somebody pressed stop.
+     *
+     * The wait is polled rather than slept through in one go so the stop button still answers
+     * within a chunk, and [onEnded] is skipped if it got there first - the session is being taken
+     * down already, and taking it down twice is not more down.
+     */
+    private fun endOfSong(lastDueNanos: Long) {
+        val endNanos = endOfAudioNanos(lastDueNanos, System.nanoTime())
+        renderer.endAt(endNanos)
+        while (!flags.isStopped() && System.nanoTime() < endNanos) Thread.sleep(END_POLL_MILLIS)
+        if (flags.isStopped()) return
+        flags.markStopped()
+        onEnded()
     }
 
     override fun stop() {
@@ -308,6 +367,9 @@ class HostSession(
         const val SCHEDULER_CAPACITY_CHUNKS = 150
 
         const val JOIN_TIMEOUT_MILLIS = 5_000L
+
+        /** Keeps the stop button answering within a chunk while the tail plays out. */
+        const val END_POLL_MILLIS = 20L
 
         const val LOG_TAG = "SoundMeshSession"
     }

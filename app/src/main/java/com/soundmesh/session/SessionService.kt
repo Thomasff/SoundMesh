@@ -136,14 +136,16 @@ class SessionService : Service() {
         val source = StreamingChunkSource.open(file)
         advertise()
         return HostSession(
-            // Null is the source having been closed, which only stop() does. Reaching here any
-            // other way is a session with no producer, and the same throw the capture path uses
-            // is what marks it stopped rather than leaving it saying PLAYING to nobody.
-            readChunk = { source.readChunk() ?: throw IllegalStateException("the song ended") },
+            // Null is the song having ended, which the session plays out and then acts on.
+            readChunk = source::readChunk,
             deadbandFrames = deadbandFrames(intent),
             trimFrames = trimFrames(intent),
             closeSource = source::close,
             lateChunks = source::lateChunks,
+            // The song is over, so the session is over: the service takes itself down exactly the
+            // way the stop button does. Anything less leaves a foreground notification, a bound
+            // set of sockets and an open AudioTrack behind a room that has gone quiet.
+            onEnded = { stopSession() },
             spatialId = HostIdentity(filesDir).current()
         )
     }

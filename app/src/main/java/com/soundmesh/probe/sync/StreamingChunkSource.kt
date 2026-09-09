@@ -53,14 +53,20 @@ class StreamingChunkSource private constructor(private val song: File) {
 
     private fun run() {
         try {
-            // The same song again, which is the loop the whole-buffer source does by resetting a
-            // read position. This is also the one place that would have to answer differently for
-            // a folder of songs, and reopening rather than seeking is what makes that the same
-            // code: the next song may be at another rate entirely, so it would need its own
-            // decoder and its own converter regardless.
-            while (!queue.stopped) {
-                play(song)
-            }
+            play(song)
+            // Once, and then the song is over. It used to start again here, which is what the
+            // whole-buffer source does by resetting a read position - and from a room that is a
+            // song with no end and no way to reach one short of stopping the session.
+            //
+            // Stopping the queue is not emptying it: what is already decoded is still handed over,
+            // and the consumer is answered with null only once it runs out. That is how the host
+            // learns the difference between a song that ended and a source that broke.
+            //
+            // This is the one place a folder of songs would answer differently, and opening the
+            // next file rather than seeking back is what makes that the same code: the next song
+            // may be at another rate entirely, so it would need its own decoder and its own
+            // converter regardless.
+            queue.stop()
         } catch (interrupted: InterruptedException) {
             Log.i(LOG_TAG, "the decoder was asked to stop")
         } catch (error: Throwable) {

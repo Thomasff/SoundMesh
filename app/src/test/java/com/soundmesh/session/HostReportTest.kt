@@ -5,6 +5,7 @@ import com.soundmesh.product.SessionReadout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import com.soundmesh.probe.sync.SyncRenderer
 import org.junit.Test
 
 /**
@@ -38,6 +39,34 @@ class HostReportTest {
 
     private fun valueOf(report: String, label: Int): String =
         SessionReadout.counters(report).first { it.label == label }.value
+
+    /**
+     * The end of a song is a second and a half after the source stops answering, not at it.
+     *
+     * This is the whole content of the function: a chunk is stamped 1.5 s into its own future and
+     * every handset in the room is holding its copy of that instant. Ending at the moment the
+     * source ran dry would take the last second and a half off the end of every song, everywhere
+     * at once, and would leave every counter in the report saying the audio was fine.
+     */
+    @Test
+    fun aSongThatRanOutStillHasItsLeadLeftToPlay() {
+        val now = 5_000_000_000L
+        val lastDue = now + 1_500_000_000L
+        assertTrue(endOfAudioNanos(lastDue, now) > lastDue)
+    }
+
+    /** And the tail is the whole of the last chunk, not the instant it starts. */
+    @Test
+    fun theLastChunkIsHeardToItsEnd() {
+        val lastDue = 5_000_000_000L
+        assertEquals(lastDue + SyncRenderer.CHUNK_NANOS, endOfAudioNanos(lastDue, 0L))
+    }
+
+    /** A source that ended before saying anything has no tail to wait for. */
+    @Test
+    fun aSongThatPlayedNothingEndsNow() {
+        assertEquals(700L, endOfAudioNanos(NOTHING_PLAYED, nowNanos = 700L))
+    }
 
     /**
      * The one mark a source that fell behind leaves anywhere.
