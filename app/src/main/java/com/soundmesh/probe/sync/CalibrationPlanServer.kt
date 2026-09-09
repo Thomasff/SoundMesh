@@ -74,7 +74,7 @@ class CalibrationPlanServer(private val port: Int) {
             }
         }.onFailure {
             failureCode = when (it) {
-                is SocketTimeoutException -> "PLAN_TIMEOUT"
+                is SocketTimeoutException -> TIMEOUT
                 is GarbledRequest -> "PLAN_GARBLED"
                 is IllegalArgumentException -> "PLAN_REFUSED"
                 else -> "PLAN_UNREADABLE"
@@ -89,4 +89,16 @@ class CalibrationPlanServer(private val port: Int) {
 
     /** An ask this server could not read, as opposed to one the host declined to serve. */
     private class GarbledRequest(cause: Throwable) : RuntimeException(cause)
+
+    companion object {
+        /**
+         * Nobody asked inside the wait.
+         *
+         * Named rather than left a literal because a caller serving several handsets off one press
+         * has to tell it apart from every other failure: this one means the session is finished,
+         * and the rest mean this handset's turn went wrong and the next one is still owed theirs.
+         * Two literals compared across two files is exactly the drift that has no symptom.
+         */
+        const val TIMEOUT = "PLAN_TIMEOUT"
+    }
 }

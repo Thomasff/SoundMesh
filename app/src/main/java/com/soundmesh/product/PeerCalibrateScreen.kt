@@ -50,17 +50,18 @@ data class PeerCalibrateState(
 /**
  * What one sink's round came to, kept beside the others rather than replacing them.
  *
- * A host measures one sink per press, so a pair of handsets takes two presses and the answer to
- * the first is gone by the end of the second - which is exactly the comparison somebody pressed
- * twice to make. [name] is the short form shown; [sinkId] is the whole one, and the two are kept
- * apart because rows must be told apart by the name that cannot collide.
+ * One press now serves handset after handset, so a host has as many answers as there were phones
+ * in the room and the last one must not be the only one left. [name] is the short form shown;
+ * [sinkId] is the whole one, and the two are kept apart because rows must be told apart by the
+ * name that cannot collide.
  */
 data class SinkOutcome(val sinkId: String, val name: String, val text: String)
 
 class PeerCalibrateActions(
     val calibrate: () -> Unit,
     val verify: () -> Unit,
-    val forget: () -> Unit
+    val forget: () -> Unit,
+    val stop: () -> Unit
 )
 
 @Composable
@@ -119,6 +120,19 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(stringResource(R.string.pair_calibrate_start))
+                }
+                // Only a host, and only while it is serving. One press serves handset after
+                // handset until this is pressed or nobody else asks, and a sink has nothing to
+                // stop - its run is one round with nothing after it, so a button there would sit
+                // and do nothing, which is worse than no button at all.
+                if (state.role == CalibrationRole.HOST && state.running) {
+                    OutlinedButton(onClick = actions.stop, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.pair_calibrate_stop))
+                    }
+                    Text(
+                        stringResource(R.string.pair_calibrate_stop_hint),
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 // Only once there is something to check. A verification with nothing stored
                 // applies nothing and measures the whole difference again, which reads like a

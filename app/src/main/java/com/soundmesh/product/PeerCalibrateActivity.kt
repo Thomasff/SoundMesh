@@ -224,6 +224,64 @@ private fun estimateJson(estimate: ClockEstimate?): String =
             "\"driftPpm\":${it.driftPpm},\"sampleCount\":${it.sampleCount}}"
     } ?: "null"
 
+/** What one round of serving one sink came to, as far as the loop running them is concerned. */
+internal enum class RoundResult {
+    /** A handset was measured. Whatever verdict it got, the round did its job. */
+    SERVED,
+
+    /** The wait for somebody to ask ran out. Nobody else is coming, so the session is over. */
+    NOBODY_ASKED,
+
+    /** This round broke. The next handset is still owed its turn. */
+    FAILED
+}
+
+/**
+ * Serves one sink after another off a single press, and answers how many were measured.
+ *
+ * Apart from what a round does, because a round is fifty seconds of chirps against a real handset
+ * and this is a decision: given how the last one came out, does the next handset still get a turn.
+ * Same shape as the other internal functions in this file, and for the same reason - the thing
+ * worth guarding is lifted out of the thing that needs a room and two phones.
+ *
+ * A throw counts as a failure rather than ending the session. That is the whole point of the
+ * change this belongs to: a session used to be one round, so one sink's trouble was the end of it
+ * by construction, and a host measuring three handsets cannot be built that way.
+ *
+ * [round] is handed the number served so far, because that is what the screen counts up while
+ * somebody walks across the room to the next phone.
+ */
+internal fun serveRounds(stopped: () -> Boolean, round: (Int) -> RoundResult): Int {
+    var served = 0
+    var failuresInARow = 0
+    while (!stopped()) {
+        when (runCatching { round(served) }.getOrDefault(RoundResult.FAILED)) {
+            RoundResult.SERVED -> {
+                served++
+                // Consecutive, not cumulative: a room where every other handset has trouble is
+                // still a room worth finishing, and counting them all would stop it partway
+                // through for a reason nobody watching could see.
+                failuresInARow = 0
+            }
+            RoundResult.NOBODY_ASKED -> return served
+            RoundResult.FAILED -> {
+                failuresInARow++
+                if (failuresInARow >= MAX_FAILURES_IN_A_ROW) return served
+            }
+        }
+    }
+    return served
+}
+
+/**
+ * How many rounds may break in a row before the session gives up.
+ *
+ * Bounded rather than open, because a round can fail without waiting - a request this host refuses
+ * comes back at once - so an unbounded "carry on" spins one thread for as long as the screen is
+ * up, which from outside looks exactly like a session that is working.
+ */
+internal const val MAX_FAILURES_IN_A_ROW = 3
+
 /**
  * Measures the fixed offset between this handset and the one it is paired with, and stores it.
  *
@@ -252,6 +310,25 @@ class PeerCalibrateActivity : ComponentActivity() {
     @Volatile private var running = false
 
     /**
+     * Set by the stop button, read between rounds.
+     *
+     * Between rather than inside: a round is fifty seconds of chirps whose answer only exists once
+     * both halves are in, so ending one partway would throw away the measurement it was most of
+     * the way through, for no gain over waiting out the minute.
+     */
+    @Volatile private var stopping = false
+
+    /**
+     * The plan server of a host session in flight, or null when none is serving.
+     *
+     * Held here only so the stop button can reach it. The run thread spends most of a session
+     * parked in that server's accept(), and closing the socket is the only thing that wakes it -
+     * without which the button would take up to five minutes to have any visible effect, which is
+     * indistinguishable from a button that does not work.
+     */
+    @Volatile private var hostPlanServer: CalibrationPlanServer? = null
+
+    /**
      * Whether the WiFi radio was actually held out of power save for this run.
      *
      * On the record rather than assumed: the lock is best effort, and a run whose lock quietly did
@@ -264,9 +341,10 @@ class PeerCalibrateActivity : ComponentActivity() {
 
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
+    private var serveManyAfterPermission = false
 
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) start(verifyingAfterPermission)
+        if (granted) start(verifyingAfterPermission, serveManyAfterPermission)
         else state = state.copy(message = getString(R.string.pair_calibrate_no_permission))
     }
 
@@ -286,15 +364,16 @@ class PeerCalibrateActivity : ComponentActivity() {
                             observations = stored?.observations ?: 0
                         ),
                         actions = PeerCalibrateActions(
-                            calibrate = { begin(verifying = false) },
-                            verify = { begin(verifying = true) },
-                            forget = { forget() }
+                            calibrate = { begin(verifying = false, serveMany = true) },
+                            verify = { begin(verifying = true, serveMany = true) },
+                            forget = { forget() },
+                            stop = { stopServing() }
                         )
                     )
                 }
             }
         }
-        if (intent.getBooleanExtra("auto", false)) begin(intent.getBooleanExtra("verify", false))
+        if (intent.getBooleanExtra("auto", false)) beginFrom(intent)
     }
 
     /**
@@ -307,7 +386,7 @@ class PeerCalibrateActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.getBooleanExtra("auto", false)) begin(intent.getBooleanExtra("verify", false))
+        if (intent.getBooleanExtra("auto", false)) beginFrom(intent)
     }
 
     /**
@@ -324,18 +403,35 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun role(): CalibrationRole? =
         CalibrationRole.entries.firstOrNull { it.name == intent.getStringExtra("role") }
 
-    private fun begin(verifying: Boolean) {
+    /**
+     * The ADB-driven start, which serves one handset unless asked for more.
+     *
+     * One round is what every archived run of this screen did, and it is what a driver expects: a
+     * host that went on serving would still be running five minutes later, and the next
+     * `am start` would find [running] set and be ignored - which looks from outside like a
+     * command that succeeded and measured nothing. `-e serve_many true` opts back in.
+     */
+    private fun beginFrom(intent: Intent) = begin(
+        verifying = intent.getBooleanExtra("verify", false),
+        serveMany = intent.getBooleanExtra("serve_many", false)
+    )
+
+    private fun begin(verifying: Boolean, serveMany: Boolean) {
         if (running) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             verifyingAfterPermission = verifying
+            serveManyAfterPermission = serveMany
             askRecordAudio.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        start(verifying)
+        start(verifying, serveMany)
     }
 
-    private fun start(verifying: Boolean) {
+    private fun start(verifying: Boolean, serveMany: Boolean) {
         running = true
+        // Cleared here rather than when the session ends, so a stop pressed as the last round
+        // finished cannot end the next session before it has served anybody.
+        stopping = false
         state = state.copy(running = true, message = getString(R.string.pair_calibrate_waiting))
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
@@ -347,7 +443,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 // milliseconds. Whether it was actually taken is recorded, not assumed.
                 holdingRadio(radioHoldOf(this), held = { radioHeld = it }) {
                     when (role()) {
-                        CalibrationRole.HOST -> measureAsHost()
+                        CalibrationRole.HOST -> measureAsHost(serveMany)
                         CalibrationRole.SINK -> measureAsSink(verifying)
                         null -> show(getString(R.string.pair_calibrate_no_role))
                     }
@@ -367,121 +463,177 @@ class PeerCalibrateActivity : ComponentActivity() {
      * It stores nothing. The correction belongs to the handset that applies it, and this one does
      * not - what this produces is the answer the sink is waiting for on the socket it delivered on.
      */
-    private fun measureAsHost() {
+    private fun measureAsHost(serveMany: Boolean) {
         val hostId = HostIdentity(filesDir).current()
         val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
         val resultServer = AlignmentResultServer(SyncActivity.RESULT_PORT)
         val planServer = CalibrationPlanServer(PLAN_PORT)
+        // Reachable from the stop button, which ends the wait by closing the socket this thread is
+        // parked in accept() on. Without that the button does nothing visible for five minutes.
+        hostPlanServer = planServer
         try {
             clockServer.start()
             resultServer.start()
             planServer.start()
-            // Which handset this round is with. Set on the accept, because that is the only
-            // moment it is known, and every file this run writes is named with it.
-            var servedSink: String? = null
-            val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS) { request ->
-                // The case names a directory RunStore will create, and it arrived over a socket.
-                // Only the two this handset runs are honoured; anything else ends the run here
-                // rather than at the run store.
-                if (request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY)) {
-                    throw IllegalArgumentException("not a case this handset runs: ${request.caseId}")
+            // Opened once and held across every round, which is the whole of what one press
+            // serving several handsets amounts to: they used to be opened and closed around a
+            // single round, so the second sink to press start found nothing listening at all.
+            val served = if (serveMany) {
+                serveRounds({ stopping }) { alreadyServed ->
+                    serveOneSink(hostId, planServer, resultServer, alreadyServed)
                 }
-                // The sink's name arrived over the same socket and names files on this side too.
-                // Checked for shape here rather than trusted from where it came, on the same terms
-                // as every other id that reaches a file name.
-                if (!HostId.isValid(request.sinkId)) {
-                    throw IllegalArgumentException("not a handset name: ${request.sinkId}")
-                }
-                servedSink = request.sinkId
-                CalibrationPlan(
-                    caseId = request.caseId,
-                    hostId = hostId,
-                    // Far enough out to cover the warm-up and the gap the sink has yet to start.
-                    firstChirpAtHostNanos = System.nanoTime() + PLAN_LEAD_NANOS,
-                    staggerNanos = STAGGER_NANOS,
-                    repeats = CHIRP_REPEATS,
-                    intervalNanos = CHIRP_INTERVAL_NANOS
-                )
-            } ?: return show(
-                getString(R.string.pair_calibrate_failed, planServer.failureCode ?: "PLAN_LOST")
-            )
-            // Non-null by construction: awaitRequest answers a plan only once planFor has run.
-            val sinkId = servedSink ?: return show(
-                getString(R.string.pair_calibrate_failed, "PLAN_UNSIGNED")
-            )
-            show(getString(R.string.pair_calibrate_running))
-            val run = PeerCalibrationRunner(
-                runStore = RunStore(filesDir),
-                caseId = plan.caseId,
-                role = CalibrationRole.HOST,
-                plan = plan,
-                hostNanosNow = { System.nanoTime() }
-            ).run()
-            // Written before anything is answered, so a refused run still leaves its evidence.
-            // Named with the peer, not just the case: a case id names a directory this only ever
-            // mkdirs, so a second sink measured on this host landed on the first one's file and
-            // the directory's own mtime did not move to say so.
-            File(RunStore(filesDir).prepareRun(plan.caseId), hostArtifact(sinkId)).writeText(run.json)
-            fileAttempt("HOST-${plan.caseId}-$sinkId", run.json)
-            Log.i(LOG_TAG, run.json)
-            var outcome = getString(R.string.pair_calibrate_kept, run.refusal ?: "ONE_SIDED_RUN")
-            resultServer.awaitResult(RESULT_TIMEOUT_MILLIS) { message ->
-                // The delivery is signed, and this host waits on one socket that any handset in
-                // the room still holding a plan can reach. Combining a stranger's readings would
-                // not make a worse number, it would make a number about a pair that never ran.
-                if (message.sinkId != sinkId) {
-                    outcome = getString(R.string.pair_calibrate_wrong_sink, shortName(message.sinkId))
-                    return@awaitResult CalibrationReply(null, null, null)
-                }
-                val combined = AlignmentPairing.combine(plan.caseId, run.readings, message)
-                outcome = combined.verdict?.clusterMeanMs?.let { mean ->
-                    val metres = combined.pairs.filterNotNull().map { it.separationMetres }.average()
-                    // Kept rather than only shown. It has had no consumer until now - every gain
-                    // depends on direction alone - and the one it has is not scaling anything: it
-                    // is the only thing that can catch two icons dragged onto the wrong phones.
-                    // Guarded, because a room screen's check is not worth a failed calibration.
-                    runCatching { StoredSeparation(filesDir, sinkId).write(metres) }
-                    getString(R.string.pair_calibrate_host_done, mean, metres)
-                } ?: getString(
-                    R.string.pair_calibrate_kept,
-                    combined.failure?.name ?: "NO_VERDICT"
-                )
-                // Filed here rather than after: this is the only point at which both halves of
-                // the run exist in one place, and before this the combination was never written
-                // down at all - one sentence on a screen, then gone.
-                fileAttempt(
-                    "HOST-${plan.caseId}-$sinkId-PAIRED",
-                    pairedReportJson(
-                        caseId = plan.caseId,
-                        hostId = plan.hostId,
-                        sinkId = sinkId,
-                        combined = combined,
-                        hostReadings = run.readings,
-                        sinkReadings = message.readings,
-                        intervalFrames = chirpIntervalFrames(plan.intervalNanos)
-                    )
-                )
-                CalibrationReply(
-                    // Read through what the sink says it applied, never through this handset's
-                    // idea of it: only the sink knows what it actually used.
-                    measuredOffsetMicros = CalibrationUpdate.measured(
-                        message.appliedOffsetMicros,
-                        combined.verdict
-                    ),
-                    clusterMeanMicros = combined.verdict?.clusterMeanMs?.let { (it * 1000).toLong() },
-                    passed = combined.verdict?.passed
-                )
+            } else {
+                // Spelled out rather than expressed as a loop of one, so that the path every
+                // archived measurement was taken on is the same few lines it always was.
+                if (serveOneSink(hostId, planServer, resultServer, 0) == RoundResult.SERVED) 1 else 0
             }
-            // Kept on the screen rather than replacing what the last sink said. A host that
-            // measures two handsets in a row has two answers, and the pair of them is the whole
-            // point of measuring the second one.
-            record(sinkId, outcome)
-            show(outcome)
+            if (served > 0) show(getString(R.string.pair_calibrate_served, served))
         } finally {
+            hostPlanServer = null
             planServer.stop()
             resultServer.stop()
             clockServer.stop()
         }
+    }
+
+    /**
+     * One handset's turn: wait to be asked, mint the plan, play, and combine the two halves.
+     *
+     * The servers are handed in rather than opened here, because they outlive a round. A sink that
+     * presses start while this host is between handsets has to find the ports already listening,
+     * and that is the difference between one press serving a room and one press serving a phone.
+     *
+     * Nothing is stored here. The correction belongs to the handset that applies it, and this one
+     * does not - what this produces is the answer the sink is waiting for on the socket it
+     * delivered on.
+     */
+    private fun serveOneSink(
+        hostId: String,
+        planServer: CalibrationPlanServer,
+        resultServer: AlignmentResultServer,
+        alreadyServed: Int
+    ): RoundResult {
+        show(
+            if (alreadyServed == 0) getString(R.string.pair_calibrate_waiting)
+            else getString(R.string.pair_calibrate_waiting_next, alreadyServed)
+        )
+        // Which handset this round is with. Set on the accept, because that is the only
+        // moment it is known, and every file this run writes is named with it.
+        var servedSink: String? = null
+        val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS) { request ->
+            // The case names a directory RunStore will create, and it arrived over a socket.
+            // Only the two this handset runs are honoured; anything else ends the run here
+            // rather than at the run store.
+            if (request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY)) {
+                throw IllegalArgumentException("not a case this handset runs: ${request.caseId}")
+            }
+            // The sink's name arrived over the same socket and names files on this side too.
+            // Checked for shape here rather than trusted from where it came, on the same terms
+            // as every other id that reaches a file name.
+            if (!HostId.isValid(request.sinkId)) {
+                throw IllegalArgumentException("not a handset name: ${request.sinkId}")
+            }
+            servedSink = request.sinkId
+            CalibrationPlan(
+                caseId = request.caseId,
+                hostId = hostId,
+                // Far enough out to cover the warm-up and the gap the sink has yet to start.
+                firstChirpAtHostNanos = System.nanoTime() + PLAN_LEAD_NANOS,
+                staggerNanos = STAGGER_NANOS,
+                repeats = CHIRP_REPEATS,
+                intervalNanos = CHIRP_INTERVAL_NANOS
+            )
+        } ?: return when {
+            // The stop button closed the socket this was waiting on, so what came back is the
+            // button working rather than anything having gone wrong. The loop is about to end.
+            stopping -> RoundResult.FAILED
+            planServer.failureCode == CalibrationPlanServer.TIMEOUT -> {
+                // Said only when nothing has been measured yet. After a handset or two this is
+                // how a session ends rather than how one fails, and a failure line under two good
+                // answers reads as the answers themselves being in doubt.
+                if (alreadyServed == 0) {
+                    show(getString(R.string.pair_calibrate_failed, CalibrationPlanServer.TIMEOUT))
+                }
+                RoundResult.NOBODY_ASKED
+            }
+            else -> {
+                show(getString(R.string.pair_calibrate_failed, planServer.failureCode ?: "PLAN_LOST"))
+                RoundResult.FAILED
+            }
+        }
+        // Non-null by construction: awaitRequest answers a plan only once planFor has run.
+        val sinkId = servedSink ?: run {
+            show(getString(R.string.pair_calibrate_failed, "PLAN_UNSIGNED"))
+            return RoundResult.FAILED
+        }
+        show(getString(R.string.pair_calibrate_running))
+        val run = PeerCalibrationRunner(
+            runStore = RunStore(filesDir),
+            caseId = plan.caseId,
+            role = CalibrationRole.HOST,
+            plan = plan,
+            hostNanosNow = { System.nanoTime() }
+        ).run()
+        // Written before anything is answered, so a refused run still leaves its evidence.
+        // Named with the peer, not just the case: a case id names a directory this only ever
+        // mkdirs, so a second sink measured on this host landed on the first one's file and
+        // the directory's own mtime did not move to say so.
+        File(RunStore(filesDir).prepareRun(plan.caseId), hostArtifact(sinkId)).writeText(run.json)
+        fileAttempt("HOST-${plan.caseId}-$sinkId", run.json)
+        Log.i(LOG_TAG, run.json)
+        var outcome = getString(R.string.pair_calibrate_kept, run.refusal ?: "ONE_SIDED_RUN")
+        resultServer.awaitResult(RESULT_TIMEOUT_MILLIS) { message ->
+            // The delivery is signed, and this host waits on one socket that any handset in
+            // the room still holding a plan can reach. Combining a stranger's readings would
+            // not make a worse number, it would make a number about a pair that never ran.
+            if (message.sinkId != sinkId) {
+                outcome = getString(R.string.pair_calibrate_wrong_sink, shortName(message.sinkId))
+                return@awaitResult CalibrationReply(null, null, null)
+            }
+            val combined = AlignmentPairing.combine(plan.caseId, run.readings, message)
+            outcome = combined.verdict?.clusterMeanMs?.let { mean ->
+                val metres = combined.pairs.filterNotNull().map { it.separationMetres }.average()
+                // Kept rather than only shown. It has had no consumer until now - every gain
+                // depends on direction alone - and the one it has is not scaling anything: it
+                // is the only thing that can catch two icons dragged onto the wrong phones.
+                // Guarded, because a room screen's check is not worth a failed calibration.
+                runCatching { StoredSeparation(filesDir, sinkId).write(metres) }
+                getString(R.string.pair_calibrate_host_done, mean, metres)
+            } ?: getString(
+                R.string.pair_calibrate_kept,
+                combined.failure?.name ?: "NO_VERDICT"
+            )
+            // Filed here rather than after: this is the only point at which both halves of
+            // the run exist in one place, and before this the combination was never written
+            // down at all - one sentence on a screen, then gone.
+            fileAttempt(
+                "HOST-${plan.caseId}-$sinkId-PAIRED",
+                pairedReportJson(
+                    caseId = plan.caseId,
+                    hostId = plan.hostId,
+                    sinkId = sinkId,
+                    combined = combined,
+                    hostReadings = run.readings,
+                    sinkReadings = message.readings,
+                    intervalFrames = chirpIntervalFrames(plan.intervalNanos)
+                )
+            )
+            CalibrationReply(
+                // Read through what the sink says it applied, never through this handset's
+                // idea of it: only the sink knows what it actually used.
+                measuredOffsetMicros = CalibrationUpdate.measured(
+                    message.appliedOffsetMicros,
+                    combined.verdict
+                ),
+                clusterMeanMicros = combined.verdict?.clusterMeanMs?.let { (it * 1000).toLong() },
+                passed = combined.verdict?.passed
+            )
+        }
+        // Kept on the screen rather than replacing what the last sink said. A host that
+        // measures two handsets in a row has two answers, and the pair of them is the whole
+        // point of measuring the second one.
+        record(sinkId, outcome)
+        return RoundResult.SERVED
     }
 
     /**
@@ -654,6 +806,20 @@ class PeerCalibrateActivity : ComponentActivity() {
      * may move the constant reads the observation count, and clearing it mid-run would turn the
      * run in flight into a first run - adopted whether or not it passed.
      */
+    /**
+     * Ends a host session after the round in flight, rather than in the middle of one.
+     *
+     * Only a host has anything to stop: a sink's run is one round with nothing after it, so the
+     * button is not offered there. See [stopping] for why the round in flight is left to finish.
+     */
+    private fun stopServing() {
+        if (!running) return
+        stopping = true
+        show(getString(R.string.pair_calibrate_stopping))
+        // What makes the button take effect now instead of at the end of the wait.
+        runCatching { hostPlanServer?.stop() }
+    }
+
     private fun forget() {
         if (running) return
         PairedHost(filesDir).read()?.let { StoredCalibration(filesDir, it.hostId).forget() }

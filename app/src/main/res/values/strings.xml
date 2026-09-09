@@ -67,6 +67,11 @@
     <string name="pair_calibrate_waiting">在等另一台连过来。请在另一台上也按开始。</string>
     <string name="pair_calibrate_clock">正在和另一台对时钟，大约二十秒。这一步不发声。</string>
     <string name="pair_calibrate_running">正在测。两台都别碰，保持安静，大约一分钟。</string>
+    <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
+    <string name="pair_calibrate_stop">停止</string>
+    <string name="pair_calibrate_stop_hint">正在测的这一台会测完，之后不再等新的手机。</string>
+    <string name="pair_calibrate_stopping">这一台测完就结束，不再等下一台了。</string>
+    <string name="pair_calibrate_served">这一轮一共测了 %1$d 台。</string>
     <string name="pair_calibrate_host_done">这台是主机，测量结果记在另一台上。这一轮量到：偏差 %1$.3f 毫秒，两台间距约 %2$.2f 米。</string>
     <string name="pair_calibrate_done">测完了：这一对的偏差是 %1$.3f 毫秒，已经记下来（第 %2$d 次观测）。</string>
     <string name="pair_calibrate_slow_link">这个网络太慢，没法对齐：两台之间一来一回要 %1$.0f 毫秒，超过 %2$.0f 就对不准了。如果这台正在开热点，改成让另一台开热点、这台连过去；如果两台都连着路由器，改成一台开热点、另一台连它。</string>
