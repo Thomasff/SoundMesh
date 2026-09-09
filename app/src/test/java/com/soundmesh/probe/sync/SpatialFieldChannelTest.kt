@@ -165,7 +165,83 @@ class SpatialFieldChannelTest {
             server.stop()
         }
     }
-/**
+    /**
+     * A handset that comes back is the same handset, and the roster has to say so once.
+     *
+     * The roster holds a name until a write to that socket fails, which is a write nobody makes
+     * while nobody is touching the drawing - so a sink that dropped and returned was in it twice,
+     * and a drawing cannot be made of a room where one handset stands in two places. It took the
+     * host's process down.
+     *
+     * The waiting here is on the replacement having been *registered*, not on a count: a count of
+     * one is also what the roster reads a moment before the second connection joins it, so a test
+     * that waited for that would pass against the very bug it is here for. A rule published ahead
+     * of time is pushed to a sink as it registers, so reading it is the sink saying it is in.
+     */
+    @Test
+    fun aSinkThatComesBackIsInTheRoomOnceNotTwice() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        server.start()
+        try {
+            val first = Socket("127.0.0.1", port)
+            first.getOutputStream().apply { write(SpatialFrame.encode(here)); flush() }
+            awaitTrue("the first connection to be named") { server.peerIds() == listOf(here) }
+            server.publish(field(SpatialMode.ROTATE))
+            assertEquals(
+                SpatialFieldCodec.encode(field(SpatialMode.ROTATE)),
+                SpatialFrame.read(first.getInputStream().buffered())
+            )
+
+            val second = Socket("127.0.0.1", port)
+            second.getOutputStream().apply { write(SpatialFrame.encode(here)); flush() }
+            // Only a registered sink is handed the standing rule, so this read is the handshake.
+            assertEquals(
+                SpatialFieldCodec.encode(field(SpatialMode.ROTATE)),
+                SpatialFrame.read(second.getInputStream().buffered())
+            )
+
+            assertEquals(listOf(here), server.peerIds())
+            assertEquals(1, server.clientCount())
+            // And the one it replaced is closed, not left parked on a thread of its own.
+            awaitTrue("the replaced connection to be closed") {
+                first.soTimeout = 50
+                runCatching { first.getInputStream().read() == -1 }.getOrDefault(false)
+            }
+            second.close()
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * Two different handsets are two entries, which is the half of this the other test cannot see.
+     *
+     * A roster that answered "one" to everything would pass the test above and lose a phone.
+     */
+    @Test
+    fun twoHandsetsAreStillTwoEntries() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        server.start()
+        try {
+            val one = Socket("127.0.0.1", port)
+            one.getOutputStream().apply { write(SpatialFrame.encode(here)); flush() }
+            awaitTrue("the first handset to be named") { server.peerIds() == listOf(here) }
+
+            val other = Socket("127.0.0.1", port)
+            other.getOutputStream().apply { write(SpatialFrame.encode(there)); flush() }
+            awaitTrue("both handsets to be named") { server.peerIds().size == 2 }
+
+            assertEquals(setOf(here, there), server.peerIds().toSet())
+            one.close()
+            other.close()
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
      * What the roster is for. Chunks travel over anonymous sockets, so before the announce the
      * host could count its sinks and not name one - and an icon that is not a particular handset
      * is an icon dragging moves nothing in particular.

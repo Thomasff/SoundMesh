@@ -143,4 +143,29 @@ class SpatialRoomTest {
 
         assertEquals(SpatialRoom.defaultIcons(listOf(a, b)), room)
     }
+
+    /**
+     * A name arriving twice draws one icon, because a drawing is what this is for.
+     *
+     * The roster it reads is built from connections rather than from handsets, and a handset that
+     * dropped and came back was in it twice - which SpatialLayout refuses to draw, by construction
+     * and rightly, so the refusal arrived as the host's process ending. The roster is fixed where
+     * it is built; this is the drawing declining to be the place a bad roster becomes a crash.
+     */
+    @Test
+    fun aNameThatArrivesTwiceIsOneIcon() {
+        val room = SpatialRoom.reconciled(emptyList(), listOf(a, b, a))
+
+        assertEquals(listOf(a, b), room.map { it.peerId })
+    }
+
+    /** And the placed icon is kept, not replaced by the default the duplicate would carry. */
+    @Test
+    fun aDuplicateDoesNotMoveTheIconAlreadyPlaced() {
+        val dragged = RoomIcon(a, 10f, 20f)
+
+        val room = SpatialRoom.reconciled(listOf(dragged), listOf(a, b, a))
+
+        assertEquals(dragged, room.first())
+    }
 }

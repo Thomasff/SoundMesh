@@ -78,9 +78,16 @@ object SpatialRoom {
      * stays first however many others come and go.
      */
     fun reconciled(icons: List<RoomIcon>, peerIds: List<String>): List<RoomIcon> {
+        // One icon per name, whatever the roster says. The roster is built from connections rather
+        // than from handsets, so a handset that dropped and came back can be in it twice - and a
+        // room where one handset stands in two places is one SpatialLayout refuses to draw, by
+        // construction and rightly. That refusal used to arrive as the host's process ending.
+        // The roster is fixed where it is built; this is the drawing declining to be where a bad
+        // one becomes a crash.
+        val names = peerIds.distinct()
         val placed = icons.associateBy { it.peerId }
-        val fresh = defaultIcons(peerIds).associateBy { it.peerId }
-        return peerIds.mapNotNull { placed[it] ?: fresh[it] }
+        val fresh = defaultIcons(names).associateBy { it.peerId }
+        return names.mapNotNull { placed[it] ?: fresh[it] }
     }
 
     /**

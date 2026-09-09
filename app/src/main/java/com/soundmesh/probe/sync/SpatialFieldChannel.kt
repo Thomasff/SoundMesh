@@ -151,7 +151,23 @@ class SpatialFieldServer(private val port: Int) {
             unnamedSinks++
             return
         }
-        clients.add(client)
+        // A handset that comes back is the same handset. This roster only lets go of a name when a
+        // write to that socket fails, and while nobody is touching the drawing there are no writes
+        // - so the connection a sink left behind outlives it, and the sink that returns stands in
+        // the room twice. A room where one handset has two places is one SpatialLayout refuses to
+        // draw, by construction, and that refusal reached the listener as the host disappearing.
+        //
+        // The new connection wins rather than being turned away: the old one is only still here
+        // because nothing has been written to it, which is the same reason nobody noticed it die.
+        val replaced = synchronized(clients) {
+            val stale = clients.filter { it.peerId == client.peerId }
+            clients.removeAll(stale)
+            clients.add(client)
+            stale
+        }
+        // Outside the lock, and closed rather than dropped: the thread parked on that socket ends
+        // when the socket does, and a sender thread per departed handset is a leak with a name.
+        for (old in replaced) runCatching { old.socket.close() }
         // After the name, not before: the roster is what a drawing is made of, so the first rule a
         // sink is told is one that could have been drawn knowing it was here.
         current?.let { client.offerLatest(it) }

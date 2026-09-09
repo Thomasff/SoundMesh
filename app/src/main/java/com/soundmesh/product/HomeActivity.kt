@@ -199,9 +199,20 @@ class HomeActivity : ComponentActivity() {
         publish(room)
     }
 
+    /**
+     * Hands the room's drawing to the host, or says why it could not.
+     *
+     * A layout refuses to be built out of a room it cannot draw - two handsets sharing a name, a
+     * handset sitting on the listener - and those refusals are worth keeping. What they are not
+     * worth is the app: this runs off a five-a-second refresh on the main thread, so a roster that
+     * arrived wrong took the whole process down and the listener saw the host vanish. Caught here
+     * rather than softened there, because the next bad roster should still be findable.
+     */
     private fun publish(room: RoomState) {
         val host = SessionService.ACTIVE as? HostSession ?: return
-        val layout = SpatialRoom.layoutOf(room.icons) ?: return
+        val layout = runCatching { SpatialRoom.layoutOf(room.icons) }
+            .onFailure { Log.e(LOG_TAG, "this room cannot be drawn, so it was not published", it) }
+            .getOrNull() ?: return
         host.publishSpatialField(
             SpatialField(room.mode, layout, pan = room.pan.toDouble().coerceIn(-1.0, 1.0))
         )
