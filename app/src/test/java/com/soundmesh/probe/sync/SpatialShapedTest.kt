@@ -5,6 +5,7 @@ import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SpatialPosition
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -164,5 +165,62 @@ class SpatialShapedTest {
 
         val left = firstLeftSample(shaped)
         assertTrue("it started at $left, not where the old rule left it (~8485)", left in 8_300..8_700)
+    }
+
+    /**
+     * One handset straight ahead under [SpatialMode.SPLIT] carries both sides equally and the
+     * whole-room normalisation scales it to unity, so what comes back is the fold with no placement
+     * gain folded into the arithmetic.
+     */
+    private fun solo(separation: Double) = SpatialField(
+        SpatialMode.SPLIT,
+        SpatialLayout(listOf(SpatialPosition("solo", 0.0, 1.0))),
+        separation = separation
+    )
+
+    private fun steadyPair(left: Int, right: Int): ByteArray {
+        val pcm = ByteArray(SyncRenderer.FRAMES_PER_CHUNK * SyncRenderer.CHANNELS * 2)
+        for (frame in 0 until SyncRenderer.FRAMES_PER_CHUNK) {
+            val at = frame * 4
+            pcm[at] = (left and 0xFF).toByte()
+            pcm[at + 1] = (left shr 8).toByte()
+            pcm[at + 2] = (right and 0xFF).toByte()
+            pcm[at + 3] = (right shr 8).toByte()
+        }
+        return pcm
+    }
+
+    private fun leftSampleAt(pcm: ByteArray, frame: Int): Int {
+        val at = frame * 4
+        return ((pcm[at].toInt() and 0xFF) or (pcm[at + 1].toInt() shl 8)).toShort().toInt()
+    }
+
+    /**
+     * The separation knob is dragged, not switched, so a drag publishes a new rule several times a
+     * second and each one moves the fold. The renderer knows what the previous chunk was heard under
+     * and has to say so, exactly as it already does for the gain - otherwise every one of those
+     * publications is a step at a chunk edge, worth up to half of the other channel.
+     *
+     * The two cannot share one argument: dragging an icon moves the gain and leaves the fold alone,
+     * dragging the knob does the reverse, and this test is the second of those.
+     */
+    @Test
+    fun aChangedSeparationIsRampedIntoRatherThanSteppedInto() {
+        val pcm = steadyPair(10_000, 4_000)
+
+        val shaped = spatialShaped(5, 0L, pcm, solo(1.0), "solo", wasUnder = solo(0.0))
+
+        assertEquals("the first frame is not where the previous chunk left off", 10_000, leftSampleAt(shaped, 0))
+        assertEquals("the fold did not move across the chunk", 8_500, leftSampleAt(shaped, SyncRenderer.FRAMES_PER_CHUNK / 2))
+    }
+
+    /** A handset that has been playing unshaped was folding in none of the other channel, not half of it. */
+    @Test
+    fun aHandsetUnderNoRuleAtAllIsRampedInFromTheWholeMix() {
+        val pcm = steadyPair(10_000, 4_000)
+
+        val shaped = spatialShaped(5, 0L, pcm, solo(1.0), "solo", wasUnder = null)
+
+        assertEquals(10_000, leftSampleAt(shaped, 0))
     }
 }

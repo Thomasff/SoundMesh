@@ -1,9 +1,15 @@
 package com.soundmesh.core
 
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Multiplies one chunk of stereo PCM by the gain a spatial rule gives this handset.
+ * Turns one chunk of stereo PCM into what one handset plays of it.
+ *
+ * Two steps, and they answer different questions. The fold decides which part of the mix this
+ * handset carries - all of it, what the channels share, or what they disagree about. The gain
+ * decides how loudly the room wants that part just now. Both ramp across the chunk, and for the
+ * same reason: each one steps at a chunk edge when the listener moves the control that drives it.
  *
  * The rule is a function of the host instant and nothing else, so this needs no state and no
  * messages: every handset evaluates the same function at the same instants and the room agrees
@@ -40,6 +46,11 @@ object SpatialShaper {
      * law is still a function of the host instant; what this argument says is where the room was
      * coming from, which the law cannot know because the previous chunk was under a different law
      * or under none. Null means the two agree, which is every chunk of ordinary playback.
+     *
+     * [fromFold] is that same argument for the fold, and it needs its own because the two move for
+     * different reasons: dragging an icon moves the gain and leaves the fold where it was, dragging
+     * the separation knob does the reverse. Zero is what a handset under no rule was heard at - the
+     * fold being how much of the other channel it was folding in, which was none of it.
      */
     fun shape(
         pcm: ByteArray,
@@ -47,7 +58,8 @@ object SpatialShaper {
         peerId: String,
         startHostNanos: Long,
         sampleRate: Int,
-        from: StereoGain? = null
+        from: StereoGain? = null,
+        fromFold: Double? = null
     ): ByteArray {
         require(sampleRate > 0) { "frames need a rate to become instants: $sampleRate" }
         require(pcm.size % BYTES_PER_FRAME == 0) {
@@ -61,6 +73,9 @@ object SpatialShaper {
         val spanNanos = frames.toLong() * 1_000_000_000L / sampleRate
         val end = field.gainAt(peerId, startHostNanos + spanNanos)
 
+        val endFold = field.foldFor(peerId)
+        val beginFold = fromFold ?: endFold
+
         val out = ByteArray(pcm.size)
         for (frame in 0 until frames) {
             // frame / frames, not frame / (frames - 1): the last frame stops just short of `end`,
@@ -70,8 +85,15 @@ object SpatialShaper {
             val left = begin.left + (end.left - begin.left) * across
             val right = begin.right + (end.right - begin.right) * across
             val at = frame * BYTES_PER_FRAME
-            writeSample(out, at, sampleAt(pcm, at) * left)
-            writeSample(out, at + BYTES_PER_SAMPLE, sampleAt(pcm, at + BYTES_PER_SAMPLE) * right)
+            val fold = beginFold + (endFold - beginFold) * across
+            val own = 1.0 - abs(fold)
+            val sentLeft = sampleAt(pcm, at)
+            val sentRight = sampleAt(pcm, at + BYTES_PER_SAMPLE)
+            // Both channels of the fold read both channels of the source, so the source samples are
+            // read out before either is written. Writing into `out` rather than `pcm` already keeps
+            // them apart, and this keeps it that way if that ever changes.
+            writeSample(out, at, (own * sentLeft + fold * sentRight) * left)
+            writeSample(out, at + BYTES_PER_SAMPLE, (fold * sentLeft + own * sentRight) * right)
         }
         return out
     }

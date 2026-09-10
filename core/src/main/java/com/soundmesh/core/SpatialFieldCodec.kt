@@ -18,22 +18,37 @@ package com.soundmesh.core
  */
 object SpatialFieldCodec {
     const val MAGIC = "soundmesh-spatial"
-    const val VERSION = 1
 
-    private const val HEADER_FIELDS = 7
-    private const val POSITION_FIELDS = 3
+    /**
+     * Two since the separation knob and the parts joined the rule.
+     *
+     * Both ends refuse anything else rather than reading what they recognise, which is the whole
+     * point of the number: a build that defaulted a missing part to the middle would render a room
+     * the sender did not draw while believing it agreed with them.
+     */
+    const val VERSION = 2
+
+    private const val HEADER_FIELDS = 8
+    private const val POSITION_FIELDS = 4
+
+    // Written out rather than taken from an enum because there is no enum: which part a handset
+    // carries is a membership of [SpatialField.sideIds], and a two-valued enum beside a set that
+    // already says the same thing is a second place for the answer to be wrong.
+    private const val MIDDLE = "MIDDLE"
+    private const val SIDES = "SIDES"
 
     fun encode(field: SpatialField): String {
         val lines = ArrayList<String>(field.layout.positions.size + 1)
         lines.add(
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
-                "${field.epochHostNanos} ${field.layout.positions.size}"
+                "${field.epochHostNanos} ${field.separation} ${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
             require(position.peerId.isNotEmpty() && position.peerId.none { it.isWhitespace() }) {
                 "a handset name is a wire field: it must be non-empty and carry no whitespace"
             }
-            lines.add("${position.peerId} ${position.x} ${position.y}")
+            val part = if (position.peerId in field.sideIds) SIDES else MIDDLE
+            lines.add("${position.peerId} ${position.x} ${position.y} $part")
         }
         return lines.joinToString("\n")
     }
@@ -57,15 +72,23 @@ object SpatialFieldCodec {
             ?: throw IllegalArgumentException("unreadable pan: ${header[4]}")
         val epochHostNanos = header[5].toLongOrNull()
             ?: throw IllegalArgumentException("unreadable epoch: ${header[5]}")
-        val count = header[6].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[6]}")
+        val separation = header[6].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable separation: ${header[6]}")
+        val count = header[7].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[7]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
         }
+        val sideIds = mutableSetOf<String>()
         val positions = (1..count).map { line ->
             val fields = lines[line].split(" ")
             require(fields.size == POSITION_FIELDS) {
                 "handset $line has ${fields.size} fields, expected $POSITION_FIELDS"
+            }
+            when (fields[3]) {
+                SIDES -> sideIds += fields[0]
+                MIDDLE -> Unit
+                else -> throw IllegalArgumentException("unknown part: ${fields[3]}")
             }
             SpatialPosition(
                 peerId = fields[0],
@@ -83,7 +106,9 @@ object SpatialFieldCodec {
             layout = SpatialLayout(positions),
             periodNanos = periodNanos,
             pan = pan,
-            epochHostNanos = epochHostNanos
+            epochHostNanos = epochHostNanos,
+            separation = separation,
+            sideIds = sideIds
         )
     }
 }

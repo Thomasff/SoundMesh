@@ -132,4 +132,126 @@ class SpatialShaperTest {
 
         assertTrue(thrown.exceptionOrNull() is IllegalArgumentException)
     }
+
+    /**
+     * One handset straight ahead under [SpatialMode.SPLIT] carries both sides equally, and the
+     * whole-room normalisation then scales it to exactly unity - so what comes back out is the
+     * fold on its own, with no placement gain mixed into the arithmetic being checked.
+     */
+    private fun soloField(separation: Double, sides: Set<String> = emptySet()) = SpatialField(
+        mode = SpatialMode.SPLIT,
+        layout = SpatialLayout(listOf(SpatialPosition("solo", 0.0, 1.0))),
+        separation = separation,
+        sideIds = sides
+    )
+
+    /** A chunk whose two channels carry different constants, so a fold is visible in the output. */
+    private fun steadyPair(left: Int, right: Int, frames: Int = framesPerChunk): ByteArray {
+        val pcm = ByteArray(frames * 4)
+        for (frame in 0 until frames) {
+            val at = frame * 4
+            pcm[at] = (left and 0xFF).toByte()
+            pcm[at + 1] = (left shr 8).toByte()
+            pcm[at + 2] = (right and 0xFF).toByte()
+            pcm[at + 3] = (right shr 8).toByte()
+        }
+        return pcm
+    }
+
+    /** What both channels agree about, on both channels of the handset carrying it. */
+    @Test
+    fun aHandsetCarryingTheMiddlePlaysWhatTheTwoChannelsShare() {
+        val shaped = SpatialShaper.shape(steadyPair(10_000, 4_000), soloField(1.0), "solo", 0L, sampleRate)
+
+        assertEquals(7_000, leftChannel(shaped)[0])
+        assertEquals(7_000, rightChannel(shaped)[0])
+    }
+
+    /** What they disagree about, and the two channels of it are opposites - that is what a side is. */
+    @Test
+    fun aHandsetCarryingTheSidesPlaysWhatTheTwoChannelsDisagreeAbout() {
+        val field = soloField(1.0, setOf("solo"))
+
+        val shaped = SpatialShaper.shape(steadyPair(10_000, 4_000), field, "solo", 0L, sampleRate)
+
+        assertEquals(3_000, leftChannel(shaped)[0])
+        assertEquals(-3_000, rightChannel(shaped)[0])
+    }
+
+    /**
+     * The limit this effect has to be honest about. Anything panned to the centre lives in both
+     * channels identically, so the sides of it are nothing at all - and a mono recording is that
+     * case for the whole song. A handset given the sides of mono material is silent, not quiet.
+     *
+     * This is why the rule is "everything sitting in the middle" and never "the vocal": the kick
+     * and the bass usually sit there too, and they leave with it.
+     */
+    @Test
+    fun theSidesOfMaterialTheChannelsAgreeOnAreSilent() {
+        val field = soloField(1.0, setOf("solo"))
+
+        val shaped = SpatialShaper.shape(steady(12_000), field, "solo", 0L, sampleRate)
+
+        assertArrayEquals(ByteArray(shaped.size), shaped)
+    }
+
+    /**
+     * The two parts are a decomposition, not two effects that merely sound different: played
+     * together they are the mix that was sent, sample for sample. A rule that failed this would be
+     * throwing part of the song away, and nothing else here would notice.
+     */
+    @Test
+    fun theMiddleAndTheSidesAddBackUpToWhatWasSent() {
+        val pcm = steadyPair(10_000, 4_000)
+
+        val middle = SpatialShaper.shape(pcm, soloField(1.0), "solo", 0L, sampleRate)
+        val sides = SpatialShaper.shape(pcm, soloField(1.0, setOf("solo")), "solo", 0L, sampleRate)
+
+        assertEquals(10_000, leftChannel(middle)[0] + leftChannel(sides)[0])
+        assertEquals(4_000, rightChannel(middle)[0] + rightChannel(sides)[0])
+    }
+
+    /** The knob at zero has to leave the samples exactly as they were, or it is not a knob. */
+    @Test
+    fun aKnobAtZeroPassesBothChannelsThrough() {
+        val pcm = steadyPair(10_000, 4_000)
+
+        val shaped = SpatialShaper.shape(pcm, soloField(0.0, setOf("solo")), "solo", 0L, sampleRate)
+
+        assertArrayEquals(pcm, shaped)
+    }
+
+    /**
+     * The knob has the same edge the gain had, and for the same reason. Dragging it publishes a new
+     * rule several times a second, and each one moves the fold - so a fold that were held for a whole
+     * chunk would step at every chunk edge while a finger is down. The step is worth up to half of the
+     * other channel, which is the class of thing a listener already reported hearing once
+     * (the gain arriving in one jump, fixed separately), not the class measured as inaudible.
+     *
+     * Checked as arithmetic rather than as a shape: at the halfway frame the fold must be halfway,
+     * which for these two channels is one exact sample value and nothing else.
+     */
+    @Test
+    fun theFoldRampsThroughAChunkRatherThanSteppingAtItsEdge() {
+        val pcm = steadyPair(10_000, 4_000)
+
+        val shaped = SpatialShaper.shape(
+            pcm, soloField(1.0), "solo", 0L, sampleRate, fromFold = 0.0
+        )
+
+        val left = leftChannel(shaped)
+        assertEquals("the first frame is where the previous chunk left off", 10_000, left.first())
+        // Halfway to a fold of 0.5: 0.75 of its own channel and 0.25 of the other.
+        assertEquals("the fold did not move across the chunk", 8_500, left[framesPerChunk / 2])
+    }
+
+    /** A handset already under this same rule has nothing to ramp from, and must not invent one. */
+    @Test
+    fun aFoldThatDidNotChangeIsHeldFlatAcrossTheChunk() {
+        val shaped = SpatialShaper.shape(steadyPair(10_000, 4_000), soloField(1.0), "solo", 0L, sampleRate)
+
+        val left = leftChannel(shaped)
+        assertEquals(7_000, left.first())
+        assertEquals(7_000, left.last())
+    }
 }

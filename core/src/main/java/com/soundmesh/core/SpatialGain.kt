@@ -48,11 +48,30 @@ data class SpatialField(
     /** Where the listener has dragged the source: -1 hard left, +1 hard right. Only read by [SpatialMode.PAN]. */
     val pan: Double = 0.0,
     /** The instant the circuit is measured from, so every handset starts the sweep at the same angle. */
-    val epochHostNanos: Long = 0L
+    val epochHostNanos: Long = 0L,
+    /**
+     * How far apart the room pulls the mix, from 0 (every handset plays all of it) to 1.
+     *
+     * A knob rather than a switch because it is also the way this degrades. Separating the mix asks
+     * much more of the alignment than placing it does: the handsets are no longer playing the same
+     * waveform, so the time between them stops being a colouration and becomes the thing that decides
+     * where the listener hears the sound. Past about a millisecond the earlier handset takes the
+     * image outright and the separation is not merely spoiled but gone. Winding this down lands the
+     * room back on the mix it was already playing, which is a worse effect rather than a broken one.
+     */
+    val separation: Double = 0.0,
+    /** Which handsets carry the sides. Every handset the drawing names and this does not carries the middle. */
+    val sideIds: Set<String> = emptySet()
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
         require(pan in -1.0..1.0) { "pan runs from -1 to +1: $pan" }
+        require(separation in 0.0..1.0) { "separation runs from 0 to 1: $separation" }
+        // Refused rather than ignored: a name that is in neither the drawing nor an error message is
+        // a handset the listener assigned and cannot see the assignment of.
+        require(sideIds.all { layout.contains(it) }) {
+            "these handsets carry the sides but are not in the drawing: ${sideIds.filterNot { layout.contains(it) }}"
+        }
     }
 
     /** Where the source is at [hostNanos], as an azimuth. Meaningless for [SpatialMode.SPLIT]. */
@@ -68,6 +87,33 @@ data class SpatialField(
         // rotation but not by dragging: a control whose two ends meet has no ends.
         SpatialMode.PAN -> pan * PI / 2.0
         SpatialMode.SPLIT -> 0.0
+    }
+
+    /**
+     * How much of the other channel [peerId] folds into each of its own, before any placement gain.
+     *
+     * A mix is two channels because someone placed each instrument by how loudly it appears in each.
+     * Anything they placed in the middle appears in both identically, so adding the channels keeps it
+     * and subtracting them cancels it exactly; anything they placed to a side survives the subtraction
+     * and is thinned by the addition. That is the whole mechanism, and it is one addition per sample.
+     *
+     * Both halves are the same shape with one sign changed, so a single signed number says which part
+     * a handset carries and how much of it: the handset keeps 1 - abs(fold) of its own channel and
+     * folds [fold] of the other one in. At +1/2 that is exactly the middle on both channels, at -1/2
+     * exactly the sides, and at 0 the mix untouched. Nothing else in this class has to know.
+     *
+     * Two things this cannot do, both of which have to reach the listener as words rather than as a
+     * surprise. It divides by **where a sound was placed**, never by what instrument it is - the kick
+     * and the bass sit in the middle with the voice and leave with it. And material the two channels
+     * agree on has no sides at all, so a handset given the sides of a mono recording is silent.
+     *
+     * The two parts are also not equally loud - in most music the middle carries far more energy than
+     * the sides - and nothing here corrects for that. Whether it should is a question about what a
+     * room sounds like, so it waits for a listener rather than for an argument.
+     */
+    fun foldFor(peerId: String): Double {
+        require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
+        return if (peerId in sideIds) -separation / 2.0 else separation / 2.0
     }
 
     /**

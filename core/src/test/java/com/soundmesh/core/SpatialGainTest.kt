@@ -170,4 +170,65 @@ class SpatialGainTest {
     fun askingForAHandsetTheLayoutDoesNotHoldThrows() {
         SpatialField(mode = SpatialMode.PAN, layout = pair).gainAt("elsewhere", 0L)
     }
+
+    /**
+     * Full separation on a handset carrying the middle is exactly the mid signal: half of each
+     * channel, which is what the two channels agree about. Expressed as one signed number rather
+     * than a matrix because both rows of that matrix hold the same two values swapped - a handset
+     * keeps [1 - abs(fold)] of its own channel and folds [fold] of the other one in.
+     */
+    @Test
+    fun aHandsetCarryingTheMiddleFoldsInHalfOfTheOtherChannel() {
+        val field = SpatialField(mode = SpatialMode.SPLIT, layout = pair, separation = 1.0)
+
+        assertEquals(0.5, field.foldFor("left"), 1e-12)
+        assertEquals(0.5, field.foldFor("right"), 1e-12)
+    }
+
+    /** The sides are the same fold with the sign turned round: what the two channels disagree about. */
+    @Test
+    fun aHandsetCarryingTheSidesFoldsTheOtherChannelInNegated() {
+        val field = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, separation = 1.0, sideIds = setOf("right")
+        )
+
+        assertEquals(0.5, field.foldFor("left"), 1e-12)
+        assertEquals(-0.5, field.foldFor("right"), 1e-12)
+    }
+
+    /**
+     * The knob at zero is the whole point of it being a knob: every handset plays the mix it was
+     * sent, which is what the room did before this existed. It is also where the room lands when
+     * the sync is too poor to carry a separation, so this is the degraded state as much as the
+     * default one.
+     */
+    @Test
+    fun aKnobAtZeroLeavesEveryHandsetPlayingTheWholeMix() {
+        val field = SpatialField(mode = SpatialMode.SPLIT, layout = pair, sideIds = setOf("right"))
+
+        assertEquals(0.0, field.foldFor("left"), 1e-12)
+        assertEquals(0.0, field.foldFor("right"), 1e-12)
+    }
+
+    /** Halfway along the knob is halfway to the fold, so the control has no dead travel. */
+    @Test
+    fun theKnobMovesProportionallyRatherThanSnapping() {
+        val field = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, separation = 0.5, sideIds = setOf("right")
+        )
+
+        assertEquals(0.25, field.foldFor("left"), 1e-12)
+        assertEquals(-0.25, field.foldFor("right"), 1e-12)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun aSeparationBeyondTheEndsOfTheKnobIsRefused() {
+        SpatialField(mode = SpatialMode.SPLIT, layout = pair, separation = 1.5)
+    }
+
+    /** A name the drawing does not show cannot be given a part in it. */
+    @Test(expected = IllegalArgumentException::class)
+    fun givingTheSidesToAHandsetTheDrawingDoesNotShowIsRefused() {
+        SpatialField(mode = SpatialMode.SPLIT, layout = pair, sideIds = setOf("elsewhere"))
+    }
 }

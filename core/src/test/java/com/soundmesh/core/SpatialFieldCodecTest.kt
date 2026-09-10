@@ -80,7 +80,7 @@ class SpatialFieldCodecTest {
     @Test(expected = IllegalArgumentException::class)
     fun aHandsetSittingOnTheListenerIsRefusedOnArrivalToo() {
         SpatialFieldCodec.decode(
-            "${SpatialFieldCodec.MAGIC} ${SpatialFieldCodec.VERSION} PAN 1000 0.0 0 1\na 0.0 0.0"
+            "${SpatialFieldCodec.MAGIC} ${SpatialFieldCodec.VERSION} PAN 1000 0.0 0 0.0 1\na 0.0 0.0 MIDDLE"
         )
     }
 
@@ -93,5 +93,49 @@ class SpatialFieldCodecTest {
                 layout = SpatialLayout(listOf(SpatialPosition("a b", 1.0, 0.0)))
             )
         )
+    }
+
+    private val separated = SpatialField(
+        mode = SpatialMode.SPLIT,
+        layout = SpatialLayout(
+            listOf(
+                SpatialPosition("a1b2c3d4e5f60718", -0.7, 0.25),
+                SpatialPosition("0918273645abcdef", 0.7, 0.25)
+            )
+        ),
+        separation = 0.7,
+        sideIds = setOf("0918273645abcdef")
+    )
+
+    /**
+     * The knob and the parts travel with the drawing rather than in a message of their own, for the
+     * reason the whole rule travels together: a handset holding this drawing and the previous
+     * assignment would render a room nobody drew and have no way to notice.
+     */
+    @Test
+    fun theKnobAndThePartsSurviveTheRoundTrip() {
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(separated))
+
+        assertEquals(separated.separation, back.separation, 0.0)
+        assertEquals(separated.sideIds, back.sideIds)
+        for (peerId in separated.layout.peerIds) {
+            assertEquals(separated.foldFor(peerId), back.foldFor(peerId), 0.0)
+        }
+    }
+
+    /** A part this build cannot render is a room it cannot draw, and is refused like an unknown mode. */
+    @Test(expected = IllegalArgumentException::class)
+    fun aPartThisBuildDoesNotHaveIsRefused() {
+        SpatialFieldCodec.decode(SpatialFieldCodec.encode(separated).replaceFirst("MIDDLE", "CEILING"))
+    }
+
+    /**
+     * A handset line from the older format carries no part at all. Refused rather than defaulted to
+     * the middle: the two builds would then disagree about the room while both believed they agreed,
+     * which is the one failure the version number exists to prevent.
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun aHandsetLineWithNoPartOnItIsRefused() {
+        SpatialFieldCodec.decode(SpatialFieldCodec.encode(separated).replaceFirst(" MIDDLE", ""))
     }
 }

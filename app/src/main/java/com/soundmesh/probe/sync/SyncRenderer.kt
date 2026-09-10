@@ -92,7 +92,8 @@ internal fun spatialShaped(
         peerId,
         playAtHostNanos,
         SyncRenderer.SAMPLE_RATE,
-        from = cameFrom(wasUnder, field, peerId, playAtHostNanos)
+        from = cameFrom(wasUnder, field, peerId, playAtHostNanos),
+        fromFold = foldCameFrom(wasUnder, field, peerId)
     )
 }
 
@@ -121,6 +122,25 @@ private fun cameFrom(
     if (wasUnder === now) return null
     if (wasUnder == null || !wasUnder.layout.contains(peerId)) return StereoGain(1.0, 1.0)
     return wasUnder.gainAt(peerId, playAtHostNanos)
+}
+
+/**
+ * How much of the other channel the room was folding in a moment ago, when that is not what this
+ * rule asks for.
+ *
+ * A second function rather than a second return value from [cameFrom] because the two answer to
+ * different controls: dragging an icon moves the gain and leaves the fold where it was, dragging
+ * the separation knob does the reverse. Sharing one would make each of them ramp whenever the
+ * other did, which is a step at a chunk edge dressed as a smoothing.
+ *
+ * Zero for a handset that was playing under no rule at all, because folding in none of the other
+ * channel is exactly what playing the mix unshaped is. A handset the old rule did not name is the
+ * same case, for the same reason it is in [cameFrom].
+ */
+private fun foldCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: String): Double? {
+    if (wasUnder === now) return null
+    if (wasUnder == null || !wasUnder.layout.contains(peerId)) return 0.0
+    return wasUnder.foldFor(peerId)
 }
 
 /**
