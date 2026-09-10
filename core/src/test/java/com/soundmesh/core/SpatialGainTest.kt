@@ -323,4 +323,61 @@ class SpatialGainTest {
     fun aCrossoverAboveAnythingAudibleIsRefused() {
         SpatialField(mode = SpatialMode.SPLIT, layout = pair, crossoverHz = 30_000.0)
     }
+
+    /**
+     * Dragging an icon further from the listener used to do nothing at all: every rule read the
+     * direction and threw the radius away, so a room drawn with one handset across the table and one
+     * at arm's length rendered as though both were the same distance off. It does something now.
+     *
+     * Read as a ratio between the two handsets rather than as an absolute, because that is the part
+     * the drawing can actually say. Moving one of them twice as far doubles what it plays relative to
+     * the other; how loud the room is overall is still the power normalisation's business.
+     */
+    @Test
+    fun aHandsetDraggedFurtherAwayPlaysLouderThanTheOneThatDidNotMove() {
+        val near = SpatialLayout(
+            listOf(SpatialPosition("moved", 0.0, 1.0), SpatialPosition("still", 1.0, 0.0))
+        )
+        val far = SpatialLayout(
+            listOf(SpatialPosition("moved", 0.0, 2.0), SpatialPosition("still", 1.0, 0.0))
+        )
+
+        val before = ratioOf(SpatialField(mode = SpatialMode.PAN, layout = near))
+        val after = ratioOf(SpatialField(mode = SpatialMode.PAN, layout = far))
+        assertEquals(2.0, after / before, 1e-9)
+    }
+
+    private fun ratioOf(field: SpatialField): Double =
+        field.gainAt("moved", 0L).left / field.gainAt("still", 0L).left
+
+    /**
+     * The same room drawn larger is the same room. This is the whole reason the drawing is allowed
+     * to carry no units: what every rule reads is a ratio, and a ratio does not know the scale.
+     *
+     * One handset is drawn close enough to the listener that the correction is capped, and that is
+     * the point of these particular numbers. Without it the check is very nearly an identity: the
+     * whole-room power normalisation divides out any factor common to every handset, so a distance
+     * term measured in absolute units would satisfy it too. The cap is the one part of this that has
+     * to be told the scale, so it is the part worth pointing a test at.
+     */
+    @Test
+    fun drawingTheSameRoomLargerLeavesEveryHandsetPlayingWhatItWas() {
+        val small = SpatialField(
+            mode = SpatialMode.SPLIT,
+            layout = SpatialLayout(
+                listOf(SpatialPosition("a", -0.03, 0.04), SpatialPosition("b", 0.6, 0.8))
+            )
+        )
+        val large = SpatialField(
+            mode = SpatialMode.SPLIT,
+            layout = SpatialLayout(
+                listOf(SpatialPosition("a", -0.3, 0.4), SpatialPosition("b", 6.0, 8.0))
+            )
+        )
+
+        for (peerId in listOf("a", "b")) {
+            assertEquals(small.gainAt(peerId, 0L).left, large.gainAt(peerId, 0L).left, 1e-12)
+            assertEquals(small.gainAt(peerId, 0L).right, large.gainAt(peerId, 0L).right, 1e-12)
+        }
+    }
 }

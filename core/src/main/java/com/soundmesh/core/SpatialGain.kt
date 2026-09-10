@@ -201,7 +201,11 @@ data class SpatialField(
         // cannot render. Sharing the sound out evenly is a wrong position; silence is a dropout,
         // which is worse and which a listener would blame on the network.
         if (power <= 0.0) {
-            val even = sqrt(1.0 / layout.peerIds.size)
+            // Evenly at the listener rather than evenly at the handsets, which for a room whose
+            // handsets are all the same distance off is the same arithmetic this used to do.
+            val reaches = layout.peerIds.associateWith { layout.distanceGainOf(it) }
+            val evenScale = sqrt(reaches.values.sumOf { it * it })
+            val even = reaches.getValue(peerId) / evenScale
             return StereoGain(even, even)
         }
         val scale = 1.0 / sqrt(power)
@@ -209,9 +213,18 @@ data class SpatialField(
         return StereoGain(mine.left * scale, mine.right * scale)
     }
 
+    /**
+     * What the rule asks of [peerId] before the room is normalised, distance included.
+     *
+     * The distance correction multiplies whatever the mode decided rather than being a mode of its
+     * own, because it answers a different question: the mode says how loud this handset should be
+     * heard, and this says what it has to play to be heard that loudly from where it is standing.
+     * Every mode wants it, so it sits outside the branch.
+     */
     private fun rawGain(peerId: String, hostNanos: Long): StereoGain {
         val azimuth = layout.azimuthOf(peerId)
-        return when (mode) {
+        val reach = layout.distanceGainOf(peerId)
+        val placed = when (mode) {
             SpatialMode.ROTATE, SpatialMode.PAN -> {
                 // Raised cosine of the angular gap: full facing the source, nothing facing away.
                 // For the two-handset case this is exactly constant-power panning; for more it is
@@ -229,6 +242,7 @@ data class SpatialField(
                 StereoGain(sqrt((1.0 - sideways) / 2.0), sqrt((1.0 + sideways) / 2.0))
             }
         }
+        return StereoGain(placed.left * reach, placed.right * reach)
     }
 
     companion object {

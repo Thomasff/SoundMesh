@@ -167,7 +167,7 @@
     <string name="counter_sinks">从机（在收/报过名）</string>
 
     <string name="room_title">房间摆位</string>
-    <string name="room_hint">拖动手机图标，摆成它们相对你的大致方位。中间那个点是你，不用拖；画多大都一样，只有方向算数。</string>
+    <string name="room_hint">拖动手机图标，摆成它们相对你的大致方位和远近。中间那个点是你，不用拖。整张图画多大都一样，算数的是各台之间的比例。摆得远的那台会自动放响一点补回距离——只补了音量，没补声音多跑的那段时间。</string>
     <string name="room_you">你</string>
     <string name="room_this_phone">这台</string>
     <string name="room_mode_rotate">旋转</string>
