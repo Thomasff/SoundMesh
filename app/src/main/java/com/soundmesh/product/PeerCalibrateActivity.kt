@@ -70,6 +70,47 @@ import kotlin.math.abs
 internal const val MAX_FOLD_STEP_MICROS = 5_000L
 
 /**
+ * RunStore accepts `[A-Z][0-9]+` and never clears a directory it is handed, so a case id names a
+ * place on disk rather than a run. Every letter is already spoken for by an archived series, and
+ * C1 landed on top of one: the first hardware run overwrote the calibration.wav an earlier
+ * alignment run had left in runs/C1 on both handsets. Ninety and up is past the end of every
+ * series the harness has recorded.
+ */
+internal const val CASE_MEASURE = "C90"
+internal const val CASE_VERIFY = "C91"
+
+/**
+ * The experiment arm, which is a run the link gate would have refused.
+ *
+ * Its own directory rather than a flag inside the measurement's, for the reason the two above are
+ * separate: a case id is a place, and an experiment landing in runs/C90 would overwrite the
+ * calibration the pair actually uses with a run taken on a link known to be too slow to align.
+ *
+ * A directory is also a better record of the arm than a field would be. What is wanted later is
+ * "was this run allowed past the gate", and that question is answered by which folder the file is
+ * in, whether or not anything inside the file was written to say so. Whether the gate *would*
+ * have fired is a different question, and the link quality in the clock report answers that one.
+ */
+internal const val CASE_SLOW_LINK = "C92"
+
+/**
+ * Which of the three a press is, or null if it is not one of them.
+ *
+ * Null is the verification asked for with the gate open. A verification measures what is left
+ * after the stored constant is applied, and the experiment arm is defined by never touching that
+ * constant - so the combination names no run, and the alternative to saying so is picking one of
+ * the two silently. A driver that passed both would then read a residual as a measurement, which
+ * is the shape of the mistake that has already cost this project a day: a flag that went missing
+ * swapped the arm and nothing in the result said which one had run.
+ */
+internal fun calibrationCase(verifying: Boolean, allowSlowLink: Boolean): String? = when {
+    verifying && allowSlowLink -> null
+    allowSlowLink -> CASE_SLOW_LINK
+    verifying -> CASE_VERIFY
+    else -> CASE_MEASURE
+}
+
+/**
  * Whether a finished run may move the correction this handset carries.
  *
  * The run is already known to be readable by the time this is asked - [CalibrationUpdate.measured]
@@ -342,9 +383,10 @@ class PeerCalibrateActivity : ComponentActivity() {
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
     private var serveManyAfterPermission = false
+    private var allowSlowLinkAfterPermission = false
 
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) start(verifyingAfterPermission, serveManyAfterPermission)
+        if (granted) start(verifyingAfterPermission, serveManyAfterPermission, allowSlowLinkAfterPermission)
         else state = state.copy(message = getString(R.string.pair_calibrate_no_permission))
     }
 
@@ -364,8 +406,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                             observations = stored?.observations ?: 0
                         ),
                         actions = PeerCalibrateActions(
-                            calibrate = { begin(verifying = false, serveMany = true) },
-                            verify = { begin(verifying = true, serveMany = true) },
+                            calibrate = { begin(verifying = false, serveMany = true, allowSlowLink = false) },
+                            verify = { begin(verifying = true, serveMany = true, allowSlowLink = false) },
                             forget = { forget() },
                             stop = { stopServing() }
                         )
@@ -413,21 +455,29 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private fun beginFrom(intent: Intent) = begin(
         verifying = intent.getBooleanExtra("verify", false),
-        serveMany = intent.getBooleanExtra("serve_many", false)
+        serveMany = intent.getBooleanExtra("serve_many", false),
+        // Deliberately reachable only from a command line. The gate exists because a link this
+        // slow cannot be aligned by any estimator, so a listener who got past it by pressing
+        // something would be handed a correction measured on a link that cannot carry one - and
+        // it would then be applied to every session afterwards with nothing to notice it by.
+        // What is on the other side of it is an experiment: measure the network asymmetry
+        // acoustically on a link slow enough to have one worth measuring. See the roadmap.
+        allowSlowLink = intent.getBooleanExtra("allow_slow_link", false)
     )
 
-    private fun begin(verifying: Boolean, serveMany: Boolean) {
+    private fun begin(verifying: Boolean, serveMany: Boolean, allowSlowLink: Boolean) {
         if (running) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             verifyingAfterPermission = verifying
             serveManyAfterPermission = serveMany
+            allowSlowLinkAfterPermission = allowSlowLink
             askRecordAudio.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        start(verifying, serveMany)
+        start(verifying, serveMany, allowSlowLink)
     }
 
-    private fun start(verifying: Boolean, serveMany: Boolean) {
+    private fun start(verifying: Boolean, serveMany: Boolean, allowSlowLink: Boolean = false) {
         running = true
         // Cleared here rather than when the session ends, so a stop pressed as the last round
         // finished cannot end the next session before it has served anybody.
@@ -444,7 +494,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 holdingRadio(radioHoldOf(this), held = { radioHeld = it }) {
                     when (role()) {
                         CalibrationRole.HOST -> measureAsHost(serveMany)
-                        CalibrationRole.SINK -> measureAsSink(verifying)
+                        CalibrationRole.SINK -> measureAsSink(verifying, allowSlowLink)
                         null -> show(getString(R.string.pair_calibrate_no_role))
                     }
                 }
@@ -532,7 +582,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // The case names a directory RunStore will create, and it arrived over a socket.
             // Only the two this handset runs are honoured; anything else ends the run here
             // rather than at the run store.
-            if (request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY)) {
+            if (request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)) {
                 throw IllegalArgumentException("not a case this handset runs: ${request.caseId}")
             }
             // The sink's name arrived over the same socket and names files on this side too.
@@ -651,7 +701,12 @@ class PeerCalibrateActivity : ComponentActivity() {
      * cannot act on one until it can convert. The other order would leave the plan expiring inside
      * a wait it caused itself.
      */
-    private fun measureAsSink(verifying: Boolean) {
+    private fun measureAsSink(verifying: Boolean, allowSlowLink: Boolean) {
+        // Named before anything is spent, and before the gate, so that a refused run can still
+        // say which one it would have been - and so that the one combination that names no run is
+        // turned away here rather than two minutes of clock later.
+        val caseId = calibrationCase(verifying, allowSlowLink)
+            ?: return show(getString(R.string.pair_calibrate_failed, "VERIFY_PAST_THE_GATE"))
         val paired = PairedHost(filesDir).read()
             ?: return show(getString(R.string.pair_calibrate_no_pairing))
         // The name this handset answers to, which it signs both of its messages with. The same
@@ -693,12 +748,12 @@ class PeerCalibrateActivity : ComponentActivity() {
             // a two-way exchange carries is half the difference between the one way delays, which
             // is systematic - so the alternative to saying so here is fifty seconds of standing
             // still for a number nobody can read.
-            // Asked for by name: the host cannot tell a measurement from a check, and both landing
-            // in one directory cost the measurement's host half once already. Named before the
-            // gate rather than after it, so a refused run can say which one it would have been.
-            val caseId = if (verifying) CASE_VERIFY else CASE_MEASURE
+            //
+            // Opened only for the experiment arm, and the survey is read either way: a run that
+            // was let past is worth nothing without the number it was let past on, and that number
+            // is what the experiment is about.
             link = LinkSurvey.of(clockClient.recordedExchanges())
-            link?.takeIf { !it.usable }?.let {
+            link?.takeIf { !it.usable && !allowSlowLink }?.let {
                 // Stopped before the exchanges are read, on the same terms as a finished run:
                 // recordedExchanges is documented to be read once runFor has returned, and what is
                 // being filed here is the whole record rather than the survey's summary of it.
@@ -776,6 +831,16 @@ class PeerCalibrateActivity : ComponentActivity() {
             // an empty run and a dead sink look the same from an end of a socket that never opens.
             val reply = AlignmentResultClient(paired.address, SyncActivity.RESULT_PORT)
                 .exchange(plan.caseId, sinkId, appliedMicros, run.readings)
+            // The experiment arm ends here, one step short of every arm that moves the constant.
+            // That is what it is: the gate refuses these links because the offset a two-way
+            // exchange gives on one is biased by half the difference of the one way delays, so a
+            // constant folded from here would carry that bias into every session afterwards. What
+            // it is for is measuring that bias acoustically, and the readings are already filed.
+            if (allowSlowLink) return show(
+                reply.measuredOffsetMicros?.let {
+                    getString(R.string.pair_calibrate_measured_only, it / 1000.0)
+                } ?: getString(R.string.pair_calibrate_kept, run.refusal ?: "NOT_USABLE")
+            )
             // A verification measures the residual left after the stored constant is applied.
             // Writing a residual where the constant lives would halve the correction every time.
             if (verifying) return show(
@@ -903,16 +968,6 @@ class PeerCalibrateActivity : ComponentActivity() {
 
         /** Why a refused run was refused, in the field a finished run names its own refusal in. */
         const val SLOW_LINK = "SLOW_LINK"
-
-        /**
-         * RunStore accepts `[A-Z][0-9]+` and never clears a directory it is handed, so a case id
-         * names a place on disk rather than a run. Every letter is already spoken for by an
-         * archived series, and C1 landed on top of one: the first hardware run overwrote the
-         * calibration.wav an earlier alignment run had left in runs/C1 on both handsets. Ninety
-         * and up is past the end of every series the harness has recorded.
-         */
-        const val CASE_MEASURE = "C90"
-        const val CASE_VERIFY = "C91"
 
         /**
          * The plan's chirp interval in frames, which is the grid an emission is measured against.

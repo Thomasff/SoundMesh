@@ -129,9 +129,9 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theCasesSitPastEverySeriesTheHarnessHasArchived() {
-        val cases = Regex("const val CASE_(?:MEASURE|VERIFY) = \"([A-Z])([0-9]+)\"")
+        val cases = Regex("const val CASE_(?:MEASURE|VERIFY|SLOW_LINK) = \"([A-Z])([0-9]+)\"")
             .findAll(source).map { it.groupValues[2].toInt() }.toList()
-        assertEquals(2, cases.size)
+        assertEquals(3, cases.size)
         assertTrue("a case id could be an archived run's directory", cases.all { it >= 90 })
     }
 
@@ -148,7 +148,7 @@ class PeerCalibrateActivityTest {
             "the host plans the measurement case whatever the sink asked for",
             source.contains("caseId = CASE_MEASURE")
         )
-        assertTrue(source.contains("request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY)"))
+        assertTrue(source.contains("request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)"))
     }
     /**
      * A case id names a directory the run store only ever mkdirs, so two runs of one case land on
@@ -304,7 +304,7 @@ class PeerCalibrateActivityTest {
     @Test
     fun theRefusedRunIsFiledRatherThanOnlyShownOnTheScreen() {
         assertTrue("a refused run still writes nothing", source.contains("SINK-REFUSED"))
-        val gate = source.substringAfter("link?.takeIf { !it.usable }?.let {")
+        val gate = source.substringAfter("link?.takeIf { !it.usable && !allowSlowLink }?.let {")
         assertTrue(
             "the exchanges are read while the clock thread is still appending to them",
             gate.indexOf("clockThread.join(") < gate.indexOf("clockClient.recordedExchanges()")
@@ -497,5 +497,70 @@ class PeerCalibrateActivityTest {
         assertTrue(json.contains("\"medianRoundTripNanos\":56300000"))
         assertTrue(json.contains("\"p90RoundTripNanos\":137900000"))
         assertTrue(json.contains("\"samples\":175"))
+    }
+    /**
+     * Three arms, three directories. A case id is a place on disk that RunStore never clears, so
+     * two arms sharing one is two arms overwriting each other - which has happened here once, and
+     * cost the pair's calibration.wav on both handsets.
+     */
+    @Test
+    fun theThreeArmsAreThreeDifferentPlaces() {
+        assertEquals(3, setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK).size)
+    }
+
+    /**
+     * The gate opens for one arm and one arm only.
+     *
+     * The gate refuses a link that no estimator can align across, so the run behind it is an
+     * experiment rather than a calibration: what it measures is the bias itself. Reading it as
+     * either of the other two would fold that bias into the constant every session applies.
+     */
+    @Test
+    fun onlyTheExperimentArmGoesPastTheLinkGate() {
+        assertEquals(CASE_MEASURE, calibrationCase(verifying = false, allowSlowLink = false))
+        assertEquals(CASE_VERIFY, calibrationCase(verifying = true, allowSlowLink = false))
+        assertEquals(CASE_SLOW_LINK, calibrationCase(verifying = false, allowSlowLink = true))
+    }
+
+    /**
+     * And the one combination that names no run says so instead of picking an arm.
+     *
+     * A verification measures what is left after the stored constant is applied; the experiment
+     * arm is defined by never touching that constant. Silently choosing one of the two is the
+     * shape of a mistake this project has already paid for once - a missing flag swapped the arm
+     * and nothing in the result said which one had run.
+     */
+    @Test
+    fun aVerificationWithTheGateOpenIsNotARun() {
+        assertEquals(null, calibrationCase(verifying = true, allowSlowLink = true))
+    }
+
+    /**
+     * Nothing a listener can press opens the gate, and this is why the extra is read from an
+     * intent rather than offered as a third button: past the gate is a link on which the offset a
+     * two-way exchange gives is biased by half the difference of the one way delays. A correction
+     * folded from there would be applied to every session afterwards, silently and forever.
+     */
+    /**
+     * And the arm that does go past it never reaches the line that moves the constant.
+     *
+     * Read out of the source because there is no seam: the whole of it is inside a method that
+     * binds sockets and records audio. It is worth reading anyway - the failure it guards against
+     * is silent and permanent. A constant folded from a link the gate refuses carries half the
+     * difference of that link's one way delays, and every session afterwards applies it with
+     * nothing in any result to notice it by. That is the C1 failure exactly, one cause over.
+     */
+    @Test
+    fun theExperimentArmStopsShortOfTheConstant() {
+        val ending = source.indexOf("if (allowSlowLink) return show(")
+        val fold = source.indexOf("StoredCalibration(filesDir, paired.hostId).write(")
+
+        assertTrue("the experiment arm does not end before the fold", ending in 1 until fold)
+    }
+
+    @Test
+    fun nothingOnTheScreenOpensTheGate() {
+        assertFalse(source.contains("allowSlowLink = true"))
+        assertEquals(1, source.split("\"allow_slow_link\"").size - 1)
     }
 }
