@@ -24,15 +24,28 @@ const SERIES = [
   [8500000000, 11508727666, 11509027666, 8512239478]
 ];
 
+// Sixteen exchanges never fill the shipped window, so this is the filling path: the best-of cut
+// keeps a fraction of what is held rather than a frozen eight, which here is one.
 const GOLDEN = [
-  '3000212145/-57.95153383458646/8/5254534',
-  '3000212145/-57.95153383458646/8/5254534',
-  '3000100251/-249.96854634146342/8/4326904',
-  '3000290991/-58.45035519125683/8/4326904',
-  '3000065112/-226.5201791411043/8/4326904',
-  '3000065112/-226.5201791411043/8/4326904',
-  '2999870830/-96.44137162162163/8/4326904',
-  '3000564558/-69.76448192771085/8/4326904'
+  '3001474438/0/1/5254534',
+  '3001474438/0/1/5254534',
+  '3001474438/0/1/5254534',
+  '2998683804/0/1/4326904',
+  '2998683804/0/1/4326904',
+  '2998683804/0/1/4326904',
+  '2998683804/0/1/4326904',
+  '2998683804/0/1/4326904'
+];
+
+// The same series through a window it does fill, which is the only way the eight point fit, the
+// drift the slope reports and the plausibility guard get exercised at all.
+const GOLDEN_FULL_WINDOW = [
+  '2999856526/462.92228571428575/8/5254534',
+  '3000061884/249.0694761904762/8/5254534',
+  '2999889191/20.13233333333333/8/4326904',
+  '3000437088/-270.70528571428576/8/4326904',
+  '3000295890/-323.41478571428576/8/4326904',
+  '3000000354/117.14769047619048/8/4326904'
 ];
 
 test('answers exactly what the shipped estimator answers, including the window it rejects', () => {
@@ -41,6 +54,14 @@ test('answers exactly what the shipped estimator answers, including the window i
     .map(({ estimate }) => `${estimate.offsetNanos}/${estimate.driftPpm}/${estimate.sampleCount}/${estimate.uncertaintyNanos}`);
 
   assert.deepEqual(answers, GOLDEN);
+});
+
+test('answers exactly what the shipped estimator answers once the window is full', () => {
+  const answers = replay(SERIES, { windowSize: 8 })
+    .filter(step => step.estimate !== null)
+    .map(({ estimate }) => `${estimate.offsetNanos}/${estimate.driftPpm}/${estimate.sampleCount}/${estimate.uncertaintyNanos}`);
+
+  assert.deepEqual(answers, GOLDEN_FULL_WINDOW);
 });
 
 test('every exchange gets a step, so an estimate can be located in the run that produced it', () => {
@@ -87,7 +108,7 @@ test('each estimate carries the instant it is anchored at, which is not the inst
     const t2 = t1 + 1_000_000 + 3_000_000_000;
     return [t1, t2, t2, t2 - 3_000_000_000 + 1_000_000];
   });
-  const [only] = replay(flat).filter(step => step.estimate !== null);
+  const [only] = replay(flat, { windowSize: 8 }).filter(step => step.estimate !== null);
 
   assert.equal(only.estimate.anchorT1, 3_500_000_000);
   assert.equal(only.estimate.driftPpm, 0);
@@ -119,7 +140,8 @@ test('reports the estimate a run would have been converting through at a given i
   });
   const rogueT2 = 8_000_000_000 + 500_000 + 3_100_000_000;
   const withRogue = [...flat, [8_000_000_000, rogueT2, rogueT2, rogueT2 - 3_100_000_000 + 500_000]];
-  const disturbed = replay(withRogue);
+  // A window it fills, so the cut keeps all eight and the rogue is bound to be among them.
+  const disturbed = replay(withRogue, { windowSize: 8 });
 
   assert.equal(disturbed.at(-1).estimate, null, 'the rogue exchange is meant to be rejected');
   assert.equal(estimateInForceAt(disturbed, disturbed.at(-1).t4).offsetNanos, 3_000_000_000);

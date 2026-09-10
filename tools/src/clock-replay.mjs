@@ -25,17 +25,28 @@ const MAX_DRIFT_PPM = 500;
 const roundTripNanos = ([t1, t2, t3, t4]) => (BigInt(t4) - BigInt(t1)) - (BigInt(t3) - BigInt(t2));
 const offsetMidpointNanos = ([t1, t2, t3, t4]) => ((BigInt(t2) - BigInt(t1)) + (BigInt(t3) - BigInt(t4))) / 2n;
 
+/**
+ * How many of the quietest to keep, given how many the window is holding - ClockOffsetEstimator.keepFor.
+ *
+ * bestCount is a fraction of windowSize wearing a count's clothes. While the window is still filling
+ * a frozen count stops being a fraction: eight of eight keeps every queued exchange too. Integer
+ * division, so it truncates the way Kotlin's does.
+ */
+const keepFor = (held, windowSize, bestCount) =>
+  held >= windowSize ? bestCount : Math.max(1, Math.trunc(held * bestCount / windowSize));
+
 /** The estimate a window of exchanges supports, or null on the same terms the estimator refuses one. */
-export function estimateFromWindow(window, { bestCount = DEFAULT_BEST } = {}) {
+export function estimateFromWindow(window, { windowSize = DEFAULT_WINDOW, bestCount = DEFAULT_BEST } = {}) {
   if (window.length < MIN_SAMPLES) return null;
   const valid = window.filter(exchange => roundTripNanos(exchange) >= 0n);
   if (valid.length < MIN_SAMPLES) return null;
+  const keep = keepFor(window.length, windowSize, bestCount);
   // Stable, like Kotlin's sortedBy: exchanges tied on round trip keep the order they arrived in,
   // which decides which of them the best-of cut keeps.
   const best = valid
     .map((exchange, index) => ({ exchange, index, trip: roundTripNanos(exchange) }))
     .sort((left, right) => (left.trip === right.trip ? left.index - right.index : (left.trip < right.trip ? -1 : 1)))
-    .slice(0, bestCount)
+    .slice(0, keep)
     .map(entry => entry.exchange);
 
   const baseNanos = best.reduce((lowest, [t1]) => (BigInt(t1) < lowest ? BigInt(t1) : lowest), BigInt(best[0][0]));
@@ -81,7 +92,7 @@ export function replay(exchanges, { windowSize = DEFAULT_WINDOW, bestCount = DEF
   return exchanges.map(exchange => {
     window.push(exchange);
     while (window.length > windowSize) window.shift();
-    return { t1: exchange[0], t4: exchange[3], estimate: estimateFromWindow(window, { bestCount }) };
+    return { t1: exchange[0], t4: exchange[3], estimate: estimateFromWindow(window, { windowSize, bestCount }) };
   });
 }
 

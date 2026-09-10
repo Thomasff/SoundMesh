@@ -32,28 +32,48 @@ class ClockReplayGoldenTest {
         ClockExchange(8500000000L, 11508727666L, 11509027666L, 8512239478L)
     )
 
-    @Test
-    fun answersTheSameSeriesTheOfflineReplayIsPinnedTo() {
-        val estimator = ClockOffsetEstimator()
-        val answers = series.mapNotNull { exchange ->
+    private fun answers(estimator: ClockOffsetEstimator): List<String> =
+        series.mapNotNull { exchange ->
             estimator.record(exchange)
             estimator.estimate(exchange.t4)?.let { "${it.offsetNanos}/${it.driftPpm}/${it.sampleCount}/${it.uncertaintyNanos}" }
         }
 
-        // One of the nine windows is rejected by the drift plausibility guard, so eight answers
-        // come back from sixteen exchanges - the rejection is part of what the replay must match.
+    @Test
+    fun answersTheSameSeriesTheOfflineReplayIsPinnedTo() {
+        // Sixteen exchanges never fill the shipped window, so this pins the filling path: the
+        // best-of cut keeps a fraction of what is held rather than a frozen eight, which here is
+        // one. Seven answers are missing because the window has not reached MIN_SAMPLES, and one
+        // more because two exchanges tie and the pair is refused.
         assertEquals(
             listOf(
-                "3000212145/-57.95153383458646/8/5254534",
-                "3000212145/-57.95153383458646/8/5254534",
-                "3000100251/-249.96854634146342/8/4326904",
-                "3000290991/-58.45035519125683/8/4326904",
-                "3000065112/-226.5201791411043/8/4326904",
-                "3000065112/-226.5201791411043/8/4326904",
-                "2999870830/-96.44137162162163/8/4326904",
-                "3000564558/-69.76448192771085/8/4326904"
+                "3001474438/0.0/1/5254534",
+                "3001474438/0.0/1/5254534",
+                "3001474438/0.0/1/5254534",
+                "2998683804/0.0/1/4326904",
+                "2998683804/0.0/1/4326904",
+                "2998683804/0.0/1/4326904",
+                "2998683804/0.0/1/4326904",
+                "2998683804/0.0/1/4326904"
             ),
-            answers
+            answers(ClockOffsetEstimator())
+        )
+    }
+
+    @Test
+    fun answersTheSameSeriesTheOfflineReplayIsPinnedToOnceTheWindowIsFull() {
+        // The same series through a window it does fill, so the eight point fit, the drift the
+        // slope reports and the plausibility guard are all exercised - none of which the filling
+        // path above reaches. Ten of the sixteen windows are refused as impossible drift.
+        assertEquals(
+            listOf(
+                "2999856526/462.92228571428575/8/5254534",
+                "3000061884/249.0694761904762/8/5254534",
+                "2999889191/20.13233333333333/8/4326904",
+                "3000437088/-270.70528571428576/8/4326904",
+                "3000295890/-323.41478571428576/8/4326904",
+                "3000000354/117.14769047619048/8/4326904"
+            ),
+            answers(ClockOffsetEstimator(windowSize = 8, bestCount = 8))
         )
     }
 }

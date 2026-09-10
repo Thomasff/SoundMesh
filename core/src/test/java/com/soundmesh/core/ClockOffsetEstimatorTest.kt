@@ -115,8 +115,9 @@ class ClockOffsetEstimatorTest {
     fun anchorsTheOffsetAtTheCentreOfTheExchangesItKept() {
         // A least squares line passes through the centroid of its points, so the anchored value is
         // the mean of the kept midpoints - with a symmetric path, the true offset at the middle of
-        // the window.
-        val estimator = ClockOffsetEstimator()
+        // the window. A window this fills, so the cut keeps all eight and there is a centroid to be
+        // anchored at; a fraction of a filling window would keep one and the question would not arise.
+        val estimator = ClockOffsetEstimator(windowSize = 8, bestCount = 8)
         repeat(8) { index ->
             val localNanos = index * 2L * second
             val offset = 5 * second + localNanos * 30 / 1_000_000
@@ -210,7 +211,9 @@ class ClockOffsetEstimatorTest {
 
     @Test
     fun refusesEstimatesImplyingPhysicallyImpossibleDrift() {
-        val estimator = ClockOffsetEstimator()
+        // A window these fill: the guard grades a slope, and a slope needs more than the one exchange
+        // a filling window would keep.
+        val estimator = ClockOffsetEstimator(windowSize = ClockOffsetEstimator.MIN_SAMPLES, bestCount = ClockOffsetEstimator.MIN_SAMPLES)
         val baseT1 = 10L * second
         repeat(ClockOffsetEstimator.MIN_SAMPLES) { index ->
             // t1 values spread over 1ms; offsets spread over 500 seconds.
@@ -256,5 +259,39 @@ class ClockOffsetEstimatorTest {
 
         // The queued exchanges sit 19 ms above the truth; a fit that admitted any of them shows it.
         assertEquals(trueOffset.toDouble(), estimate.offsetNanos.toDouble(), 1_000_000.0)
+    }
+
+    @Test
+    fun keepsOnlyTheQuietFractionWhileTheWindowIsStillFilling() {
+        val estimator = ClockOffsetEstimator()
+        val trueOffset = 3_000_000_000L
+        // Eight exchanges in hand out of a window of sixty-four, one of them quiet. Keeping eight
+        // of eight is no selection at all: seven queued midpoints sit 19 ms above the truth and
+        // drag the mean up with them.
+        repeat(8) { index ->
+            val t1 = index * 250_000_000L
+            val forward = if (index == 3) 2_000_000L else 40_000_000L
+            val t2 = t1 + forward + trueOffset
+            val t3 = t2 + 100_000L
+            estimator.record(ClockExchange(t1, t2, t3, t3 - trueOffset + 2_000_000L))
+        }
+
+        val estimate = estimator.estimate(2L * second)!!
+
+        assertEquals(trueOffset.toDouble(), estimate.offsetNanos.toDouble(), 1_000_000.0)
+    }
+
+    @Test
+    fun keepsTheSameFractionOfTheWindowAsItFills() {
+        val estimator = ClockOffsetEstimator()
+        val kept = mutableListOf<Int>()
+        repeat(64) { index ->
+            estimator.record(exchange(index * 250_000_000L, 5 * second, 2_000_000, 2_000_000))
+            if (index + 1 in listOf(8, 16, 32, 64)) kept += estimator.estimate(2L * second)!!.sampleCount
+        }
+
+        // An eighth of what the window holds, and exactly bestCount once it is full - which is
+        // where every measurement the shipped constant was justified by was taken.
+        assertEquals(listOf(1, 2, 4, 8), kept)
     }
 }
