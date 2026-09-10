@@ -468,6 +468,13 @@ class SinkSession(
     // reaches it as a sequence that went backwards, which it already knows what to do with.
     override fun stepSong(by: Int) = Unit
 
+    /**
+     * Nothing, and nothing is needed. A host that pauses empties this sink's queue the way a
+     * jump does and then keeps broadcasting silence, so a paused room reaches here as audio
+     * that happens to be quiet - which is the one thing a sink already knows how to play.
+     */
+    override fun setPaused(paused: Boolean) = Unit
+
     /** Null. Positions are the source's, and a sink is handed instants instead. */
     override fun playhead(): Playhead? = null
 

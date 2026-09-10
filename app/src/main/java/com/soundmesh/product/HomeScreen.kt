@@ -89,6 +89,14 @@ data class HomeState(
      */
     val playhead: Playhead? = null,
     /**
+     * Whether the room is quiet on purpose.
+     *
+     * Read back off the session rather than remembered from the button that was pressed: the
+     * screen can be rebuilt while a session goes on running, and a toggle that forgot which way
+     * it was would offer to pause a room that is already paused.
+     */
+    val paused: Boolean = false,
+    /**
      * What the room is playing, by name, or null when nothing has said.
      *
      * On every handset rather than only the one holding the songs, which is the whole of why it is
@@ -126,6 +134,7 @@ class HomeActions(
     val calibrate: () -> Unit,
     val seek: (Long) -> Unit,
     val stepSong: (Int) -> Unit,
+    val setPaused: (Boolean) -> Unit,
     val pairCalibrate: () -> Unit,
     val room: RoomActions
 )
@@ -307,7 +316,7 @@ private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolea
     state.nowPlaying?.let {
         Text(stringResource(R.string.now_playing, it), style = MaterialTheme.typography.bodyMedium)
     }
-    state.playhead?.let { PlayheadPanel(it, actions.seek, actions.stepSong) }
+    state.playhead?.let { PlayheadPanel(it, state.paused, actions.seek, actions.stepSong, actions.setPaused) }
 }
 
 /**
@@ -329,7 +338,13 @@ private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolea
  * two words mean on a list of one and is better than a button that is there but does nothing.
  */
 @Composable
-private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit, stepSong: (Int) -> Unit) {
+private fun PlayheadPanel(
+    playhead: Playhead,
+    paused: Boolean,
+    seek: (Long) -> Unit,
+    stepSong: (Int) -> Unit,
+    setPaused: (Boolean) -> Unit
+) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     // Where the finger first landed, which is what tells a drag from a brush. A Material slider
     // treats a touch anywhere on the track as a complete gesture and reports it the same way it
@@ -368,6 +383,9 @@ private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit, stepSong: (I
     ) {
         OutlinedButton(onClick = { stepSong(-1) }, modifier = Modifier.weight(1f)) {
             Text(stringResource(R.string.play_previous))
+        }
+        Button(onClick = { setPaused(!paused) }, modifier = Modifier.weight(1f)) {
+            Text(stringResource(if (paused) R.string.play_resume else R.string.play_pause))
         }
         OutlinedButton(onClick = { stepSong(1) }, modifier = Modifier.weight(1f)) {
             Text(stringResource(R.string.play_next))

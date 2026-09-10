@@ -109,6 +109,8 @@
     <string name="play_position">%1$s / %2$s</string>
     <string name="play_previous">上一首</string>
     <string name="play_next">下一首</string>
+    <string name="play_pause">暂停</string>
+    <string name="play_resume">继续</string>
 
     <string name="state_title">状态</string>
     <string name="state_idle">没在播</string>

@@ -91,6 +91,20 @@ interface SyncSession {
     fun stepSong(by: Int)
 
     /**
+     * Stops the audio without stopping the session, or starts it again.
+     *
+     * Separate from [stop] because they are different questions: stopping releases the output, the
+     * sockets and the foreground service, and coming back from it means every handset in the room
+     * pressing something. A pause holds all of that open.
+     *
+     * Declared on both roles rather than defaulted, for the reason [onNetworkChanged] gives.
+     */
+    fun setPaused(paused: Boolean)
+
+    /** Whether [setPaused] is in force. False on a role that has nothing to pause. */
+    fun paused(): Boolean = false
+
+    /**
      * How far into the song the room is, or null when nothing can say.
      *
      * Only a host can answer: it is the handset holding the source, and a sink is handed instants

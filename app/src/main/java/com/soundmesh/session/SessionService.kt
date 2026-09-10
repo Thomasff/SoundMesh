@@ -68,6 +68,9 @@ class SessionService : Service() {
             // names a song where a drag names a place, and both end in one field and two
             // emptied queues. A zero step would ask the decoder to reopen the song it is on
             // for nothing, so it is not sent rather than being guarded further down.
+            ACTION_SET_PAUSED -> runCatching {
+                ACTIVE?.setPaused(intent.getBooleanExtra(EXTRA_PAUSED, false))
+            }.onFailure { Log.e(LOG_TAG, "could not pause", it) }
             ACTION_STEP_SONG -> runCatching {
                 intent.getIntExtra(EXTRA_SONG_STEP, 0).takeIf { it != 0 }?.let { ACTIVE?.stepSong(it) }
             }.onFailure { Log.e(LOG_TAG, "could not change song", it) }
@@ -479,6 +482,8 @@ class SessionService : Service() {
          */
         const val ACTION_SEEK = "com.soundmesh.session.SEEK"
         const val EXTRA_SEEK_MICROS = "seek_micros"
+        const val ACTION_SET_PAUSED = "com.soundmesh.session.SET_PAUSED"
+        const val EXTRA_PAUSED = "paused"
         const val ACTION_STEP_SONG = "com.soundmesh.session.STEP_SONG"
         const val EXTRA_SONG_STEP = "song_step"
         const val EXTRA_SOURCE_FILE = "source_file"

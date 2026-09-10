@@ -273,6 +273,14 @@ class HostSession(
     /** How many times the listener has jumped. Only ever compared with itself - see [generate]. */
     @Volatile private var jumps = 0
 
+    // Read by the producer once a chunk and written by whoever pressed the button, so volatile.
+    @Volatile private var paused = false
+
+    // One chunk of nothing, kept rather than made: a pause hands out fifty a second and every
+    // one of them is the same. Sized like a real chunk because the room cannot be told that a
+    // chunk is short - the timeline is frames, and a short one would move it.
+    private val silence = ByteArray(SyncRenderer.FRAMES_PER_CHUNK * SyncRenderer.CHANNELS * 2)
+
     // Which song the room has already been told about. Written by the producer thread, read by
     // the screen, so volatile rather than plain.
     @Volatile private var announcedSong = -1
@@ -351,6 +359,52 @@ class HostSession(
      */
     override fun stepSong(by: Int) = jumped("by $by song(s)") { stepSongSource(by) }
 
+    /**
+     * Stops taking audio from the source, or starts again, without taking the session down.
+     *
+     * Three things happen on the way in and only one on the way out, and the asymmetry is the
+     * whole design. Going in, everything in flight is wrong - a second and a half of it in every
+     * handset in the room - so it is thrown away exactly the way [seekTo] throws it away, and the
+     * source is asked to reopen at the place the room had actually reached. Coming out, nothing is
+     * thrown away at all: the timeline never stopped, the sequence never went backwards, and every
+     * handset stayed in TRACKING throughout. The room simply starts hearing music again where it
+     * has been hearing silence.
+     *
+     * **Silence rather than nothing.** A host that stopped broadcasting would look to its sinks
+     * exactly like a host that walked out: they would write blind silence against SinkSession's
+     * host-gone budget and then tear the session down, and a pause longer than that budget would
+     * end the evening. Anything still acquiring when the chunks stopped could not converge either
+     * - see SyncRenderer's completedAcquiringNanos for what that costs. Broadcasting silence keeps
+     * the cadence, the drift loop and the clock exactly as they were.
+     *
+     * **It costs a lead of silence to come back**, the same second and a half every jump costs and
+     * for the same reason: what is in flight when play is pressed was stamped before it. Pressing
+     * pause is what had to be instant, because a room that keeps playing after the button is a
+     * room that looks broken; a room that takes a moment to start looks like a room starting.
+     *
+     * Asked for where the room is rather than where the source has decoded to. Those differ by the
+     * lead, and pausing at the second one would silently skip a second and a half of the song.
+     *
+     * One thing to know before reading a report off a run that used this: silence is broadcast
+     * chunk for chunk, so `generated` counts a pause. It has been read as a duration - a folder
+     * run was checked for a cut ending by multiplying it by the chunk length - and that reading
+     * is only right on a run nobody paused.
+     */
+    override fun setPaused(wanted: Boolean) {
+        if (wanted == paused) return
+        if (!wanted) {
+            paused = false
+            return
+        }
+        val room = playhead()?.positionMicros
+        // Before the queues are emptied, so the producer cannot take one more real chunk between
+        // the emptying and the flag - it would be a chunk of the old place inside the new silence.
+        paused = true
+        jumped("into a pause") { room?.let { seekSource(it) } }
+    }
+
+    /** Whether the room is hearing silence on purpose. A screen has no other way to know. */
+    override fun paused(): Boolean = paused
     private fun jumped(where: String, ask: () -> Unit) {
         ask()
         val thrown = scheduler.clear()
@@ -450,7 +504,9 @@ class HostSession(
         var timeline = ChunkTimeline(SyncRenderer.FRAMES_PER_CHUNK, SyncRenderer.SAMPLE_RATE)
         var lastDueNanos = NOTHING_PLAYED
         while (!flags.isStopped()) {
-            val pcm = readChunk() ?: return endOfSong(lastDueNanos)
+            // A pause takes nothing from the source, which is what makes it a pause rather than
+            // a mute: the decoder stays parked on a full queue at the place the room stopped.
+            val pcm = if (paused) silence else (readChunk() ?: return endOfSong(lastDueNanos))
             sayWhatIsPlaying()
             if (jumpsSeen != jumps) {
                 jumpsSeen = jumps

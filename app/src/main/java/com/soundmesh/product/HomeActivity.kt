@@ -165,6 +165,9 @@ class HomeActivity : ComponentActivity() {
         // Told to the service rather than to the session directly: the session outlives this
         // screen on purpose, and reaching into it from here would be the one place that assumed
         // otherwise.
+        setPaused = { wanted ->
+            startService(request(SessionService.ACTION_SET_PAUSED).putExtra(SessionService.EXTRA_PAUSED, wanted))
+        },
         stepSong = { by ->
             startService(request(SessionService.ACTION_STEP_SONG).putExtra(SessionService.EXTRA_SONG_STEP, by))
         },
@@ -436,6 +439,7 @@ class HomeActivity : ComponentActivity() {
             sessionState = session?.state(),
             playhead = session?.playhead(),
             nowPlaying = session?.nowPlaying(),
+            paused = session?.paused() == true,
             failure = if (awaitingSession) SessionService.FAILURE else null,
             counters = SessionReadout.counters(session?.report()),
             room = readRoom(session)
