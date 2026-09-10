@@ -144,8 +144,19 @@ fun acquiringTotalNanos(
     completedNanos: Long,
     currentStartNanos: Long?,
     currentConvergedNanos: Long?,
-    nowNanos: Long
+    /**
+     * Called rather than read, because both early returns above are exactly the states in which
+     * a sink has no host time to give.
+     *
+     * A sink throws for host time until its first clock estimate succeeds - inventing one would
+     * play a whole session at the wrong instant while every counter read healthy. The home
+     * screen polls the report from the moment the session leaves IDLE, seconds before any
+     * estimate exists, so an eagerly evaluated argument took the app down on the sink every
+     * time it was started. Nothing here wanted that reading: there was no acquisition running
+     * to measure it against.
+     */
+    nowNanos: () -> Long
 ): Long {
     if (currentStartNanos == null || currentConvergedNanos != null) return completedNanos
-    return completedNanos + (nowNanos - currentStartNanos)
+    return completedNanos + (nowNanos() - currentStartNanos)
 }

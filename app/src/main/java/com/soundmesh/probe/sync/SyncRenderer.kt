@@ -985,7 +985,7 @@ class SyncRenderer(
                 completedAcquiringNanos,
                 acquisitionStartHostNanos.takeIf { it != UNDEFINED },
                 acquisitionConvergedAtHostNanos.takeIf { it != UNDEFINED },
-                hostNanosNow()
+                hostNanosNow
             )}," +
             "\"reacquisitionErrorSumFrames\":$reacquisitionErrorSumFrames," +
             "\"reacquisitionsNegative\":$reacquisitionsNegative," +

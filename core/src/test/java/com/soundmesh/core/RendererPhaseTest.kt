@@ -176,7 +176,7 @@ class RendererPhaseTest {
         // A run that ends mid-reacquisition - which is how the pad ended both long sessions -
         // would otherwise report the acquisition as costing nothing at all.
         val total = acquiringTotalNanos(
-            completedNanos = 0L, currentStartNanos = 1_000L, currentConvergedNanos = null, nowNanos = 1_500L
+            completedNanos = 0L, currentStartNanos = 1_000L, currentConvergedNanos = null, nowNanos = { 1_500L }
         )
 
         assertEquals(500L, total)
@@ -185,7 +185,7 @@ class RendererPhaseTest {
     @Test
     fun countsNothingBeforeTheFirstChunkHasPinnedTheTimeline() {
         val total = acquiringTotalNanos(
-            completedNanos = 0L, currentStartNanos = null, currentConvergedNanos = null, nowNanos = 9_000L
+            completedNanos = 0L, currentStartNanos = null, currentConvergedNanos = null, nowNanos = { 9_000L }
         )
 
         assertEquals(0L, total)
@@ -196,9 +196,42 @@ class RendererPhaseTest {
         // The window was added to the running total the instant it converged, so counting it
         // again here would double every acquisition but the last.
         val total = acquiringTotalNanos(
-            completedNanos = 500L, currentStartNanos = 1_000L, currentConvergedNanos = 1_500L, nowNanos = 9_000L
+            completedNanos = 500L, currentStartNanos = 1_000L, currentConvergedNanos = 1_500L, nowNanos = { 9_000L }
         )
 
         assertEquals(500L, total)
+    }
+
+    /**
+     * The clock is read only when there is a running acquisition to measure against it.
+     *
+     * A sink has no host time until its first clock estimate succeeds, and asking for it before
+     * then throws rather than inventing one. The report is polled by the home screen from the
+     * moment the session leaves IDLE - seconds before any estimate exists - so an argument
+     * evaluated whether or not this branch needs it takes the whole app down on the sink, every
+     * time, on the main thread. It did: two crashes in seven seconds on the X10.
+     *
+     * Both branches that return early here are exactly the branches where no host time exists
+     * yet, so a clock that is called rather than read is not a workaround - it is the only
+     * arrangement in which this function asks for what it is entitled to.
+     */
+    @Test
+    fun doesNotReadTheClockWhenThereIsNoRunningAcquisitionToMeasure() {
+        val unavailable: () -> Long = { throw IllegalStateException("the clock was read") }
+
+        assertEquals(
+            0L,
+            acquiringTotalNanos(
+                completedNanos = 0L, currentStartNanos = null,
+                currentConvergedNanos = null, nowNanos = unavailable
+            )
+        )
+        assertEquals(
+            500L,
+            acquiringTotalNanos(
+                completedNanos = 500L, currentStartNanos = 1_000L,
+                currentConvergedNanos = 1_500L, nowNanos = unavailable
+            )
+        )
     }
 }
