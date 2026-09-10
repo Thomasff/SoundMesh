@@ -108,4 +108,74 @@ class ClockSyncClientTest {
         held.offer(later)
         assertEquals(later, held.current())
     }
+
+    /**
+     * A sink is silent until the estimator answers, and it will not answer below MIN_SAMPLES. At the
+     * session cadence of two seconds that is fourteen seconds of nothing - measured from the code
+     * and confirmed by the room, where the second handset has always taken "十几秒". Nothing is
+     * being computed in that time; the eighth ping is being waited for.
+     *
+     * Bursting the first few costs no accuracy. Replayed on 2026-09-10's eighteen runs, a first
+     * eight gathered 250 ms apart landed 0.85 ± 1.69 ms from that run's mature reading against
+     * 0.71 ± 2.53 for a first eight gathered 2000 ms apart - same mean, tighter spread, and a worst
+     * case of 3.8 ms against 13.6. See on-device-calibration.md 28.1.
+     */
+    @Test
+    fun theFirstExchangesComeFastSoASinkIsNotSilentWaitingForTheEighth() {
+        val port = freePort()
+        val server = ClockSyncServer(port)
+        server.start()
+        try {
+            val client = ClockSyncClient("127.0.0.1", port, ClockOffsetEstimator())
+            client.runFor(
+                seconds = 2,
+                intervalMillis = SETTLED_MILLIS,
+                burstExchanges = BURST,
+                burstIntervalMillis = BURST_MILLIS
+            )
+            val gaps = client.recordedExchanges().map { it.t1 }.zipWithNext { a, b -> (b - a) / 1_000_000L }
+
+            assertTrue("too few exchanges to see a cadence: ${gaps.size}", gaps.size > BURST)
+            // The burst is the point: the eighth exchange has to arrive in a fraction of the time the
+            // settled cadence would have taken to reach it.
+            val toEighth = gaps.take(BURST - 1).sum()
+            assertTrue(
+                "the first $BURST took $toEighth ms, no better than the settled cadence",
+                toEighth < (BURST - 1) * SETTLED_MILLIS / 2
+            )
+            assertTrue("burst gaps were not fast: ${gaps.take(BURST - 1)}", gaps.take(BURST - 1).all { it < SETTLED_MILLIS / 2 })
+            // And it has to stop bursting, or the sink pays the extra traffic for the whole session.
+            assertTrue("the cadence never settled: ${gaps.drop(BURST)}", gaps.drop(BURST).all { it >= SETTLED_MILLIS / 2 })
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * Callers that ask for no burst get exactly what they got before it existed. The pair
+     * calibration screen is one: its 250 ms cadence is already a burst that never stops, and a
+     * second one layered on it would change what every archived run is being compared against.
+     */
+    @Test
+    fun aRunThatAsksForNoBurstKeepsOneCadenceThroughout() {
+        val port = freePort()
+        val server = ClockSyncServer(port)
+        server.start()
+        try {
+            val client = ClockSyncClient("127.0.0.1", port, ClockOffsetEstimator())
+            client.runFor(seconds = 1, intervalMillis = 60)
+            val gaps = client.recordedExchanges().map { it.t1 }.zipWithNext { a, b -> (b - a) / 1_000_000L }
+
+            assertTrue("too few exchanges: ${gaps.size}", gaps.size > 4)
+            assertTrue("a cadence nobody asked to vary varied: $gaps", gaps.all { it >= 30 })
+        } finally {
+            server.stop()
+        }
+    }
+
+    private companion object {
+        const val BURST = 8
+        const val BURST_MILLIS = 10L
+        const val SETTLED_MILLIS = 200L
+    }
 }

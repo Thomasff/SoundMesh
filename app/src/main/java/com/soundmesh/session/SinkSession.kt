@@ -142,6 +142,14 @@ class SinkSession(
     @Volatile private var clockHealth: ClockHealth? = null
     @Volatile private var worstUncertaintyNanos = 0L
 
+    // How long this handset was silent waiting for its first estimate, which is the whole of
+    // what a listener sees when a second phone joins and says nothing. It was never recorded, so
+    // the only account of it was that the room said "十几秒" - which turned out to match
+    // CLOCK_INTERVAL_MILLIS times MIN_SAMPLES exactly. Recorded now so the burst that shortens it
+    // is checked rather than argued.
+    @Volatile private var clockStartedNanos = 0L
+    @Volatile private var firstEstimateNanos = 0L
+
     private val alignmentOffsetNanos =
         (StoredCalibration(calibrationDirectory, peerId).read()?.micros ?: 0L) * 1_000L
 
@@ -206,7 +214,13 @@ class SinkSession(
             ",\"rediscoveries\":${rediscoveries.get()}" +
             ",\"clockHealth\":\"${clockHealth ?: "NONE"}\"" +
             ",\"hostGone\":$hostGone" +
-            ",\"worstUncertaintyNanos\":$worstUncertaintyNanos"
+            ",\"worstUncertaintyNanos\":$worstUncertaintyNanos" +
+            ",\"silentUntilFirstEstimateNanos\":${silentUntilFirstEstimateNanos()}"
+
+    /** Minus one while still silent, so "has not answered yet" cannot be read as "answered at once". */
+    private fun silentUntilFirstEstimateNanos(): Long =
+        if (firstEstimateNanos == 0L || clockStartedNanos == 0L) -1L
+        else firstEstimateNanos - clockStartedNanos
 
     override fun onAudioFocusChanged(hasFocus: Boolean) = flags.setAudioFocus(hasFocus)
 
@@ -292,10 +306,18 @@ class SinkSession(
      * moved", which is the only other thing that interrupts this thread.
      */
     private fun exchangeClock() {
+        clockStartedNanos = System.nanoTime()
         while (!flags.isStopped()) {
             val client = ClockSyncClient(address, SyncActivity.CLOCK_PORT, estimator)
             clockClient = client
-            runCatching { client.runFor(FOREVER_SECONDS, CLOCK_INTERVAL_MILLIS) }
+            runCatching {
+                client.runFor(
+                    FOREVER_SECONDS,
+                    CLOCK_INTERVAL_MILLIS,
+                    burstExchanges = CLOCK_BURST_EXCHANGES,
+                    burstIntervalMillis = CLOCK_BURST_INTERVAL_MILLIS
+                )
+            }
             if (flags.isStopped()) return
             // The interrupt is cleared here rather than left set, or the rebuilt client's first
             // sleep would throw immediately and spin this loop.
@@ -511,6 +533,7 @@ class SinkSession(
      * can be trusted to emit onto. Everything between the two bounds keeps playing and says so.
      */
     private fun grade(estimate: ClockEstimate?) {
+        if (estimate != null && firstEstimateNanos == 0L) firstEstimateNanos = System.nanoTime()
         val health = estimate?.let { ClockHealth.of(it.uncertaintyNanos) }
         clockHealth = health
         if (estimate != null) worstUncertaintyNanos = maxOf(worstUncertaintyNanos, estimate.uncertaintyNanos)
@@ -554,6 +577,28 @@ class SinkSession(
 
         /** The design's clock cadence: 1 ppm of drift moves 2 microseconds across it. */
         const val CLOCK_INTERVAL_MILLIS = 2000L
+
+        /**
+         * How many exchanges go out at [CLOCK_BURST_INTERVAL_MILLIS] before the cadence settles.
+         *
+         * The estimator answers nothing below MIN_SAMPLES, and this session plays nothing until it
+         * answers, so at the settled cadence alone a joining handset is silent for fourteen
+         * seconds - which is what the room has always seen. None of that is computation.
+         *
+         * Thirty-two rather than eight, and it is not a trade. Replayed over 2026-09-10's
+         * eighteen runs, the first estimate a burst of this length supports sat 0.07 ± 0.74 ms
+         * from that run's mature reading, worst case 1.82; the eight the settled cadence spends
+         * fourteen seconds collecting sat 0.71 ± 2.53, worst case 13.62. Eight seconds instead of
+         * fourteen AND a tighter answer. Stopping at eight would reach sound in two seconds but
+         * with a worst case of 3.8 ms, past the millisecond a room can hear.
+         *
+         * See on-device-calibration.md 28.1. The cost is about twenty-eight extra small packets,
+         * once, over the first eight seconds of a session.
+         */
+        const val CLOCK_BURST_EXCHANGES = 32
+
+        /** The pair calibration screen's cadence, which is where the numbers above were measured. */
+        const val CLOCK_BURST_INTERVAL_MILLIS = 250L
 
         /** No new chunk for this long means the host has stopped sending. The harness's value. */
         const val IDLE_THRESHOLD_NANOS = 800_000_000L

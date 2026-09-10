@@ -60,13 +60,34 @@ class ClockSyncClient(
     // Held here, one recorded run replays through any number of designs offline, on identical input.
     private val exchanges = ArrayList<ClockExchange>()
 
-    fun runFor(seconds: Int, intervalMillis: Long = 2000): List<ClockEstimate> {
+    /**
+     * Exchanges with the host until [seconds] are up, one request per interval.
+     *
+     * [burstExchanges] of them go out [burstIntervalMillis] apart before the cadence settles to
+     * [intervalMillis]. The estimator answers nothing below MIN_SAMPLES, and a sink is silent
+     * until it answers, so at the session cadence of two seconds a joining handset waits
+     * fourteen for its eighth reply - the whole of which is waiting, not computing.
+     *
+     * The burst is counted in exchanges the estimator accepted rather than requests sent, so a
+     * dropped reply extends the burst instead of spending it. Bursting costs no accuracy:
+     * replayed on 2026-09-10's eighteen runs, a first eight gathered 250 ms apart sat
+     * 0.85 ± 1.69 ms from that run's mature reading against 0.71 ± 2.53 for a first eight
+     * gathered 2000 ms apart - the same mean, a tighter spread, and a worst case of 3.8 ms
+     * rather than 13.6. See on-device-calibration.md 28.1 for why 32 is the length chosen.
+     */
+    fun runFor(
+        seconds: Int,
+        intervalMillis: Long = 2000,
+        burstExchanges: Int = 0,
+        burstIntervalMillis: Long = intervalMillis
+    ): List<ClockEstimate> {
         val history = ArrayList<ClockEstimate>()
         val address = InetAddress.getByName(hostAddress)
         DatagramSocket().use { socket ->
             socket.soTimeout = SOCKET_TIMEOUT_MILLIS
             val deadline = System.nanoTime() + seconds * 1_000_000_000L
             var seq = 0
+            var accepted = 0
             try {
                 while (System.nanoTime() < deadline) {
                     val t1 = System.nanoTime()
@@ -75,11 +96,11 @@ class ClockSyncClient(
                     runCatching {
                         socket.send(DatagramPacket(request, request.size, address, port))
                         receiveMatchingReply(socket, sent)
-                    }.getOrNull()?.let(::keep)
+                    }.getOrNull()?.let { keep(it); accepted++ }
                         val estimate = estimator.estimate(System.nanoTime())
                     cached.offer(estimate)
                     estimate?.let { history.add(it) }
-                    Thread.sleep(intervalMillis)
+                    Thread.sleep(if (accepted < burstExchanges) burstIntervalMillis else intervalMillis)
                 }
             } catch (stopped: InterruptedException) {
                 // The interrupt is this loop's stop, and every caller uses it as one: it has no
