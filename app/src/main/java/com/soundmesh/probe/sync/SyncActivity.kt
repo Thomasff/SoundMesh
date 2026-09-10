@@ -809,7 +809,7 @@ class SyncActivity : Activity() {
         // ruled out just letting the scheduler's own capacity/lateness logic handle it - that
         // would show up as droppedLate/droppedOverflow on an otherwise healthy run.
         val converged = AtomicBoolean(false)
-        val chunkClient = ChunkClient(address, host.chunkPort) { chunk ->
+        val chunkClient = ChunkClient(address, host.chunkPort, peerId = HostIdentity(filesDir).current()) { chunk ->
             if (converged.get()) {
                 lastPlayAt.set(chunk.playAtHostNanos)
                 scheduler.submit(chunk)

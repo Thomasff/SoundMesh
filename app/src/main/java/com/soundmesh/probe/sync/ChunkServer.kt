@@ -2,6 +2,7 @@ package com.soundmesh.probe.sync
 
 import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.ChunkCodec
+import com.soundmesh.core.HostId
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
@@ -23,8 +24,12 @@ class ChunkServer(private val port: Int) {
      *
      * Per client rather than one queue for all of them, because a shared queue would only move the
      * stall: the reconnecting handset's fresh socket would wait behind the dead one it replaced.
+     *
+     * [peerId] is how a handset that comes back is recognised as the handset that left. Null for a
+     * sink that named nothing, which is the older builds and the probe path, and costs only the
+     * ability to be recognised later - see [serve] for why that is not a refusal.
      */
-    private class Client(val socket: Socket, val stream: OutputStream) {
+    private class Client(val socket: Socket, val stream: OutputStream, val peerId: String?) {
         val outbox = ArrayBlockingQueue<ByteArray>(OUTBOX_CAPACITY_CHUNKS)
     }
 
@@ -35,6 +40,11 @@ class ChunkServer(private val port: Int) {
     // Kept on the server rather than on the client, so that what a run dropped survives the client
     // it was dropped for - a sink that left is exactly the case the number is wanted for.
     @Volatile private var dropped = 0
+
+    // Kept here for the same reason, and kept at all because the fix would otherwise be silent: a
+    // handset that comes back leaves no trace of the connection it left behind, and a roster that
+    // quietly repairs itself is indistinguishable from one that never needed to.
+    @Volatile private var replacedSinks = 0
 
     fun start() {
         // Bind on the caller's thread before handing off to the worker: stop() reads `server`,
@@ -49,9 +59,7 @@ class ChunkServer(private val port: Int) {
                     while (running) {
                         val socket = bound.accept()
                         socket.tcpNoDelay = true
-                        val client = Client(socket, socket.getOutputStream().buffered())
-                        clients.add(client)
-                        Thread({ serve(client) }, "SoundMeshChunkSend").start()
+                        Thread({ serve(socket) }, "SoundMeshChunkSend").start()
                     }
                 }
             }
@@ -73,8 +81,38 @@ class ChunkServer(private val port: Int) {
         }
     }
 
-    /** Drains one sink's queue until the session ends or its socket does. */
-    private fun serve(client: Client) {
+    /**
+     * Names one sink, puts it in the roster, and drains its queue until the session or the socket ends.
+     *
+     * The name is what makes the roster able to let go. Until it existed, a connection left this
+     * list only when a write to it failed, and a half open TCP swallows a great many writes before
+     * one does - so the socket a handset abandoned outlived it, holding a queue and a thread and
+     * counting as a second sink. Measured across three devices: four sinks reported against two
+     * handsets, while the control channel, which had already been taught this, had its roster right.
+     *
+     * A sink that names nothing is served anyway, which is where this parts company with the
+     * control channel. Refusing one there costs an icon on a drawing; refusing one here costs a
+     * handset all of its audio, and a build that predates the name is exactly the case.
+     *
+     * Read before the roster rather than after, so that a sink which connects and then says
+     * nothing cannot park this thread for the life of the process: it is in no roster, so stop()
+     * would not close it either. The bound on the read is what ends it.
+     */
+    private fun serve(socket: Socket) {
+        val client = Client(socket, socket.getOutputStream().buffered(), announcedPeerId(socket))
+        // The returning connection wins rather than being turned away: the old one is only still
+        // here because nothing has failed on it yet, which is the same reason nobody noticed it die.
+        val replaced = synchronized(clients) {
+            val stale = client.peerId?.let { name -> clients.filter { it.peerId == name } }.orEmpty()
+            clients.removeAll(stale)
+            clients.add(client)
+            // Counted under the lock for the reason dropped is: two handsets can come back at once.
+            replacedSinks += stale.size
+            stale
+        }
+        // Closed outside the lock, and closed rather than dropped: the thread parked on that socket
+        // ends when the socket does, and a sender thread per departed handset is a leak with a name.
+        for (old in replaced) runCatching { old.socket.close() }
         runCatching {
             client.socket.use {
                 while (running) {
@@ -89,10 +127,33 @@ class ChunkServer(private val port: Int) {
         clients.remove(client)
     }
 
+    /**
+     * The name a sink writes first, or null if it wrote something else, or nothing at all.
+     *
+     * Fixed width ASCII rather than a framed message, because a [HostId] is fixed width by
+     * construction and its shape is checked wherever one is read - a length prefix would only add
+     * a second way for this to be wrong. Nothing has ever travelled sink to host on this socket,
+     * so a sink of an older build says nothing and waits out the bound.
+     */
+    private fun announcedPeerId(socket: Socket): String? = runCatching {
+        socket.soTimeout = ANNOUNCE_TIMEOUT_MILLIS
+        val name = ByteArray(HostId.LENGTH)
+        var filled = 0
+        while (filled < name.size) {
+            val read = socket.getInputStream().read(name, filled, name.size - filled)
+            if (read < 0) return@runCatching null
+            filled += read
+        }
+        String(name, Charsets.US_ASCII).takeIf { HostId.isValid(it) }
+    }.getOrNull()
+
     fun clientCount(): Int = clients.size
 
     /** Chunks that were not sent because a sink stopped keeping up. Zero on a healthy link. */
     fun droppedChunks(): Int = dropped
+
+    /** Connections a returning handset took the place of. Zero on a run with no reconnects. */
+    fun replacedSinks(): Int = replacedSinks
 
     fun stop() {
         // Drained before anything is closed, so that a run which broadcast its last chunk and
@@ -127,6 +188,15 @@ class ChunkServer(private val port: Int) {
 
         /** How often a sender wakes to notice the session ended. Short next to a person's patience. */
         const val POLL_MILLIS = 200L
+
+        /**
+         * How long a sink has to say its name before it is served as an unnamed one.
+         *
+         * Shorter than the control channel's two seconds, and for a different cost: there the wait
+         * delays a drawing, here it delays audio. Sixteen bytes written the instant a handshake
+         * completed on a LAN either arrive well inside this or are not coming.
+         */
+        const val ANNOUNCE_TIMEOUT_MILLIS = 500
 
         /** Long enough for a full queue on a healthy link, short enough that a dead one is not waited on. */
         const val DRAIN_TIMEOUT_MILLIS = 2_000L

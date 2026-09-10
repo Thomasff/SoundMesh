@@ -58,8 +58,9 @@ object SessionReadout {
             // Two numbers, and neither is a reading on its own: how many sockets are open says
             // nothing about how many were expected, and how many announced themselves says nothing
             // about how many are still listening. It is their disagreement that says a handset
-            // left. It cannot say which one - the audio sockets carry no name - so this is a
-            // prompt to look at the phones rather than an answer about them.
+            // left. It cannot say which one - the audio sockets carry a name of their own now,
+            // but this screen is not shown it - so this is a prompt to look at the phones rather
+            // than an answer about them.
             rows += Counter(
                 R.string.counter_sinks,
                 if (room.isEmpty()) "$sinks" else "$sinks/${room.size - 1}"

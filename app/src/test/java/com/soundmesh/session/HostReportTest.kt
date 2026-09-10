@@ -32,6 +32,7 @@ class HostReportTest {
             generated = 3_010,
             droppedToSinks = 0,
             sinks = sinks,
+            replacedSinks = 0,
             roomPeerIds = room,
             unnamedSinks = 0,
             lateChunks = lateChunks,

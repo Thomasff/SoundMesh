@@ -6,6 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
 
 class ChunkServerTest {
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
@@ -19,7 +20,8 @@ class ChunkServerTest {
         server.start()
         try {
             Socket("127.0.0.1", port).use { socket ->
-                waitForClient(server)
+                announce(socket, PEER)
+                waitForClients(server, 1)
                 server.broadcast(chunk(7))
                 val reader = FrameReader(socket.getInputStream())
 
@@ -49,7 +51,8 @@ class ChunkServerTest {
         server.start()
         try {
             Socket("127.0.0.1", port).use {
-                waitForClient(server)
+                announce(it, PEER)
+                waitForClients(server, 1)
                 val startedAt = System.nanoTime()
                 repeat(CHUNKS_PAST_EVERY_BUFFER) { server.broadcast(chunk(it)) }
                 val elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000
@@ -62,10 +65,134 @@ class ChunkServerTest {
         }
     }
 
-    private fun waitForClient(server: ChunkServer) {
-        val deadline = System.nanoTime() + 2_000_000_000L
-        while (server.clientCount() == 0 && System.nanoTime() < deadline) Thread.sleep(5)
-        assertEquals(1, server.clientCount())
+    /**
+     * The other half of the fix that landed on the control channel and not here.
+     *
+     * A socket only leaves this roster when a write to it fails, and a half open TCP swallows a
+     * great many writes before one does - so the connection a handset left behind outlives it, and
+     * the handset that comes back stands in the room twice. Measured on three devices: the host
+     * reported four sinks against two handsets, while the control channel, which had already been
+     * taught to recognise a returning peer, reported the roster correctly.
+     *
+     * The new connection wins rather than being turned away, for the reason the control channel
+     * gives: the old one is only still here because nothing has failed on it yet, which is the
+     * same reason nobody noticed it die.
+     */
+    @Test
+    fun aSinkThatComesBackReplacesTheConnectionItLeftBehind() {
+        val port = freePort()
+        val server = ChunkServer(port)
+        server.start()
+        try {
+            val left = Socket("127.0.0.1", port)
+            announce(left, PEER)
+            waitForClients(server, 1)
+            Socket("127.0.0.1", port).use { returned ->
+                announce(returned, PEER)
+                waitFor("the returning sink to take the old one's place") { server.replacedSinks() == 1 }
+
+                assertEquals(1, server.clientCount())
+                server.broadcast(chunk(3))
+                assertEquals(3, FrameReader(returned.getInputStream()).readChunk()?.sequence)
+            }
+            left.soTimeout = SOCKET_WAIT_MILLIS
+            val ending = runCatching { left.getInputStream().read() }
+
+            assertTrue(
+                "the connection it left behind is still open",
+                ending.getOrNull() == -1 || ending.exceptionOrNull() is SocketException
+            )
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun twoSinksThatNameThemselvesDifferentlyBothStay() {
+        val port = freePort()
+        val server = ChunkServer(port)
+        server.start()
+        try {
+            Socket("127.0.0.1", port).use { one ->
+                Socket("127.0.0.1", port).use { other ->
+                    announce(one, PEER)
+                    announce(other, OTHER_PEER)
+                    waitForClients(server, 2)
+
+                    assertEquals(0, server.replacedSinks())
+                }
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * Unlike the control channel, which closes a connection that cannot name itself.
+     *
+     * There the cost of turning one away is an icon missing from a drawing; here it is a handset
+     * that plays nothing. A sink of an older build, and the probe path, both connect without a
+     * name - they lose only the ability to be recognised when they come back.
+     */
+    @Test
+    fun aSinkThatNamesNothingIsStillServed() {
+        val port = freePort()
+        val server = ChunkServer(port)
+        server.start()
+        try {
+            Socket("127.0.0.1", port).use { socket ->
+                waitForClients(server, 1)
+                server.broadcast(chunk(11))
+
+                assertEquals(11, FrameReader(socket.getInputStream()).readChunk()?.sequence)
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * The two halves of the name against each other, rather than against a hand written socket.
+     *
+     * Every other test here says its name by writing sixteen bytes itself, which would go on
+     * passing if the sink had never been taught to say one - and a sink that says nothing is
+     * served, so nothing else would fail either. This is the only place the write and the read
+     * meet.
+     */
+    @Test
+    fun aSinkOfThisBuildSaysTheNameThisServerReads() {
+        val port = freePort()
+        val server = ChunkServer(port)
+        server.start()
+        val left = ChunkClient("127.0.0.1", port, peerId = PEER) {}
+        val returned = ChunkClient("127.0.0.1", port, peerId = PEER) {}
+        try {
+            left.start()
+            waitForClients(server, 1)
+            returned.start()
+            waitFor("the returning sink to take the old one's place") { server.replacedSinks() == 1 }
+
+            assertEquals(1, server.clientCount())
+        } finally {
+            left.stop()
+            returned.stop()
+            server.stop()
+        }
+    }
+
+    private fun announce(socket: Socket, peerId: String) {
+        socket.getOutputStream().apply { write(peerId.toByteArray(Charsets.US_ASCII)); flush() }
+    }
+
+    private fun waitForClients(server: ChunkServer, count: Int) {
+        waitFor("$count sink(s) to connect") { server.clientCount() == count }
+        assertEquals(count, server.clientCount())
+    }
+
+    private fun waitFor(what: String, done: () -> Boolean) {
+        val deadline = System.nanoTime() + SOCKET_WAIT_MILLIS * 1_000_000L
+        while (!done() && System.nanoTime() < deadline) Thread.sleep(5)
+        assertTrue("timed out waiting for $what", done())
     }
 
     private companion object {
@@ -77,5 +204,11 @@ class ChunkServerTest {
 
         /** Far below what one blocked write costs, and far above what three thousand enqueues do. */
         const val BLOCKING_MILLIS = 5_000
+
+        /** Long next to a loopback connection and a sixteen byte write, short next to a stuck test. */
+        const val SOCKET_WAIT_MILLIS = 4_000
+
+        const val PEER = "0123456789abcdef"
+        const val OTHER_PEER = "fedcba9876543210"
     }
 }

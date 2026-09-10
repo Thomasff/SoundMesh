@@ -31,14 +31,20 @@ import com.soundmesh.probe.sync.SyncRenderer
  * listener next touches the drawing, and not before - so the roster is a record of who joined
  * rather than of who is still here. The connection count is the live one, late by however long
  * the kernel keeps retransmitting to a handset that walked out of the network, measured at 26.9
- * seconds. What neither can say is *which* handset stopped listening: chunks travel over
- * anonymous sockets, which is why the roster had to be built on a separate channel at all.
+ * seconds. Audio sockets carry a name of their own now - they had to, or a handset that came back
+ * stood in the room twice until the kernel gave up on the socket it left - but nothing reads that
+ * name here yet, so *which* handset stopped listening is still a question these two can only pose.
+ *
+ * [replacedSinks] is what that fix left behind to be read, and it tells the two ways the numbers
+ * disagree apart: a connection replaced is a handset that came back, so a run whose sinks and
+ * roster disagree with this at zero is a handset that left and did not return.
  */
 internal fun hostReportFields(
     maxBroadcastNanos: Long,
     generated: Int,
     droppedToSinks: Int,
     sinks: Int,
+    replacedSinks: Int,
     roomPeerIds: List<String>,
     unnamedSinks: Int,
     lateChunks: Int,
@@ -46,6 +52,9 @@ internal fun hostReportFields(
 ): String =
     "\"maxBroadcastNanos\":$maxBroadcastNanos,\"generated\":$generated" +
         ",\"droppedToSinks\":$droppedToSinks,\"sinks\":$sinks" +
+        // A returning handset used to be a second sink for as long as the kernel kept writing
+        // to the socket it left. It is not any more, and this is the only trace it leaves.
+        ",\"replacedSinks\":$replacedSinks" +
         // Whole names rather than the four characters a screen shows. This report is also written
         // to a file that a later run reads, and a prefix cannot be matched back against a stored
         // calibration or a stored separation, which are kept under the whole name.
@@ -358,6 +367,7 @@ class HostSession(
             generated = generated,
             droppedToSinks = chunkServer.droppedChunks(),
             sinks = chunkServer.clientCount(),
+            replacedSinks = chunkServer.replacedSinks(),
             roomPeerIds = roomPeerIds(),
             unnamedSinks = spatialServer?.unnamedSinks() ?: 0,
             lateChunks = lateChunks(),

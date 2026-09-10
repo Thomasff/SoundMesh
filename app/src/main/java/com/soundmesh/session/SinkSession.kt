@@ -367,7 +367,7 @@ class SinkSession(
 
     /** One attempt. The caller's loop is the retry, so a host that is not up yet costs one sleep. */
     private fun dial(): Boolean {
-        val client = ChunkClient(address, chunkPort, ::receive)
+        val client = ChunkClient(address, chunkPort, peerId = spatialId, onChunk = ::receive)
         if (runCatching { client.start() }.isFailure) {
             Thread.sleep(CONNECT_RETRY_MILLIS)
             return false
