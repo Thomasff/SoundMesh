@@ -7,6 +7,7 @@ import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
 import com.soundmesh.core.StreamingResampler
+import com.soundmesh.core.songAfterStep
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -16,6 +17,16 @@ import java.util.concurrent.atomic.AtomicReference
  * that jumped back to the left without saying why is a slider that looks broken.
  */
 data class Playhead(val songIndex: Int, val positionMicros: Long, val durationMicros: Long)
+
+/**
+ * Where the listener asked to go next: a place, and which song it is a place in.
+ *
+ * Carrying the index is what makes next and previous the same mechanism as the slider instead of
+ * a second one beside it. A drag names the song already playing; a press on next or previous
+ * names its neighbour. Everything after that - ending the decoding pass, emptying the queue,
+ * opening a file at an instant - is the path the slider already took.
+ */
+private data class Jump(val songIndex: Int, val micros: Long)
 
 /**
  * A song decoded a piece at a time, on its own thread, into a queue the renderer takes from.
@@ -53,13 +64,13 @@ class StreamingChunkSource private constructor(
     @Volatile private var skipped = 0
 
     /**
-     * Where the listener asked to jump to, in microseconds within the song now playing.
+     * Where the listener asked to go, or null if nobody has asked.
      *
-     * Read and taken by the decoder thread, written by whoever holds the slider. Null is nobody
-     * having asked, which is not the same as zero - zero is the start of the song, and somebody
-     * dragging a slider all the way left means it.
+     * Read and taken by the decoder thread, written by whoever holds the slider or the buttons.
+     * Null is nobody having asked, which is not the same as a jump to zero - zero is the start of
+     * a song, and somebody dragging a slider all the way left means it.
      */
-    private val seekRequest = AtomicReference<Long?>(null)
+    private val jumpRequest = AtomicReference<Jump?>(null)
 
     @Volatile private var decodedMicros = 0L
     @Volatile private var songMicros = 0L
@@ -91,7 +102,20 @@ class StreamingChunkSource private constructor(
      * host's 1.5 s of lead.
      */
     fun seekTo(micros: Long) {
-        seekRequest.set(maxOf(0L, micros))
+        jumpRequest.set(Jump(songIndex, maxOf(0L, micros)))
+        queue.discard()
+    }
+
+    /**
+     * Starts the song [by] places along the list, from its beginning.
+     *
+     * The two ends are [songAfterStep]'s to decide, and it is asked here rather than by the
+     * caller because the index it decides from is this thread's - a caller reading it first and
+     * asking second could name a song by the time the answer arrived was no longer the neighbour
+     * of anything.
+     */
+    fun stepSong(by: Int) {
+        jumpRequest.set(Jump(songAfterStep(songIndex, by), 0L))
         queue.discard()
     }
 
@@ -175,16 +199,24 @@ class StreamingChunkSource private constructor(
                 if (firstRefusal == null) firstRefusal = refused
                 Log.i(LOG_TAG, "a song in the folder was passed over: ${refused.message}")
             }
-            // A jump asked for while that song was playing is answered by opening the same song
-            // again at the place asked for. Anything else means the song is over.
+            // A jump asked for while that song was playing names where to open next - the
+            // same song at the place a slider asked for, or a neighbour a button asked for.
+            // Anything else means the song is over and the list moves on by itself.
             //
             // Opening rather than seeking the extractor in place, for the reason the folder gives:
             // the converter holds sixteen samples either side of where it is and the codec holds
             // whatever it has buffered, and both would have to be told - where opening again is
             // the path a folder already takes every time it changes song.
-            val asked = seekRequest.getAndSet(null)
+            val asked = jumpRequest.getAndSet(null)
             if (asked != null) {
-                from = asked
+                index = asked.songIndex
+                from = asked.micros
+                // What the cutter is holding back is from where the listener just left, and
+                // finishing the next chunk with it would put a few milliseconds of the old
+                // place at the front of the new one. Here rather than inside play(), because
+                // the condition is "the listener jumped" and not "the new place is not zero":
+                // a press on next lands at zero and is exactly as much of a cut as a drag is.
+                cutter.forget()
             } else {
                 index++
                 from = 0L
@@ -221,9 +253,6 @@ class StreamingChunkSource private constructor(
                 // to start from produces noise until the next one arrives.
                 extractor.seekTo(fromMicros, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             }
-            // What is held back is from where the listener just left, and finishing the next chunk
-            // with it would put a few milliseconds of the old place at the front of the new one.
-            if (fromMicros > 0L) cutter.forget()
             val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
             try {
                 codec.configure(format, null, null, 0)
@@ -255,7 +284,7 @@ class StreamingChunkSource private constructor(
         // sixteen samples either side of where it is and the codec is holding whatever it has
         // buffered; the caller opens the song again at the new place, which is the path a folder
         // already takes every time it changes song.
-        while (!queue.stopped && seekRequest.get() == null) {
+        while (!queue.stopped && jumpRequest.get() == null) {
             if (!inputDone) {
                 val inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_MICROS)
                 if (inputIndex >= 0) {
@@ -303,7 +332,7 @@ class StreamingChunkSource private constructor(
         //
         // Not on a jump: a listener who dragged the slider to the last second of a song has asked
         // for less than a chunk of audio and is owed the next song, not a refusal.
-        if (!queue.stopped && seekRequest.get() == null && converted < CHUNK_BYTES) {
+        if (!queue.stopped && jumpRequest.get() == null && converted < CHUNK_BYTES) {
             throw SourceUnusable("SOURCE_FILE_TOO_SHORT")
         }
     }

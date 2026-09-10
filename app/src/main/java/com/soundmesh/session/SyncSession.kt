@@ -79,6 +79,18 @@ interface SyncSession {
     fun seekTo(micros: Long)
 
     /**
+     * Starts the song [by] places along the list, from its beginning.
+     *
+     * Everything [seekTo] throws away is thrown away here too, and for the same reason - what is
+     * in flight is the old song. Which song a step lands on at either end of the list is
+     * [com.soundmesh.core.songAfterStep]'s decision, taken where the index is known rather than
+     * by whoever pressed the button.
+     *
+     * Declared on both roles rather than defaulted, for the reason [onNetworkChanged] gives.
+     */
+    fun stepSong(by: Int)
+
+    /**
      * How far into the song the room is, or null when nothing can say.
      *
      * Only a host can answer: it is the handset holding the source, and a sink is handed instants

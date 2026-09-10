@@ -64,6 +64,13 @@ class SessionService : Service() {
             ACTION_SEEK -> runCatching {
                 ACTIVE?.seekTo(intent.getLongExtra(EXTRA_SEEK_MICROS, 0L))
             }.onFailure { Log.e(LOG_TAG, "could not jump", it) }
+            // The same shape and the same thread, because it is the same mechanism: a step
+            // names a song where a drag names a place, and both end in one field and two
+            // emptied queues. A zero step would ask the decoder to reopen the song it is on
+            // for nothing, so it is not sent rather than being guarded further down.
+            ACTION_STEP_SONG -> runCatching {
+                intent.getIntExtra(EXTRA_SONG_STEP, 0).takeIf { it != 0 }?.let { ACTIVE?.stepSong(it) }
+            }.onFailure { Log.e(LOG_TAG, "could not change song", it) }
         }
         return START_NOT_STICKY
     }
@@ -167,6 +174,7 @@ class SessionService : Service() {
             lateChunks = source::lateChunks,
             skippedSongs = source::skippedSongs,
             seekSource = source::seekTo,
+            stepSongSource = source::stepSong,
             sourcePlayhead = source::playhead,
             // The song is over, so the session is over: the service takes itself down exactly the
             // way the stop button does. Anything less leaves a foreground notification, a bound
@@ -471,6 +479,8 @@ class SessionService : Service() {
          */
         const val ACTION_SEEK = "com.soundmesh.session.SEEK"
         const val EXTRA_SEEK_MICROS = "seek_micros"
+        const val ACTION_STEP_SONG = "com.soundmesh.session.STEP_SONG"
+        const val EXTRA_SONG_STEP = "song_step"
         const val EXTRA_SOURCE_FILE = "source_file"
 
         /**

@@ -464,6 +464,10 @@ class SinkSession(
     /** Nothing. A sink holds no source: the handset that does is the one that can jump. */
     override fun seekTo(micros: Long) = Unit
 
+    // Nor this one, and for the same reason: a sink plays the instants it is handed. A step
+    // reaches it as a sequence that went backwards, which it already knows what to do with.
+    override fun stepSong(by: Int) = Unit
+
     /** Null. Positions are the source's, and a sink is handed instants instead. */
     override fun playhead(): Playhead? = null
 

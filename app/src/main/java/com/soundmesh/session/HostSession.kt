@@ -193,6 +193,13 @@ class HostSession(
      */
     private val seekSource: (Long) -> Unit = {},
     /**
+     * Asks the source to move [by] songs along the list it is playing.
+     *
+     * Does nothing by default, for the reason [seekSource] gives and one more: a source that is
+     * one song has no list to move along, so a step on it is a press with nowhere to go.
+     */
+    private val stepSongSource: (Int) -> Unit = {},
+    /**
      * Where the source has got to, before this session's own lead is taken off it.
      *
      * Null by default and null from a source that cannot say how long its audio is - a slider
@@ -333,11 +340,22 @@ class HostSession(
      * Chasing it would mean a lock between this thread and the producer's, on the path that feeds
      * the room, to save something nobody can hear.
      */
-    override fun seekTo(micros: Long) {
-        seekSource(micros)
+    override fun seekTo(micros: Long) = jumped("to ${micros / 1000} ms") { seekSource(micros) }
+
+    /**
+     * The next song, or the one before it. Everything [seekTo] lets go of is let go of here too.
+     *
+     * A step is a jump like any other as far as the room is concerned: the sinks are told nothing
+     * except that the sequence went backwards, which is what makes both of these one mechanism
+     * rather than two.
+     */
+    override fun stepSong(by: Int) = jumped("by $by song(s)") { stepSongSource(by) }
+
+    private fun jumped(where: String, ask: () -> Unit) {
+        ask()
         val thrown = scheduler.clear()
         jumps++
-        Log.i(LOG_TAG, "jumped to ${micros / 1000} ms; $thrown queued chunks were thrown away")
+        Log.i(LOG_TAG, "jumped $where; $thrown queued chunks were thrown away")
     }
 
     /**

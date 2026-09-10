@@ -125,6 +125,7 @@ class HomeActions(
     val stop: () -> Unit,
     val calibrate: () -> Unit,
     val seek: (Long) -> Unit,
+    val stepSong: (Int) -> Unit,
     val pairCalibrate: () -> Unit,
     val room: RoomActions
 )
@@ -306,11 +307,11 @@ private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolea
     state.nowPlaying?.let {
         Text(stringResource(R.string.now_playing, it), style = MaterialTheme.typography.bodyMedium)
     }
-    state.playhead?.let { PlayheadPanel(it, actions.seek) }
+    state.playhead?.let { PlayheadPanel(it, actions.seek, actions.stepSong) }
 }
 
 /**
- * Where the song is, and somewhere to drag it to.
+ * Where the song is, somewhere to drag it to, and the two songs either side of it.
  *
  * The position shown while a finger is down is the finger's, not the room's: a slider that snapped
  * back to the music every time the screen refreshed would be one nobody could aim. The jump is
@@ -319,10 +320,16 @@ private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolea
  *
  * **It goes quiet for about a second and a half after a jump.** That is the lead every chunk is
  * stamped with; the alternative was carrying on playing the old place for the same length of time,
- * which sounds like the app ignoring the drag.
+ * which sounds like the app ignoring the drag. The buttons cost the same silence for the same
+ * reason - they are the same jump.
+ *
+ * Here rather than beside start and stop, because this whole panel is drawn only for a source that
+ * can say how long it is - and a source that cannot say that has no list to step through either.
+ * A folder of one still gets them: next ends it and previous plays it again, which is what those
+ * two words mean on a list of one and is better than a button that is there but does nothing.
  */
 @Composable
-private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit) {
+private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit, stepSong: (Int) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     // Where the finger first landed, which is what tells a drag from a brush. A Material slider
     // treats a touch anywhere on the track as a complete gesture and reports it the same way it
@@ -355,6 +362,17 @@ private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit) {
             dragging = null
         }
     )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        OutlinedButton(onClick = { stepSong(-1) }, modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.play_previous))
+        }
+        OutlinedButton(onClick = { stepSong(1) }, modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.play_next))
+        }
+    }
 }
 
 /**

@@ -165,6 +165,9 @@ class HomeActivity : ComponentActivity() {
         // Told to the service rather than to the session directly: the session outlives this
         // screen on purpose, and reaching into it from here would be the one place that assumed
         // otherwise.
+        stepSong = { by ->
+            startService(request(SessionService.ACTION_STEP_SONG).putExtra(SessionService.EXTRA_SONG_STEP, by))
+        },
         seek = { micros ->
             startService(request(SessionService.ACTION_SEEK).putExtra(SessionService.EXTRA_SEEK_MICROS, micros))
         },
