@@ -159,6 +159,7 @@
     <string name="counter_reconnects">重连</string>
     <string name="counter_rediscoveries">重新找主机</string>
     <string name="counter_clock">时钟</string>
+    <string name="counter_silent_start">加入后多久出声</string>
     <string name="counter_broadcast">最慢广播</string>
     <string name="counter_source_late">等音源（次）</string>
     <string name="counter_songs_skipped">跳过（首）</string>

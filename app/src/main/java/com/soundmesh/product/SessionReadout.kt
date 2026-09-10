@@ -39,6 +39,9 @@ object SessionReadout {
             rows += Counter(R.string.counter_reconnects, "$it")
             rows += Counter(R.string.counter_rediscoveries, "${whole(report, "rediscoveries") ?: 0}")
             rows += Counter(R.string.counter_clock, clock(report))
+            // The one reading here that a listener can check against their own patience, and
+            // the only account of it before this row existed was the room saying "十几秒".
+            rows += Counter(R.string.counter_silent_start, silentStart(report))
         }
         // A host's own, and the only rows that say anything about the other handsets rather than
         // about this one. Keyed off the connection count and not off the roster, because a host
@@ -87,6 +90,14 @@ object SessionReadout {
     private fun clock(report: String): String {
         val health = text(report, "clockHealth") ?: "-"
         return "$health ${millis(whole(report, "worstUncertaintyNanos") ?: 0L, 2)}"
+    }
+
+    /** Seconds, because this is the row compared against a person waiting, not against a budget. */
+    private fun silentStart(report: String): String {
+        val nanos = whole(report, "silentUntilFirstEstimateNanos") ?: -1L
+        // Negative is "no estimate yet", which a zero would misreport as "answered instantly".
+        return if (nanos < 0) "—"
+        else String.format(null as java.util.Locale?, "%.1f s", nanos / 1e9)
     }
 
     private fun millis(nanos: Long, decimals: Int): String =

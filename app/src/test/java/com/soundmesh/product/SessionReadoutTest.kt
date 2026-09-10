@@ -10,7 +10,8 @@ class SessionReadoutTest {
     /** The shape a sink actually writes, fields and all. */
     private val sinkReport = """{"played":3000,"releaseTrims":2,"trimmedFrames":88,""" +
         """"silenceWrites":1,"droppedLate":0,"droppedOverflow":0,"trackUnderruns":0,""" +
-        """"reconnects":2,"rediscoveries":1,"clockHealth":"GOOD","worstUncertaintyNanos":2670000}"""
+        """"reconnects":2,"rediscoveries":1,"clockHealth":"GOOD","worstUncertaintyNanos":2670000,""" +
+        """"silentUntilFirstEstimateNanos":3100000000}"""
 
     /** And the shape a host writes: different fields, same function. */
     private val hostReport = """{"played":3000,"releaseTrims":3,"trimmedFrames":120,""" +
@@ -70,6 +71,25 @@ class SessionReadoutTest {
     @Test
     fun theClockRowCarriesItsWorstReadingInMilliseconds() {
         assertEquals("GOOD 2.67 ms", valueOf(sinkReport, R.string.counter_clock))
+    }
+
+    /**
+     * The wait a listener actually sees: a second handset joins and says nothing until its
+     * clock answers. It was fourteen seconds and nobody had a number for it - the only record
+     * was the room saying "十几秒" - so a row that shows it is what keeps the next change to
+     * that path honest. Seconds rather than milliseconds: it is the one reading here a person
+     * compares against their own patience.
+     */
+    @Test
+    fun theWaitBeforeASinkCouldMakeAnySoundGetsARowOfItsOwn() {
+        assertEquals("3.1 s", valueOf(sinkReport, R.string.counter_silent_start))
+    }
+
+    /** Still waiting is not the same as waited no time, and a row of 0.0 s would say the latter. */
+    @Test
+    fun aSinkThatHasNotAnsweredYetSaysSoRatherThanReadingZero() {
+        val waiting = """{"played":0,"reconnects":0,"silentUntilFirstEstimateNanos":-1}"""
+        assertEquals("—", valueOf(waiting, R.string.counter_silent_start))
     }
 
     /** The counter that would say the per-sink queues had stopped working. */
