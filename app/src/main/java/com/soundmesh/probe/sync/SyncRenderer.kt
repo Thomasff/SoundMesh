@@ -29,12 +29,20 @@ import kotlin.math.cos
 /**
  * What the output path this run actually got looks like, as the framework describes it.
  *
- * Every field here is a thing the framework decides rather than a thing this code asks for, and
- * they are recorded because on 2026-09-08 the run-level alignment bias turned out to sit at one of
- * two levels 0.87 ms apart, drawn afresh each run, with nothing in the report able to tell which.
- * Twelve runs could establish that the two levels exist and not what distinguishes them - a sweep
- * over the fields that were being recorded found nothing that survived the multiple comparisons.
- * These are the ones the sweep had no access to.
+ * Every field here is a thing the framework decides rather than a thing this code asks for.
+ *
+ * The reason they were added has since been withdrawn: twelve runs read as a run-level bias
+ * sitting at one of two levels 0.87 ms apart, and eighteen runs showed one wide distribution with
+ * no step in it at all. The run-level bias turned out to be the clock offset the sink converted
+ * through, which is not in here and never was.
+ *
+ * They stay because a different two-level thing did survive, one emission below the run: an
+ * emission of the X10's lands 56.05 +/- 2.26 frames early on about a third of the chirps, drawn
+ * afresh each time, and the trim on the chirp's own chunk is a frame or less - so the step is in
+ * the depth this renderer reads out of getTimestamp rather than anywhere it can see. Which output
+ * the framework granted is the next thing that could distinguish it, and this is where a later
+ * reader finds out. What is still missing is the device's native burst, which no AudioTrack
+ * reports; it is read off the platform instead.
  */
 internal fun trackProfileJson(
     minBufferBytes: Int,
