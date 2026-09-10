@@ -124,3 +124,56 @@ for (const held of [8, 9, 10, 12, 16, 20, 24, 32, 48, 64]) {
   console.log(`   ${String(held).padStart(4)}      ${String(held * 2).padStart(5)} s     ${cell(f)}    ${cell(r)}`)
 }
 console.log('  （单位 ms。放歌那条路的第一个估计就在「攥着 8 个」那一行。）')
+
+// ------------------------------------------------ 4. would a fast first eight be a worse first eight
+
+console.log()
+console.log('== 4. 头八次快发（250 ms）对比慢发（2000 ms），第一个估计谁更准 ==')
+console.log('   参照系：同一轮窗口填满之后那份读数，按它自己报的漂移折算回被问的时刻。')
+
+/** The mature reading projected to [atNanos] along the drift it reports, so an early estimate can
+ *  be scored against it without the projection itself being the thing measured. */
+const referenceAt = (mature, atNanos) => {
+  const last = mature.filter(s => s.estimate !== null).pop()
+  if (!last) return null
+  const seconds = (atNanos - Number(last.estimate.anchorT1)) / 1e9
+  return last.estimate.offsetNanos + last.estimate.driftPpm * seconds * 1e3
+}
+
+const fast = { frozen: [], fraction: [] }
+const slow = { frozen: [], fraction: [] }
+
+for (const [, { labels }] of Object.entries(ARMS)) {
+  for (const run of labels.map(loadRun)) {
+    const exchanges = run.sink.clock.exchanges
+    const mature = replay(exchanges).map(s => (s.held >= 64 ? s : { ...s, estimate: null }))
+    for (const keep of [true, false]) {
+      const bucket = keep ? 'fraction' : 'frozen'
+      // 250 ms as recorded: the first eight span two seconds.
+      const dense = replay(exchanges, { keepFractionWhileFilling: keep }).find(s => s.held === 8 && s.estimate)
+      if (dense) {
+        const ref = referenceAt(mature, dense.t4)
+        if (ref !== null) fast[bucket].push((dense.estimate.offsetNanos - ref) / 1e6)
+      }
+      // 2000 ms: the first eight span sixteen.
+      for (let phase = 0; phase < STRIDE; phase++) {
+        const step = replay(decimate(exchanges, STRIDE, phase), { keepFractionWhileFilling: keep })
+          .find(s => s.held === 8 && s.estimate)
+        if (!step) continue
+        const ref = referenceAt(mature, step.t4)
+        if (ref !== null) slow[bucket].push((step.estimate.offsetNanos - ref) / 1e6)
+      }
+    }
+  }
+}
+
+const cell = g => g.length
+  ? `${mean(g).toFixed(2).padStart(6)} ± ${(sd(g) || 0).toFixed(2)}   最大 ${Math.max(...g.map(Math.abs)).toFixed(2).padStart(5)}  (n=${g.length})`
+  : '   -'
+console.log()
+console.log('   第一个估计（攥着 8 个）离参照系多远，ms：')
+console.log('                        老规则(frozen)                        新规则(fraction)')
+console.log('   头八次快发 250 ms  ', cell(fast.frozen), '  ', cell(fast.fraction))
+console.log('   头八次慢发 2000 ms ', cell(slow.frozen), '  ', cell(slow.fraction))
+console.log()
+console.log('   快发到第一个估计要 2 秒，慢发要 14 秒。')
