@@ -182,8 +182,45 @@ data class SpatialField(
         if (splitAxis != SplitAxis.LOW_HIGH) return SpectrumMix(1.0, 0.0)
         // The low half lets go of the mix as it takes the filter on; the high half keeps the mix
         // and subtracts. Summed over the pair that is one mix and no filter left over.
-        return if (peerId in otherHalfIds) SpectrumMix(1.0, -separation)
+        val trim = highTrim()
+        return if (peerId in otherHalfIds) SpectrumMix(trim, -separation * trim)
         else SpectrumMix(1.0 - separation, separation)
+    }
+
+    /**
+     * How far down the high half plays, so that dragging the split low tilts the room toward it.
+     *
+     * Dragging the split down takes the low handset's content away twice over: the band it keeps
+     * narrows, and what is left of it sits further below the frequency its own speaker stops
+     * being able to make a sound at. On 2026-09-10, with the skirt newly steepened, a listener
+     * dragged the split to 100 Hz and the low handset went to very nearly nothing. That is the
+     * split working and the feature vanishing at the same time: somebody who drags it down there
+     * is asking to hear the low part, not to switch a handset off.
+     *
+     * Six decibels an octave below the default, which is exactly "halve the split, double the
+     * difference" - a ratio of frequencies, no logarithm needed. Neutral at and above the default,
+     * so every test that asserts the two halves add back up goes on holding where it is written.
+     *
+     * A trim rather than a lift on the low half, which is what this was first built as. That
+     * crackled within minutes of reaching a listener: at a split of 500 Hz the lift was 1.6x,
+     * four decibels, and a modern master has nowhere to put four decibels. No cap would have
+     * saved it, because the smallest lift the slider can ask for already clipped - and the gains
+     * here multiply, so distance compensation and the room power normalisation were on top of it.
+     * Trimming cannot do that to anybody: every sample it produces is smaller than the one this
+     * same arrangement produced before it existed, and that arrangement had been listened to.
+     * What it costs is a room that gets quieter as the split goes down, which a volume key fixes
+     * and clipping does not.
+     *
+     * Riding on [separation] rather than on the crossover alone: with the knob at nothing there
+     * is no split, and a handset sitting twelve decibels down because of a slider that is doing
+     * nothing would have no control on screen saying so.
+     *
+     * Still capped, now for taste rather than for damage: past a quarter the room is being turned
+     * down rather than tilted, and the far side of the split is a band the speaker cannot carry.
+     */
+    private fun highTrim(): Double {
+        val tilt = (DEFAULT_CROSSOVER_HZ / crossoverHz).coerceIn(1.0, MAX_LOW_TILT)
+        return 1.0 / (1.0 + (tilt - 1.0) * separation)
     }
 
     /**
@@ -264,5 +301,8 @@ data class SpatialField(
         /** Wide enough to be worth dragging, narrow enough that both ends are still a split. */
         const val LOWEST_CROSSOVER_HZ = 100.0
         const val HIGHEST_CROSSOVER_HZ = 5_000.0
+
+        /** Twelve decibels. See [highTrim]: past this the room is being turned down, not tilted. */
+        const val MAX_LOW_TILT = 4.0
     }
 }

@@ -1,5 +1,6 @@
 package com.soundmesh.core
 
+import kotlin.math.abs
 import kotlin.math.sqrt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -278,6 +279,111 @@ class SpatialGainTest {
 
         assertEquals(1.0, low.whole + high.whole, 1e-12)
         assertEquals(0.0, low.low + high.low, 1e-12)
+    }
+
+    /**
+     * Dragging the split down tilts the balance toward the low half, by trimming the high one.
+     *
+     * Heard on 2026-09-10, immediately after the skirt was steepened: at 100 Hz the low handset
+     * went from "the melody is still followable" to very nearly nothing. That is the steepening
+     * working, and it is also the feature disappearing exactly where a listener asked for it -
+     * somebody who drags the split to the bottom wants the low part, not silence.
+     *
+     * Six decibels an octave below the default, which is exactly "halve the split, double the
+     * difference" - a ratio of frequencies, no logarithm needed. Neutral at and above the default,
+     * so every test that asserts the two halves add back up goes on holding where it is written.
+     */
+    @Test
+    fun halvingTheSplitHalvesTheHighHalf() {
+        val atDefault =
+        SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, splitAxis = SplitAxis.LOW_HIGH,
+            separation = 1.0, otherHalfIds = setOf("right"), crossoverHz = SpatialField.DEFAULT_CROSSOVER_HZ
+        )
+        val anOctaveDown =
+        SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, splitAxis = SplitAxis.LOW_HIGH,
+            separation = 1.0, otherHalfIds = setOf("right"), crossoverHz = SpatialField.DEFAULT_CROSSOVER_HZ / 2
+        )
+
+        assertEquals(1.0, atDefault.spectrumFor("right").whole, 1e-12)
+        assertEquals(0.5, anOctaveDown.spectrumFor("right").whole, 1e-12)
+        // And the low handset is left exactly where it was.
+        assertEquals(1.0, anOctaveDown.spectrumFor("left").low, 1e-12)
+    }
+
+    /**
+     * Trimmed rather than lifted, and this is the whole reason the tilt is arranged this way.
+     *
+     * It was built the other way round first - lift the low half - and a listener had it crackling
+     * within minutes. At a split of 500 Hz the lift is 1.6x, four decibels, and that already broke
+     * up on bass notes; a modern master leaves no headroom for four decibels, so no cap on a lift
+     * would have saved it. They then found it themselves: they suspected the quieter handset had a
+     * worse speaker, remembered the two were at different distances and therefore at different
+     * gains, moved them level, and heard the other one break up too. The defect followed the gain,
+     * not the handset - and gains here multiply: distance compensation, this tilt, and the room
+     * power normalisation are each bounded on their own and their product is not.
+     *
+     * A trim cannot do that to anybody. Every sample it produces is smaller than the one the same
+     * arrangement produced before this existed, and that arrangement had already been listened to.
+     * Clipping is shut off structurally rather than tuned away, which is why the cap below is now
+     * about taste and not about damage.
+     */
+    @Test
+    fun theTiltIsATrimSoNoSampleGrowsAndTheLowHalfNeverClips() {
+        val field =
+        SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, splitAxis = SplitAxis.LOW_HIGH,
+            separation = 1.0, otherHalfIds = setOf("right"), crossoverHz = SpatialField.LOWEST_CROSSOVER_HZ
+        )
+        val low = field.spectrumFor("left")
+        val high = field.spectrumFor("right")
+
+        assertTrue("the low half grew: $low", low.whole <= 1.0 && low.low <= 1.0)
+        assertTrue("the high half grew: $high", high.whole <= 1.0 && abs(high.low) <= 1.0)
+    }
+
+    /**
+     * And it stops, at a quarter. Past that the room is being turned down rather than tilted, and
+     * what is on the other side of the split is a band the handset's own speaker cannot carry -
+     * so the trim would be buying silence on one side and nothing on the other.
+     */
+    @Test
+    fun theTiltStopsRatherThanFollowingTheSliderToTheBottom() {
+        val bottom =
+        SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, splitAxis = SplitAxis.LOW_HIGH,
+            separation = 1.0, otherHalfIds = setOf("right"), crossoverHz = SpatialField.LOWEST_CROSSOVER_HZ
+        )
+        val twoOctavesDown =
+        SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, splitAxis = SplitAxis.LOW_HIGH,
+            separation = 1.0, otherHalfIds = setOf("right"), crossoverHz = SpatialField.DEFAULT_CROSSOVER_HZ / 4
+        )
+
+        assertEquals(0.25, twoOctavesDown.spectrumFor("right").whole, 1e-12)
+        assertEquals(0.25, bottom.spectrumFor("right").whole, 1e-12)
+    }
+
+    /**
+     * The knob at zero is the mix the room was already playing, at every split there is.
+     *
+     * The tilt rides on the separation knob rather than on the crossover alone. Without that, a
+     * listener who had dragged the split low and then wound the separation back to nothing would
+     * be left with one handset quietly twelve decibels down and no control on screen still saying
+     * so - the crossover slider means nothing at all when nothing is being split by it.
+     */
+    @Test
+    fun aKnobAtZeroLeavesBothHandsetsAloneHoweverLowTheSplitWasDragged() {
+        val field = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair, splitAxis = SplitAxis.LOW_HIGH,
+            separation = 0.0, otherHalfIds = setOf("right"),
+            crossoverHz = SpatialField.LOWEST_CROSSOVER_HZ
+        )
+
+        assertEquals(1.0, field.spectrumFor("right").whole, 1e-12)
+        assertEquals(0.0, field.spectrumFor("right").low, 1e-12)
+        assertEquals(1.0, field.spectrumFor("left").whole, 1e-12)
     }
 
     /** The same landing place as the other axis: the knob at zero is the mix the room was already playing. */
