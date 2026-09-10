@@ -78,5 +78,9 @@ class HostRoomTest {
             "0/0",
             SessionReadout.counters(report).first { it.label == R.string.counter_sinks }.value
         )
+        // The audio roster is a different list from the one above and is wired from a different
+        // object, and the mistake worth catching is that they are both Lists of the same thing:
+        // handing the room's roster to both would read as the host being sent its own audio.
+        assertEquals("\"audioPeerIds\":\"\"", Regex("\"audioPeerIds\":\"[^\"]*\"").find(report!!)?.value)
     }
 }

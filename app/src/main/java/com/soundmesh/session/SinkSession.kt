@@ -473,7 +473,7 @@ class SinkSession(
      * jump does and then keeps broadcasting silence, so a paused room reaches here as audio
      * that happens to be quiet - which is the one thing a sink already knows how to play.
      */
-    override fun setPaused(paused: Boolean) = Unit
+    override fun setPaused(wanted: Boolean) = Unit
 
     /** Null. Positions are the source's, and a sink is handed instants instead. */
     override fun playhead(): Playhead? = null

@@ -31,13 +31,16 @@ import com.soundmesh.probe.sync.SyncRenderer
  * listener next touches the drawing, and not before - so the roster is a record of who joined
  * rather than of who is still here. The connection count is the live one, late by however long
  * the kernel keeps retransmitting to a handset that walked out of the network, measured at 26.9
- * seconds. Audio sockets carry a name of their own now - they had to, or a handset that came back
- * stood in the room twice until the kernel gave up on the socket it left - but nothing reads that
- * name here yet, so *which* handset stopped listening is still a question these two can only pose.
+ * seconds.
  *
- * [replacedSinks] is what that fix left behind to be read, and it tells the two ways the numbers
- * disagree apart: a connection replaced is a handset that came back, so a run whose sinks and
- * roster disagree with this at zero is a handset that left and did not return.
+ * [audioPeerIds] is the same room seen from the audio channel, and it is why the two above no
+ * longer only pose the question: a name in [roomPeerIds] and not in here is the handset that
+ * stopped being sent audio, by name. It is shorter than [sinks] by however many sinks are of a
+ * build that predates the name, and those are the ones this still cannot tell apart.
+ *
+ * [replacedSinks] tells the two ways the numbers disagree apart: a connection replaced is a
+ * handset that came back, so a run whose sinks and roster disagree with this at zero is a handset
+ * that left and did not return.
  */
 internal fun hostReportFields(
     maxBroadcastNanos: Long,
@@ -46,6 +49,7 @@ internal fun hostReportFields(
     sinks: Int,
     replacedSinks: Int,
     roomPeerIds: List<String>,
+    audioPeerIds: List<String>,
     unnamedSinks: Int,
     lateChunks: Int,
     skippedSongs: Int
@@ -59,6 +63,10 @@ internal fun hostReportFields(
         // to a file that a later run reads, and a prefix cannot be matched back against a stored
         // calibration or a stored separation, which are kept under the whole name.
         ",\"roomPeerIds\":\"${roomPeerIds.joinToString(",")}\"" +
+        // The same room as the audio channel has it. Whole names for the same reason, and read
+        // against the line above rather than alone: which of them fell silent is the difference
+        // of the two lists, and neither list on its own says it.
+        ",\"audioPeerIds\":\"${audioPeerIds.joinToString(",")}\"" +
         // A handset that could not say its name gets no rule and is in no drawing, which from the
         // room looks like one phone quietly staying flat. A build speaking another version would
         // do it to all of them at once, and only this says so.
@@ -441,6 +449,7 @@ class HostSession(
             sinks = chunkServer.clientCount(),
             replacedSinks = chunkServer.replacedSinks(),
             roomPeerIds = roomPeerIds(),
+            audioPeerIds = chunkServer.peerIds(),
             unnamedSinks = spatialServer?.unnamedSinks() ?: 0,
             lateChunks = lateChunks(),
             skippedSongs = skippedSongs()

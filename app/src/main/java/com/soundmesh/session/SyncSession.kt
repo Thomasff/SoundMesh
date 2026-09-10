@@ -99,7 +99,7 @@ interface SyncSession {
      *
      * Declared on both roles rather than defaulted, for the reason [onNetworkChanged] gives.
      */
-    fun setPaused(paused: Boolean)
+    fun setPaused(wanted: Boolean)
 
     /** Whether [setPaused] is in force. False on a role that has nothing to pause. */
     fun paused(): Boolean = false

@@ -180,6 +180,35 @@ class ChunkServerTest {
         }
     }
 
+    /**
+     * The list this server can be asked for, and the one sink that is not in it.
+     *
+     * The list exists to be read against the control channel's roster: a name there and not here
+     * is the handset that stopped being sent audio, which until now was a question the host could
+     * pose and not answer. A sink that named nothing is served and is counted, and is in no list -
+     * so the two readings disagree by one on a healthy room, and that is not a handset leaving.
+     */
+    @Test
+    fun theNamedSinksCanBeListedAndAnUnnamedOneIsOnlyCounted() {
+        val port = freePort()
+        val server = ChunkServer(port)
+        server.start()
+        try {
+            Socket("127.0.0.1", port).use { named ->
+                Socket("127.0.0.1", port).use { nameless ->
+                    announce(named, PEER)
+                    waitForClients(server, 2)
+
+                    assertEquals(listOf(PEER), server.peerIds())
+                    assertEquals(2, server.clientCount())
+                    assertTrue("the unnamed sink is not being served", nameless.isConnected)
+                }
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
     private fun announce(socket: Socket, peerId: String) {
         socket.getOutputStream().apply { write(peerId.toByteArray(Charsets.US_ASCII)); flush() }
     }

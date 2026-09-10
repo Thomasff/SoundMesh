@@ -149,6 +149,19 @@ class ChunkServer(private val port: Int) {
 
     fun clientCount(): Int = clients.size
 
+    /**
+     * The sinks currently being sent audio, as they named themselves.
+     *
+     * Only the ones that said a name. A sink of an older build is served and is in [clientCount],
+     * and is in no list anywhere - so the two read together say how many are being sent audio
+     * without being able to be told apart, which is a different thing from a handset that left.
+     *
+     * What this is for is the comparison, not the list: a name in the control channel's roster and
+     * not in here is the handset that stopped getting audio, and until this existed the host could
+     * only say that one of them had.
+     */
+    fun peerIds(): List<String> = synchronized(clients) { clients.mapNotNull { it.peerId } }
+
     /** Chunks that were not sent because a sink stopped keeping up. Zero on a healthy link. */
     fun droppedChunks(): Int = dropped
 

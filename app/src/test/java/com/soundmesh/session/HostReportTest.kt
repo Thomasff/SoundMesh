@@ -26,7 +26,13 @@ class HostReportTest {
     private val near = "0918273645abcdef"
     private val far = "1122334455667788"
 
-    private fun report(sinks: Int, room: List<String>, lateChunks: Int = 0, skippedSongs: Int = 0): String =
+    private fun report(
+        sinks: Int,
+        room: List<String>,
+        audio: List<String> = room.drop(1),
+        lateChunks: Int = 0,
+        skippedSongs: Int = 0
+    ): String =
         "{" + hostReportFields(
             maxBroadcastNanos = 1_000_000L,
             generated = 3_010,
@@ -34,6 +40,7 @@ class HostReportTest {
             sinks = sinks,
             replacedSinks = 0,
             roomPeerIds = room,
+            audioPeerIds = audio,
             unnamedSinks = 0,
             lateChunks = lateChunks,
             skippedSongs = skippedSongs
@@ -158,12 +165,44 @@ class HostReportTest {
     }
 
     /**
-     * One handset gone, which is as far as this can honestly go: the audio sockets are anonymous,
-     * so the screen can say how many are still connected and not which one is not.
+     * One handset gone, as far as the screen goes: it is shown two counts and not two rosters,
+     * so it can say how many are still connected and not which one is not.
      */
     @Test
     fun aHandsetThatLeftShowsAsTheTwoCountsDisagreeing() {
-        assertEquals("1/2", valueOf(report(sinks = 1, room = listOf(host, near, far)), R.string.counter_sinks))
+        val text = report(sinks = 1, room = listOf(host, near, far), audio = listOf(near))
+
+        assertEquals("1/2", valueOf(text, R.string.counter_sinks))
+    }
+
+    /**
+     * And in the report, by name, which the counts above cannot do at any resolution.
+     *
+     * The room is the host and two handsets; one of them is no longer being sent audio. Neither
+     * list says which on its own - the roster is a record of who joined, and the audio list has no
+     * idea who was expected - so the answer is only ever the difference of the two, and this is
+     * the reading the pair was added for.
+     */
+    @Test
+    fun theReportNamesTheHandsetThatStoppedGettingAudio() {
+        val text = report(sinks = 1, room = listOf(host, near, far), audio = listOf(near))
+
+        assertTrue(text.contains("\"roomPeerIds\":\"$host,$near,$far\""))
+        assertTrue(text.contains("\"audioPeerIds\":\"$near\""))
+    }
+
+    /**
+     * A sink of a build that predates the name is in the count and in no list.
+     *
+     * Which reads exactly like the case above and is not it. Saying so is the count's job: the
+     * lists disagree by one either way, and only sinks says whether that one is still connected.
+     */
+    @Test
+    fun anUnnamedSinkIsCountedAndNotNamed() {
+        val text = report(sinks = 2, room = listOf(host, near, far), audio = listOf(near))
+
+        assertTrue(text.contains("\"audioPeerIds\":\"$near\""))
+        assertEquals("2/2", valueOf(text, R.string.counter_sinks))
     }
 
     /** A host by itself is a room of one, not an empty one. Nobody has connected and it says so. */
