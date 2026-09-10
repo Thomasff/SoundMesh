@@ -163,6 +163,15 @@ internal fun clockReportJson(
      * such runs differ in nothing else a report records.
      */
     keepFractionWhileFilling: Boolean,
+    /**
+     * How long the exchange ran before anything was scheduled against it.
+     *
+     * Beside [keepFractionWhileFilling] because it decides whether that rule was reachable at
+     * all: the two rules differ only on a chirp fired while the window is still filling, and
+     * this wait is what stands between the run and that state. Measured on hardware 09-10,
+     * the default put every chirp at 18 s or later of estimator life.
+     */
+    clockFillNanos: Long,
     radioHeld: Boolean,
     link: LinkQuality?,
     atStart: ClockEstimate?,
@@ -171,6 +180,7 @@ internal fun clockReportJson(
 ): String =
     "{\"intervalMillis\":$intervalMillis,\"windowSize\":$windowSize,\"bestCount\":$bestCount," +
         "\"keepFractionWhileFilling\":$keepFractionWhileFilling," +
+        "\"clockFillNanos\":$clockFillNanos," +
         "\"radioHeld\":$radioHeld,\"link\":${linkJson(link)}," +
         "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}," +
         "\"exchanges\":${exchangesJson(exchanges)}}"
@@ -483,6 +493,23 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun keepFractionWhileFilling(): Boolean = !intent.getBooleanExtra("frozen_count", false)
 
     /**
+     * How long to let the window fill before asking for a plan. `--ei clock_fill_millis 0`
+     * fires the first chirp as soon as the estimator will answer at all.
+     *
+     * [planLeadNanos] cannot reach this: the lead moves the first chirp relative to the plan
+     * request, and this wait ends before that request is made. Section 26 found the published
+     * offset biased +5.10 ms over the first four seconds and was never checked acoustically
+     * because of exactly that - measured 09-10, a lead of 7000 put the first chirp at 22.9 s
+     * of estimator life and a lead of 2000 at 18.0 s, both far outside the four.
+     *
+     * Shipping keeps the full wait, and [CLOCK_FILL_NANOS] carries why. What this opens is the
+     * run that can say whether the wait is still buying anything under the section-26 rule -
+     * if it is not, sixteen seconds come off every calibration.
+     */
+    private fun clockFillNanos(): Long =
+        intent.getIntExtra("clock_fill_millis", (CLOCK_FILL_NANOS / 1_000_000L).toInt()) * 1_000_000L
+
+    /**
      * The capture source, default MIC as every archived run used.
      *
      * MIC is the vendor processing chain, whose convergence is time-varying and could be landing on
@@ -787,7 +814,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // The harness never met this because it plays two minutes of audio between converging
             // and chirping, which at its own two second cadence is exactly the window's worth of
             // exchanges. This waits for the same thing directly instead of buying it by accident.
-            while (System.nanoTime() - clockStartedAt < CLOCK_FILL_NANOS) {
+            while (System.nanoTime() - clockStartedAt < clockFillNanos()) {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
             }
             val converged = clockClient.currentEstimate()
@@ -818,6 +845,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                             estimator.windowSize,
                             estimator.bestCount,
                             estimator.keepFractionWhileFilling,
+                            clockFillNanos(),
                             radioHeld,
                             link,
                             converged,
@@ -1006,7 +1034,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         json,
         clockReportJson(
             CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, estimator.keepFractionWhileFilling,
-            radioHeld, link, atStart, atEnd, exchanges
+            clockFillNanos(), radioHeld, link, atStart, atEnd, exchanges
         )
     )
 

@@ -22,6 +22,7 @@ import org.junit.Test
 class PeerCalibrateActivityTest {
     private val SINK_ID = "a1b2c3d4e5f60718"
     private val PLAN_LEAD = 7_000_000_000L
+    private val CLOCK_FILL = 16_000_000_000L
 
     private val source =
         File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8)
@@ -107,6 +108,7 @@ class PeerCalibrateActivityTest {
             windowSize = 64,
             bestCount = 8,
             keepFractionWhileFilling = true,
+            clockFillNanos = CLOCK_FILL,
             radioHeld = true,
             link = null,
             atStart = ClockEstimate(offsetNanos = -5L, uncertaintyNanos = 7L, driftPpm = 1.5, sampleCount = 8),
@@ -285,7 +287,7 @@ class PeerCalibrateActivityTest {
             caseId = "C90",
             refusal = "SLOW_LINK",
             clock = clockReportJson(
-                250L, 64, 8, true, true,
+                250L, 64, 8, true, CLOCK_FILL, true,
                 LinkQuality(medianRoundTripNanos = 90_000_000L, p90RoundTripNanos = 152_000_000L, samples = 57),
                 null, null, listOf(ClockExchange(1, 2, 3, 4))
             )
@@ -441,6 +443,7 @@ class PeerCalibrateActivityTest {
             windowSize = 64,
             bestCount = 8,
             keepFractionWhileFilling = true,
+            clockFillNanos = CLOCK_FILL,
             radioHeld = true,
             link = null,
             atStart = null,
@@ -460,7 +463,7 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theReportSaysWhichEstimatorShapeTheRunUsed() {
-        val json = clockReportJson(250L, 64, 8, true, true, null, null, null, emptyList())
+        val json = clockReportJson(250L, 64, 8, true, CLOCK_FILL, true, null, null, null, emptyList())
 
         assertTrue(json.contains("\"windowSize\":64"))
         assertTrue(json.contains("\"bestCount\":8"))
@@ -478,10 +481,10 @@ class PeerCalibrateActivityTest {
     @Test
     fun theReportSaysWhetherTheRadioWasActuallyHeld() {
         assertTrue(
-            clockReportJson(250L, 64, 8, true, true, null, null, null, emptyList()).contains("\"radioHeld\":true")
+            clockReportJson(250L, 64, 8, true, CLOCK_FILL, true, null, null, null, emptyList()).contains("\"radioHeld\":true")
         )
         assertTrue(
-            clockReportJson(250L, 64, 8, true, false, null, null, null, emptyList()).contains("\"radioHeld\":false")
+            clockReportJson(250L, 64, 8, true, CLOCK_FILL, false, null, null, null, emptyList()).contains("\"radioHeld\":false")
         )
     }
 
@@ -493,7 +496,7 @@ class PeerCalibrateActivityTest {
     @Test
     fun theReportSaysWhatLinkTheRunWasSpentOn() {
         val json = clockReportJson(
-            250L, 64, 8, true, true,
+            250L, 64, 8, true, CLOCK_FILL, true,
             LinkQuality(medianRoundTripNanos = 56_300_000L, p90RoundTripNanos = 137_900_000L, samples = 175),
             null, null, emptyList()
         )
@@ -585,6 +588,7 @@ class PeerCalibrateActivityTest {
             windowSize = 64,
             bestCount = 8,
             keepFractionWhileFilling = false,
+            clockFillNanos = 0L,
             radioHeld = true,
             link = null,
             atStart = null,
@@ -593,6 +597,11 @@ class PeerCalibrateActivityTest {
         )
 
         assertTrue("the arm is not on the record: $json", json.contains("\"keepFractionWhileFilling\":false"))
+
+        // Without this the two arms of the same experiment are indistinguishable in the file:
+        // the filling rule only has an effect on a chirp fired while the window is filling,
+        // and whether that happened is decided entirely by how long this wait was.
+        assertTrue("the fill wait is not on the record: $json", json.contains("\"clockFillNanos\":0"))
 
         // The other knob is the host's, so it is on the host's own report rather than this one.
         val paired = pairedReportJson(
@@ -616,9 +625,29 @@ class PeerCalibrateActivityTest {
         assertTrue(source.contains("getIntExtra(\"plan_lead_millis\""))
         assertTrue(source.contains("getBooleanExtra(\"frozen_count\""))
         assertTrue(source.contains("CalibrationAudioSource.parse(intent.getStringExtra(\"audio_source\"))"))
+        assertTrue(source.contains("getIntExtra(\"clock_fill_millis\""))
 
         val runners = source.split("PeerCalibrationRunner(").size - 1
         val sourced = source.split("audioSource = audioSource()").size - 1
         assertEquals("a runner is built without a capture source", runners, sourced)
+    }
+
+    /**
+     * The wait the chirp lead cannot reach past, which is why section 26 stayed unmeasured.
+     *
+     * The lead moves the first chirp relative to the plan request; this wait sits before the
+     * plan is requested at all. Measured on hardware 09-10: lead 7000 put the first chirp at
+     * 22.9 s of estimator life, lead 2000 at 18.0 s, and the effect being hunted lives in the
+     * first four. The knob has to be this one or the run cannot reach the question.
+     */
+    @Test
+    fun theFillWaitIsWaitedOutRatherThanSleptThrough() {
+        // A wait written as one sleep cannot be shortened by a command line without also
+        // changing what "shortened" means when the estimator is slow; a poll loop against a
+        // deadline reads the same at zero as it does at sixteen seconds.
+        assertTrue(
+            "the fill wait must stay a deadline loop, not a single sleep",
+            source.contains("while (System.nanoTime() - clockStartedAt < clockFillNanos())")
+        )
     }
 }
