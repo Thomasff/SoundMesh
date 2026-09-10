@@ -232,6 +232,15 @@ class SyncRenderer(
      * cannot report - it is one sample, and on a run ending mid-acquisition it is one taken while
      * the error was already being worked off.
      *
+     * [reacquisitionsNegative] is the direction the other three throw away by being magnitudes,
+     * and the two answers it separates want opposite repairs. Fallbacks all of one sign mean
+     * playback keeps running off the same way from its own timeline - a rate the 1Hz, one-frame
+     * TRACKING budget cannot hold, whose repair is more correction authority. Fallbacks of both
+     * signs mean the loop is chasing something that is not going anywhere, and more authority
+     * would only let it chase harder; the repair would be in what pendingFrames measures. The
+     * fallback needs the filtered error at or beyond the threshold, so it is never zero here and
+     * the split is over two buckets rather than three.
+     *
      * One thing to subtract before reading a sink's reported acquiringNanos. A sink outlives its
      * host by SinkSession's host-gone budget, and across that whole tail nothing is queued, so the
      * loop writes blind silence - which advances the timeline by exactly the frames it writes,
@@ -242,6 +251,7 @@ class SyncRenderer(
      */
     @Volatile private var completedAcquiringNanos = 0L
     @Volatile private var reacquisitionErrorSumFrames = 0L
+    @Volatile private var reacquisitionsNegative = 0
     @Volatile private var maxFilteredErrorMagnitudeFrames = 0
     /**
      * How often a released chunk had to be trimmed, and by how much at worst. This is the release
@@ -749,6 +759,7 @@ class SyncRenderer(
             // only the start would make it negative against that stale end.
             reacquisitions++
             reacquisitionErrorSumFrames += magnitude
+            if (decision.filteredErrorFrames < 0) reacquisitionsNegative++
             acquisitionStartHostNanos = hostNanosNow()
             acquisitionConvergedAtHostNanos = UNDEFINED
         }
@@ -884,6 +895,7 @@ class SyncRenderer(
                 hostNanosNow()
             )}," +
             "\"reacquisitionErrorSumFrames\":$reacquisitionErrorSumFrames," +
+            "\"reacquisitionsNegative\":$reacquisitionsNegative," +
             "\"maxFilteredErrorMagnitudeFrames\":$maxFilteredErrorMagnitudeFrames," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
             "\"trimmedFrames\":$trimmedFrames,\"trackUnderruns\":$trackUnderruns," +
