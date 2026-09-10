@@ -109,6 +109,42 @@ internal const val CASE_DISTANCE = "C93"
 internal const val STAGGER_NANOS = 500_000_000L
 
 /**
+ * How far out the plan puts the first chirp: the sink's warm-up and the gap after it, plus
+ * enough for the sink to have received the plan and started. See CalibrationSchedule.
+ */
+/**
+ * How often the clock is exchanged during a calibration, against the harness's own 2000.
+ *
+ * The estimator's window is sized in exchanges, not in seconds - sixty-four of them, of
+ * which the eight quietest are kept, because round trips on one link are bimodal and a
+ * quiet one is about an eighth of the traffic. Filling that window at the harness's cadence
+ * takes two minutes, which the harness pays for out of its audio segment and a calibration
+ * has no reason to pay at all.
+ *
+ * Sampling faster is safe for the quantity that matters here: the offset is the mean of the
+ * kept midpoints anchored at their centroid, never extrapolated, so a drift slope fitted
+ * over a shorter span cannot enter it - and the staleness that anchoring costs is half a
+ * window of real drift, which a shorter window makes smaller rather than larger. What it
+ * cannot rule out is quiet moments on the link being clustered in time, so that sixty-four
+ * exchanges over sixteen seconds meet fewer of them than sixty-four over two minutes. That
+ * shows up as a wider `uncertaintyNanos`, which every run now records for exactly this.
+ */
+internal const val CLOCK_INTERVAL_MILLIS = 250L
+
+internal const val PLAN_LEAD_NANOS = 7_000_000_000L
+
+/**
+ * How long the exchange runs before anything is scheduled against it: one window's worth.
+ *
+ * Derived rather than chosen - the window size times the cadence - because the property
+ * being waited for is structural. Below a full window the estimator is still answering
+ * from a growing population and its answer moves as it grows, which C1 measured at 8.1 ms
+ * across twenty seconds and paid for in the whole run.
+ */
+internal const val CLOCK_FILL_NANOS =
+    ClockOffsetEstimator.DEFAULT_WINDOW * CLOCK_INTERVAL_MILLIS * 1_000_000L
+
+/**
  * Five pairs. CalibrationUpdate.usable needs a cluster of at least two, and three is not
  * enough to trust a cluster mean: O60, O61 and O62 were the same binary run back to back
  * without the phones being touched, and came out +1.323, -0.927 and +0.097 ms.
@@ -194,25 +230,25 @@ internal data class CalibrationTiming(
 )
 
 /**
- * What [caseId] runs, given what the command line asked for.
+ * What [caseId] runs when the command line says nothing, which is what a listener always gets.
  *
- * Only [CASE_DISTANCE] departs from the shipped schedule, and what it drops is exactly what its
- * answer does not depend on. The separation comes out of the half difference of the two
- * recordings, where a clock error enters both sides with the same sign and cancels - so the fill
- * wait, whose whole purpose is an offset accurate enough to align by, buys the distance nothing.
- * The lead comes down with it or the saving is spent waiting, and the repeats and the interval
- * come down because a person is standing still holding a phone to their ear for the whole of it.
+ * Only [CASE_DISTANCE] departs from the shipped schedule, and what it drops is what its answer
+ * does not depend on. The separation comes out of the half difference of the two recordings,
+ * where a clock error enters both sides with the same sign and cancels - so the fill wait, whose
+ * whole purpose is an offset accurate enough to align by, buys the distance nothing. The lead
+ * comes down with it or the saving is spent waiting, and the repeats and the interval come down
+ * because a person is standing still holding a phone to their ear for the whole of it.
  *
- * What does not come down is the stagger, and under it the interval: a pair is searched for over
- * the stagger with the recording-start uncertainty added either side, so windows begin to touch
- * at stagger plus twice that. Below it a pair can be answered by its neighbour's chirp, which is
- * worse than a miss because the reading is then wrong rather than absent.
+ * What does not come down is the stagger, and under it the interval. Two floors, and only the
+ * first was derived before the arm was first run: a pair is searched for over the stagger with
+ * the recording-start uncertainty added either side, so windows begin to touch at stagger plus
+ * twice that - 1.5 s. The second floor was measured. At a two second interval the arm's three
+ * pairs came back at 5.1, -7.6 and -2.8 metres with the phones a hand apart, one pair's two
+ * correlation peaks swapped round, while the same handsets at five seconds read 0.15, 0.40,
+ * 0.11, -0.08 and 0.15 the same evening. Whatever the window arithmetic says, an emission that
+ * can sit a quarter of a second from its plan needs more room between pairs than that.
  */
-internal fun timingFor(
-    caseId: String?,
-    requestedPlanLeadNanos: Long,
-    requestedClockFillNanos: Long
-): CalibrationTiming = when (caseId) {
+internal fun defaultTimingFor(caseId: String?): CalibrationTiming = when (caseId) {
     CASE_DISTANCE -> CalibrationTiming(
         repeats = DISTANCE_REPEATS,
         intervalNanos = DISTANCE_INTERVAL_NANOS,
@@ -224,8 +260,8 @@ internal fun timingFor(
         repeats = CHIRP_REPEATS,
         intervalNanos = CHIRP_INTERVAL_NANOS,
         staggerNanos = STAGGER_NANOS,
-        planLeadNanos = requestedPlanLeadNanos,
-        clockFillNanos = requestedClockFillNanos
+        planLeadNanos = PLAN_LEAD_NANOS,
+        clockFillNanos = CLOCK_FILL_NANOS
     )
 }
 
@@ -569,7 +605,7 @@ class PeerCalibrateActivity : ComponentActivity() {
      * the command line happened to ask for.
      */
     @Volatile
-    private var timing = timingFor(null, PLAN_LEAD_NANOS, CLOCK_FILL_NANOS)
+    private var timing = defaultTimingFor(null)
 
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) start(verifyingAfterPermission, serveManyAfterPermission, allowSlowLinkAfterPermission)
@@ -645,8 +681,27 @@ class PeerCalibrateActivity : ComponentActivity() {
      * returns the default with only a log line to say so, and the run then measures the shipped arm
      * while the command line says otherwise. That has already cost this project one silent session.
      */
-    private fun planLeadNanos(): Long =
-        intent.getIntExtra("plan_lead_millis", (PLAN_LEAD_NANOS / 1_000_000L).toInt()) * 1_000_000L
+    /**
+     * The schedule this round runs: the arm's own defaults, with anything the command line asked
+     * for on top.
+     *
+     * Every number here is reachable, and every one of them is written into the report by the side
+     * that honours it. A knob that cannot be turned cannot be swept, and the interval is the one
+     * whose floor had to be found by sweeping - the arithmetic said 1.5 s and the handsets said
+     * otherwise.
+     */
+    private fun timingFor(caseId: String?): CalibrationTiming {
+        val shipped = defaultTimingFor(caseId)
+        return shipped.copy(
+            repeats = intent.getIntExtra("chirp_repeats", shipped.repeats),
+            intervalNanos = millisExtra("chirp_interval_millis", shipped.intervalNanos),
+            planLeadNanos = millisExtra("plan_lead_millis", shipped.planLeadNanos),
+            clockFillNanos = millisExtra("clock_fill_millis", shipped.clockFillNanos)
+        )
+    }
+
+    private fun millisExtra(name: String, fallbackNanos: Long): Long =
+        intent.getIntExtra(name, (fallbackNanos / 1_000_000L).toInt()) * 1_000_000L
 
     /** `--ez frozen_count true` restores the pre-section-26 rule. See [ClockOffsetEstimator]. */
     private fun keepFractionWhileFilling(): Boolean = !intent.getBooleanExtra("frozen_count", false)
@@ -665,9 +720,6 @@ class PeerCalibrateActivity : ComponentActivity() {
      * run that can say whether the wait is still buying anything under the section-26 rule -
      * if it is not, sixteen seconds come off every calibration.
      */
-    private fun requestedClockFillNanos(): Long =
-        intent.getIntExtra("clock_fill_millis", (CLOCK_FILL_NANOS / 1_000_000L).toInt()) * 1_000_000L
-
     /**
      * `--ez distance_only true` measures how far apart the two handsets are and nothing else.
      *
@@ -838,7 +890,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // The arm is the sink's to name - it is the handset somebody pressed something on -
             // and the plan is where the host adopts it. Held on the field as well so that the
             // report this side files says which schedule actually ran.
-            timing = timingFor(request.caseId, planLeadNanos(), requestedClockFillNanos())
+            timing = timingFor(request.caseId)
             CalibrationPlan(
                 caseId = request.caseId,
                 hostId = hostId,
@@ -960,7 +1012,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         // turned away here rather than two minutes of clock later.
         val caseId = calibrationCase(verifying, allowSlowLink, distanceOnly())
             ?: return show(getString(R.string.pair_calibrate_failed, "ARMS_COMBINED"))
-        timing = timingFor(caseId, planLeadNanos(), requestedClockFillNanos())
+        timing = timingFor(caseId)
         val paired = PairedHost(filesDir).read()
             ?: return show(getString(R.string.pair_calibrate_no_pairing))
         // The name this handset answers to, which it signs both of its messages with. The same
@@ -1246,44 +1298,8 @@ class PeerCalibrateActivity : ComponentActivity() {
         /** How long the host holds the screen open waiting for somebody to pick up the other phone. */
         const val PLAN_WAIT_MILLIS = 300_000
 
-        /**
-         * How far out the plan puts the first chirp: the sink's warm-up and the gap after it, plus
-         * enough for the sink to have received the plan and started. See CalibrationSchedule.
-         */
-        const val PLAN_LEAD_NANOS = 7_000_000_000L
-
         /** Long enough for the whole schedule; the exchange runs the length of the calibration. */
         const val CLOCK_SECONDS = 120
-
-        /**
-         * How often the clock is exchanged during a calibration, against the harness's own 2000.
-         *
-         * The estimator's window is sized in exchanges, not in seconds - sixty-four of them, of
-         * which the eight quietest are kept, because round trips on one link are bimodal and a
-         * quiet one is about an eighth of the traffic. Filling that window at the harness's cadence
-         * takes two minutes, which the harness pays for out of its audio segment and a calibration
-         * has no reason to pay at all.
-         *
-         * Sampling faster is safe for the quantity that matters here: the offset is the mean of the
-         * kept midpoints anchored at their centroid, never extrapolated, so a drift slope fitted
-         * over a shorter span cannot enter it - and the staleness that anchoring costs is half a
-         * window of real drift, which a shorter window makes smaller rather than larger. What it
-         * cannot rule out is quiet moments on the link being clustered in time, so that sixty-four
-         * exchanges over sixteen seconds meet fewer of them than sixty-four over two minutes. That
-         * shows up as a wider `uncertaintyNanos`, which every run now records for exactly this.
-         */
-        const val CLOCK_INTERVAL_MILLIS = 250L
-
-        /**
-         * How long the exchange runs before anything is scheduled against it: one window's worth.
-         *
-         * Derived rather than chosen - the window size times the cadence - because the property
-         * being waited for is structural. Below a full window the estimator is still answering
-         * from a growing population and its answer moves as it grows, which C1 measured at 8.1 ms
-         * across twenty seconds and paid for in the whole run.
-         */
-        const val CLOCK_FILL_NANOS =
-            ClockOffsetEstimator.DEFAULT_WINDOW * CLOCK_INTERVAL_MILLIS * 1_000_000L
 
         /** SyncActivity's own convergence bound, and it is the first estimate this bounds. */
         const val CONVERGENCE_TIMEOUT_NANOS = 40_000_000_000L

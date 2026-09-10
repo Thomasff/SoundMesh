@@ -625,10 +625,16 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theCommandLineCanReachTheChirpLeadTheFillingRuleAndTheCaptureSource() {
-        assertTrue(source.contains("getIntExtra(\"plan_lead_millis\""))
+        for (name in listOf("plan_lead_millis", "clock_fill_millis", "chirp_interval_millis")) {
+            assertTrue("$name cannot be reached from a command line", source.contains("millisExtra(\"$name\""))
+        }
+        assertTrue(source.contains("getIntExtra(\"chirp_repeats\""))
+        // And they stay integer extras, so `--ei` remains the right flag. A string extra read as
+        // an int returns the default with a log line, and the run then measures the shipped arm
+        // while the command line says otherwise.
+        assertTrue(source.contains("intent.getIntExtra(name, (fallbackNanos / 1_000_000L).toInt())"))
         assertTrue(source.contains("getBooleanExtra(\"frozen_count\""))
         assertTrue(source.contains("CalibrationAudioSource.parse(intent.getStringExtra(\"audio_source\"))"))
-        assertTrue(source.contains("getIntExtra(\"clock_fill_millis\""))
 
         val runners = source.split("PeerCalibrationRunner(").size - 1
         val sourced = source.split("audioSource = audioSource()").size - 1
@@ -692,11 +698,10 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun aDistanceMeasurementSkipsTheWaitsItsAnswerDoesNotDependOn() {
-        val short = timingFor(CASE_DISTANCE, PLAN_LEAD, CLOCK_FILL)
+        val short = defaultTimingFor(CASE_DISTANCE)
         assertEquals(0L, short.clockFillNanos)
         assertTrue("the lead has to come down too, or the fill saving is spent waiting", short.planLeadNanos < PLAN_LEAD)
         assertTrue(short.repeats < 5)
-        assertTrue(short.intervalNanos < 5_000_000_000L)
     }
 
     /**
@@ -705,7 +710,7 @@ class PeerCalibrateActivityTest {
     @Test
     fun theArmsThatAlignStillRunTheShippedSchedule() {
         for (caseId in listOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)) {
-            val timing = timingFor(caseId, PLAN_LEAD, CLOCK_FILL)
+            val timing = defaultTimingFor(caseId)
             assertEquals(PLAN_LEAD, timing.planLeadNanos)
             assertEquals(CLOCK_FILL, timing.clockFillNanos)
             assertEquals(5, timing.repeats)
@@ -726,7 +731,7 @@ class PeerCalibrateActivityTest {
     fun theShortIntervalStillKeepsOnePairsSearchOutOfTheNexts() {
         val uncertaintyNanos =
             CalibrationWindow.DEFAULT_UNCERTAINTY_FRAMES.toLong() * 1_000_000_000L / ChirpGenerator.SAMPLE_RATE
-        val timing = timingFor(CASE_DISTANCE, PLAN_LEAD, CLOCK_FILL)
+        val timing = defaultTimingFor(CASE_DISTANCE)
         val floor = timing.staggerNanos + 2 * uncertaintyNanos
         assertTrue(
             "interval ${timing.intervalNanos} is under the floor $floor",
