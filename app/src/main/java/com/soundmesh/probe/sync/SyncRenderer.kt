@@ -254,6 +254,37 @@ class SyncRenderer(
     @Volatile private var reacquisitionsNegative = 0
     @Volatile private var maxFilteredErrorMagnitudeFrames = 0
     /**
+     * The same three questions asked of the steady state alone, where [reacquisitions] cannot
+     * reach: how often the loop sits outside the deadband while TRACKING, and which way.
+     *
+     * [adjustments] over [driftSamples] is the ratio the limit-cycle reading rests on - 84-98% on
+     * a twenty-minute run against 11-24% on a five-second one - and it is a mixture. Eighty-eight
+     * percent of a long run's samples are taken while ACQUIRING, where being outside the deadband
+     * is not a symptom but the definition: that is the phase working an excursion off. So the
+     * headline ratio is mostly a statement about how long acquisitions last.
+     * [trackingAdjustments] over [trackingSamples] asks it of the phase that is supposed to be
+     * holding, which is the phase the reading is actually about.
+     *
+     * [trackingAdjustmentsNegative] is [reacquisitionsNegative]'s question at n in the thousands
+     * instead of n in the tens, and of a different quantity: not which way an excursion blew up,
+     * but which way the error sits when nothing is blowing up. The two can disagree, and that
+     * combination is itself an answer - a steady state parked on one side while the fallbacks
+     * fire both ways means two mechanisms at once, a slow one-way rate and a two-way step source,
+     * which no single counter here can say.
+     *
+     * [trackingSamples] also gives the phase split of the samples directly. Reverse-solving it
+     * from [driftSamples] needs ACQUIRING to sample at exactly one per chunk, which has never been
+     * checked; against acquiringNanos this is the second, independent route to the same split.
+     *
+     * Counted where the correction is asked for rather than where applyPendingAdjust applies it,
+     * because only here is the phase known. The two are near enough to one-to-one in TRACKING -
+     * one request a second against fifty chances to spend it - but do not expect
+     * [trackingAdjustments] and [adjustments] to reconcile exactly.
+     */
+    @Volatile private var trackingSamples = 0
+    @Volatile private var trackingAdjustments = 0
+    @Volatile private var trackingAdjustmentsNegative = 0
+    /**
      * How often a released chunk had to be trimmed, and by how much at worst. This is the release
      * phase made directly observable: before the trim existed the same quantity was silently
      * carried into the audio and left for the drift controller, and the only place it ever showed
@@ -740,6 +771,11 @@ class SyncRenderer(
         driftSamples++
         pendingAdjustFrames = decision.adjustFrames
         val wasAcquiring = phaseState.phase == RendererPhase.ACQUIRING
+        if (!wasAcquiring) {
+            trackingSamples++
+            if (decision.adjustFrames != 0) trackingAdjustments++
+            if (decision.adjustFrames < 0) trackingAdjustmentsNegative++
+        }
         phaseState = nextPhaseState(
             phaseState,
             inDeadband = decision.adjustFrames == 0,
@@ -897,6 +933,8 @@ class SyncRenderer(
             "\"reacquisitionErrorSumFrames\":$reacquisitionErrorSumFrames," +
             "\"reacquisitionsNegative\":$reacquisitionsNegative," +
             "\"maxFilteredErrorMagnitudeFrames\":$maxFilteredErrorMagnitudeFrames," +
+            "\"trackingSamples\":$trackingSamples,\"trackingAdjustments\":$trackingAdjustments," +
+            "\"trackingAdjustmentsNegative\":$trackingAdjustmentsNegative," +
             "\"releaseTrims\":$releaseTrims,\"maxTrimFrames\":$maxTrimFrames," +
             "\"trimmedFrames\":$trimmedFrames,\"trackUnderruns\":$trackUnderruns," +
             "\"silenceWrites\":$silenceWrites,\"maxSilenceFrames\":$maxSilenceFrames," +
