@@ -187,7 +187,15 @@ class HomeActivity : ComponentActivity() {
                 if (icon.peerId == moved.peerId) moved else icon
             }) } },
             pickMode = { mode -> updateRoom { it.copy(mode = mode) } },
-            setPan = { pan -> updateRoom { it.copy(pan = pan) } }
+            setPan = { pan -> updateRoom { it.copy(pan = pan) } },
+            setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
+            togglePart = { peerId ->
+                updateRoom {
+                    it.copy(
+                        sideIds = if (peerId in it.sideIds) it.sideIds - peerId else it.sideIds + peerId
+                    )
+                }
+            }
         )
     )
 
@@ -216,11 +224,27 @@ class HomeActivity : ComponentActivity() {
      */
     private fun publish(room: RoomState) {
         val host = SessionService.ACTIVE as? HostSession ?: return
-        val layout = runCatching { SpatialRoom.layoutOf(room.icons) }
-            .onFailure { Log.e(LOG_TAG, "this room cannot be drawn, so it was not published", it) }
+        val field = runCatching { fieldOf(room) }
+            .onFailure { Log.e(LOG_TAG, "this room cannot be published, so it was not", it) }
             .getOrNull() ?: return
-        host.publishSpatialField(
-            SpatialField(room.mode, layout, pan = room.pan.toDouble().coerceIn(-1.0, 1.0))
+        host.publishSpatialField(field)
+    }
+
+    /**
+     * Null while there is nothing to draw; throws for a room that could not exist.
+     *
+     * Split out so the net above covers the whole rule rather than only the drawing. It used to
+     * cover the drawing alone, which was enough while the drawing held everything that could be
+     * refused - and stopped being enough the moment the rule started naming handsets too.
+     */
+    private fun fieldOf(room: RoomState): SpatialField? {
+        val layout = SpatialRoom.layoutOf(room.icons) ?: return null
+        return SpatialField(
+            room.mode,
+            layout,
+            pan = room.pan.toDouble().coerceIn(-1.0, 1.0),
+            separation = room.separation.toDouble().coerceIn(0.0, 1.0),
+            sideIds = room.sideIds
         )
     }
 
@@ -467,7 +491,11 @@ class HomeActivity : ComponentActivity() {
         val measured = icons.mapNotNull { icon ->
             StoredSeparation(filesDir, icon.peerId).read()?.let { icon.peerId to it }
         }.toMap()
-        return previous.copy(icons = icons, measuredMetres = measured).also(::publish)
+        return previous.copy(
+            icons = icons,
+            measuredMetres = measured,
+            sideIds = SpatialRoom.reconciledSides(previous.sideIds, icons.map { it.peerId })
+        ).also(::publish)
     }
 
     override fun onResume() {

@@ -73,6 +73,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
         }
         ModePicker(state, actions)
         if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
+        SeparationControl(state, actions)
     }
 }
 
@@ -92,13 +93,19 @@ data class RoomState(
      * no measurement, and neither has a room whose phones have only ever met this one.
      */
     val measuredMetres: Map<String, Double> = emptyMap(),
-    val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt()
+    val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
+    /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
+    val separation: Float = 0f,
+    /** Which handsets carry the sides. Everything in [icons] and not in here carries the middle. */
+    val sideIds: Set<String> = emptySet()
 )
 
 class RoomActions(
     val moveIcon: (RoomIcon) -> Unit,
     val pickMode: (SpatialMode) -> Unit,
-    val setPan: (Float) -> Unit
+    val setPan: (Float) -> Unit,
+    val setSeparation: (Float) -> Unit,
+    val togglePart: (String) -> Unit
 )
 
 @Composable
@@ -258,5 +265,51 @@ private fun PanSlider(state: RoomState, actions: RoomActions) {
             Text(stringResource(R.string.room_pan_left), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.room_pan_right), style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+/**
+ * The knob that pulls the mix apart, and who gets which half of it.
+ *
+ * Beside the mode rather than inside it, because it answers a different question: the mode says
+ * where a handset stands in the room, this says which part of the song it carries there. Either
+ * is useful without the other, and the two compose - a room can rotate what it has separated.
+ *
+ * A knob rather than a switch, and the reason is on screen as much as in the rule: the further it
+ * goes the more the handsets depend on being in step with each other, so the way this degrades is
+ * for the listener to wind it back until the room sounds right rather than for the app to decide.
+ */
+@Composable
+private fun SeparationControl(state: RoomState, actions: RoomActions) {
+    Column {
+        Text(stringResource(R.string.room_split_content), style = MaterialTheme.typography.bodySmall)
+        Slider(value = state.separation, onValueChange = actions.setSeparation, valueRange = 0f..1f)
+        if (state.separation <= 0f) {
+            Text(stringResource(R.string.room_split_content_off), style = MaterialTheme.typography.bodySmall)
+            return@Column
+        }
+        for (icon in state.icons) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    if (icon.peerId == state.selfId) stringResource(R.string.room_this_phone)
+                    else icon.peerId.take(4),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedButton(onClick = { actions.togglePart(icon.peerId) }) {
+                    Text(
+                        stringResource(
+                            if (icon.peerId in state.sideIds) R.string.room_part_sides
+                            else R.string.room_part_middle
+                        )
+                    )
+                }
+            }
+        }
+        // Said before it is heard rather than after. Both of these sound like a fault to somebody
+        // who was told this separates instruments, and neither is one.
+        Text(stringResource(R.string.room_split_content_limits), style = MaterialTheme.typography.bodySmall)
     }
 }

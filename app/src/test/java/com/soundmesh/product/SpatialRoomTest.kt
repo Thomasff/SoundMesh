@@ -168,4 +168,25 @@ class SpatialRoomTest {
 
         assertEquals(dragged, room.first())
     }
+
+    /**
+     * A handset that left has to leave the assignment along with its icon.
+     *
+     * This is not tidiness. A rule naming a handset the drawing does not show is one SpatialField
+     * refuses to build, and the screen publishes on a five-a-second refresh with that refusal caught
+     * and logged rather than thrown - so a name left behind here does not crash anything, it stops
+     * the room being published at all, silently, until somebody notices the phones went flat.
+     *
+     * The same shape as the drawing needing [SpatialRoom.reconciled]: two places holding one roster.
+     */
+    @Test
+    fun aHandsetThatLeftStopsCarryingTheSides() {
+        assertEquals(setOf(b), SpatialRoom.reconciledSides(setOf(a, b), listOf(b, c)))
+    }
+
+    /** A handset still here keeps the part it was given, or every roster change would undo the choice. */
+    @Test
+    fun aHandsetStillHereKeepsThePartItWasGiven() {
+        assertEquals(setOf(a), SpatialRoom.reconciledSides(setOf(a), listOf(a, b, c)))
+    }
 }

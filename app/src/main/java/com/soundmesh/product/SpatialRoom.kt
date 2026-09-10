@@ -91,6 +91,20 @@ object SpatialRoom {
     }
 
     /**
+     * Which handsets carry the sides, kept to the ones still in the room.
+     *
+     * A second place holding the roster, and so a second place for a departed handset to linger.
+     * The consequence is not symmetric with the drawing: a rule naming a handset its own drawing
+     * does not show is one SpatialField refuses to build, and the screen builds one five times a
+     * second. Left to itself the room would stop being published rather than say anything.
+     *
+     * A handset that is still here keeps what it was given, for the reason its icon keeps where it
+     * was dragged: the roster is re-read constantly and a choice rebuilt each time is not a choice.
+     */
+    fun reconciledSides(sideIds: Set<String>, peerIds: List<String>): Set<String> =
+        sideIds.intersect(peerIds.toSet())
+
+    /**
      * The same icon, no closer to the listener than [MIN_RADIUS].
      *
      * An icon dropped exactly on the listener has no direction to push it back along, so it goes
