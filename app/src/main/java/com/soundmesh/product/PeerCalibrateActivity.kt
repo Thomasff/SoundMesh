@@ -213,7 +213,10 @@ internal fun calibrationCase(
 }
 
 /**
- * The chirp schedule a case runs, and the two waits that come before it.
+ * The chirp schedule an arm runs, and the two waits that come before it.
+ *
+ * Not [com.soundmesh.core.CalibrationTiming], which is the instants one handset acts on once a
+ * plan exists. This is what goes into the plan.
  *
  * One value rather than four knobs on a command line. Everything the distance arm shortens could
  * have been passed in - and then four numbers spread over two `am start`s would have had to agree
@@ -221,7 +224,7 @@ internal fun calibrationCase(
  * this project once and left nothing in the result to say which one had run: the case names the
  * arm, and every number the arm needs comes out of the name.
  */
-internal data class CalibrationTiming(
+internal data class ArmSchedule(
     val repeats: Int,
     val intervalNanos: Long,
     val staggerNanos: Long,
@@ -239,24 +242,32 @@ internal data class CalibrationTiming(
  * comes down with it or the saving is spent waiting, and the repeats and the interval come down
  * because a person is standing still holding a phone to their ear for the whole of it.
  *
- * What does not come down is the stagger, and under it the interval. Two floors, and only the
- * first was derived before the arm was first run: a pair is searched for over the stagger with
- * the recording-start uncertainty added either side, so windows begin to touch at stagger plus
- * twice that - 1.5 s. The second floor was measured. At a two second interval the arm's three
- * pairs came back at 5.1, -7.6 and -2.8 metres with the phones a hand apart, one pair's two
- * correlation peaks swapped round, while the same handsets at five seconds read 0.15, 0.40,
- * 0.11, -0.08 and 0.15 the same evening. Whatever the window arithmetic says, an emission that
- * can sit a quarter of a second from its plan needs more room between pairs than that.
+ * What does not come down is the stagger, and under it the interval: a pair is searched for over
+ * the stagger with the recording-start uncertainty added either side, so windows begin to touch
+ * at stagger plus twice that - 1.5 s. Two seconds is one notch above the floor rather than on it.
+ * Swept on hardware 09-10 at 5000, 3000, 2000 and 1500 against the shipped schedule, two runs
+ * each: every arm's median separation landed between 18.9 and 21.1 cm, a spread of 2.2 cm across
+ * all ten runs, where what reads the answer needs 30. The floor is where the arithmetic says it
+ * is, and the cost of the last notch of margin is 1.1 s.
+ *
+ * The lead is the one number here that is short on purpose rather than because it can be:
+ * [com.soundmesh.core.CalibrationSchedule] opens the warm-up 5.5 s before the first chirp, so a
+ * two second lead runs no warm-up at all. That settles the renderer's output depth compensation,
+ * which the alignment is made of and the separation is not - emission jitter enters both
+ * recordings with the same sign and cancels in the half difference. The same sweep shows it:
+ * the short arms' alignment wandered -1.45 to +0.83 ms while the shipped schedule sat at +0.07
+ * and +0.28, and their separations agreed with it to a centimetre anyway. An arm that measured
+ * alignment could not make this trade.
  */
-internal fun defaultTimingFor(caseId: String?): CalibrationTiming = when (caseId) {
-    CASE_DISTANCE -> CalibrationTiming(
+internal fun defaultTimingFor(caseId: String?): ArmSchedule = when (caseId) {
+    CASE_DISTANCE -> ArmSchedule(
         repeats = DISTANCE_REPEATS,
         intervalNanos = DISTANCE_INTERVAL_NANOS,
         staggerNanos = STAGGER_NANOS,
         planLeadNanos = DISTANCE_PLAN_LEAD_NANOS,
         clockFillNanos = 0L
     )
-    else -> CalibrationTiming(
+    else -> ArmSchedule(
         repeats = CHIRP_REPEATS,
         intervalNanos = CHIRP_INTERVAL_NANOS,
         staggerNanos = STAGGER_NANOS,
@@ -292,10 +303,30 @@ internal fun keepsCorrection(caseId: String): Boolean = caseId != CASE_DISTANCE
  * conditional on the one that is made of it.
  */
 internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
-    val metres = pairs.filterNotNull().map { it.separationMetres }.sorted()
+    val metres = pairs.filterNotNull().map { it.separationMetres }
     if (metres.isEmpty()) return null
-    val middle = metres.size / 2
-    return if (metres.size % 2 == 1) metres[middle] else (metres[middle - 1] + metres[middle]) / 2
+    val middle = medianOf(metres)
+    // A stored distance is replaced, not averaged, so one unreadable run can wipe out a good
+    // measurement - and this used to be guarded by the alignment verdict, by accident, which is
+    // what removing that guard exposed: three pairs measured through a muted handset wrote 17.04
+    // metres over a real 0.19. The pairs' own agreement is what the guard should have been all
+    // along, and the bound is what reads the answer rather than what the correlator can do:
+    // 30 cm, the precedence threshold's 1 ms in metres. Measured 09-10, ten good runs sat at a
+    // median absolute deviation of 0 to 2.1 cm and the runs through the muted handset at 19 cm
+    // and up - so this is a floor under gross failure, not a precision gate.
+    if (medianOf(metres.map { abs(it - middle) }) > SEPARATION_AGREEMENT_METRES) return null
+    // A negative separation is not a small distance, it is the two sides disagreeing about which
+    // of them is nearer, which no room can produce.
+    return middle.takeIf { it > 0.0 }
+}
+
+/** How far apart the pairs of one run may sit and still be read as one distance. */
+internal const val SEPARATION_AGREEMENT_METRES = 0.30
+
+private fun medianOf(values: List<Double>): Double {
+    val sorted = values.sorted()
+    val middle = sorted.size / 2
+    return if (sorted.size % 2 == 1) sorted[middle] else (sorted[middle - 1] + sorted[middle]) / 2
 }
 
 /**
@@ -690,7 +721,7 @@ class PeerCalibrateActivity : ComponentActivity() {
      * whose floor had to be found by sweeping - the arithmetic said 1.5 s and the handsets said
      * otherwise.
      */
-    private fun timingFor(caseId: String?): CalibrationTiming {
+    private fun timingFor(caseId: String?): ArmSchedule {
         val shipped = defaultTimingFor(caseId)
         return shipped.copy(
             repeats = intent.getIntExtra("chirp_repeats", shipped.repeats),

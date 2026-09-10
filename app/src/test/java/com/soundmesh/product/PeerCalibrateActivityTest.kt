@@ -775,6 +775,28 @@ class PeerCalibrateActivityTest {
         assertEquals(2.0, measuredSeparationMetres(listOf(facing(1.9), facing(2.0), facing(9.9)))!!, 1e-9)
     }
 
+    /**
+     * And a run the pairs themselves disagree about writes nothing rather than a wrong distance.
+     *
+     * The stored distance is replaced, not averaged, so one bad run wipes out a good measurement.
+     * Removing the verdict from the write removed a guard that had been doing this by accident:
+     * three pairs measured through a handset whose media volume was at zero wrote 17.04 metres
+     * over a real 0.19. The bound is what reads the answer, not what the correlator can do.
+     */
+    @Test
+    fun aRunWhosePairsDisagreeWritesNothing() {
+        // Ten good runs measured 09-10 sat at a median absolute deviation of 0 to 2.1 cm.
+        assertEquals(0.20, measuredSeparationMetres(listOf(facing(0.19), facing(0.20), facing(0.21)))!!, 1e-9)
+        // Metres apart is the shape a silent room makes, and it is refused rather than averaged.
+        assertEquals(null, measuredSeparationMetres(listOf(facing(2.01), facing(0.62), facing(9.9))))
+        // A negative separation is the two sides disagreeing about which is nearer.
+        assertEquals(null, measuredSeparationMetres(listOf(facing(-0.10), facing(-0.05), facing(-0.02))))
+        assertTrue(
+            "the bound has to be the precedence threshold in metres, not a number picked to fit",
+            SEPARATION_AGREEMENT_METRES == 0.30
+        )
+    }
+
     private fun facing(metres: Double) = FacingPair(
         alignmentErrorMs = 0.0,
         separationMetres = metres,
