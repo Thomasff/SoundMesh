@@ -4,8 +4,11 @@ import com.soundmesh.core.AlignmentConfidence
 import com.soundmesh.core.AlignmentPairing
 import com.soundmesh.core.AlignmentReading
 import com.soundmesh.core.AlignmentResultMessage
+import com.soundmesh.core.CalibrationWindow
+import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
+import com.soundmesh.core.FacingPair
 import com.soundmesh.core.LinkQuality
 import com.soundmesh.core.PairedAlignment
 import java.io.File
@@ -134,9 +137,9 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theCasesSitPastEverySeriesTheHarnessHasArchived() {
-        val cases = Regex("const val CASE_(?:MEASURE|VERIFY|SLOW_LINK) = \"([A-Z])([0-9]+)\"")
+        val cases = Regex("const val CASE_(?:MEASURE|VERIFY|SLOW_LINK|DISTANCE) = \"([A-Z])([0-9]+)\"")
             .findAll(source).map { it.groupValues[2].toInt() }.toList()
-        assertEquals(3, cases.size)
+        assertEquals(4, cases.size)
         assertTrue("a case id could be an archived run's directory", cases.all { it >= 90 })
     }
 
@@ -153,7 +156,7 @@ class PeerCalibrateActivityTest {
             "the host plans the measurement case whatever the sink asked for",
             source.contains("caseId = CASE_MEASURE")
         )
-        assertTrue(source.contains("request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)"))
+        assertTrue(source.contains("request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK, CASE_DISTANCE)"))
     }
     /**
      * A case id names a directory the run store only ever mkdirs, so two runs of one case land on
@@ -512,7 +515,7 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theThreeArmsAreThreeDifferentPlaces() {
-        assertEquals(3, setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK).size)
+        assertEquals(4, setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK, CASE_DISTANCE).size)
     }
 
     /**
@@ -647,7 +650,131 @@ class PeerCalibrateActivityTest {
         // deadline reads the same at zero as it does at sixteen seconds.
         assertTrue(
             "the fill wait must stay a deadline loop, not a single sleep",
-            source.contains("while (System.nanoTime() - clockStartedAt < clockFillNanos())")
+            source.contains("while (System.nanoTime() - clockStartedAt < timing.clockFillNanos)")
         )
     }
+    /**
+     * A distance measurement is its own arm, and its own arm is the whole of how it is asked for.
+     *
+     * Everything this arm shortens - the fill wait, the lead, the repeats, the interval - could
+     * have been four numbers on a command line instead. Four numbers that have to agree, spread
+     * over two `am start`s, with nothing to check they did: that is the shape that has already
+     * swapped an arm on this project once and left no trace in the result of which one ran.
+     * One flag names it, and every number the arm needs is derived from the name.
+     */
+    @Test
+    fun aDistanceMeasurementIsItsOwnArm() {
+        assertEquals(CASE_DISTANCE, calibrationCase(verifying = false, allowSlowLink = false, distanceOnly = true))
+        assertEquals(CASE_MEASURE, calibrationCase(verifying = false, allowSlowLink = false, distanceOnly = false))
+    }
+
+    /**
+     * And the combinations that name no run say so, on the same terms the gate already does.
+     *
+     * A verification measures the residual left by the stored constant; a distance measurement
+     * never touches that constant and deliberately runs on a clock too young to align by. Neither
+     * pairing describes a run, so neither gets to pick one silently.
+     */
+    @Test
+    fun aDistanceMeasurementCombinedWithAnotherArmIsNotARun() {
+        assertEquals(null, calibrationCase(verifying = true, allowSlowLink = false, distanceOnly = true))
+        assertEquals(null, calibrationCase(verifying = false, allowSlowLink = true, distanceOnly = true))
+    }
+
+    /**
+     * The arm skips exactly the waits its answer does not depend on, and no others.
+     *
+     * The flight time comes out of the half difference of the two recordings, where a clock error
+     * enters both sides with the same sign and cancels. So the sixteen second fill - a wait whose
+     * entire purpose is an offset accurate enough to align by - buys a distance nothing at all,
+     * and it is the single biggest thing standing between a person holding a phone to their ear
+     * and being told they may put it down.
+     */
+    @Test
+    fun aDistanceMeasurementSkipsTheWaitsItsAnswerDoesNotDependOn() {
+        val short = timingFor(CASE_DISTANCE, PLAN_LEAD, CLOCK_FILL)
+        assertEquals(0L, short.clockFillNanos)
+        assertTrue("the lead has to come down too, or the fill saving is spent waiting", short.planLeadNanos < PLAN_LEAD)
+        assertTrue(short.repeats < 5)
+        assertTrue(short.intervalNanos < 5_000_000_000L)
+    }
+
+    /**
+     * Every other arm keeps what it was given, so this cannot quietly reshape a calibration.
+     */
+    @Test
+    fun theArmsThatAlignStillRunTheShippedSchedule() {
+        for (caseId in listOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)) {
+            val timing = timingFor(caseId, PLAN_LEAD, CLOCK_FILL)
+            assertEquals(PLAN_LEAD, timing.planLeadNanos)
+            assertEquals(CLOCK_FILL, timing.clockFillNanos)
+            assertEquals(5, timing.repeats)
+            assertEquals(5_000_000_000L, timing.intervalNanos)
+        }
+    }
+
+    /**
+     * The short interval still has to keep one pair's search out of the next pair's chirps.
+     *
+     * A pair is looked for over the stagger with the recording-start uncertainty added either
+     * side, so consecutive windows touch when the interval falls to stagger plus twice that
+     * uncertainty. Under it, a pair can be answered by its neighbour's chirp and the reading is
+     * wrong rather than missing. This is the floor the shortening is allowed to approach, and
+     * measuring it here is cheaper than discovering it in a quiet room.
+     */
+    @Test
+    fun theShortIntervalStillKeepsOnePairsSearchOutOfTheNexts() {
+        val uncertaintyNanos =
+            CalibrationWindow.DEFAULT_UNCERTAINTY_FRAMES.toLong() * 1_000_000_000L / ChirpGenerator.SAMPLE_RATE
+        val timing = timingFor(CASE_DISTANCE, PLAN_LEAD, CLOCK_FILL)
+        val floor = timing.staggerNanos + 2 * uncertaintyNanos
+        assertTrue(
+            "interval ${timing.intervalNanos} is under the floor $floor",
+            timing.intervalNanos > floor
+        )
+    }
+
+    /**
+     * A run this short never moves the standing correction, whatever it happens to have measured.
+     *
+     * It runs on an estimator eight samples old by design. That is ample for a distance, which
+     * cancels the clock, and nowhere near enough for an alignment, which is the clock. The fold
+     * exempts a pair nobody has measured yet - on purpose, or no first correction could ever be
+     * made - so on a fresh pair there is nothing but this to stop a two second run becoming the
+     * constant every session afterwards applies.
+     */
+    @Test
+    fun aShortRunNeverMovesTheStandingCorrection() {
+        assertFalse(keepsCorrection(CASE_DISTANCE))
+        assertTrue(keepsCorrection(CASE_MEASURE))
+        assertTrue(keepsCorrection(CASE_VERIFY))
+        assertTrue(keepsCorrection(CASE_SLOW_LINK))
+    }
+
+    /**
+     * The separation survives a run whose alignment cannot be read.
+     *
+     * It used to be written inside the branch that had a cluster mean, which made a measurement
+     * that cancels the clock conditional on one that is made of it. The two share the chirps and
+     * nothing else: the flight time is the half difference, the alignment is the half sum, and
+     * they are orthogonal by construction. A run that clusters badly still measured the room.
+     */
+    @Test
+    fun theSeparationSurvivesARunTheAlignmentCannotRead() {
+        val pairs = listOf(facing(1.90), null, facing(2.10))
+        assertEquals(2.00, measuredSeparationMetres(pairs)!!, 1e-9)
+        assertEquals(null, measuredSeparationMetres(listOf(null, null)))
+        assertEquals(null, measuredSeparationMetres(emptyList<FacingPair?>()))
+        // The median is the point: one pair at twice its neighbours is what the archive shows
+        // roughly one in six of them doing, and a three sample mean cannot survive one.
+        assertEquals(2.0, measuredSeparationMetres(listOf(facing(1.9), facing(2.0), facing(9.9)))!!, 1e-9)
+    }
+
+    private fun facing(metres: Double) = FacingPair(
+        alignmentErrorMs = 0.0,
+        separationMetres = metres,
+        flightTimeMs = metres / 343.0 * 1000,
+        rawHostMs = 0.0,
+        rawSinkMs = 0.0
+    )
 }

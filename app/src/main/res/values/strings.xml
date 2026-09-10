@@ -75,6 +75,7 @@
     <string name="pair_calibrate_stopping">这一台测完就结束，不再等下一台了。</string>
     <string name="pair_calibrate_served">这一轮一共测了 %1$d 台。</string>
     <string name="pair_calibrate_host_done">这台是主机，测量结果记在另一台上。这一轮量到：偏差 %1$.3f 毫秒，两台间距约 %2$.2f 米。</string>
+    <string name="pair_calibrate_distance_done">量好了，两台间距约 %1$.2f 米。可以把手机放下了。</string>
     <string name="pair_calibrate_done">测完了：这一对的偏差是 %1$.3f 毫秒，已经记下来（第 %2$d 次观测）。</string>
     <string name="pair_calibrate_slow_link">这个网络太慢，没法对齐：两台之间一来一回要 %1$.0f 毫秒，超过 %2$.0f 就对不准了。如果这台正在开热点，改成让另一台开热点、这台连过去；如果两台都连着路由器，改成一台开热点、另一台连它。</string>
     <string name="pair_calibrate_forget">清除这一对的校准，重新开始</string>

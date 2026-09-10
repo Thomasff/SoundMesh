@@ -25,6 +25,7 @@ import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.ChirpGenerator
+import com.soundmesh.core.FacingPair
 import com.soundmesh.core.HostId
 import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ClockEstimate
@@ -95,6 +96,60 @@ internal const val CASE_VERIFY = "C91"
 internal const val CASE_SLOW_LINK = "C92"
 
 /**
+ * The distance-only arm: a separation, and deliberately nothing else.
+ *
+ * Its own case rather than a flag on C90 because it writes into the same places a calibration
+ * does and must be tellable apart there afterwards - its own directory under the run store, its
+ * own name on every file. See [timingFor] for what it drops and [keepsCorrection] for what it
+ * refuses to touch.
+ */
+internal const val CASE_DISTANCE = "C93"
+
+/** SyncActivity's own, and the one AlignmentAnalysis is written around. */
+internal const val STAGGER_NANOS = 500_000_000L
+
+/**
+ * Five pairs. CalibrationUpdate.usable needs a cluster of at least two, and three is not
+ * enough to trust a cluster mean: O60, O61 and O62 were the same binary run back to back
+ * without the phones being touched, and came out +1.323, -0.927 and +0.097 ms.
+ */
+internal const val CHIRP_REPEATS = 5
+
+/**
+ * Five seconds, run-sync's own floor: a slice of the recording has to hold the record
+ * lead, the stagger and the sweep, with the input latency and start jitter on top.
+ */
+internal const val CHIRP_INTERVAL_NANOS = 5_000_000_000L
+
+/**
+ * Three pairs, against the five a calibration takes.
+ *
+ * Five is what a cluster mean needs, and a distance has no cluster: it is one number per pair
+ * with an outlier rate the archive puts near one in six, which a median over three handles. What
+ * three buys over one is that a single missed chirp costs the run a sample instead of the answer.
+ */
+internal const val DISTANCE_REPEATS = 3
+
+/**
+ * Two seconds, against the five second interval a calibration runs.
+ *
+ * The floor is [STAGGER_NANOS] plus twice the recording-start uncertainty, which is 1.5 s, and
+ * the floor is where consecutive search windows touch rather than where they overlap. Two seconds
+ * takes the margin instead of arguing about it, and the whole schedule is four seconds long.
+ */
+internal const val DISTANCE_INTERVAL_NANOS = 2_000_000_000L
+
+/**
+ * Two seconds of lead, against seven.
+ *
+ * Seven covers the sink's warm-up and the gap after it while the estimator is also filling a
+ * window; with no window to fill, what is left is the plan's round trip and the recording opening.
+ * Two seconds is the shortest lead this screen has been run at on hardware - measured 09-10 - so
+ * it is a value with a run behind it rather than the smallest number that looks plausible.
+ */
+internal const val DISTANCE_PLAN_LEAD_NANOS = 2_000_000_000L
+
+/**
  * Which of the three a press is, or null if it is not one of them.
  *
  * Null is the verification asked for with the gate open. A verification measures what is left
@@ -104,11 +159,107 @@ internal const val CASE_SLOW_LINK = "C92"
  * is the shape of the mistake that has already cost this project a day: a flag that went missing
  * swapped the arm and nothing in the result said which one had run.
  */
-internal fun calibrationCase(verifying: Boolean, allowSlowLink: Boolean): String? = when {
+internal fun calibrationCase(
+    verifying: Boolean,
+    allowSlowLink: Boolean,
+    distanceOnly: Boolean = false
+): String? = when {
+    // A distance measurement runs on an estimator too young to align by, on purpose, and never
+    // touches the stored constant. Pairing it with either of the other two describes no run for
+    // the same reason their own pairing does not, and picking one silently is the mistake this
+    // whole function exists to refuse.
+    distanceOnly && (verifying || allowSlowLink) -> null
+    distanceOnly -> CASE_DISTANCE
     verifying && allowSlowLink -> null
     allowSlowLink -> CASE_SLOW_LINK
     verifying -> CASE_VERIFY
     else -> CASE_MEASURE
+}
+
+/**
+ * The chirp schedule a case runs, and the two waits that come before it.
+ *
+ * One value rather than four knobs on a command line. Everything the distance arm shortens could
+ * have been passed in - and then four numbers spread over two `am start`s would have had to agree
+ * with each other, with nothing checking that they did. That is the shape that swapped an arm on
+ * this project once and left nothing in the result to say which one had run: the case names the
+ * arm, and every number the arm needs comes out of the name.
+ */
+internal data class CalibrationTiming(
+    val repeats: Int,
+    val intervalNanos: Long,
+    val staggerNanos: Long,
+    val planLeadNanos: Long,
+    val clockFillNanos: Long
+)
+
+/**
+ * What [caseId] runs, given what the command line asked for.
+ *
+ * Only [CASE_DISTANCE] departs from the shipped schedule, and what it drops is exactly what its
+ * answer does not depend on. The separation comes out of the half difference of the two
+ * recordings, where a clock error enters both sides with the same sign and cancels - so the fill
+ * wait, whose whole purpose is an offset accurate enough to align by, buys the distance nothing.
+ * The lead comes down with it or the saving is spent waiting, and the repeats and the interval
+ * come down because a person is standing still holding a phone to their ear for the whole of it.
+ *
+ * What does not come down is the stagger, and under it the interval: a pair is searched for over
+ * the stagger with the recording-start uncertainty added either side, so windows begin to touch
+ * at stagger plus twice that. Below it a pair can be answered by its neighbour's chirp, which is
+ * worse than a miss because the reading is then wrong rather than absent.
+ */
+internal fun timingFor(
+    caseId: String?,
+    requestedPlanLeadNanos: Long,
+    requestedClockFillNanos: Long
+): CalibrationTiming = when (caseId) {
+    CASE_DISTANCE -> CalibrationTiming(
+        repeats = DISTANCE_REPEATS,
+        intervalNanos = DISTANCE_INTERVAL_NANOS,
+        staggerNanos = STAGGER_NANOS,
+        planLeadNanos = DISTANCE_PLAN_LEAD_NANOS,
+        clockFillNanos = 0L
+    )
+    else -> CalibrationTiming(
+        repeats = CHIRP_REPEATS,
+        intervalNanos = CHIRP_INTERVAL_NANOS,
+        staggerNanos = STAGGER_NANOS,
+        planLeadNanos = requestedPlanLeadNanos,
+        clockFillNanos = requestedClockFillNanos
+    )
+}
+
+/**
+ * Whether a finished run of [caseId] may move the standing correction at all.
+ *
+ * Asked before [foldsIntoStoredCalibration], and asking a different question: that one is about
+ * how far a measurement may travel, this one about whether the run was ever measuring the thing.
+ * A distance run's estimator is eight samples old - ample for a separation, which cancels the
+ * clock, and nowhere near enough for an alignment, which is made of it. The fold exempts a pair
+ * nobody has measured yet, deliberately, so on a fresh pair nothing else stands between a two
+ * second run and the constant every session afterwards applies.
+ */
+internal fun keepsCorrection(caseId: String): Boolean = caseId != CASE_DISTANCE
+
+/**
+ * How far apart the two handsets were, from the pairs that could be read, or null if none could.
+ *
+ * The median rather than the mean, which the five-pair schedule could afford not to care about
+ * and a three-pair one cannot: across the six archived runs that recorded separations, one pair
+ * in six sat at roughly twice its neighbours, and one such pair moves a three-sample mean by a
+ * third of the answer.
+ *
+ * Independent of the verdict on purpose. The flight time is the half difference of the two
+ * recordings and the alignment is the half sum; they share the chirps and nothing else. A run
+ * whose alignment will not cluster still measured the room, and this used to be written inside
+ * the branch that had a cluster mean - which made the measurement that cancels the clock
+ * conditional on the one that is made of it.
+ */
+internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
+    val metres = pairs.filterNotNull().map { it.separationMetres }.sorted()
+    if (metres.isEmpty()) return null
+    val middle = metres.size / 2
+    return if (metres.size % 2 == 1) metres[middle] else (metres[middle - 1] + metres[middle]) / 2
 }
 
 /**
@@ -412,6 +563,14 @@ class PeerCalibrateActivity : ComponentActivity() {
     private var serveManyAfterPermission = false
     private var allowSlowLinkAfterPermission = false
 
+    /**
+     * The schedule this round is running, set the moment its case is known and read everywhere
+     * afterwards - including by the report, so a run says which arm it was on rather than what
+     * the command line happened to ask for.
+     */
+    @Volatile
+    private var timing = timingFor(null, PLAN_LEAD_NANOS, CLOCK_FILL_NANOS)
+
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) start(verifyingAfterPermission, serveManyAfterPermission, allowSlowLinkAfterPermission)
         else state = state.copy(message = getString(R.string.pair_calibrate_no_permission))
@@ -506,8 +665,18 @@ class PeerCalibrateActivity : ComponentActivity() {
      * run that can say whether the wait is still buying anything under the section-26 rule -
      * if it is not, sixteen seconds come off every calibration.
      */
-    private fun clockFillNanos(): Long =
+    private fun requestedClockFillNanos(): Long =
         intent.getIntExtra("clock_fill_millis", (CLOCK_FILL_NANOS / 1_000_000L).toInt()) * 1_000_000L
+
+    /**
+     * `--ez distance_only true` measures how far apart the two handsets are and nothing else.
+     *
+     * Command line only for now, because what reads the answer does not exist yet: the room
+     * screen scales a drawing by it, and until it does, a listener offered this button would be
+     * standing still for a number nothing displays. The measurement itself is a product one -
+     * this is not an experiment arm and does not belong beside [allow_slow_link] in that sense.
+     */
+    private fun distanceOnly(): Boolean = intent.getBooleanExtra("distance_only", false)
 
     /**
      * The capture source, default MIC as every archived run used.
@@ -656,7 +825,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // The case names a directory RunStore will create, and it arrived over a socket.
             // Only the two this handset runs are honoured; anything else ends the run here
             // rather than at the run store.
-            if (request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)) {
+            if (request.caseId !in setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK, CASE_DISTANCE)) {
                 throw IllegalArgumentException("not a case this handset runs: ${request.caseId}")
             }
             // The sink's name arrived over the same socket and names files on this side too.
@@ -666,14 +835,18 @@ class PeerCalibrateActivity : ComponentActivity() {
                 throw IllegalArgumentException("not a handset name: ${request.sinkId}")
             }
             servedSink = request.sinkId
+            // The arm is the sink's to name - it is the handset somebody pressed something on -
+            // and the plan is where the host adopts it. Held on the field as well so that the
+            // report this side files says which schedule actually ran.
+            timing = timingFor(request.caseId, planLeadNanos(), requestedClockFillNanos())
             CalibrationPlan(
                 caseId = request.caseId,
                 hostId = hostId,
                 // Far enough out to cover the warm-up and the gap the sink has yet to start.
-                firstChirpAtHostNanos = System.nanoTime() + planLeadNanos(),
-                staggerNanos = STAGGER_NANOS,
-                repeats = CHIRP_REPEATS,
-                intervalNanos = CHIRP_INTERVAL_NANOS
+                firstChirpAtHostNanos = System.nanoTime() + timing.planLeadNanos,
+                staggerNanos = timing.staggerNanos,
+                repeats = timing.repeats,
+                intervalNanos = timing.intervalNanos
             )
         } ?: return when {
             // The stop button closed the socket this was waiting on, so what came back is the
@@ -724,14 +897,17 @@ class PeerCalibrateActivity : ComponentActivity() {
                 return@awaitResult CalibrationReply(null, null, null)
             }
             val combined = AlignmentPairing.combine(plan.caseId, run.readings, message)
+            val metres = measuredSeparationMetres(combined.pairs)
+            // Kept rather than only shown, and kept outside the verdict: the separation is the
+            // half difference of the two recordings and the alignment is the half sum, so a run
+            // that will not cluster still measured the room. Guarded, because a room screen's
+            // check is not worth a failed calibration.
+            if (metres != null) runCatching { StoredSeparation(filesDir, sinkId).write(metres) }
             outcome = combined.verdict?.clusterMeanMs?.let { mean ->
-                val metres = combined.pairs.filterNotNull().map { it.separationMetres }.average()
-                // Kept rather than only shown. It has had no consumer until now - every gain
-                // depends on direction alone - and the one it has is not scaling anything: it
-                // is the only thing that can catch two icons dragged onto the wrong phones.
-                // Guarded, because a room screen's check is not worth a failed calibration.
-                runCatching { StoredSeparation(filesDir, sinkId).write(metres) }
-                getString(R.string.pair_calibrate_host_done, mean, metres)
+                getString(R.string.pair_calibrate_host_done, mean, metres ?: 0.0)
+            } ?: metres?.takeIf { plan.caseId == CASE_DISTANCE }?.let {
+                // The distance arm has no verdict to report and is not failing when it has none.
+                getString(R.string.pair_calibrate_distance_done, it)
             } ?: getString(
                 R.string.pair_calibrate_kept,
                 combined.failure?.name ?: "NO_VERDICT"
@@ -749,13 +925,14 @@ class PeerCalibrateActivity : ComponentActivity() {
                     hostReadings = run.readings,
                     sinkReadings = message.readings,
                     intervalFrames = chirpIntervalFrames(plan.intervalNanos),
-                    planLeadNanos = planLeadNanos()
+                    planLeadNanos = timing.planLeadNanos
                 )
             )
             CalibrationReply(
                 // Read through what the sink says it applied, never through this handset's
                 // idea of it: only the sink knows what it actually used.
-                measuredOffsetMicros = CalibrationUpdate.measured(
+                measuredOffsetMicros = if (!keepsCorrection(plan.caseId)) null
+                else CalibrationUpdate.measured(
                     message.appliedOffsetMicros,
                     combined.verdict
                 ),
@@ -781,8 +958,9 @@ class PeerCalibrateActivity : ComponentActivity() {
         // Named before anything is spent, and before the gate, so that a refused run can still
         // say which one it would have been - and so that the one combination that names no run is
         // turned away here rather than two minutes of clock later.
-        val caseId = calibrationCase(verifying, allowSlowLink)
-            ?: return show(getString(R.string.pair_calibrate_failed, "VERIFY_PAST_THE_GATE"))
+        val caseId = calibrationCase(verifying, allowSlowLink, distanceOnly())
+            ?: return show(getString(R.string.pair_calibrate_failed, "ARMS_COMBINED"))
+        timing = timingFor(caseId, planLeadNanos(), requestedClockFillNanos())
         val paired = PairedHost(filesDir).read()
             ?: return show(getString(R.string.pair_calibrate_no_pairing))
         // The name this handset answers to, which it signs both of its messages with. The same
@@ -814,7 +992,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // The harness never met this because it plays two minutes of audio between converging
             // and chirping, which at its own two second cadence is exactly the window's worth of
             // exchanges. This waits for the same thing directly instead of buying it by accident.
-            while (System.nanoTime() - clockStartedAt < clockFillNanos()) {
+            while (System.nanoTime() - clockStartedAt < timing.clockFillNanos) {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
             }
             val converged = clockClient.currentEstimate()
@@ -845,7 +1023,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                             estimator.windowSize,
                             estimator.bestCount,
                             estimator.keepFractionWhileFilling,
-                            clockFillNanos(),
+                            timing.clockFillNanos,
                             radioHeld,
                             link,
                             converged,
@@ -1034,7 +1212,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         json,
         clockReportJson(
             CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, estimator.keepFractionWhileFilling,
-            clockFillNanos(), radioHeld, link, atStart, atEnd, exchanges
+            timing.clockFillNanos, radioHeld, link, atStart, atEnd, exchanges
         )
     )
 
@@ -1073,22 +1251,6 @@ class PeerCalibrateActivity : ComponentActivity() {
          * enough for the sink to have received the plan and started. See CalibrationSchedule.
          */
         const val PLAN_LEAD_NANOS = 7_000_000_000L
-
-        /** SyncActivity's own, and the one AlignmentAnalysis is written around. */
-        const val STAGGER_NANOS = 500_000_000L
-
-        /**
-         * Five pairs. CalibrationUpdate.usable needs a cluster of at least two, and three is not
-         * enough to trust a cluster mean: O60, O61 and O62 were the same binary run back to back
-         * without the phones being touched, and came out +1.323, -0.927 and +0.097 ms.
-         */
-        const val CHIRP_REPEATS = 5
-
-        /**
-         * Five seconds, run-sync's own floor: a slice of the recording has to hold the record
-         * lead, the stagger and the sweep, with the input latency and start jitter on top.
-         */
-        const val CHIRP_INTERVAL_NANOS = 5_000_000_000L
 
         /** Long enough for the whole schedule; the exchange runs the length of the calibration. */
         const val CLOCK_SECONDS = 120
