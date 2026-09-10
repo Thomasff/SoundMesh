@@ -12,7 +12,15 @@ class ClockOffsetEstimator(
     // a stored run cannot know how to reproduce it, and the check that the replay still matches the
     // shipped estimator quietly stops working the first time a default moves.
     val windowSize: Int = DEFAULT_WINDOW,
-    val bestCount: Int = DEFAULT_BEST
+    val bestCount: Int = DEFAULT_BEST,
+    /**
+     * False restores the rule this one replaced: [bestCount] frozen, filling window or not.
+     *
+     * Reachable so that one hardware session can carry both arms. Everything that justified the
+     * replacement was replay, and no archived chirp was ever fired early enough in a run to be
+     * affected by either rule - see [keepFor].
+     */
+    val keepFractionWhileFilling: Boolean = true
 ) {
     private val window = ArrayDeque<ClockExchange>()
 
@@ -104,7 +112,8 @@ class ClockOffsetEstimator(
      * exchange in eight and there is nothing quiet to pick.
      */
     private fun keepFor(held: Int): Int =
-        if (held >= windowSize) bestCount else maxOf(1, held * bestCount / windowSize)
+        if (held >= windowSize || !keepFractionWhileFilling) bestCount
+        else maxOf(1, held * bestCount / windowSize)
 
     companion object {
         const val MIN_SAMPLES = 8

@@ -294,4 +294,27 @@ class ClockOffsetEstimatorTest {
         // where every measurement the shipped constant was justified by was taken.
         assertEquals(listOf(1, 2, 4, 8), kept)
     }
+
+    /**
+     * The rule this one replaced, kept reachable so the two can be compared in a quiet room.
+     *
+     * Everything above is replay: the 3.65 to 0.70 ms it cites was measured by re-running archived
+     * exchanges, and every archived chirp landed twenty seconds or more into a run, by which time
+     * the window was full and the two rules agree. Neither the fault nor the fix has ever been
+     * heard by a microphone. A flag is what lets one hardware session carry both arms.
+     *
+     * A frozen count over a filling window keeps every exchange the window holds, which is what
+     * the eight above are: no selection at all.
+     */
+    @Test
+    fun theFrozenCountRuleKeepsEverythingAFillingWindowHolds() {
+        val estimator = ClockOffsetEstimator(keepFractionWhileFilling = false)
+        val kept = mutableListOf<Int>()
+        repeat(64) { index ->
+            estimator.record(exchange(index * 250_000_000L, 5 * second, 2_000_000, 2_000_000))
+            if (index + 1 in listOf(8, 16, 32, 64)) kept += estimator.estimate(2L * second)!!.sampleCount
+        }
+
+        assertEquals(listOf(8, 8, 8, 8), kept)
+    }
 }

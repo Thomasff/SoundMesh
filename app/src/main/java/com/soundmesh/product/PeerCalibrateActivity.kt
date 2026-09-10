@@ -46,6 +46,7 @@ import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.PairedHost
+import com.soundmesh.probe.sync.CalibrationAudioSource
 import com.soundmesh.probe.sync.PeerCalibrationRunner
 import com.soundmesh.probe.sync.PeerRunLog
 import com.soundmesh.probe.sync.holdingRadio
@@ -153,6 +154,15 @@ internal fun clockReportJson(
     intervalMillis: Long,
     windowSize: Int,
     bestCount: Int,
+    /**
+     * Which filtering rule the window was filling under, because a run cannot be read without it.
+     *
+     * Section 26 replaced a frozen count with a fraction and justified it entirely in replay, on
+     * archived chirps that all landed after the window was full - where the two rules agree. The
+     * run that fires a chirp early enough to tell them apart is the reason this field exists: two
+     * such runs differ in nothing else a report records.
+     */
+    keepFractionWhileFilling: Boolean,
     radioHeld: Boolean,
     link: LinkQuality?,
     atStart: ClockEstimate?,
@@ -160,6 +170,7 @@ internal fun clockReportJson(
     exchanges: List<ClockExchange>
 ): String =
     "{\"intervalMillis\":$intervalMillis,\"windowSize\":$windowSize,\"bestCount\":$bestCount," +
+        "\"keepFractionWhileFilling\":$keepFractionWhileFilling," +
         "\"radioHeld\":$radioHeld,\"link\":${linkJson(link)}," +
         "\"atStart\":${estimateJson(atStart)},\"atEnd\":${estimateJson(atEnd)}," +
         "\"exchanges\":${exchangesJson(exchanges)}}"
@@ -191,7 +202,13 @@ internal fun pairedReportJson(
     combined: PairedAlignment,
     hostReadings: List<AlignmentReading>,
     sinkReadings: List<AlignmentReading>,
-    intervalFrames: Int
+    intervalFrames: Int,
+    /**
+     * How far ahead of the request the first chirp was scheduled - the host half of the same
+     * experiment [clockReportJson] records the sink half of. Every archived run used one value,
+     * so nothing until now had to say which.
+     */
+    planLeadNanos: Long
 ): String {
     // The sink plays at the plan's instant and the host a stagger later, and first/second are
     // ordered by arrival, so firstIndex is the sink's chirp in either recording. See
@@ -201,7 +218,7 @@ internal fun pairedReportJson(
     val hostSeenBySink = EmissionDeviation.of(sinkReadings.map { it.secondIndex }, intervalFrames)
     val sinkSeenByHost = EmissionDeviation.of(hostReadings.map { it.firstIndex }, intervalFrames)
     return "{\"role\":\"HOST\",\"caseId\":\"$caseId\",\"hostId\":\"$hostId\"," +
-        "\"sinkId\":\"$sinkId\"," +
+        "\"sinkId\":\"$sinkId\",\"planLeadNanos\":$planLeadNanos," +
         "\"failure\":${combined.failure?.let { "\"${it.name}\"" } ?: "null"}," +
         "\"combinedMs\":${numbers(combined.pairs.map { it?.alignmentErrorMs })}," +
         "\"separationMetres\":${numbers(combined.pairs.map { it?.separationMetres })}," +
@@ -446,6 +463,36 @@ class PeerCalibrateActivity : ComponentActivity() {
         CalibrationRole.entries.firstOrNull { it.name == intent.getStringExtra("role") }
 
     /**
+     * The next three are read off the intent the way [role] is, rather than threaded through
+     * [begin], because the screen is singleTask and onNewIntent calls setIntent: the intent is
+     * always the one that started the run in progress. Threading them would have added three
+     * parameters to four signatures and three more fields to hold across the permission prompt.
+     *
+     * All three are diagnostic arms of one experiment (queue item 16 and 20a), reachable only from
+     * a command line, and each is written into the run's report by the side that honours it. None
+     * changes what a listener's handset does: the defaults are the shipped constants.
+     *
+     * Note the flag types. `--ei` and `--ez`, not `-e`: a string extra read as an int or a boolean
+     * returns the default with only a log line to say so, and the run then measures the shipped arm
+     * while the command line says otherwise. That has already cost this project one silent session.
+     */
+    private fun planLeadNanos(): Long =
+        intent.getIntExtra("plan_lead_millis", (PLAN_LEAD_NANOS / 1_000_000L).toInt()) * 1_000_000L
+
+    /** `--ez frozen_count true` restores the pre-section-26 rule. See [ClockOffsetEstimator]. */
+    private fun keepFractionWhileFilling(): Boolean = !intent.getBooleanExtra("frozen_count", false)
+
+    /**
+     * The capture source, default MIC as every archived run used.
+     *
+     * MIC is the vendor processing chain, whose convergence is time-varying and could be landing on
+     * the chirp onset; UNPROCESSED is the control. CalibrationRunner falls back if the source will
+     * not open, and records which it opened, so asking is not the same as getting.
+     */
+    private fun audioSource(): CalibrationAudioSource =
+        CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
+
+    /**
      * The ADB-driven start, which serves one handset unless asked for more.
      *
      * One round is what every archived run of this screen did, and it is what a driver expects: a
@@ -596,7 +643,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 caseId = request.caseId,
                 hostId = hostId,
                 // Far enough out to cover the warm-up and the gap the sink has yet to start.
-                firstChirpAtHostNanos = System.nanoTime() + PLAN_LEAD_NANOS,
+                firstChirpAtHostNanos = System.nanoTime() + planLeadNanos(),
                 staggerNanos = STAGGER_NANOS,
                 repeats = CHIRP_REPEATS,
                 intervalNanos = CHIRP_INTERVAL_NANOS
@@ -630,7 +677,8 @@ class PeerCalibrateActivity : ComponentActivity() {
             caseId = plan.caseId,
             role = CalibrationRole.HOST,
             plan = plan,
-            hostNanosNow = { System.nanoTime() }
+            hostNanosNow = { System.nanoTime() },
+            audioSource = audioSource()
         ).run()
         // Written before anything is answered, so a refused run still leaves its evidence.
         // Named with the peer, not just the case: a case id names a directory this only ever
@@ -673,7 +721,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                     combined = combined,
                     hostReadings = run.readings,
                     sinkReadings = message.readings,
-                    intervalFrames = chirpIntervalFrames(plan.intervalNanos)
+                    intervalFrames = chirpIntervalFrames(plan.intervalNanos),
+                    planLeadNanos = planLeadNanos()
                 )
             )
             CalibrationReply(
@@ -714,7 +763,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         val sinkId = HostIdentity(filesDir).current()
         val stored = StoredCalibration(filesDir, paired.hostId).read()
         val appliedMicros = stored?.micros ?: 0L
-        val estimator = ClockOffsetEstimator()
+        val estimator = ClockOffsetEstimator(keepFractionWhileFilling = keepFractionWhileFilling())
         val clockClient = ClockSyncClient(paired.address, SyncActivity.CLOCK_PORT, estimator)
         val clockThread =
             Thread({ clockClient.runFor(CLOCK_SECONDS, CLOCK_INTERVAL_MILLIS) }, "SoundMeshPeerClock")
@@ -768,6 +817,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                             CLOCK_INTERVAL_MILLIS,
                             estimator.windowSize,
                             estimator.bestCount,
+                            estimator.keepFractionWhileFilling,
                             radioHeld,
                             link,
                             converged,
@@ -807,7 +857,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                         (clockClient.currentEstimate() ?: converged).offsetNanos -
                         appliedMicros * 1_000L
                 },
-                offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos }
+                offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos },
+                audioSource = audioSource()
             ).run()
             // Spliced in rather than passed to the runner: the clock belongs to this screen, and
             // the reason to record it is that the constant is only as good as the offset the
@@ -954,7 +1005,8 @@ class PeerCalibrateActivity : ComponentActivity() {
     ): String = withClockReport(
         json,
         clockReportJson(
-            CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, radioHeld, link, atStart, atEnd, exchanges
+            CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, estimator.keepFractionWhileFilling,
+            radioHeld, link, atStart, atEnd, exchanges
         )
     )
 

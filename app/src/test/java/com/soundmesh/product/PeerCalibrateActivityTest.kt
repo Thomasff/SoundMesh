@@ -7,6 +7,7 @@ import com.soundmesh.core.AlignmentResultMessage
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.LinkQuality
+import com.soundmesh.core.PairedAlignment
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,6 +21,7 @@ import org.junit.Test
  */
 class PeerCalibrateActivityTest {
     private val SINK_ID = "a1b2c3d4e5f60718"
+    private val PLAN_LEAD = 7_000_000_000L
 
     private val source =
         File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8)
@@ -104,6 +106,7 @@ class PeerCalibrateActivityTest {
             intervalMillis = 250L,
             windowSize = 64,
             bestCount = 8,
+            keepFractionWhileFilling = true,
             radioHeld = true,
             link = null,
             atStart = ClockEstimate(offsetNanos = -5L, uncertaintyNanos = 7L, driftPpm = 1.5, sampleCount = 8),
@@ -282,7 +285,7 @@ class PeerCalibrateActivityTest {
             caseId = "C90",
             refusal = "SLOW_LINK",
             clock = clockReportJson(
-                250L, 64, 8, true,
+                250L, 64, 8, true, true,
                 LinkQuality(medianRoundTripNanos = 90_000_000L, p90RoundTripNanos = 152_000_000L, samples = 57),
                 null, null, listOf(ClockExchange(1, 2, 3, 4))
             )
@@ -351,7 +354,7 @@ class PeerCalibrateActivityTest {
         )
         val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", SINK_ID, 0L, sink))
 
-        val json = pairedReportJson("C91", "0123456789abcdef", SINK_ID, combined, host, sink, 5 * 48_000)
+        val json = pairedReportJson("C91", "0123456789abcdef", SINK_ID, combined, host, sink, 5 * 48_000, PLAN_LEAD)
 
         // The X10 is the host here and it is the one that stepped.
         assertTrue("the host's emission spread is missing: $json", json.contains("\"hostSpreadMs\":0.700"))
@@ -382,7 +385,7 @@ class PeerCalibrateActivityTest {
             second = listOf(288_480, 528_481, 768_425, 1_008_477, 1_248_410)
         )
         val combined = AlignmentPairing.combine("C91", host, AlignmentResultMessage("C91", SINK_ID, 0L, sink))
-        val json = pairedReportJson("C91", "0123456789abcdef", SINK_ID, combined, host, sink, 5 * 48_000)
+        val json = pairedReportJson("C91", "0123456789abcdef", SINK_ID, combined, host, sink, 5 * 48_000, PLAN_LEAD)
 
         assertEquals(
             "the verdict in the report is not the verdict the run was judged by",
@@ -437,6 +440,7 @@ class PeerCalibrateActivityTest {
             intervalMillis = 250L,
             windowSize = 64,
             bestCount = 8,
+            keepFractionWhileFilling = true,
             radioHeld = true,
             link = null,
             atStart = null,
@@ -456,7 +460,7 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theReportSaysWhichEstimatorShapeTheRunUsed() {
-        val json = clockReportJson(250L, 64, 8, true, null, null, null, emptyList())
+        val json = clockReportJson(250L, 64, 8, true, true, null, null, null, emptyList())
 
         assertTrue(json.contains("\"windowSize\":64"))
         assertTrue(json.contains("\"bestCount\":8"))
@@ -474,10 +478,10 @@ class PeerCalibrateActivityTest {
     @Test
     fun theReportSaysWhetherTheRadioWasActuallyHeld() {
         assertTrue(
-            clockReportJson(250L, 64, 8, true, null, null, null, emptyList()).contains("\"radioHeld\":true")
+            clockReportJson(250L, 64, 8, true, true, null, null, null, emptyList()).contains("\"radioHeld\":true")
         )
         assertTrue(
-            clockReportJson(250L, 64, 8, false, null, null, null, emptyList()).contains("\"radioHeld\":false")
+            clockReportJson(250L, 64, 8, true, false, null, null, null, emptyList()).contains("\"radioHeld\":false")
         )
     }
 
@@ -489,7 +493,7 @@ class PeerCalibrateActivityTest {
     @Test
     fun theReportSaysWhatLinkTheRunWasSpentOn() {
         val json = clockReportJson(
-            250L, 64, 8, true,
+            250L, 64, 8, true, true,
             LinkQuality(medianRoundTripNanos = 56_300_000L, p90RoundTripNanos = 137_900_000L, samples = 175),
             null, null, emptyList()
         )
@@ -562,5 +566,59 @@ class PeerCalibrateActivityTest {
     fun nothingOnTheScreenOpensTheGate() {
         assertFalse(source.contains("allowSlowLink = true"))
         assertEquals(1, source.split("\"allow_slow_link\"").size - 1)
+    }
+
+    /**
+     * Section 26 changed how a filling window is filtered and moved nothing else, and every number
+     * that justified it came from replay. The acoustic arm needs the old rule and an early first
+     * chirp, and both are constants no command line could reach - so a hardware session could only
+     * ever carry one arm, and never the arm the change was made for.
+     *
+     * Two runs of this screen differing only in these two settings are indistinguishable in their
+     * reports unless the report says which it was. That is the failure this asserts against: a
+     * silently swapped arm is the one mistake this project has made more than once.
+     */
+    @Test
+    fun theClockReportSaysWhichArmOfTheFillingRuleExperimentRan() {
+        val json = clockReportJson(
+            intervalMillis = 250L,
+            windowSize = 64,
+            bestCount = 8,
+            keepFractionWhileFilling = false,
+            radioHeld = true,
+            link = null,
+            atStart = null,
+            atEnd = null,
+            exchanges = emptyList()
+        )
+
+        assertTrue("the arm is not on the record: $json", json.contains("\"keepFractionWhileFilling\":false"))
+
+        // The other knob is the host's, so it is on the host's own report rather than this one.
+        val paired = pairedReportJson(
+            caseId = "C93", hostId = SINK_ID, sinkId = SINK_ID,
+            combined = PairedAlignment(null, emptyList(), null),
+            hostReadings = emptyList(), sinkReadings = emptyList(),
+            intervalFrames = 240_000, planLeadNanos = 2_000_000_000L
+        )
+        assertTrue("the chirp lead is not on the record: $paired", paired.contains("\"planLeadNanos\":2000000000"))
+    }
+
+    /**
+     * The three settings the acoustic arm needs, each reachable from a command line.
+     *
+     * The capture source matters twice over: the screen builds a runner in two places, and a
+     * control round that reached only one of them would be a control round in name. Counted rather
+     * than found, because finding it once is what wiring half of it looks like.
+     */
+    @Test
+    fun theCommandLineCanReachTheChirpLeadTheFillingRuleAndTheCaptureSource() {
+        assertTrue(source.contains("getIntExtra(\"plan_lead_millis\""))
+        assertTrue(source.contains("getBooleanExtra(\"frozen_count\""))
+        assertTrue(source.contains("CalibrationAudioSource.parse(intent.getStringExtra(\"audio_source\"))"))
+
+        val runners = source.split("PeerCalibrationRunner(").size - 1
+        val sourced = source.split("audioSource = audioSource()").size - 1
+        assertEquals("a runner is built without a capture source", runners, sourced)
     }
 }
