@@ -76,4 +76,26 @@ class ClockReplayGoldenTest {
             answers(ClockOffsetEstimator(windowSize = 8, bestCount = 8))
         )
     }
+
+    /**
+     * The rule section 26 replaced, pinned on the same series so the offline replay can score it.
+     *
+     * Not the case above: that one caps the window at eight as well, which is a third behaviour
+     * neither rule has. Here the window is the shipped sixty-four and only the count is frozen,
+     * so every exchange the filling window holds is kept - eight from the first fit onwards,
+     * where the fraction keeps one. Hardware agreed on 2026-09-10 across eighteen runs.
+     */
+    @Test
+    fun answersTheSameSeriesTheOfflineReplayIsPinnedToUnderTheRuleSection26Replaced() {
+        assertEquals(
+            listOf(8, 8, 8, 8, 8, 8, 8, 8),
+            answers(ClockOffsetEstimator(keepFractionWhileFilling = false))
+                .map { it.substringAfter("/").substringAfter("/").substringBefore("/").toInt() }
+        )
+        assertEquals(
+            listOf(1, 1, 1, 1, 1, 1, 1, 1),
+            answers(ClockOffsetEstimator())
+                .map { it.substringAfter("/").substringAfter("/").substringBefore("/").toInt() }
+        )
+    }
 }

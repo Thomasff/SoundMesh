@@ -64,6 +64,28 @@ test('answers exactly what the shipped estimator answers once the window is full
   assert.deepEqual(answers, GOLDEN_FULL_WINDOW);
 });
 
+// The rule section 26 replaced, which the shipped estimator can still be built with and which
+// this had no way to score until now. It is not `{ windowSize: 8 }` above - that caps the window
+// too, and answers a third thing neither rule answers.
+//
+// What separates the two rules is legible without running either: while the window is filling,
+// the frozen count keeps everything held, so the very first fit is over eight exchanges; the
+// fraction keeps held/8 of them, which is one until sixteen are held. Measured on hardware
+// 2026-09-10, eighteen runs: `clock.atStart.sampleCount` was 8 under the frozen rule and 1
+// under the fraction, on both handsets, every run.
+test('the frozen count keeps every exchange a filling window holds, which is what the fraction does not', () => {
+  const frozen = replay(SERIES, { keepFractionWhileFilling: false })
+    .filter(step => step.estimate !== null)
+    .map(({ estimate }) => estimate.sampleCount);
+  const fraction = replay(SERIES)
+    .filter(step => step.estimate !== null)
+    .map(({ estimate }) => estimate.sampleCount);
+
+  assert.ok(frozen.length > 0, 'the frozen rule answered nothing at all');
+  assert.deepEqual([...new Set(frozen)], [8]);
+  assert.deepEqual([...new Set(fraction)], [1]);
+});
+
 test('every exchange gets a step, so an estimate can be located in the run that produced it', () => {
   const steps = replay(SERIES);
   assert.equal(steps.length, SERIES.length);

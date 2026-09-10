@@ -32,15 +32,22 @@ const offsetMidpointNanos = ([t1, t2, t3, t4]) => ((BigInt(t2) - BigInt(t1)) + (
  * a frozen count stops being a fraction: eight of eight keeps every queued exchange too. Integer
  * division, so it truncates the way Kotlin's does.
  */
-const keepFor = (held, windowSize, bestCount) =>
-  held >= windowSize ? bestCount : Math.max(1, Math.trunc(held * bestCount / windowSize));
+// keepFractionWhileFilling false is the rule this one replaced, kept so it can be scored on the
+// same input rather than argued about: the count stays frozen whether the window is full or not.
+const keepFor = (held, windowSize, bestCount, keepFractionWhileFilling) =>
+  (held >= windowSize || !keepFractionWhileFilling)
+    ? bestCount
+    : Math.max(1, Math.trunc(held * bestCount / windowSize));
 
 /** The estimate a window of exchanges supports, or null on the same terms the estimator refuses one. */
-export function estimateFromWindow(window, { windowSize = DEFAULT_WINDOW, bestCount = DEFAULT_BEST } = {}) {
+export function estimateFromWindow(
+  window,
+  { windowSize = DEFAULT_WINDOW, bestCount = DEFAULT_BEST, keepFractionWhileFilling = true } = {}
+) {
   if (window.length < MIN_SAMPLES) return null;
   const valid = window.filter(exchange => roundTripNanos(exchange) >= 0n);
   if (valid.length < MIN_SAMPLES) return null;
-  const keep = keepFor(window.length, windowSize, bestCount);
+  const keep = keepFor(window.length, windowSize, bestCount, keepFractionWhileFilling);
   // Stable, like Kotlin's sortedBy: exchanges tied on round trip keep the order they arrived in,
   // which decides which of them the best-of cut keeps.
   const best = valid
@@ -87,12 +94,20 @@ export function estimateFromWindow(window, { windowSize = DEFAULT_WINDOW, bestCo
  * produced - null where the run had no usable one. Keeping the nulls in place is what lets an
  * estimate be located in the run that produced it rather than counted off from a compacted list.
  */
-export function replay(exchanges, { windowSize = DEFAULT_WINDOW, bestCount = DEFAULT_BEST } = {}) {
+export function replay(
+  exchanges,
+  { windowSize = DEFAULT_WINDOW, bestCount = DEFAULT_BEST, keepFractionWhileFilling = true } = {}
+) {
   const window = [];
   return exchanges.map(exchange => {
     window.push(exchange);
     while (window.length > windowSize) window.shift();
-    return { t1: exchange[0], t4: exchange[3], estimate: estimateFromWindow(window, { windowSize, bestCount }) };
+    return {
+      t1: exchange[0],
+      t4: exchange[3],
+      held: window.length,
+      estimate: estimateFromWindow(window, { windowSize, bestCount, keepFractionWhileFilling })
+    };
   });
 }
 
