@@ -6,10 +6,15 @@ import kotlin.math.roundToInt
 /**
  * Turns one chunk of stereo PCM into what one handset plays of it.
  *
- * Two steps, and they answer different questions. The fold decides which part of the mix this
- * handset carries - all of it, what the channels share, or what they disagree about. The gain
- * decides how loudly the room wants that part just now. Both ramp across the chunk, and for the
- * same reason: each one steps at a chunk edge when the listener moves the control that drives it.
+ * Three steps, and they answer different questions. The fold and the spectrum decide which part of
+ * the mix this handset carries - all of it, what the two channels share or disagree about, or what
+ * lies below or above the crossover. The gain decides how loudly the room wants that part just now.
+ * All three ramp across the chunk, and for the same reason: each one steps at a chunk edge when the
+ * listener moves the control that drives it.
+ *
+ * The two ways of dividing the mix are never both in force, because a rule carries one axis; the
+ * one not chosen returns its own identity and the arithmetic below runs regardless. That costs a
+ * multiply per sample and buys one path through this loop instead of two.
  *
  * The rule is a function of the host instant and nothing else, so this needs no state and no
  * messages: every handset evaluates the same function at the same instants and the room agrees
@@ -51,6 +56,15 @@ object SpatialShaper {
      * different reasons: dragging an icon moves the gain and leaves the fold where it was, dragging
      * the separation knob does the reverse. Zero is what a handset under no rule was heard at - the
      * fold being how much of the other channel it was folding in, which was none of it.
+     *
+     * [fromSpectrum] is the third of them, and its no-rule value is the whole mix and none of the
+     * filter. It is separate again because the axis itself can change under a handset, and swapping
+     * axes moves both this and the fold at once while the gain stays where it is.
+     *
+     * [crossover] is where the filter keeps what it has heard, so it belongs to the stream rather
+     * than to this call: one per playing handset, handed in every chunk. Required whenever the rule
+     * asks for any of the low half and refused when it is missing, because a filter that is not
+     * there and a knob at zero sound exactly alike.
      */
     fun shape(
         pcm: ByteArray,
@@ -59,7 +73,9 @@ object SpatialShaper {
         startHostNanos: Long,
         sampleRate: Int,
         from: StereoGain? = null,
-        fromFold: Double? = null
+        fromFold: Double? = null,
+        fromSpectrum: SpectrumMix? = null,
+        crossover: Crossover? = null
     ): ByteArray {
         require(sampleRate > 0) { "frames need a rate to become instants: $sampleRate" }
         require(pcm.size % BYTES_PER_FRAME == 0) {
@@ -76,6 +92,16 @@ object SpatialShaper {
         val endFold = field.foldFor(peerId)
         val beginFold = fromFold ?: endFold
 
+        val endSpectrum = field.spectrumFor(peerId)
+        val beginSpectrum = fromSpectrum ?: endSpectrum
+        require(crossover != null || (endSpectrum.low == 0.0 && beginSpectrum.low == 0.0)) {
+            "a low/high split needs somewhere to keep what the filter has heard"
+        }
+        // Read once per chunk rather than per frame: a coefficient is two transcendentals and the
+        // rule cannot change inside a chunk. It is not ramped, because moving where a filter divides
+        // leaves the signal already inside it alone - the output stays continuous through a drag.
+        val coefficient = crossover?.let { Crossover.coefficientFor(field.crossoverHz, sampleRate) } ?: 0.0
+
         val out = ByteArray(pcm.size)
         for (frame in 0 until frames) {
             // frame / frames, not frame / (frames - 1): the last frame stops just short of `end`,
@@ -87,13 +113,23 @@ object SpatialShaper {
             val at = frame * BYTES_PER_FRAME
             val fold = beginFold + (endFold - beginFold) * across
             val own = 1.0 - abs(fold)
+            val whole = beginSpectrum.whole + (endSpectrum.whole - beginSpectrum.whole) * across
+            val lowShare = beginSpectrum.low + (endSpectrum.low - beginSpectrum.low) * across
             val sentLeft = sampleAt(pcm, at)
             val sentRight = sampleAt(pcm, at + BYTES_PER_SAMPLE)
+            // Fed the mix as it was sent, never the folded version: the filter is a property of the
+            // stream and has to hear the same thing on every handset whatever each one is playing.
+            // It runs on every frame a filter exists for, so a rule arriving finds it already warm.
+            val lowLeft = crossover?.lowLeft(sentLeft.toDouble(), coefficient) ?: 0.0
+            val lowRight = crossover?.lowRight(sentRight.toDouble(), coefficient) ?: 0.0
             // Both channels of the fold read both channels of the source, so the source samples are
             // read out before either is written. Writing into `out` rather than `pcm` already keeps
             // them apart, and this keeps it that way if that ever changes.
-            writeSample(out, at, (own * sentLeft + fold * sentRight) * left)
-            writeSample(out, at + BYTES_PER_SAMPLE, (fold * sentLeft + own * sentRight) * right)
+            writeSample(out, at, (whole * (own * sentLeft + fold * sentRight) + lowShare * lowLeft) * left)
+            writeSample(
+                out, at + BYTES_PER_SAMPLE,
+                (whole * (fold * sentLeft + own * sentRight) + lowShare * lowRight) * right
+            )
         }
         return out
     }

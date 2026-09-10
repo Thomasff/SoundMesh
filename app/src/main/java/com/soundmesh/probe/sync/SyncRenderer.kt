@@ -4,6 +4,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTimestamp
 import android.media.AudioTrack
+import com.soundmesh.core.Crossover
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
@@ -13,6 +14,7 @@ import com.soundmesh.core.RendererPhase
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
+import com.soundmesh.core.SpectrumMix
 import com.soundmesh.core.StereoGain
 import com.soundmesh.core.acquiringTotalNanos
 import com.soundmesh.core.driftIntervalNanos
@@ -81,7 +83,8 @@ internal fun spatialShaped(
     payload: ByteArray,
     field: SpatialField?,
     peerId: String?,
-    wasUnder: SpatialField? = null
+    wasUnder: SpatialField? = null,
+    crossover: Crossover
 ): ByteArray {
     if (field == null || peerId == null) return payload
     if (sequence >= SyncRenderer.CHIRP_SEQUENCE_BASE) return payload
@@ -93,7 +96,9 @@ internal fun spatialShaped(
         playAtHostNanos,
         SyncRenderer.SAMPLE_RATE,
         from = cameFrom(wasUnder, field, peerId, playAtHostNanos),
-        fromFold = foldCameFrom(wasUnder, field, peerId)
+        fromFold = foldCameFrom(wasUnder, field, peerId),
+        fromSpectrum = spectrumCameFrom(wasUnder, field, peerId),
+        crossover = crossover
     )
 }
 
@@ -141,6 +146,23 @@ private fun foldCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: Str
     if (wasUnder === now) return null
     if (wasUnder == null || !wasUnder.layout.contains(peerId)) return 0.0
     return wasUnder.foldFor(peerId)
+}
+
+/**
+ * How much of the mix and of its low half the room was playing a moment ago.
+ *
+ * The third of these, for the third control, and separate for the reason the other two are: the
+ * axis can be swapped under a handset, which moves this and the fold at once and leaves the gain
+ * where it stands.
+ *
+ * The whole mix and none of the filter for a handset that was under no rule, because playing the
+ * mix unshaped is exactly that. A swap of axis therefore ramps out of one division and into the
+ * other across a chunk rather than cutting between them.
+ */
+private fun spectrumCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: String): SpectrumMix? {
+    if (wasUnder === now) return null
+    if (wasUnder == null || !wasUnder.layout.contains(peerId)) return SpectrumMix(1.0, 0.0)
+    return wasUnder.spectrumFor(peerId)
 }
 
 /**
@@ -232,6 +254,12 @@ class SyncRenderer(
     // rather than stepped into. Null means the last chunk went out unshaped - at unity - which is
     // true both before any rule arrives and for a chirp, which is never shaped.
     private var shapedUnder: SpatialField? = null
+
+    // One filter for this handset stream, not one per chunk. It answers with what it has already
+    // heard, so a fresh one at every chunk edge would restart the ringing fifty times a second.
+    // Held here rather than inside the shaper because the shaper is a function of the instant and
+    // this is the one thing in the path that is a function of the past.
+    private val crossover = Crossover()
     @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
     @Volatile private var failureCode: String? = null
@@ -581,7 +609,8 @@ class SyncRenderer(
                             adjusted,
                             rule,
                             spatialPeerId,
-                            wasUnder = shapedUnder
+                            wasUnder = shapedUnder,
+                            crossover = crossover
                         )
                         shapedUnder = if (payload !== adjusted) rule else null
                         // Against the adjusted array, not against the chunk: applyPendingAdjust returns a

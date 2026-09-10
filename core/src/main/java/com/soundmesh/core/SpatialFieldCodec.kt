@@ -20,34 +20,47 @@ object SpatialFieldCodec {
     const val MAGIC = "soundmesh-spatial"
 
     /**
-     * Two since the separation knob and the parts joined the rule.
+     * Three since the split gained a second axis to run along.
      *
      * Both ends refuse anything else rather than reading what they recognise, which is the whole
      * point of the number: a build that defaulted a missing part to the middle would render a room
      * the sender did not draw while believing it agreed with them.
      */
-    const val VERSION = 2
+    const val VERSION = 3
 
-    private const val HEADER_FIELDS = 8
+    private const val HEADER_FIELDS = 10
     private const val POSITION_FIELDS = 4
 
     // Written out rather than taken from an enum because there is no enum: which part a handset
-    // carries is a membership of [SpatialField.sideIds], and a two-valued enum beside a set that
+    // carries is a membership of [SpatialField.otherHalfIds], and a two-valued enum beside a set that
     // already says the same thing is a second place for the answer to be wrong.
+    //
+    // Each axis names its own pair, so a handset line read out of a log says what it means without
+    // the header beside it - and a message whose header and handsets disagree is caught rather than
+    // read as a room. Nothing on the sending side can make one; a spliced message can.
     private const val MIDDLE = "MIDDLE"
     private const val SIDES = "SIDES"
+    private const val LOW = "LOW"
+    private const val HIGH = "HIGH"
+
+    private fun nearHalfOf(axis: SplitAxis) = if (axis == SplitAxis.LOW_HIGH) LOW else MIDDLE
+
+    private fun farHalfOf(axis: SplitAxis) = if (axis == SplitAxis.LOW_HIGH) HIGH else SIDES
 
     fun encode(field: SpatialField): String {
         val lines = ArrayList<String>(field.layout.positions.size + 1)
         lines.add(
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
-                "${field.epochHostNanos} ${field.separation} ${field.layout.positions.size}"
+                "${field.epochHostNanos} ${field.separation} ${field.splitAxis.name} " +
+                "${field.crossoverHz} ${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
             require(position.peerId.isNotEmpty() && position.peerId.none { it.isWhitespace() }) {
                 "a handset name is a wire field: it must be non-empty and carry no whitespace"
             }
-            val part = if (position.peerId in field.sideIds) SIDES else MIDDLE
+            val part =
+                if (position.peerId in field.otherHalfIds) farHalfOf(field.splitAxis)
+                else nearHalfOf(field.splitAxis)
             lines.add("${position.peerId} ${position.x} ${position.y} $part")
         }
         return lines.joinToString("\n")
@@ -74,21 +87,26 @@ object SpatialFieldCodec {
             ?: throw IllegalArgumentException("unreadable epoch: ${header[5]}")
         val separation = header[6].toDoubleOrNull()
             ?: throw IllegalArgumentException("unreadable separation: ${header[6]}")
-        val count = header[7].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[7]}")
+        val splitAxis = SplitAxis.valueOf(header[7])
+        val crossoverHz = header[8].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable crossover: ${header[8]}")
+        val count = header[9].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[9]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
         }
-        val sideIds = mutableSetOf<String>()
+        val otherHalfIds = mutableSetOf<String>()
         val positions = (1..count).map { line ->
             val fields = lines[line].split(" ")
             require(fields.size == POSITION_FIELDS) {
                 "handset $line has ${fields.size} fields, expected $POSITION_FIELDS"
             }
             when (fields[3]) {
-                SIDES -> sideIds += fields[0]
-                MIDDLE -> Unit
-                else -> throw IllegalArgumentException("unknown part: ${fields[3]}")
+                farHalfOf(splitAxis) -> otherHalfIds += fields[0]
+                nearHalfOf(splitAxis) -> Unit
+                else -> throw IllegalArgumentException(
+                    "part ${fields[3]} does not belong to a $splitAxis room"
+                )
             }
             SpatialPosition(
                 peerId = fields[0],
@@ -108,7 +126,9 @@ object SpatialFieldCodec {
             pan = pan,
             epochHostNanos = epochHostNanos,
             separation = separation,
-            sideIds = sideIds
+            splitAxis = splitAxis,
+            crossoverHz = crossoverHz,
+            otherHalfIds = otherHalfIds
         )
     }
 }

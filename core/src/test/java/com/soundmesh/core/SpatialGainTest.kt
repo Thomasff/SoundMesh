@@ -189,7 +189,7 @@ class SpatialGainTest {
     @Test
     fun aHandsetCarryingTheSidesFoldsTheOtherChannelInNegated() {
         val field = SpatialField(
-            mode = SpatialMode.SPLIT, layout = pair, separation = 1.0, sideIds = setOf("right")
+            mode = SpatialMode.SPLIT, layout = pair, separation = 1.0, otherHalfIds = setOf("right")
         )
 
         assertEquals(0.5, field.foldFor("left"), 1e-12)
@@ -204,7 +204,7 @@ class SpatialGainTest {
      */
     @Test
     fun aKnobAtZeroLeavesEveryHandsetPlayingTheWholeMix() {
-        val field = SpatialField(mode = SpatialMode.SPLIT, layout = pair, sideIds = setOf("right"))
+        val field = SpatialField(mode = SpatialMode.SPLIT, layout = pair, otherHalfIds = setOf("right"))
 
         assertEquals(0.0, field.foldFor("left"), 1e-12)
         assertEquals(0.0, field.foldFor("right"), 1e-12)
@@ -214,7 +214,7 @@ class SpatialGainTest {
     @Test
     fun theKnobMovesProportionallyRatherThanSnapping() {
         val field = SpatialField(
-            mode = SpatialMode.SPLIT, layout = pair, separation = 0.5, sideIds = setOf("right")
+            mode = SpatialMode.SPLIT, layout = pair, separation = 0.5, otherHalfIds = setOf("right")
         )
 
         assertEquals(0.25, field.foldFor("left"), 1e-12)
@@ -229,6 +229,98 @@ class SpatialGainTest {
     /** A name the drawing does not show cannot be given a part in it. */
     @Test(expected = IllegalArgumentException::class)
     fun givingTheSidesToAHandsetTheDrawingDoesNotShowIsRefused() {
-        SpatialField(mode = SpatialMode.SPLIT, layout = pair, sideIds = setOf("elsewhere"))
+        SpatialField(mode = SpatialMode.SPLIT, layout = pair, otherHalfIds = setOf("elsewhere"))
+    }
+
+    /**
+     * The other axis. Which part of the spectrum a handset carries, rather than which part of the
+     * stereo image - and it is written as a crossfade from the whole mix toward this handsets own
+     * half, so the knob means the same thing on both axes and lands in the same place at zero.
+     *
+     * At full separation the low handset plays none of the mix as sent and all of what the filter
+     * kept, which is why the whole coefficient is zero rather than one.
+     */
+    @Test
+    fun aHandsetCarryingTheLowHalfPlaysWhatTheFilterKept() {
+        val field = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair,
+            splitAxis = SplitAxis.LOW_HIGH, separation = 1.0, otherHalfIds = setOf("right")
+        )
+
+        assertEquals(0.0, field.spectrumFor("left").whole, 1e-12)
+        assertEquals(1.0, field.spectrumFor("left").low, 1e-12)
+    }
+
+    /**
+     * The high half is never filtered for. It is whatever is left of the mix once the low half is
+     * taken out of it, which is what makes the two add back up exactly whatever the filter does.
+     */
+    @Test
+    fun aHandsetCarryingTheHighHalfPlaysTheMixWithTheLowHalfTakenOut() {
+        val field = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair,
+            splitAxis = SplitAxis.LOW_HIGH, separation = 1.0, otherHalfIds = setOf("right")
+        )
+
+        assertEquals(1.0, field.spectrumFor("right").whole, 1e-12)
+        assertEquals(-1.0, field.spectrumFor("right").low, 1e-12)
+    }
+
+    /** Full separation, the two handsets summed: the mix, once, with nothing of the filter left over. */
+    @Test
+    fun theTwoSpectrumHalvesAddBackUpToTheMix() {
+        val field = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair,
+            splitAxis = SplitAxis.LOW_HIGH, separation = 1.0, otherHalfIds = setOf("right")
+        )
+        val low = field.spectrumFor("left")
+        val high = field.spectrumFor("right")
+
+        assertEquals(1.0, low.whole + high.whole, 1e-12)
+        assertEquals(0.0, low.low + high.low, 1e-12)
+    }
+
+    /** The same landing place as the other axis: the knob at zero is the mix the room was already playing. */
+    @Test
+    fun aKnobAtZeroLeavesTheSpectrumAlone() {
+        val field = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair,
+            splitAxis = SplitAxis.LOW_HIGH, otherHalfIds = setOf("right")
+        )
+
+        assertEquals(1.0, field.spectrumFor("right").whole, 1e-12)
+        assertEquals(0.0, field.spectrumFor("right").low, 1e-12)
+    }
+
+    /**
+     * A room separates along one axis at a time, and the set of handsets on the far side of it is
+     * shared between the two. Without this a rule would carry two separations that a listener set
+     * one at a time, and the handset that was given the sides would silently also be given the
+     * high half - a room nobody drew.
+     */
+    @Test
+    fun onlyOneAxisSeparatesAtATime() {
+        val spectrum = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair,
+            splitAxis = SplitAxis.LOW_HIGH, separation = 1.0, otherHalfIds = setOf("right")
+        )
+        val image = SpatialField(
+            mode = SpatialMode.SPLIT, layout = pair,
+            splitAxis = SplitAxis.MIDDLE_SIDES, separation = 1.0, otherHalfIds = setOf("right")
+        )
+
+        assertEquals(0.0, spectrum.foldFor("right"), 1e-12)
+        assertEquals(1.0, image.spectrumFor("right").whole, 1e-12)
+        assertEquals(0.0, image.spectrumFor("right").low, 1e-12)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun aCrossoverBelowAnythingAudibleIsRefused() {
+        SpatialField(mode = SpatialMode.SPLIT, layout = pair, crossoverHz = 5.0)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun aCrossoverAboveAnythingAudibleIsRefused() {
+        SpatialField(mode = SpatialMode.SPLIT, layout = pair, crossoverHz = 30_000.0)
     }
 }

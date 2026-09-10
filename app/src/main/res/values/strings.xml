@@ -181,6 +181,12 @@
     <string name="room_split_content">分开播：一部分手机放两声道共有的声音，另一部分放它们不同的声音</string>
     <string name="room_split_content_off">关着。每台手机都放完整的混音。往右拉才开始分。</string>
     <string name="room_split_content_limits">按声音摆在哪儿分，不是按乐器分——主唱一般在中间，底鼓和贝斯通常也在中间，会跟着一起走。单声道的歌分不出「两边」，分到那边的手机会没声音。</string>
+    <string name="room_axis_middle_sides">按位置分</string>
+    <string name="room_axis_low_high">按高低音分</string>
+    <string name="room_part_low">低音</string>
+    <string name="room_part_high">高音</string>
+    <string name="room_crossover_at">分界点 %1$d Hz 以下算低音</string>
+    <string name="room_split_low_high_limits">按频率分，不是按乐器分——人声和吉他在分界点两边都有，两台手机都会有它们。手机喇叭本来就放不出很低的声音，分界点拉得太低那台手机会几乎没动静。</string>
     <string name="room_part_middle">中间</string>
     <string name="room_part_sides">两边</string>
     <string name="room_alone">还没有别的手机连上来。一台手机也能摆，但听不出方向。</string>

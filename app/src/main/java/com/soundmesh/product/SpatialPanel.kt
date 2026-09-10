@@ -32,6 +32,8 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soundmesh.core.SpatialField
+import kotlin.math.roundToInt
+import com.soundmesh.core.SplitAxis
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.probe.R
 import kotlin.math.hypot
@@ -96,8 +98,12 @@ data class RoomState(
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
+    /** Which way the mix is pulled apart. One at a time: the knob and the parts below mean whatever this says. */
+    val splitAxis: SplitAxis = SplitAxis.MIDDLE_SIDES,
+    /** Where the low half stops. Only on screen while the split runs along that axis. */
+    val crossoverHz: Float = SpatialField.DEFAULT_CROSSOVER_HZ.toFloat(),
     /** Which handsets carry the sides. Everything in [icons] and not in here carries the middle. */
-    val sideIds: Set<String> = emptySet()
+    val otherHalfIds: Set<String> = emptySet()
 )
 
 class RoomActions(
@@ -105,6 +111,8 @@ class RoomActions(
     val pickMode: (SpatialMode) -> Unit,
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
+    val pickAxis: (SplitAxis) -> Unit,
+    val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
 )
 
@@ -288,6 +296,8 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
             Text(stringResource(R.string.room_split_content_off), style = MaterialTheme.typography.bodySmall)
             return@Column
         }
+        AxisPicker(state, actions)
+        if (state.splitAxis == SplitAxis.LOW_HIGH) CrossoverSlider(state, actions)
         for (icon in state.icons) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -299,17 +309,74 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
                     style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedButton(onClick = { actions.togglePart(icon.peerId) }) {
-                    Text(
-                        stringResource(
-                            if (icon.peerId in state.sideIds) R.string.room_part_sides
-                            else R.string.room_part_middle
-                        )
-                    )
+                    Text(stringResource(partLabelOf(state.splitAxis, icon.peerId in state.otherHalfIds)))
                 }
             }
         }
-        // Said before it is heard rather than after. Both of these sound like a fault to somebody
-        // who was told this separates instruments, and neither is one.
-        Text(stringResource(R.string.room_split_content_limits), style = MaterialTheme.typography.bodySmall)
+        // Said before it is heard rather than after. Every one of these sounds like a fault to
+        // somebody who was told this separates instruments, and none of them is one.
+        Text(
+            stringResource(
+                when (state.splitAxis) {
+                    SplitAxis.MIDDLE_SIDES -> R.string.room_split_content_limits
+                    SplitAxis.LOW_HIGH -> R.string.room_split_low_high_limits
+                }
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+/** Which name a handset button carries, since the two halves are named by the axis they divide. */
+private fun partLabelOf(axis: SplitAxis, farHalf: Boolean): Int = when (axis) {
+    SplitAxis.MIDDLE_SIDES -> if (farHalf) R.string.room_part_sides else R.string.room_part_middle
+    SplitAxis.LOW_HIGH -> if (farHalf) R.string.room_part_high else R.string.room_part_low
+}
+
+/**
+ * Which way the mix is pulled apart - by where a sound sits in the image, or by how fast it moves.
+ *
+ * One at a time, and below the knob rather than beside the mode, because the knob is the thing
+ * that decides whether any of this is happening: with it at zero there is no axis to choose.
+ */
+@Composable
+private fun AxisPicker(state: RoomState, actions: RoomActions) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        for (axis in SplitAxis.entries) {
+            val label = stringResource(
+                when (axis) {
+                    SplitAxis.MIDDLE_SIDES -> R.string.room_axis_middle_sides
+                    SplitAxis.LOW_HIGH -> R.string.room_axis_low_high
+                }
+            )
+            if (axis == state.splitAxis) {
+                Button(onClick = { actions.pickAxis(axis) }, modifier = Modifier.weight(1f)) {
+                    Text(label)
+                }
+            } else {
+                OutlinedButton(onClick = { actions.pickAxis(axis) }, modifier = Modifier.weight(1f)) {
+                    Text(label)
+                }
+            }
+        }
+    }
+}
+
+/** Where the low half stops. Read out in hertz because a slider with no number on it is a guess. */
+@Composable
+private fun CrossoverSlider(state: RoomState, actions: RoomActions) {
+    Column {
+        Slider(
+            value = state.crossoverHz,
+            onValueChange = actions.setCrossoverHz,
+            valueRange = SpatialField.LOWEST_CROSSOVER_HZ.toFloat()..SpatialField.HIGHEST_CROSSOVER_HZ.toFloat()
+        )
+        Text(
+            stringResource(R.string.room_crossover_at, state.crossoverHz.roundToInt()),
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }

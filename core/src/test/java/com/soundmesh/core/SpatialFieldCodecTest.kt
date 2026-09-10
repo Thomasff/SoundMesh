@@ -1,6 +1,7 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SpatialFieldCodecTest {
@@ -104,7 +105,7 @@ class SpatialFieldCodecTest {
             )
         ),
         separation = 0.7,
-        sideIds = setOf("0918273645abcdef")
+        otherHalfIds = setOf("0918273645abcdef")
     )
 
     /**
@@ -117,7 +118,7 @@ class SpatialFieldCodecTest {
         val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(separated))
 
         assertEquals(separated.separation, back.separation, 0.0)
-        assertEquals(separated.sideIds, back.sideIds)
+        assertEquals(separated.otherHalfIds, back.otherHalfIds)
         for (peerId in separated.layout.peerIds) {
             assertEquals(separated.foldFor(peerId), back.foldFor(peerId), 0.0)
         }
@@ -137,5 +138,48 @@ class SpatialFieldCodecTest {
     @Test(expected = IllegalArgumentException::class)
     fun aHandsetLineWithNoPartOnItIsRefused() {
         SpatialFieldCodec.decode(SpatialFieldCodec.encode(separated).replaceFirst(" MIDDLE", ""))
+    }
+
+    private val byFrequency = SpatialField(
+        mode = SpatialMode.SPLIT,
+        layout = SpatialLayout(
+            listOf(
+                SpatialPosition("a1b2c3d4e5f60718", -0.7, 0.25),
+                SpatialPosition("0918273645abcdef", 0.7, 0.25)
+            )
+        ),
+        separation = 0.7,
+        splitAxis = SplitAxis.LOW_HIGH,
+        crossoverHz = 1234.0,
+        otherHalfIds = setOf("0918273645abcdef")
+    )
+
+    @Test
+    fun theAxisAndTheCrossoverSurviveTheRoundTrip() {
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(byFrequency))
+
+        assertEquals(byFrequency.splitAxis, back.splitAxis)
+        assertEquals(byFrequency.crossoverHz, back.crossoverHz, 0.0)
+        assertEquals(byFrequency.otherHalfIds, back.otherHalfIds)
+        for (peerId in byFrequency.layout.peerIds) {
+            assertEquals(byFrequency.spectrumFor(peerId), back.spectrumFor(peerId))
+        }
+    }
+
+    /**
+     * A part names its own axis on the wire, so a line reads as what it is out of a log and a
+     * message whose header and handsets disagree is caught rather than read. Nothing on the sending
+     * side can produce one; a truncated or spliced message can.
+     */
+    @Test
+    fun aPartFromTheOtherAxisIsRefused() {
+        // The handset line, pinned by the newline after it: the header carries LOW_HIGH, and a
+        // replacement that hit that instead would refuse this message for an unknown axis while
+        // reading as though it had refused a crossed part.
+        val crossed = SpatialFieldCodec.encode(byFrequency).replaceFirst(" LOW\n", " MIDDLE\n")
+
+        val thrown = runCatching { SpatialFieldCodec.decode(crossed) }
+
+        assertTrue(thrown.exceptionOrNull() is IllegalArgumentException)
     }
 }

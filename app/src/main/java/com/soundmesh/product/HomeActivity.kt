@@ -189,10 +189,12 @@ class HomeActivity : ComponentActivity() {
             pickMode = { mode -> updateRoom { it.copy(mode = mode) } },
             setPan = { pan -> updateRoom { it.copy(pan = pan) } },
             setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
+            pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
+            setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
                 updateRoom {
                     it.copy(
-                        sideIds = if (peerId in it.sideIds) it.sideIds - peerId else it.sideIds + peerId
+                        otherHalfIds = if (peerId in it.otherHalfIds) it.otherHalfIds - peerId else it.otherHalfIds + peerId
                     )
                 }
             }
@@ -244,7 +246,10 @@ class HomeActivity : ComponentActivity() {
             layout,
             pan = room.pan.toDouble().coerceIn(-1.0, 1.0),
             separation = room.separation.toDouble().coerceIn(0.0, 1.0),
-            sideIds = room.sideIds
+            splitAxis = room.splitAxis,
+            crossoverHz = room.crossoverHz.toDouble()
+                .coerceIn(SpatialField.LOWEST_CROSSOVER_HZ, SpatialField.HIGHEST_CROSSOVER_HZ),
+            otherHalfIds = room.otherHalfIds
         )
     }
 
@@ -494,7 +499,7 @@ class HomeActivity : ComponentActivity() {
         return previous.copy(
             icons = icons,
             measuredMetres = measured,
-            sideIds = SpatialRoom.reconciledSides(previous.sideIds, icons.map { it.peerId })
+            otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
         ).also(::publish)
     }
 

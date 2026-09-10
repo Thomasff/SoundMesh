@@ -1,5 +1,6 @@
 package com.soundmesh.probe.sync
 
+import com.soundmesh.core.Crossover
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialMode
@@ -79,20 +80,20 @@ class SpatialRoomTest {
             for (who in listOf(host, sink)) {
                 assertArrayEquals(
                     "$who heard a different room than the host drew",
-                    spatialShaped(11, instant, pcm, drawn, who),
-                    spatialShaped(11, instant, pcm, received.get(), who)
+                    spatialShaped(11, instant, pcm, drawn, who, crossover = Crossover()),
+                    spatialShaped(11, instant, pcm, received.get(), who, crossover = Crossover())
                 )
             }
             // Not vacuous: the two handsets are in different places, so the same instant has to
             // give them different gains, and an all-silent chunk would satisfy the check above.
             assertFalse(
                 "the two handsets were given the same gain",
-                spatialShaped(11, instant, pcm, drawn, host)
-                    .contentEquals(spatialShaped(11, instant, pcm, drawn, sink))
+                spatialShaped(11, instant, pcm, drawn, host, crossover = Crossover())
+                    .contentEquals(spatialShaped(11, instant, pcm, drawn, sink, crossover = Crossover()))
             )
             assertTrue(
                 "the rule did nothing at all",
-                !spatialShaped(11, instant, pcm, drawn, host).contentEquals(pcm)
+                !spatialShaped(11, instant, pcm, drawn, host, crossover = Crossover()).contentEquals(pcm)
             )
         } finally {
             client.stop()

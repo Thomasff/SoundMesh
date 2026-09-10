@@ -142,7 +142,7 @@ class SpatialShaperTest {
         mode = SpatialMode.SPLIT,
         layout = SpatialLayout(listOf(SpatialPosition("solo", 0.0, 1.0))),
         separation = separation,
-        sideIds = sides
+        otherHalfIds = sides
     )
 
     /** A chunk whose two channels carry different constants, so a fold is visible in the output. */
@@ -253,5 +253,136 @@ class SpatialShaperTest {
         val left = leftChannel(shaped)
         assertEquals(7_000, left.first())
         assertEquals(7_000, left.last())
+    }
+
+    /** One handset straight ahead again, so the placement gain is unity and the split is all that shows. */
+    private fun spectrumField(separation: Double, high: Set<String> = emptySet()) = SpatialField(
+        mode = SpatialMode.SPLIT,
+        layout = SpatialLayout(listOf(SpatialPosition("solo", 0.0, 1.0))),
+        separation = separation,
+        splitAxis = SplitAxis.LOW_HIGH,
+        otherHalfIds = high
+    )
+
+    /** Full scale flipping sign every sample: the fastest thing this format can carry, on both channels. */
+    private fun alternating(level: Int, frames: Int = framesPerChunk): ByteArray {
+        val pcm = ByteArray(frames * 4)
+        for (frame in 0 until frames) {
+            val value = if (frame % 2 == 0) level else -level
+            val at = frame * 4
+            pcm[at] = (value and 0xFF).toByte()
+            pcm[at + 1] = (value shr 8).toByte()
+            pcm[at + 2] = (value and 0xFF).toByte()
+            pcm[at + 3] = (value shr 8).toByte()
+        }
+        return pcm
+    }
+
+    @Test
+    fun aHandsetCarryingTheLowHalfDropsTheFastestWaveThereIs() {
+        val shaped = SpatialShaper.shape(
+            alternating(10_000), spectrumField(1.0), "solo", 0L, sampleRate, crossover = Crossover()
+        )
+
+        val settled = leftChannel(shaped).drop(480)
+        assertTrue("nothing that fast is low: ${settled.maxOf { abs(it) }}", settled.all { abs(it) < 200 })
+    }
+
+    @Test
+    fun aHandsetCarryingTheHighHalfKeepsIt() {
+        val shaped = SpatialShaper.shape(
+            alternating(10_000), spectrumField(1.0, high = setOf("solo")), "solo", 0L, sampleRate,
+            crossover = Crossover()
+        )
+
+        val settled = leftChannel(shaped).drop(480)
+        assertTrue("all of it should survive: ${settled.minOf { abs(it) }}", settled.all { abs(it) > 9_800 })
+    }
+
+    @Test
+    fun aLevelThatNeverMovesGoesToTheLowHandsetAndLeavesTheHighOneSilent() {
+        val low = SpatialShaper.shape(
+            steady(10_000), spectrumField(1.0), "solo", 0L, sampleRate, crossover = Crossover()
+        )
+        val high = SpatialShaper.shape(
+            steady(10_000), spectrumField(1.0, high = setOf("solo")), "solo", 0L, sampleRate,
+            crossover = Crossover()
+        )
+
+        assertEquals(10_000, leftChannel(low).last().toLong().toInt())
+        assertTrue("the high half of a steady level is nothing: ${leftChannel(high).last()}",
+            abs(leftChannel(high).last()) < 2)
+    }
+
+    /**
+     * The property the whole design is built around, checked on real samples rather than on the
+     * coefficients: the high half is the mix with the low half subtracted, so whatever the filter
+     * does to one is undone by the other. This is what lets the knob wind back to the mix the room
+     * was already playing instead of to something that merely resembles it.
+     */
+    @Test
+    fun theTwoSpectrumHalvesAddBackUpToWhatWasSent() {
+        val sent = alternating(9_000)
+        val low = SpatialShaper.shape(sent, spectrumField(1.0), "solo", 0L, sampleRate, crossover = Crossover())
+        val high = SpatialShaper.shape(
+            sent, spectrumField(1.0, high = setOf("solo")), "solo", 0L, sampleRate, crossover = Crossover()
+        )
+
+        val sum = leftChannel(low).zip(leftChannel(high)) { a, c -> a + c }
+        val original = leftChannel(sent)
+        for (index in original.indices) {
+            assertEquals("frame $index", original[index].toDouble(), sum[index].toDouble(), 1.0)
+        }
+    }
+
+    /**
+     * One axis at a time reaching the samples. A rule that splits by frequency must leave the two
+     * channels where they were - if the fold ran as well, the handset carrying the high half would
+     * also be carrying the sides, and nobody asked it to.
+     */
+    @Test
+    fun aSplitByFrequencyLeavesTheTwoChannelsWhereTheyWere() {
+        val shaped = SpatialShaper.shape(
+            steadyPair(10_000, 0), spectrumField(1.0, high = setOf("solo")), "solo", 0L, sampleRate,
+            crossover = Crossover()
+        )
+
+        assertEquals(0, rightChannel(shaped).last().toLong().toInt())
+    }
+
+    /**
+     * Refused rather than quietly played flat. A filter that is not there cannot be told apart from
+     * a knob at zero by listening, so the failure this catches is a build that separates on screen
+     * and plays the same mix from every handset.
+     */
+    @Test
+    fun aSplitByFrequencyWithNoFilterToDoItIsRefused() {
+        val thrown = runCatching {
+            SpatialShaper.shape(steady(10_000), spectrumField(1.0), "solo", 0L, sampleRate)
+        }
+
+        assertTrue(thrown.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    /**
+     * The chunk edge a filter makes. Handed the same silent chunk, a filter that has just heard a
+     * loud one is still ringing and a fresh one is not - and if this ever stops being true the room
+     * has lost its state between chunks, which is a click fifty times a second.
+     */
+    @Test
+    fun theFilterCarriesOnFromTheChunkBefore() {
+        val carried = Crossover()
+        SpatialShaper.shape(steady(10_000), spectrumField(1.0), "solo", 0L, sampleRate, crossover = carried)
+
+        val after = SpatialShaper.shape(
+            steady(0), spectrumField(1.0), "solo", 0L, sampleRate, crossover = carried
+        )
+        val cold = SpatialShaper.shape(
+            steady(0), spectrumField(1.0), "solo", 0L, sampleRate, crossover = Crossover()
+        )
+
+        assertEquals(0, leftChannel(cold).first().toLong().toInt())
+        assertTrue("a ringing filter is not a cold one: ${leftChannel(after).first()}",
+            leftChannel(after).first() > 5_000)
     }
 }

@@ -29,6 +29,31 @@ enum class SpatialMode {
 }
 
 /**
+ * The two ways a room can be told to split the song up between its handsets.
+ *
+ * One at a time, and the same knob and the same list of handsets drive whichever is chosen. Two
+ * separations running at once would need four parts named on a screen that has room for two, and
+ * would hand a handset the half of an axis its listener never touched.
+ */
+enum class SplitAxis {
+    /** What the two channels share against what they disagree about: the middle of the image against its edges. */
+    MIDDLE_SIDES,
+
+    /** What is below the crossover against what is above it. */
+    LOW_HIGH
+}
+
+/**
+ * What one handset takes of the mix it was sent and of the low half of that mix.
+ *
+ * Two numbers rather than one because the low and high halves are not each other with a sign
+ * turned round, the way the middle and the sides are: the high half is defined by subtraction, so
+ * the handset carrying it keeps the whole mix and takes the low half away, while the one carrying
+ * the low half does the opposite and lets go of the mix.
+ */
+data class SpectrumMix(val whole: Double, val low: Double)
+
+/**
  * One rule for turning a host instant into every handset's pair of gains.
  *
  * Every chunk already carries the host instant it is to be played at, so a gain expressed as a
@@ -60,17 +85,32 @@ data class SpatialField(
      * room back on the mix it was already playing, which is a worse effect rather than a broken one.
      */
     val separation: Double = 0.0,
-    /** Which handsets carry the sides. Every handset the drawing names and this does not carries the middle. */
-    val sideIds: Set<String> = emptySet()
+    /** Which way the mix is pulled apart. The knob and [otherHalfIds] mean whatever this says they mean. */
+    val splitAxis: SplitAxis = SplitAxis.MIDDLE_SIDES,
+    /**
+     * Where the low half stops, in hertz. Only read by [SplitAxis.LOW_HIGH].
+     *
+     * Not ramped when it moves, and it does not need to be: changing where a filter divides does
+     * not move the signal already inside it, so the output stays continuous through a drag.
+     */
+    val crossoverHz: Double = DEFAULT_CROSSOVER_HZ,
+    /**
+     * Which handsets carry the far half of whichever split [splitAxis] names - the sides, or the
+     * high. Every handset the drawing names and this does not carries the near half.
+     */
+    val otherHalfIds: Set<String> = emptySet()
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
         require(pan in -1.0..1.0) { "pan runs from -1 to +1: $pan" }
         require(separation in 0.0..1.0) { "separation runs from 0 to 1: $separation" }
+        require(crossoverHz in LOWEST_CROSSOVER_HZ..HIGHEST_CROSSOVER_HZ) {
+            "a crossover has to be somewhere a person can hear: $crossoverHz"
+        }
         // Refused rather than ignored: a name that is in neither the drawing nor an error message is
         // a handset the listener assigned and cannot see the assignment of.
-        require(sideIds.all { layout.contains(it) }) {
-            "these handsets carry the sides but are not in the drawing: ${sideIds.filterNot { layout.contains(it) }}"
+        require(otherHalfIds.all { layout.contains(it) }) {
+            "these handsets carry the sides but are not in the drawing: ${otherHalfIds.filterNot { layout.contains(it) }}"
         }
     }
 
@@ -113,7 +153,37 @@ data class SpatialField(
      */
     fun foldFor(peerId: String): Double {
         require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
-        return if (peerId in sideIds) -separation / 2.0 else separation / 2.0
+        if (splitAxis != SplitAxis.MIDDLE_SIDES) return 0.0
+        return if (peerId in otherHalfIds) -separation / 2.0 else separation / 2.0
+    }
+
+    /**
+     * How much of the mix and of its low half [peerId] plays, before any placement gain.
+     *
+     * The other axis, and a different kind of division from the fold. The middle and the sides are
+     * arithmetic on the sample in hand; low and high are what a sound has been doing for the last
+     * few milliseconds, so this half of the feature needs a filter that remembers - see [Crossover],
+     * which is where the remembering lives. Nothing here holds any state.
+     *
+     * Written as a crossfade from the whole mix toward this handset own half, so the knob lands in
+     * the same place on both axes: at zero every handset plays what it was sent, at one it plays
+     * only its half, and in between it is the two mixed in that proportion. The high half is the mix
+     * with the low half taken out of it rather than a filter of its own, which is what makes the two
+     * halves add back up to exactly what was sent no matter what the filter does to the low one.
+     *
+     * The same two warnings as the fold apply in their own shape. This divides by **frequency**, not
+     * by instrument: a voice and a guitar both live on both sides of any crossover and will be heard
+     * from both handsets. And what a handset speaker can actually produce is not the same as what
+     * this hands it - the low half of a mix on a speaker that cannot go low is quieter than the
+     * arithmetic says, which is a thing to measure rather than to argue about.
+     */
+    fun spectrumFor(peerId: String): SpectrumMix {
+        require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
+        if (splitAxis != SplitAxis.LOW_HIGH) return SpectrumMix(1.0, 0.0)
+        // The low half lets go of the mix as it takes the filter on; the high half keeps the mix
+        // and subtracts. Summed over the pair that is one mix and no filter left over.
+        return if (peerId in otherHalfIds) SpectrumMix(1.0, -separation)
+        else SpectrumMix(1.0 - separation, separation)
     }
 
     /**
@@ -164,5 +234,21 @@ data class SpatialField(
     companion object {
         /** Slow enough to hear as travel rather than as tremolo, fast enough to notice. */
         const val DEFAULT_PERIOD_NANOS = 6_000_000_000L
+
+        /**
+         * Where the split starts out, chosen for handset speakers rather than for music theory.
+         *
+         * A crossover down where a subwoofer would sit hands one handset a part its speaker cannot
+         * make a sound with, so the room separates on paper and plays as one handset and one silent
+         * one. This sits above that, where both sides of the split are things a phone can emit.
+         *
+         * How far above is a guess until somebody measures a handset: the roll-off is somewhere
+         * around a few hundred hertz by reputation, and reputation is not a measurement.
+         */
+        const val DEFAULT_CROSSOVER_HZ = 800.0
+
+        /** Wide enough to be worth dragging, narrow enough that both ends are still a split. */
+        const val LOWEST_CROSSOVER_HZ = 100.0
+        const val HIGHEST_CROSSOVER_HZ = 5_000.0
     }
 }

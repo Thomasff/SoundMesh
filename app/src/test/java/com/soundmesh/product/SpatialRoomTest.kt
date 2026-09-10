@@ -181,12 +181,12 @@ class SpatialRoomTest {
      */
     @Test
     fun aHandsetThatLeftStopsCarryingTheSides() {
-        assertEquals(setOf(b), SpatialRoom.reconciledSides(setOf(a, b), listOf(b, c)))
+        assertEquals(setOf(b), SpatialRoom.reconciledOtherHalf(setOf(a, b), listOf(b, c)))
     }
 
     /** A handset still here keeps the part it was given, or every roster change would undo the choice. */
     @Test
     fun aHandsetStillHereKeepsThePartItWasGiven() {
-        assertEquals(setOf(a), SpatialRoom.reconciledSides(setOf(a), listOf(a, b, c)))
+        assertEquals(setOf(a), SpatialRoom.reconciledOtherHalf(setOf(a), listOf(a, b, c)))
     }
 }

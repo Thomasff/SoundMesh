@@ -101,8 +101,8 @@ object SpatialRoom {
      * A handset that is still here keeps what it was given, for the reason its icon keeps where it
      * was dragged: the roster is re-read constantly and a choice rebuilt each time is not a choice.
      */
-    fun reconciledSides(sideIds: Set<String>, peerIds: List<String>): Set<String> =
-        sideIds.intersect(peerIds.toSet())
+    fun reconciledOtherHalf(otherHalfIds: Set<String>, peerIds: List<String>): Set<String> =
+        otherHalfIds.intersect(peerIds.toSet())
 
     /**
      * The same icon, no closer to the listener than [MIN_RADIUS].

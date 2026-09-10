@@ -1,9 +1,11 @@
 package com.soundmesh.probe.sync
 
+import com.soundmesh.core.Crossover
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SpatialPosition
+import com.soundmesh.core.SplitAxis
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -42,7 +44,7 @@ class SpatialShapedTest {
     fun aChirpChunkIsNeverTouched() {
         val pcm = steady()
 
-        val shaped = spatialShaped(SyncRenderer.CHIRP_SEQUENCE_BASE, 0L, pcm, hardRight, "left")
+        val shaped = spatialShaped(SyncRenderer.CHIRP_SEQUENCE_BASE, 0L, pcm, hardRight, "left", crossover = Crossover())
 
         assertSame(pcm, shaped)
     }
@@ -52,7 +54,7 @@ class SpatialShapedTest {
         val pcm = steady()
         val laterRepeat = SyncRenderer.CHIRP_SEQUENCE_BASE + 3 * SyncRenderer.CHIRP_REPEAT_STRIDE
 
-        assertSame(pcm, spatialShaped(laterRepeat, 0L, pcm, hardRight, "left"))
+        assertSame(pcm, spatialShaped(laterRepeat, 0L, pcm, hardRight, "left", crossover = Crossover()))
     }
 
     /**
@@ -66,7 +68,7 @@ class SpatialShapedTest {
     fun aStreamedChunkIsShaped() {
         val pcm = steady()
 
-        val shaped = spatialShaped(5, 0L, pcm, hardRight, "left", wasUnder = hardRight)
+        val shaped = spatialShaped(5, 0L, pcm, hardRight, "left", wasUnder = hardRight, crossover = Crossover())
 
         assertFalse("the rule was not applied", shaped.contentEquals(pcm))
         assertArrayEquals(ByteArray(pcm.size), shaped)
@@ -76,14 +78,14 @@ class SpatialShapedTest {
     fun withNoRuleTheChunkGoesOutAsItCame() {
         val pcm = steady()
 
-        assertSame(pcm, spatialShaped(5, 0L, pcm, null, "left"))
+        assertSame(pcm, spatialShaped(5, 0L, pcm, null, "left", crossover = Crossover()))
     }
 
     @Test
     fun beforeThisHandsetKnowsItsOwnNameTheChunkGoesOutAsItCame() {
         val pcm = steady()
 
-        assertSame(pcm, spatialShaped(5, 0L, pcm, hardRight, null))
+        assertSame(pcm, spatialShaped(5, 0L, pcm, hardRight, null, crossover = Crossover()))
     }
 
     /**
@@ -96,7 +98,7 @@ class SpatialShapedTest {
     fun aHandsetTheDrawingDoesNotNameIsLeftAlone() {
         val pcm = steady()
 
-        assertSame(pcm, spatialShaped(5, 0L, pcm, hardRight, "someone-else"))
+        assertSame(pcm, spatialShaped(5, 0L, pcm, hardRight, "someone-else", crossover = Crossover()))
     }
     private fun firstLeftSample(pcm: ByteArray): Int =
         ((pcm[0].toInt() and 0xFF) or (pcm[1].toInt() shl 8)).toShort().toInt()
@@ -118,7 +120,7 @@ class SpatialShapedTest {
     fun theFirstRuleIsRampedIntoRatherThanSteppedInto() {
         val pcm = steady()
 
-        val shaped = spatialShaped(0, 0L, pcm, hardRight, "left", wasUnder = null)
+        val shaped = spatialShaped(0, 0L, pcm, hardRight, "left", wasUnder = null, crossover = Crossover())
 
         val arrived = firstLeftSample(pcm)
         val left = firstLeftSample(shaped)
@@ -137,7 +139,7 @@ class SpatialShapedTest {
     fun aChunkAlreadyUnderThisRuleStartsWhereTheRuleSaysNotAtUnity() {
         val pcm = steady()
 
-        val shaped = spatialShaped(0, 0L, pcm, hardRight, "left", wasUnder = hardRight)
+        val shaped = spatialShaped(0, 0L, pcm, hardRight, "left", wasUnder = hardRight, crossover = Crossover())
 
         assertArrayEquals(ByteArray(shaped.size), shaped)
     }
@@ -161,7 +163,7 @@ class SpatialShapedTest {
             pan = 0.0
         )
 
-        val shaped = spatialShaped(0, 0L, pcm, hardRight, "left", wasUnder = centred)
+        val shaped = spatialShaped(0, 0L, pcm, hardRight, "left", wasUnder = centred, crossover = Crossover())
 
         val left = firstLeftSample(shaped)
         assertTrue("it started at $left, not where the old rule left it (~8485)", left in 8_300..8_700)
@@ -208,7 +210,7 @@ class SpatialShapedTest {
     fun aChangedSeparationIsRampedIntoRatherThanSteppedInto() {
         val pcm = steadyPair(10_000, 4_000)
 
-        val shaped = spatialShaped(5, 0L, pcm, solo(1.0), "solo", wasUnder = solo(0.0))
+        val shaped = spatialShaped(5, 0L, pcm, solo(1.0), "solo", wasUnder = solo(0.0), crossover = Crossover())
 
         assertEquals("the first frame is not where the previous chunk left off", 10_000, leftSampleAt(shaped, 0))
         assertEquals("the fold did not move across the chunk", 8_500, leftSampleAt(shaped, SyncRenderer.FRAMES_PER_CHUNK / 2))
@@ -219,8 +221,39 @@ class SpatialShapedTest {
     fun aHandsetUnderNoRuleAtAllIsRampedInFromTheWholeMix() {
         val pcm = steadyPair(10_000, 4_000)
 
-        val shaped = spatialShaped(5, 0L, pcm, solo(1.0), "solo", wasUnder = null)
+        val shaped = spatialShaped(5, 0L, pcm, solo(1.0), "solo", wasUnder = null, crossover = Crossover())
 
         assertEquals(10_000, leftSampleAt(shaped, 0))
+    }
+
+    /** The same solo room, dividing by frequency instead of by where a sound sits in the image. */
+    private fun soloByFrequency(separation: Double) = SpatialField(
+        SpatialMode.SPLIT,
+        SpatialLayout(listOf(SpatialPosition("solo", 0.0, 1.0))),
+        separation = separation,
+        splitAxis = SplitAxis.LOW_HIGH,
+        otherHalfIds = setOf("solo")
+    )
+
+    /**
+     * The third control that a drag moves, and it needs saying separately from the other two for the
+     * same reason they needed saying separately from each other: this knob leaves the gain and the
+     * fold where they stand, so nothing else in the chunk reports that it moved.
+     *
+     * Read on the handset carrying the high half, where the arithmetic is the mix with a share of its
+     * low half taken out - a steady level is all low half, so half a knob is half the level.
+     */
+    @Test
+    fun aChangedSpectrumSplitIsRampedIntoRatherThanSteppedInto() {
+        val pcm = steadyPair(10_000, 10_000)
+
+        val shaped = spatialShaped(
+            5, 0L, pcm, soloByFrequency(1.0), "solo",
+            wasUnder = soloByFrequency(0.0), crossover = Crossover()
+        )
+
+        assertEquals("the first frame is not where the previous chunk left off", 10_000, leftSampleAt(shaped, 0))
+        val midpoint = leftSampleAt(shaped, SyncRenderer.FRAMES_PER_CHUNK / 2)
+        assertTrue("the split did not move across the chunk: $midpoint", midpoint in 4_700..5_300)
     }
 }
