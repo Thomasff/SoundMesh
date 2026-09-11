@@ -8,8 +8,8 @@ import kotlin.math.hypot
  *
  * A person is good at one half of this drawing and bad at the other. Where the room is, which way
  * it faces, which side is left, roughly where each handset sits - all of that they can see, and
- * none of it can be measured: every distance this system takes is handset to handset, and the
- * listener has never been measured at all. What they are bad at is the half a tape measure is good
+ * none of it can be measured by a room that only takes handset to handset distances. What they are
+ * bad at is the half a tape measure is good
  * at - that this one is one and a half times further out than that one. So the measurement is
  * asked for the shape and the drag is kept for everything else, which is what the second term of
  * the objective below is for.
@@ -64,6 +64,15 @@ object RoomFit {
      */
     private const val GAUGE_WEIGHT = 1e-6
 
+    /**
+     * The listener, while the fit is running, under a name no handset can be called.
+     *
+     * Handset names are sixteen lowercase hexadecimal characters (HostId), so this collides with
+     * nothing, and it never leaves this file: it goes in as one more node with one more set of
+     * edges, and comes out as the origin everything else is measured from.
+     */
+    private const val LISTENER = "listener"
+
     private const val ROUNDS = 400
     private const val SETTLED = 1e-10
 
@@ -85,12 +94,20 @@ object RoomFit {
     fun corrected(
         icons: List<RoomIcon>,
         measuredMetres: Map<Pair<String, String>, Double>,
+        listenerMetres: Map<String, Double> = emptyMap(),
         priorWeight: Double = DEFAULT_PRIOR_WEIGHT
     ): List<RoomIcon>? {
         require(priorWeight > 0.0) {
             "a fit with no prior is free to rotate and mirror the room, and every gain reads that"
         }
-        val edges = edgesAmong(icons, measuredMetres)
+        val toListener = listenerEdges(icons, listenerMetres)
+        // The listener joins the fit as an ordinary node when it was measured, and the room comes
+        // out shifted so that it lands back in the middle of the drawing. Nothing downstream has to
+        // learn about it: the middle is where every gain already measures from.
+        val nodes =
+            if (toListener.isEmpty()) icons
+            else icons + RoomIcon(LISTENER, SpatialRoom.CENTRE, SpatialRoom.CENTRE)
+        val edges = edgesAmong(icons, measuredMetres) + toListener
         // Shape needs a handset that two measured edges meet at. Without one there are only
         // separate lengths, and a length on its own is a scale.
         val meetingAt = HashMap<String, Int>()
@@ -100,11 +117,12 @@ object RoomFit {
         }
         if (meetingAt.values.none { it >= 2 }) return null
 
-        if (worstEdgeMetres(placed(icons, edges, GAUGE_WEIGHT), edges) > WORST_EDGE_METRES) return null
+        if (worstEdgeMetres(placed(nodes, edges, GAUGE_WEIGHT), edges) > WORST_EDGE_METRES) return null
 
         // Brought back onto the drawing before the mirror is looked for, not after: the shrink
         // that does it is uniform about the listener, which cannot turn anything over.
-        val fitted = contained(placed(icons, edges, priorWeight))
+        val fitted = contained(centredOnListener(placed(nodes, edges, priorWeight)))
+            .filterNot { it.peerId == LISTENER }
         val moved = edges.flatMap { listOf(it.first, it.second) }.toSet()
         val before = icons.filter { it.peerId in moved }
         val after = fitted.filter { it.peerId in moved }
@@ -163,6 +181,39 @@ object RoomFit {
             .filter { it.key.first < it.key.second && it.value > 0.0 }
             .filter { it.key.first in here && it.key.second in here }
             .map { Edge(it.key.first, it.key.second, it.value) }
+    }
+
+    /**
+     * What the overhead round said, as edges, or nothing when it did not say enough.
+     *
+     * Two at least. One distance to the listener is a circle around one handset, and which point
+     * on it gets picked would come from the drawing - which is the drawing answering the one
+     * question the overhead round was run to stop it answering.
+     */
+    private fun listenerEdges(icons: List<RoomIcon>, listenerMetres: Map<String, Double>): List<Edge> {
+        val here = icons.map { it.peerId }.toSet()
+        val reachable = listenerMetres.filter { it.key in here && it.value > 0.0 }
+        if (reachable.size < 2) return emptyList()
+        return reachable.map { Edge(LISTENER, it.key, it.value) }
+    }
+
+    /**
+     * The same room, slid over so that the measured listener is the origin again.
+     *
+     * A translation, so every measured length survives it untouched; what changes is the only
+     * thing playback actually reads, which is where each handset lies **from the listener**. This
+     * is where drawing yourself in the middle of the handsets stops being the answer.
+     */
+    private fun centredOnListener(placement: Placement): Placement {
+        val at = placement.index[LISTENER] ?: return placement
+        val byX = placement.x[at]
+        val byY = placement.y[at]
+        return Placement(
+            DoubleArray(placement.x.size) { placement.x[it] - byX },
+            DoubleArray(placement.y.size) { placement.y[it] - byY },
+            placement.index,
+            placement.unitsPerMetre
+        )
     }
 
     /** Where the fit put everybody, listener at the origin, in drawing units, with its scale. */

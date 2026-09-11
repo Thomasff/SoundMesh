@@ -154,7 +154,7 @@ class RoomFitWeightTest {
             sketchScore.scores.add(worstGainErrorDb(room, sketch))
             sketchBearing.scores.add(worstBearingErrorDegrees(room, sketch))
             for (weight in weights) {
-                val fitted = RoomFit.corrected(sketch, measured, weight)
+                val fitted = RoomFit.corrected(sketch, measured, priorWeight = weight)
                 if (fitted == null) {
                     fitScore.getValue(weight).refused++
                     continue

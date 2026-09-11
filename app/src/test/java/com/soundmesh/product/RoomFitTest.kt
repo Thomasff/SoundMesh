@@ -142,8 +142,8 @@ class RoomFitTest {
     fun theSameDrawingAlwaysGetsTheSameAnswer() {
         val pulledIn = listOf(drawnA, drawnB, RoomIcon(c, 0.66f, 0.56f))
 
-        val once = RoomFit.corrected(pulledIn, measured, 0.3)!!
-        val again = RoomFit.corrected(pulledIn, measured, 0.3)!!
+        val once = RoomFit.corrected(pulledIn, measured, priorWeight = 0.3)!!
+        val again = RoomFit.corrected(pulledIn, measured, priorWeight = 0.3)!!
 
         assertEquals(once, again)
     }
@@ -160,9 +160,9 @@ class RoomFitTest {
      */
     @Test
     fun fittingItsOwnAnswerAgainWalksFurtherOffTheDrawing() {
-        val once = RoomFit.corrected(listOf(drawnA, drawnB, RoomIcon(c, 0.66f, 0.56f)), measured, 0.3)!!
+        val once = RoomFit.corrected(listOf(drawnA, drawnB, RoomIcon(c, 0.66f, 0.56f)), measured, priorWeight = 0.3)!!
 
-        val twice = RoomFit.corrected(once, measured, 0.3)!!
+        val twice = RoomFit.corrected(once, measured, priorWeight = 0.3)!!
 
         assertTrue(
             "once ${ratioError(once)}, twice ${ratioError(twice)}",
@@ -175,7 +175,7 @@ class RoomFitTest {
     fun aHandsetWithNoMeasuredDistanceKeepsItsPlace() {
         val fourth = RoomIcon("99aabbccddeeff00", 0.15f, 0.30f)
 
-        val fitted = RoomFit.corrected(sketch + fourth, measured, 0.3)!!
+        val fitted = RoomFit.corrected(sketch + fourth, measured, priorWeight = 0.3)!!
 
         val now = fitted.first { it.peerId == fourth.peerId }
         assertEquals(fourth.x.toDouble(), now.x.toDouble(), 1e-6)
@@ -188,7 +188,7 @@ class RoomFitTest {
      */
     @Test
     fun aRoomOfTwoIsNotCorrected() {
-        assertNull(RoomFit.corrected(listOf(drawnA, drawnB), measured, 0.3))
+        assertNull(RoomFit.corrected(listOf(drawnA, drawnB), measured, priorWeight = 0.3))
     }
 
     /** Same for three handsets with only one pair read: one length still fixes only the size. */
@@ -196,7 +196,7 @@ class RoomFitTest {
     fun oneMeasuredEdgeIsNotEnoughToCorrectAnything() {
         val only = bothWays(mapOf((a to b) to 2.6833))
 
-        assertNull(RoomFit.corrected(sketch, only, 0.3))
+        assertNull(RoomFit.corrected(sketch, only, priorWeight = 0.3))
     }
 
     /**
@@ -211,7 +211,7 @@ class RoomFitTest {
     fun distancesThatDescribeNoRoomAreRefused() {
         val impossible = bothWays(mapOf((a to b) to 5.0, (a to c) to 1.0, (b to c) to 1.0))
 
-        assertNull(RoomFit.corrected(sketch, impossible, 0.3))
+        assertNull(RoomFit.corrected(sketch, impossible, priorWeight = 0.3))
     }
 
     /**
@@ -232,7 +232,7 @@ class RoomFitTest {
             RoomIcon(c, 0.53f, 0.70f)
         )
 
-        assertNotNull(RoomFit.corrected(strungOut, measured, 0.3))
+        assertNotNull(RoomFit.corrected(strungOut, measured, priorWeight = 0.3))
     }
 
     /** A room measured a little inconsistently is still fitted - that is what the fit is for. */
@@ -240,7 +240,7 @@ class RoomFitTest {
     fun aRoomMeasuredSlightlyInconsistentlyIsStillFitted() {
         val noisy = bothWays(mapOf((a to b) to 2.80, (a to c) to 2.45, (b to c) to 2.90))
 
-        assertNotNull(RoomFit.corrected(sketch, noisy, 0.3))
+        assertNotNull(RoomFit.corrected(sketch, noisy, priorWeight = 0.3))
     }
 
     /**
@@ -281,7 +281,7 @@ class RoomFitTest {
             RoomIcon(c, 0.53f, 0.54f)
         )
 
-        val fitted = RoomFit.corrected(squashed, measured, 0.3)!!
+        val fitted = RoomFit.corrected(squashed, measured, priorWeight = 0.3)!!
 
         for (icon in fitted) {
             assertTrue("${icon.peerId} at ${icon.x},${icon.y}", icon.x in 0f..1f && icon.y in 0f..1f)
