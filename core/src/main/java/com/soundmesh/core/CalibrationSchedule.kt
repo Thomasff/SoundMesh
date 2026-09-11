@@ -76,6 +76,15 @@ object CalibrationSchedule {
         require(plan.intervalNanos > 0) { "repeats sharing an instant cannot be told apart" }
         require(plan.staggerNanos > 0) { "handsets sharing an instant cannot be told apart" }
         require(chirpNanos > 0) { "a chirp of no length is not a chirp" }
+        // A repeat has to be over before the next one begins. The window grows with the room
+        // while the interval does not, so past a certain size the last handset of one repeat
+        // lands on the first handset of the next - and both then sit inside one search window,
+        // where they are told apart only by which correlates louder. That is the ceiling on how
+        // many handsets one schedule holds, and it is arithmetic rather than an opinion. A
+        // single repeat has no next one to land on, and is left alone.
+        require(plan.repeats == 1 || (slotsIn(plan) - 1) * plan.staggerNanos + chirpNanos < plan.intervalNanos) {
+            "a room of ${slotsIn(plan)} spaced ${plan.staggerNanos} ns apart does not fit in ${plan.intervalNanos} ns"
+        }
         // A handset named twice would chirp twice in one window under one name, and every reading
         // of it would be of whichever of the two the correlation happened to like.
         require(plan.slotIds.size == plan.slotIds.distinct().size) {
@@ -112,6 +121,9 @@ object CalibrationSchedule {
     /**
      * How many handsets this plan schedules. Two when it names nobody, which is what a plan from
      * before rooms existed is: the pair it always described, not an empty room.
+     *
+     * Public because the reading side asks the same question of the same plan, and two places
+     * each deciding what an unnamed plan means is exactly the drift nothing would notice.
      */
-    private fun slotsIn(plan: CalibrationPlan): Int = maxOf(plan.slotIds.size, 2)
+    fun slotsIn(plan: CalibrationPlan): Int = maxOf(plan.slotIds.size, 2)
 }

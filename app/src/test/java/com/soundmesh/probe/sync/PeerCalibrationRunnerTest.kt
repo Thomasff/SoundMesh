@@ -66,4 +66,17 @@ class PeerCalibrationRunnerTest {
         assertTrue(source.contains("runCatching"))
         assertTrue(source.contains("recordingFailure ="))
     }
+
+    /**
+     * A room handset chirps in the slot the plan named it in, not the slot its role implies.
+     *
+     * The role means host-last and sink-first, which is exactly right for a pair and wrong for
+     * everything else: in a room of three it puts two handsets on one chirp and leaves one slot
+     * silent. The spacing still comes out right, so nothing downstream would say so.
+     */
+    @Test
+    fun aRoomRunTakesTheSlotThePlanNamedRatherThanTheOneItsRoleImplies() {
+        assertTrue(source.contains("ownSlot?.let { CalibrationSchedule.of(plan, it, chirpNanos()) }"))
+        assertTrue(source.contains("ownSlot = slot"))
+    }
 }

@@ -153,4 +153,34 @@ class RoomCalibrationScheduleTest {
 
         assertEquals(pair, CalibrationPlanCodec.decode(CalibrationPlanCodec.encode(pair)))
     }
+
+    /**
+     * The ceiling on how many handsets one schedule holds, which is arithmetic rather than an
+     * opinion: the window grows with the room and the interval does not, so past a certain size
+     * the last handset of one repeat lands on the first handset of the next - where the two are
+     * told apart only by which correlates louder, which is a property of the room.
+     */
+    @Test
+    fun refusesARoomTooBigToFitBetweenTwoRepeats() {
+        val names = (0 until 11).map { "%016x".format(it) }
+        val tooMany = plan(names).copy(intervalNanos = 5_000_000_000L)
+
+        val thrown = runCatching { CalibrationSchedule.of(tooMany, 0, chirpNanos) }.exceptionOrNull()
+
+        assertTrue("$thrown", thrown is IllegalArgumentException)
+        assertTrue(thrown!!.message, thrown.message!!.contains("does not fit"))
+        // Widen the interval and the same room is fine: it is the pair of numbers that is refused,
+        // never the number of handsets on its own.
+        CalibrationSchedule.of(tooMany.copy(intervalNanos = 7_000_000_000L), 0, chirpNanos)
+    }
+
+    /** One repeat has no next one to land on, so the ceiling does not apply to it. */
+    @Test
+    fun letsASingleRepeatHoldARoomWiderThanItsInterval() {
+        val names = (0 until 11).map { "%016x".format(it) }
+
+        val timing = CalibrationSchedule.of(plan(names).copy(repeats = 1), 0, chirpNanos)
+
+        assertEquals(1, timing.ownChirpAtHostNanos.size)
+    }
 }

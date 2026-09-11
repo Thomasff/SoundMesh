@@ -6,6 +6,7 @@ import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.CalibrationSchedule
 import com.soundmesh.core.CalibrationTiming
+import com.soundmesh.core.ChirpArrival
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
@@ -18,7 +19,16 @@ import java.io.File
 data class PeerCalibrationRun(
     val readings: List<AlignmentReading>,
     val refusal: String?,
-    val json: String
+    val json: String,
+    /**
+     * Where every slot of the room landed, once per repeat, and empty on a pair.
+     *
+     * A pair fills [readings] because it can: it holds both halves of the one pair it is in.
+     * A room fills this instead, and deliberately computes nothing - the pairs it would have
+     * to combine are between handsets whose order it has no business deciding. See
+     * [com.soundmesh.core.RoomResultMessage].
+     */
+    val arrivalsByRepeat: List<List<ChirpArrival?>> = emptyList()
 )
 
 /**
@@ -46,6 +56,14 @@ class PeerCalibrationRunner(
     private val caseId: String,
     private val role: CalibrationRole,
     private val plan: CalibrationPlan,
+    /**
+     * Which chirp of the window is this handset's, or null to take the slot the role implies.
+     *
+     * Told rather than derived, on both ends of the run: it is the slot the plan named this
+     * handset in, and it is also the anchor the recording is read against. A pair leaves it
+     * null and gets the slots the role has always meant - host last, sink first.
+     */
+    private val ownSlot: Int? = null,
     /** This handset's view of host time, correction included, exactly as a session holds it. */
     private val hostNanosNow: () -> Long,
     /** The clock offset in force, for the renderer's report. Zero on the host. */
@@ -68,7 +86,8 @@ class PeerCalibrationRunner(
     @Volatile private var rendererReport: String? = null
 
     fun run(): PeerCalibrationRun {
-        val timing = CalibrationSchedule.of(plan, role, chirpNanos())
+        val timing = ownSlot?.let { CalibrationSchedule.of(plan, it, chirpNanos()) }
+            ?: CalibrationSchedule.of(plan, role, chirpNanos())
         val calibration = CalibrationRunner(runStore, caseId, audioSource, hostNanosNow)
         val recording = Thread({
             runCatching {
@@ -162,6 +181,7 @@ class PeerCalibrationRunner(
             WavFileReader.readMono(File(runStore.prepareRun(caseId), "calibration.wav"))
         }.getOrElse { return refused("the recording could not be read: ${it.javaClass.simpleName}") }
         val startedNanos = System.nanoTime()
+        ownSlot?.let { return room(recorded, startedAt, startedNanos, it) }
         val readings = runCatching {
             OnDeviceAlignment.readRun(
                 recorded = recorded,
@@ -182,6 +202,41 @@ class PeerCalibrationRunner(
             readings,
             null,
             json(readings, recorded.size, startedAt, elapsedMillis, null)
+        )
+    }
+
+    /**
+     * The room half of [analyse]: every slot of every repeat, and nothing combined.
+     *
+     * Its own path rather than a branch inside the pair's, because the two produce different
+     * things and the only thing they share is the recording they read.
+     */
+    private fun room(
+        recorded: ShortArray,
+        startedAt: Long,
+        startedNanos: Long,
+        slot: Int
+    ): PeerCalibrationRun {
+        val arrivals = runCatching {
+            OnDeviceAlignment.readRoom(
+                recorded = recorded,
+                reference = ChirpGenerator.generateMono(),
+                recordingStartedAtHostNanos = startedAt,
+                firstChirpAtHostNanos = plan.firstChirpAtHostNanos,
+                staggerNanos = plan.staggerNanos,
+                slotCount = CalibrationSchedule.slotsIn(plan),
+                ownSlot = slot,
+                chirpRepeats = plan.repeats,
+                chirpIntervalNanos = plan.intervalNanos,
+                edgeShares = edgeShares
+            )
+        }.getOrElse { return refused("the recording could not be correlated: ${it.javaClass.simpleName}") }
+        val elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000
+        return PeerCalibrationRun(
+            emptyList(),
+            null,
+            roomJson(arrivals, recorded.size, startedAt, elapsedMillis, slot),
+            arrivals
         )
     }
 
@@ -207,6 +262,36 @@ class PeerCalibrationRunner(
                     "\"confidence\":\"${reading.confidence}\"," +
                     "\"ratios\":[${reading.ratios.joinToString(",") { it?.toString() ?: "null" }}]," +
                     "\"atSearchEdge\":[${reading.atSearchEdge.joinToString(",") { it?.toString() ?: "null" }}]}"
+            } + "],\"renderer\":${rendererReport ?: "null"}}"
+
+    /**
+     * The room's report: every slot of every repeat, as heard here.
+     *
+     * Beside [json] rather than inside it because the two describe different runs. A pair's
+     * report lists pairs it worked out; a room's lists arrivals it has not, and a reader handed
+     * one shaped like the other would have to guess which kind of run it was looking at.
+     */
+    private fun roomJson(
+        arrivals: List<List<ChirpArrival?>>,
+        frames: Int,
+        startedAt: Long?,
+        elapsedMillis: Long,
+        slot: Int
+    ): String =
+        "{\"role\":\"$role\",\"caseId\":\"${plan.caseId}\",\"hostId\":\"${plan.hostId}\"," +
+            "\"repeats\":${plan.repeats},\"chirpIntervalNanos\":${plan.intervalNanos}," +
+            "\"staggerNanos\":${plan.staggerNanos},\"audioSource\":\"$audioSource\"," +
+            "\"slotIds\":[" + plan.slotIds.joinToString(",") { "\"$it\"" } + "]," +
+            "\"ownSlot\":$slot," +
+            "\"recordingStartedAtHostNanos\":${startedAt ?: "null"},\"frames\":$frames," +
+            "\"elapsedMillis\":$elapsedMillis,\"refusal\":null," +
+            "\"window\":[" + arrivals.joinToString(",") { repeat ->
+                "[" + repeat.joinToString(",") { arrival ->
+                    arrival?.let {
+                        "{\"index\":${it.index},\"ratio\":${it.ratio},\"atSearchEdge\":${it.atSearchEdge}," +
+                            "\"edgeIndices\":[${it.edgeIndices.joinToString(",")}]}"
+                    } ?: "null"
+                } + "]"
             } + "],\"renderer\":${rendererReport ?: "null"}}"
 
     private fun chirpNanos(): Long =
