@@ -83,6 +83,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
         MeasuredDistances(state)
         FitOffer(state, actions)
         ModePicker(state, actions)
+        if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
         if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
         SeparationControl(state, actions)
     }
@@ -159,6 +160,16 @@ data class RoomState(
      * differ in the delay and in nothing else.
      */
     val delayCompensation: Boolean = true,
+    /**
+     * How much of itself each handset keeps when the moving source faces away from it.
+     *
+     * A quarter rather than the zero [SpatialField] defaults to, and the two defaults mean
+     * different things on purpose: the rule's zero is the law with nothing added, which is what
+     * a handset told nothing should render, and this is what a listener asked for after hearing
+     * the law with nothing added. At zero each handset falls silent once per revolution, which
+     * is one phone playing and then another rather than a source going round a room.
+     */
+    val envelopment: Float = DEFAULT_ENVELOPMENT,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -189,6 +200,7 @@ class RoomActions(
     val pickMode: (SpatialMode) -> Unit,
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
+    val setEnvelopment: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -558,6 +570,35 @@ internal fun nearestPeerId(icons: List<RoomIcon>, x: Float, y: Float): String? =
 
 /** How far from an icon a finger may land and still mean it. A fingertip on a phone screen. */
 internal const val GRAB_RADIUS = 0.12
+
+/**
+ * How much of itself a handset keeps when the source has turned away from it.
+ *
+ * A slider rather than a number somebody picked, because what it is for is a thing only an ear
+ * can judge and an ear judges "better" far more reliably than "how much". Only on screen for the
+ * two modes that move a source - the split has no source to face away from.
+ */
+@Composable
+private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
+    Column {
+        Text(stringResource(R.string.room_envelopment), style = MaterialTheme.typography.bodySmall)
+        Slider(
+            value = state.envelopment,
+            onValueChange = actions.setEnvelopment,
+            valueRange = 0f..SpatialField.MAX_ENVELOPMENT.toFloat()
+        )
+        Text(
+            stringResource(
+                if (state.envelopment <= 0f) R.string.room_envelopment_off
+                else R.string.room_envelopment_hint
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+/** What a room ships at, which is where a listener put the slider rather than where zero is. */
+const val DEFAULT_ENVELOPMENT = 0.25f
 
 @Composable
 private fun ModePicker(state: RoomState, actions: RoomActions) {

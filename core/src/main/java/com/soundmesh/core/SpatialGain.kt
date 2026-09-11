@@ -137,12 +137,36 @@ data class SpatialField(
      * from an assumed listener holds the wrong handset back, and holding the wrong handset back
      * is worse than holding none: the error it adds is the error it was meant to remove, doubled.
      */
-    val metresPerUnit: Double = 0.0
+    val metresPerUnit: Double = 0.0,
+    /**
+     * How much of itself every handset keeps however far the source is from it: 0 to 1.
+     *
+     * Zero is the law as it was written, and it has one property a listener objected to on
+     * 09-11: the raised cosine is exactly zero at the direction opposite a handset, so once per
+     * revolution each handset goes completely silent. What that sounds like is not a source
+     * travelling round a room - it is one phone playing, then another one, which is what they
+     * said: "听起来是拿着一部手机在转".
+     *
+     * This lifts the whole pattern onto a floor: a handset facing the source still plays at one,
+     * a handset the source has turned its back on plays at this. The null does not move - it is
+     * still exactly opposite, which is where they said it belonged - it simply stops being
+     * silence. At 0.25 the far side sits 12 dB under the near one, which is a direction anybody
+     * can hear and not a handset switching off.
+     *
+     * Only [ROTATE][SpatialMode.ROTATE] and [PAN][SpatialMode.PAN] read it. The split has no
+     * source to be facing away from.
+     */
+    val envelopment: Double = 0.0
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
         require(metresPerUnit >= 0.0 && metresPerUnit.isFinite()) {
             "a room cannot be a negative number of metres across: $metresPerUnit"
+        }
+        // One would be every handset playing everything equally, which is a room with no
+        // direction in it at all - and the modes that read this exist to put a source somewhere.
+        require(envelopment in 0.0..MAX_ENVELOPMENT) {
+            "how much a handset keeps runs from 0 to $MAX_ENVELOPMENT: $envelopment"
         }
         require(pan in -1.0..1.0) { "pan runs from -1 to +1: $pan" }
         require(separation in 0.0..1.0) { "separation runs from 0 to 1: $separation" }
@@ -335,7 +359,12 @@ data class SpatialField(
                 // softer than picking the two handsets that bracket the source and panning between
                 // them, which is the sharper rule to reach for if the image turns out mushy. Chosen
                 // first because it is defined for every direction, including ones no pair brackets.
-                val weight = (1.0 + cos(sourceAzimuthAt(hostNanos) - azimuth)) / 2.0
+                //
+                // Lifted onto [envelopment] rather than reaching zero, so that "facing away" is a
+                // handset that is quiet rather than one that is off. At zero this is exactly the
+                // expression it has always been.
+                val facing = (1.0 + cos(sourceAzimuthAt(hostNanos) - azimuth)) / 2.0
+                val weight = envelopment + (1.0 - envelopment) * facing
                 StereoGain(weight, weight)
             }
             // How far to the side a handset stands is how much of that side it carries. A room
@@ -371,6 +400,15 @@ data class SpatialField(
 
         /** Twelve decibels. See [highTrim]: past this the room is being turned down, not tilted. */
         const val MAX_LOW_TILT = 4.0
+
+        /**
+         * How far [envelopment] may be wound up: half, which is 6 dB between facing and facing away.
+         *
+         * Not one. At one every handset plays everything at the same level whatever the source is
+         * doing, and the two modes that read it are modes for moving a source about - a control
+         * whose far end switches the feature off is a control with a trap at the end of it.
+         */
+        const val MAX_ENVELOPMENT = 0.5
 
         /**
          * The longest wait [arrivalDelayNanosFor] will ask any handset for: fifty milliseconds.

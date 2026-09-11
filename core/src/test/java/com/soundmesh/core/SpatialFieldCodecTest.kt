@@ -236,4 +236,18 @@ class SpatialFieldCodecTest {
 
         assertEquals(0.0, back.metresPerUnit, 0.0)
     }
+
+    /** And how much a handset keeps when the source faces away, which is the newest header field. */
+    @Test
+    fun carriesHowMuchAHandsetKeepsWhenTheSourceFacesAway() {
+        val wide = field.copy(envelopment = 0.3)
+
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(wide))
+
+        assertEquals(0.3, back.envelopment, 0.0)
+        for (peerId in wide.layout.peerIds) {
+            val at = 3_300_000_000L
+            assertEquals(wide.gainAt(peerId, at).left, back.gainAt(peerId, at).left, 0.0)
+        }
+    }
 }
