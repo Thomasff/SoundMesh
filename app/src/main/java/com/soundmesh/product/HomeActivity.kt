@@ -74,6 +74,15 @@ class HomeActivity : ComponentActivity() {
     /** Reads the output a capturing host is heard on. It cannot set it - see AccessibilityVolume. */
     private val hostOutputVolume by lazy { HostOutputVolume(getSystemService(AudioManager::class.java)) }
     private val handler = Handler(Looper.getMainLooper())
+    /**
+     * Where each handset was last drawn, kept past its leaving.
+     *
+     * Not in [RoomState] because it is not a thing the screen draws: it is what the drawing is
+     * rebuilt from when somebody comes back. Grows by one entry per handset ever seen, which for
+     * a room of phones is a handful of strings.
+     */
+    private val whereTheyWere = HashMap<String, RoomIcon>()
+
     private val refresh = object : Runnable {
         override fun run() {
             readSession()
@@ -518,10 +527,21 @@ class HomeActivity : ComponentActivity() {
      * starts playing its own corner rather than the whole room flat until somebody moves a control.
      */
     private fun readRoom(session: SyncSession?): RoomState? {
-        val host = session as? HostSession ?: return null
+        // A session ending is not the room changing. The drawing used to live exactly as long as
+        // the session did, so a song finishing threw away every icon that had been dragged and
+        // the fit that had been taken - and the next press of play started from the default
+        // arrangement with nothing on screen saying anything had been lost. It is kept here
+        // instead, for as long as this phone is being the host at all.
+        val host = session as? HostSession
+            ?: return state.room?.takeIf { state.role == Role.HOST }
         val roster = host.roomPeerIds()
         val previous = state.room ?: RoomState(selfId = roster.firstOrNull())
-        val icons = SpatialRoom.reconciled(previous.icons, roster)
+        // Where each handset was last seen, including ones not in the room just now. A sink
+        // reconnects a few seconds after its host, so without this every restart is a roster
+        // that grew - and a handset that grew back into the room would be given a default
+        // position, which is the same lost drag by a slower route.
+        whereTheyWere.putAll(previous.icons.associateBy { it.peerId })
+        val icons = SpatialRoom.reconciled(previous.icons, roster, whereTheyWere)
         // The host is dropped first because it is in its own room and is not sent its own audio.
         val audio = host.audioPeerIds()
         val silent = roster.drop(1).filterNot { it in audio }.toSet()
@@ -538,11 +558,11 @@ class HomeActivity : ComponentActivity() {
             icons = icons,
             measuredMetres = measured,
             listenerMetres = StoredListenerDistance.all(filesDir),
-            // A fresh reading is a fresh reason to offer, whatever was done with the last one.
+            // A new handset is a fresh reason to offer, whatever was done with the last one.
+            // The scale is deliberately **not** cleared here: it says how many metres one unit of
+            // this drawing is, which somebody joining does not change. What does change it is a
+            // fresh measurement, and rereadDistances is where that lands.
             fitted = false,
-            // And the scale goes with it: it came out of a fit of the previous numbers, and a
-            // stale one delays the right handset by the wrong amount rather than not at all.
-            metresPerUnit = 0.0,
             colours = host.roomPlaces(),
             silentIds = silent,
             otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })

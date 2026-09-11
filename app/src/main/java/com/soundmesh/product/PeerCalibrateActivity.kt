@@ -968,7 +968,9 @@ class PeerCalibrateActivity : ComponentActivity() {
      * otherwise.
      */
     private fun timingFor(caseId: String?): ArmSchedule {
-        val shipped = defaultTimingFor(caseId)
+        val shipped = defaultTimingFor(caseId).let {
+            if (overhead()) it.copy(planLeadNanos = OVERHEAD_PLAN_LEAD_NANOS) else it
+        }
         return shipped.copy(
             repeats = intent.getIntExtra("chirp_repeats", shipped.repeats),
             intervalNanos = millisExtra("chirp_interval_millis", shipped.intervalNanos),
@@ -1806,6 +1808,21 @@ class PeerCalibrateActivity : ComponentActivity() {
 
         /** Next after the plan's 45126, and held only while a room is being measured. */
         const val ROOM_PORT = 45127
+
+        /**
+         * How long the overhead round waits after everybody has asked, before the first chirp.
+         *
+         * Every other round is measuring phones that are already where they will be, so two
+         * seconds is generous. This one is measuring a person, and the person has to press the
+         * last button, raise the handset over their head, walk back, sit down and stop moving.
+         * Eight seconds of settle plus two of lead is not that walk, and a listener who is still
+         * moving when the first chirp goes is measured somewhere they are not going to be.
+         *
+         * Here rather than in ROOM_SETTLE_MILLIS, which cannot grow: the settle is bounded by
+         * ROOM_WINDOW_MILLIS, which is bounded in turn by how long a sink will wait for its plan.
+         * The lead is after every handset already holds the plan, so it costs nothing but time.
+         */
+        const val OVERHEAD_PLAN_LEAD_NANOS = 15_000_000_000L
 
         /**
          * How long the room waits between one handset asking and the next, before deciding

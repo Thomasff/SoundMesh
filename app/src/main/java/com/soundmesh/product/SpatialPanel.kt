@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -504,6 +505,20 @@ private fun DrawScope.drawHandset(
 ) {
     val centre = Offset(icon.x * size.width, icon.y * size.height)
     val radius = size.minDimension * 0.06f
+    // A halo in the handset's own colour, because the colour is the handset's name and the name
+    // has to be readable from where the listener is sitting rather than from where the phone is.
+    // A six percent disc is a few millimetres across a room; the same hue spread over three times
+    // that is what the eye picks out, and it costs one draw call per icon.
+    val halo = radius * 2.4f
+    drawCircle(
+        Brush.radialGradient(
+            colors = listOf(colour.copy(alpha = 0.45f), colour.copy(alpha = 0f)),
+            center = centre,
+            radius = halo
+        ),
+        radius = halo,
+        center = centre
+    )
     // Hollow rather than a different colour or a missing icon. Its colour is its name, so it has
     // to stay - and an icon that vanished would say the handset left the room, which is a
     // different thing from one that is here and silent, and points at a different phone to pick

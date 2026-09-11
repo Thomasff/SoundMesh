@@ -189,4 +189,61 @@ class SpatialRoomTest {
     fun aHandsetStillHereKeepsThePartItWasGiven() {
         assertEquals(setOf(a), SpatialRoom.reconciledOtherHalf(setOf(a), listOf(a, b, c)))
     }
+
+    /**
+     * Handsets that arrive one at a time used to be drawn on top of each other.
+     *
+     * Two join and the default arrangement spreads them to -60 and +60 degrees. A third joins:
+     * the arrangement is now -60, 0, +60, the first two keep where they are, and the newcomer is
+     * handed slot three - which is +60, exactly where the second one is standing. The drawing then
+     * shows two handsets while the room has three, and the only way to find out is to drag the top
+     * one off the one underneath it. Reported from a living room on 09-11.
+     */
+    @Test
+    fun handsetsArrivingOneAtATimeAreNotDrawnOnTopOfEachOther() {
+        val two = SpatialRoom.reconciled(emptyList(), listOf(a, b))
+
+        val three = SpatialRoom.reconciled(two, listOf(a, b, c))
+
+        assertEquals(listOf(a, b, c), three.map { it.peerId })
+        for (one in three) {
+            for (other in three) {
+                if (one.peerId == other.peerId) continue
+                val apart = hypot((one.x - other.x).toDouble(), (one.y - other.y).toDouble())
+                // A fingertip apart at least, which is the distance at which they are two icons
+                // rather than one: below it a finger reaching for either could land on either.
+                assertTrue("${one.peerId} and ${other.peerId} are $apart apart", apart > GRAB_RADIUS)
+            }
+        }
+    }
+
+    /**
+     * A handset that went away and came back goes back where it was put.
+     *
+     * The drawing is rebuilt from the roster, and the roster of a session that has just started is
+     * the host alone - the sinks reconnect over the next few seconds. Without a memory of where
+     * everybody was, every restart hands each returning handset a default position, which is the
+     * listener's arrangement thrown away by a slower route than rebuilding it and just as
+     * complete. Reported as "播放完之后重新点播放就会重置位置" on 09-11.
+     */
+    @Test
+    fun aHandsetThatComesBackGoesWhereItWasPut() {
+        val dragged = RoomIcon(b, 0.15f, 0.80f)
+        val hostAlone = SpatialRoom.reconciled(listOf(RoomIcon(a, 0.5f, 0.2f)), listOf(a))
+
+        val back = SpatialRoom.reconciled(hostAlone, listOf(a, b), remembered = mapOf(b to dragged))
+
+        assertEquals(dragged, back.first { it.peerId == b })
+    }
+
+    /** What is on the drawing wins over what was remembered: the finger is the newer opinion. */
+    @Test
+    fun whatIsOnTheDrawingBeatsWhatWasRemembered() {
+        val now = RoomIcon(a, 0.3f, 0.3f)
+        val then = RoomIcon(a, 0.9f, 0.9f)
+
+        val room = SpatialRoom.reconciled(listOf(now), listOf(a), remembered = mapOf(a to then))
+
+        assertEquals(now, room.single())
+    }
 }

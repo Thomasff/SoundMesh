@@ -71,9 +71,9 @@
     <string name="pair_calibrate_running">正在测。两台都别碰，保持安静，大约一分钟。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
     <string name="pair_calibrate_room_title">几台一起量距离</string>
-    <string name="pair_calibrate_room_intro">一次把房间里每两台之间的距离都量出来，不用一对一对地来。房间里每一台都要按一次下面这个按钮，主机等所有人都按过才开始。手机放好位置，开始之后谁都别碰。</string>
+    <string name="pair_calibrate_room_intro">一次把房间里每两台之间的距离都量出来，不用一对一对地来。\n\n顺序：先在主机上按，再拿着主机走一圈，在其他每台上按一次。房间里每一台都要按到，少一台就跑不起来。最后一台按完约 10 秒开始响，手机都放好，响的时候谁都别碰。</string>
     <string name="pair_calibrate_room_start">几台一起量</string>
-    <string name="pair_calibrate_overhead_hint">想让声音同时到你耳朵，还得知道你坐在哪。举着这台手机放到头顶正上方，别动，量一轮；量完把它放回原位，再按上面那个「几台一起量」量一轮。至少要三台：举着的那台量不到它自己到你的距离，所以两台只剩一条边，定不出位置；三台还差一个左右镜像，由图上画的那一侧来定。</string>
+    <string name="pair_calibrate_overhead_hint">想让声音同时到你耳朵，还得知道你坐在哪。至少要三台：举着的那台量不到它自己到你的距离，所以两台只剩一条边，定不出位置。\n\n顺序：① 先在这台（主机）上按下面这个按钮；② 拿着这台走一圈，在其他每台上按一次「几台一起量」；③ 回到座位坐下，把这台举到头顶正上方。最后一台按完之后有大约 20 秒，然后才开始响——响的时候别动。\n\n④ 响完把这台放回它该在的位置，三台各按一次「几台一起量」，再量一轮。</string>
     <string name="pair_calibrate_overhead_start">举过头顶，量我坐在哪</string>
     <string name="pair_calibrate_room_waiting">在等房间里的手机连过来。每一台都按一次开始，都按完了这台会自己开始。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
@@ -202,13 +202,13 @@
     <string name="room_mode_split">拆声道</string>
     <string name="room_mode_rotate_hint">声音绕着你转一圈，%1$d 秒一圈。</string>
     <string name="room_mode_pan_hint">拖滑杆，声音在你左右之间移动。</string>
-    <string name="room_mode_split_hint">按摆位分左右声道：偏左的手机多出左声道，偏右的多出右声道。</string>
+    <string name="room_mode_split_hint">按摆位分左右声道：偏左的手机多出左声道，偏右的多出右声道。想让左右两台手机分别放游戏或电影的左右声道，就用这个。另外两种模式是把声音当成一个会动的点，左右信息不保留。</string>
     <string name="room_pan_left">左</string>
     <string name="room_pan_right">右</string>
     <string name="room_split_content">分开播：一部分手机放两声道共有的声音，另一部分放它们不同的声音</string>
     <string name="room_split_content_off">关着。每台手机都放完整的混音。往右拉才开始分。</string>
     <string name="room_split_content_limits">按声音摆在哪儿分，不是按乐器分——主唱一般在中间，底鼓和贝斯通常也在中间，会跟着一起走。单声道的歌分不出「两边」，分到那边的手机会没声音。</string>
-    <string name="room_axis_middle_sides">按位置分</string>
+    <string name="room_axis_middle_sides">按中间/两边分</string>
     <string name="room_axis_low_high">按高低音分</string>
     <string name="room_part_low">低音</string>
     <string name="room_part_high">高音</string>

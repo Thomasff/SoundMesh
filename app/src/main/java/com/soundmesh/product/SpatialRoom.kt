@@ -71,13 +71,22 @@ object SpatialRoom {
      *
      * A handset that is still here keeps exactly where it was put, which is the whole point: the
      * roster is re-read several times a second, and a drawing rebuilt from scratch each time would
-     * throw away every drag the moment anything else changed. A handset that left is dropped, and
-     * a new one lands where the default arrangement would have put it.
+     * throw away every drag the moment anything else changed. A handset that left is dropped from
+     * the drawing, and a handset nobody has placed lands where [emptiestSlot] puts it.
+     *
+     * [remembered] is where handsets were last drawn, including ones not in [peerIds] just now.
+     * A sink reconnects seconds after its host, so without it every restart hands a returning
+     * handset a default position - which is the listener's drag thrown away by a slower route
+     * than rebuilding the drawing, and just as complete.
      *
      * Order follows the roster rather than the old drawing, so the phone in the listener's hand
      * stays first however many others come and go.
      */
-    fun reconciled(icons: List<RoomIcon>, peerIds: List<String>): List<RoomIcon> {
+    fun reconciled(
+        icons: List<RoomIcon>,
+        peerIds: List<String>,
+        remembered: Map<String, RoomIcon> = emptyMap()
+    ): List<RoomIcon> {
         // One icon per name, whatever the roster says. The roster is built from connections rather
         // than from handsets, so a handset that dropped and came back can be in it twice - and a
         // room where one handset stands in two places is one SpatialLayout refuses to draw, by
@@ -85,9 +94,38 @@ object SpatialRoom {
         // The roster is fixed where it is built; this is the drawing declining to be where a bad
         // one becomes a crash.
         val names = peerIds.distinct()
-        val placed = icons.associateBy { it.peerId }
-        val fresh = defaultIcons(names).associateBy { it.peerId }
-        return names.mapNotNull { placed[it] ?: fresh[it] }
+        val here = icons.associateBy { it.peerId }
+        val slots = defaultIcons(names)
+        val placed = LinkedHashMap<String, RoomIcon>()
+        // Everybody whose position is already known goes down first, so that the arrivals below
+        // are choosing against the whole room and not against half of it.
+        for (name in names) (here[name] ?: remembered[name])?.let { placed[name] = it }
+        for (name in names) {
+            if (name in placed) continue
+            placed[name] = emptiestSlot(slots, placed.values).let { RoomIcon(name, it.x, it.y) }
+        }
+        return names.mapNotNull { placed[it] }
+    }
+
+    /**
+     * Where to put a handset nobody has placed yet: the default position furthest from everybody
+     * already on the drawing.
+     *
+     * It used to be "the slot the default arrangement gives this one", which put two icons on the
+     * same spot whenever handsets arrived one at a time. Two phones join: the arrangement spreads
+     * them to -60 and +60 degrees. A third joins: the arrangement is now -60, 0, +60, the first
+     * two keep where they were, and the newcomer takes slot three - which is +60, exactly where
+     * the second one is standing. The drawing then shows two handsets and the room has three,
+     * and the only way to find that out is to drag the top one off the one underneath it.
+     *
+     * Furthest-from-everybody rather than a search for an unused slot, because with more handsets
+     * than the arrangement has room for there is no unused slot and there is still a best answer.
+     */
+    private fun emptiestSlot(slots: List<RoomIcon>, taken: Collection<RoomIcon>): RoomIcon {
+        if (taken.isEmpty()) return slots.first()
+        return slots.maxByOrNull { slot ->
+            taken.minOf { hypot((slot.x - it.x).toDouble(), (slot.y - it.y).toDouble()) }
+        } ?: slots.first()
     }
 
     /**

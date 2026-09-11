@@ -331,4 +331,26 @@ class PeerCalibrateRoomTest {
         val offer = screen.indexOf("onClick = actions.measureOverhead")
         assertTrue("the overhead button is offered outside the host gate", gate in 0 until offer)
     }
+
+    /**
+     * The overhead round waits for the listener to sit down before it makes a sound.
+     *
+     * Every other round measures phones that are already where they will be, so two seconds of
+     * lead is generous. This one measures a person, who has to press the last button, raise the
+     * handset over their head, walk back and stop moving - and a listener still moving when the
+     * first chirp goes is measured somewhere they are not going to be, which is a wrong answer
+     * that looks exactly like a right one.
+     */
+    @Test
+    fun theOverheadRoundGivesTheListenerTimeToSitDown() {
+        assertTrue(source.contains("if (overhead()) it.copy(planLeadNanos = OVERHEAD_PLAN_LEAD_NANOS)"))
+        // Longer than the settle that precedes it, or the extra time would be lost in the noise
+        // of a round that was already waiting. Read out of the source because the companion that
+        // holds both is private, which is right: nothing outside that class needs either number.
+        val lead = Regex("OVERHEAD_PLAN_LEAD_NANOS = ([0-9_]+)L").find(source)!!.groupValues[1]
+        val settle = Regex("ROOM_SETTLE_MILLIS = ([0-9_]+)").find(source)!!.groupValues[1]
+        assertTrue(lead.replace("_", "").toLong() / 1_000_000L > settle.replace("_", "").toLong())
+        // And the command line still wins, so a sweep can shorten it.
+        assertTrue(source.contains("planLeadNanos = millisExtra(\"plan_lead_millis\", shipped.planLeadNanos)"))
+    }
 }
