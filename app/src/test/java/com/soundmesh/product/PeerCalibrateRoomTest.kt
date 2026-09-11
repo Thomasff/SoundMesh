@@ -294,4 +294,41 @@ class PeerCalibrateRoomTest {
         assertTrue(json, json.contains("\"a\":\"$two\",\"b\":\"$three\""))
         assertTrue(json, json.contains("\"repeats\":1"))
     }
+
+    // ---- the way in, which until 09-11 was a command line and nothing else ---------------------
+
+    private val screen =
+        File("src/main/java/com/soundmesh/product/PeerCalibrateScreen.kt").readText(Charsets.UTF_8)
+
+    /**
+     * Both buttons hand this screen a fresh intent rather than a fresh argument.
+     *
+     * Which arm a run is has exactly one answer in this class - the intent it was started with -
+     * and five readers between naming the case and filing the answer. A button that set a field
+     * instead would have made a second answer that can disagree with the first, which is the
+     * fault that has already cost this project a session: a flag passed to the right name on the
+     * wrong handset.
+     */
+    @Test
+    fun theRoomButtonsStartARunRatherThanSettingAFlagBesideOne() {
+        assertTrue(source.contains("measureRoom = { restartAsRoom(overhead = false) }"))
+        assertTrue(source.contains("measureOverhead = { restartAsRoom(overhead = true) }"))
+        assertTrue(source.contains("    .putExtra(\"room\", true)"))
+        assertTrue(source.contains("    .putExtra(\"overhead\", overhead)"))
+        // Without this the intent is delivered, onNewIntent replaces it, and nothing begins:
+        // the screen sits on the last run's answer looking exactly like a run that started.
+        assertTrue(source.contains("    .putExtra(\"auto\", true)"))
+    }
+
+    /**
+     * Everybody in the room presses the plain room button, and only the host is offered the
+     * overhead one - it is the only handset that is held and the only one that files anything.
+     */
+    @Test
+    fun onlyTheHostIsOfferedTheRoundThatMeasuresTheListener() {
+        assertTrue(screen.contains("onClick = actions.measureRoom"))
+        val gate = screen.indexOf("if (state.role == CalibrationRole.HOST) {")
+        val offer = screen.indexOf("onClick = actions.measureOverhead")
+        assertTrue("the overhead button is offered outside the host gate", gate in 0 until offer)
+    }
 }

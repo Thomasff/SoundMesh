@@ -886,13 +886,35 @@ class PeerCalibrateActivity : ComponentActivity() {
                             calibrate = { begin(verifying = false, serveMany = true, allowSlowLink = false) },
                             verify = { begin(verifying = true, serveMany = true, allowSlowLink = false) },
                             forget = { forget() },
-                            stop = { stopServing() }
+                            stop = { stopServing() },
+                            measureRoom = { restartAsRoom(overhead = false) },
+                            measureOverhead = { restartAsRoom(overhead = true) }
                         )
                     )
                 }
             }
         }
         if (intent.getBooleanExtra("auto", false)) beginFrom(intent)
+    }
+
+    /**
+     * Starts a room round by handing this screen a fresh intent instead of a fresh argument.
+     *
+     * The intent is this class's record of which arm is running: [roomAsked] and [overhead] are
+     * read off it at five places between naming the case and filing the answer, and onNewIntent
+     * already replaces it. Threading two more flags through begin() would have put a second
+     * answer to "which arm is this" beside the one that exists, which is the fault [which arm
+     * ran] keeps costing this project a session at a time.
+     */
+    private fun restartAsRoom(overhead: Boolean) {
+        if (running) return
+        startActivity(
+            Intent(this, PeerCalibrateActivity::class.java)
+                .putExtra("role", role()?.name)
+                .putExtra("room", true)
+                .putExtra("overhead", overhead)
+                .putExtra("auto", true)
+        )
     }
 
     /**
@@ -988,14 +1010,14 @@ class PeerCalibrateActivity : ComponentActivity() {
     /**
      * `--ez room true` measures the whole room in one window instead of one pair at a time.
      *
-     * Command line only, on the same terms as [distanceOnly] and for the same reason: what
-     * reads a room's answer does not exist yet. The field is measured and filed, and the
-     * screen that draws a room by it is the next thing - a button offered before then would
-     * leave three people standing still for numbers nothing displays.
+     * On screen since 09-11, under "几台一起量": the room panel draws the lengths and moves the
+     * icons onto them, so the answer this produces is now something a person can look at.
+     * [restartAsRoom] is how the button reaches this, and the command line still does too.
      *
      * Needed on every handset in the room: the host gathers under it and each sink asks under
      * it. A handset left without it runs the pair arm, and the two flows refuse each other's
-     * cases rather than producing a plausible schedule for a run nobody is running.
+     * cases rather than producing a plausible schedule for a run nobody is running. That is why
+     * the button is on both roles' screens and the wording tells everybody to press it.
      */
     private fun roomAsked(): Boolean = intent.getBooleanExtra("room", false)
 
@@ -1009,7 +1031,8 @@ class PeerCalibrateActivity : ComponentActivity() {
      * separations, unaffected by where this handset happens to be. Filed together they would be
      * the same two names meaning two different things, and the second round would erase the first.
      *
-     * Only the handset being held needs it: it is the only one that writes anything.
+     * Only the handset being held needs it: it is the only one that writes anything, and only
+     * the host can be it - so the button that sets this is offered to the host alone.
      */
     private fun overhead(): Boolean = intent.getBooleanExtra("overhead", false)
 

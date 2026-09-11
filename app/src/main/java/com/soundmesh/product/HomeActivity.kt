@@ -26,6 +26,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.soundmesh.core.CalibrationRole
 import com.soundmesh.probe.R
 import com.soundmesh.session.CAPTURING_HOST_STREAM
 import com.soundmesh.probe.sync.FolderSongs
@@ -187,6 +188,16 @@ class HomeActivity : ComponentActivity() {
         },
         room = RoomActions(
             moveIcon = { moved -> updateRoom { withIconMoved(it, moved) } },
+            // The round itself is on the calibration screen with every other round; this is a
+            // way in from where its answer is drawn, because that is where somebody notices it
+            // is missing. The role travels for the reason it does on pairCalibrate: only a host
+            // can be the handset that is held.
+            measureListener = {
+                startActivity(
+                    Intent(this, PeerCalibrateActivity::class.java)
+                        .putExtra("role", CalibrationRole.HOST.name)
+                )
+            },
             // Nothing happens if it refuses; the offer is only on screen while it would not.
             fitToMeasured = {
                 updateRoom { room ->

@@ -61,7 +61,11 @@ class PeerCalibrateActions(
     val calibrate: () -> Unit,
     val verify: () -> Unit,
     val forget: () -> Unit,
-    val stop: () -> Unit
+    val stop: () -> Unit,
+    /** Every pair in the room out of one window, instead of one pair at a time. */
+    val measureRoom: () -> Unit,
+    /** The same round with this handset held above somebody's head, which measures them. */
+    val measureOverhead: () -> Unit
 )
 
 @Composable
@@ -166,6 +170,37 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                         stringResource(R.string.pair_calibrate_forget_hint),
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+            }
+        }
+        if (state.role != null) {
+            Section(R.string.pair_calibrate_room_title) {
+                Text(
+                    stringResource(R.string.pair_calibrate_room_intro),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedButton(
+                    onClick = actions.measureRoom,
+                    enabled = !state.running,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.pair_calibrate_room_start))
+                }
+                // Only the host, because only the host is held: it is the handset that gathers
+                // the room and the only one that files anything, so a sink pressing this would
+                // be holding a phone over their head for a number nothing writes down.
+                if (state.role == CalibrationRole.HOST) {
+                    Text(
+                        stringResource(R.string.pair_calibrate_overhead_hint),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    OutlinedButton(
+                        onClick = actions.measureOverhead,
+                        enabled = !state.running,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.pair_calibrate_overhead_start))
+                    }
                 }
             }
         }

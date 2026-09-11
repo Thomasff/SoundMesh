@@ -77,7 +77,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
                 color = MaterialTheme.colorScheme.error
             )
         }
-        ListenerDistances(state)
+        ListenerDistances(state, actions)
         ArrivalDelays(state)
         MeasuredDistances(state)
         FitOffer(state, actions)
@@ -170,6 +170,8 @@ data class RoomState(
 class RoomActions(
     val moveIcon: (RoomIcon) -> Unit,
     val fitToMeasured: () -> Unit,
+    /** Opens the screen that runs the overhead round, which is the only thing that can. */
+    val measureListener: () -> Unit,
     val pickMode: (SpatialMode) -> Unit,
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
@@ -212,6 +214,23 @@ internal fun fitOffer(state: RoomState): FittedRoom? {
  * one line on the screen that says the delay is switched on. Everything else about the feature
  * is inaudible by design: it exists to make two handsets sound like one.
  */
+/**
+ * Whether an overhead round could place the listener in this room at all.
+ *
+ * Three handsets, and the reason is one that had to be computed rather than guessed. The
+ * handset being held over somebody's head cannot measure its own distance to that head - it is
+ * the head - so the listener comes out of the round with N-1 distances, not N. A point in a
+ * plane needs three of them to be pinned: two handsets leave one, which is a circle and places
+ * nothing. Three leave two, which is a fold - the listener's own reflection across the line
+ * through the two measured handsets fits both distances exactly - and which side they are on
+ * comes from the drawing, the same division of labour as the room's own mirror. Four are unique.
+ *
+ * So this is the line between "cannot" and "can, with the drawing settling one thing", and the
+ * button is offered on the second. Under it there is nothing to offer and a minute of somebody
+ * standing still holding a phone to lose.
+ */
+internal fun overheadRoundCanPlaceTheListener(icons: List<RoomIcon>): Boolean = icons.size >= 3
+
 internal fun delayLines(icons: List<RoomIcon>, metresPerUnit: Double): List<Pair<String, Double>> {
     if (metresPerUnit <= 0.0) return emptyList()
     // Caught rather than thrown, for the reason HomeActivity.publish catches: this runs off a
@@ -300,9 +319,27 @@ private fun ArrivalDelays(state: RoomState) {
 }
 
 @Composable
-private fun ListenerDistances(state: RoomState) {
+private fun ListenerDistances(state: RoomState, actions: RoomActions) {
     val shown = listenerLines(state.icons, state.listenerMetres)
-    if (shown.isEmpty()) return
+    if (shown.isEmpty()) {
+        // Said once and only while it is true, because it is the one thing on this screen a
+        // person cannot find out by looking: the drawing shows where the phones are and has
+        // never shown where they are sitting, so an unmeasured listener looks exactly like a
+        // measured one that happens to be in the middle.
+        Text(
+            stringResource(
+                if (overheadRoundCanPlaceTheListener(state.icons)) R.string.room_listener_unmeasured
+                else R.string.room_listener_needs_three
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+        if (overheadRoundCanPlaceTheListener(state.icons)) {
+            OutlinedButton(onClick = actions.measureListener) {
+                Text(stringResource(R.string.room_measure_listener))
+            }
+        }
+        return
+    }
     Text(
         stringResource(
             R.string.room_listener_measured,

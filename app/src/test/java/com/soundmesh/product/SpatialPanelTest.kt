@@ -207,4 +207,19 @@ class SpatialPanelTest {
     fun `a room with no measured scale reads out no delays`() {
         assertEquals(emptyList<Pair<String, Double>>(), delayLines(three, metresPerUnit = 0.0))
     }
+
+    /**
+     * Two handsets cannot do the overhead round, and the button is not offered for one.
+     *
+     * The handset held over somebody's head cannot measure its own distance to that head - it is
+     * the head - so the listener comes out of the round with N-1 distances. Two handsets leave
+     * one, which is a circle around a single phone and places nobody; three leave two, which
+     * places them up to a mirror the drawing settles. What is under the line is not a worse
+     * answer, it is no answer, and a minute of somebody standing still holding a phone.
+     */
+    @Test
+    fun `two handsets cannot place a listener and three can`() {
+        assertEquals(false, overheadRoundCanPlaceTheListener(three.take(2)))
+        assertEquals(true, overheadRoundCanPlaceTheListener(three))
+    }
 }

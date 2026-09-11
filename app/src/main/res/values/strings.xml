@@ -70,6 +70,11 @@
     <string name="pair_calibrate_clock">正在和另一台对时钟，大约二十秒。这一步不发声。</string>
     <string name="pair_calibrate_running">正在测。两台都别碰，保持安静，大约一分钟。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
+    <string name="pair_calibrate_room_title">几台一起量距离</string>
+    <string name="pair_calibrate_room_intro">一次把房间里每两台之间的距离都量出来，不用一对一对地来。房间里每一台都要按一次下面这个按钮，主机等所有人都按过才开始。手机放好位置，开始之后谁都别碰。</string>
+    <string name="pair_calibrate_room_start">几台一起量</string>
+    <string name="pair_calibrate_overhead_hint">想让声音同时到你耳朵，还得知道你坐在哪。举着这台手机放到头顶正上方，别动，量一轮；量完把它放回原位，再按上面那个「几台一起量」量一轮。至少要三台：举着的那台量不到它自己到你的距离，所以两台只剩一条边，定不出位置；三台还差一个左右镜像，由图上画的那一侧来定。</string>
+    <string name="pair_calibrate_overhead_start">举过头顶，量我坐在哪</string>
     <string name="pair_calibrate_room_waiting">在等房间里的手机连过来。每一台都按一次开始，都按完了这台会自己开始。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
     <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。</string>
@@ -216,6 +221,9 @@
     <string name="room_fit_done">图标已按测量摆正。拖动任意一台可以再来一次。</string>
     <string name="room_measured">量到的间距（米）：%1$s</string>
     <string name="room_arrival_delay">为了一起到达，各台延后（毫秒）：%1$s</string>
+    <string name="room_listener_unmeasured">还没量过你坐在哪，图上按你坐在正中算。量过之后，音量和先后才是从你那儿算的。</string>
+    <string name="room_listener_needs_three">要量你坐在哪，房间里至少得三台：举着的那台量不到它自己到你的距离。</string>
+    <string name="room_measure_listener">量一下我坐在哪（举过头顶）</string>
     <string name="room_listener_measured">量到你坐的位置，到各台（米）：%1$s</string>
     <string name="room_disagrees">测距说 %1$s 比 %2$s 远，你画的正相反——这两个图标是不是拖反了？</string>
     <string name="failure_port_in_use">起不来：对时和播放用的是同一个端口，多半是对时那边还开着。到「对时」那页按停止，等几秒再试一次。</string>
