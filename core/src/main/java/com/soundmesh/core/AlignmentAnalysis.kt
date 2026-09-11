@@ -112,9 +112,6 @@ object AlignmentAnalysis {
         sampleRate: Int = ChirpGenerator.SAMPLE_RATE,
         edgeShares: List<Double> = emptyList()
     ): AlignmentReading {
-        require(separationMetres.isFinite() && separationMetres >= 0) {
-            "separationMetres is required: the distance between the two handsets, in metres"
-        }
         // Once the radius reaches the stagger each chirp sits inside the other's window, and the
         // two can be told apart only by which correlates louder - silently swapping first and
         // second, and negating the reported error.
@@ -139,6 +136,109 @@ object AlignmentAnalysis {
         val partner = if (partnerIsAfter) after else before
         val first = if (partnerIsAfter) here else partner
         val second = if (partnerIsAfter) partner else here
+        return readingOf(first, second, staggerFrames, separationMetres, sampleRate, edgeShares)
+    }
+
+    /**
+     * Where every handset's chirp landed in one recording, indexed by the slot it was given.
+     *
+     * [read] answers one pair per round, and two rounds are two snapshots with the clocks drifting
+     * between them. One window holding a chirp from each handset answers every pair at once off the
+     * same instant, and reaches the pairs between two sinks that a host-centred round never does.
+     *
+     * The chirps are spaced rather than overlaid because two chirps on top of each other cannot be
+     * told apart until each handset has a signal of its own, so the window grows with the room.
+     *
+     * [ownSlot] is which chirp is this handset's, and it is told rather than worked out because it
+     * is the anchor. This microphone is centimetres from its own speaker and metres from every
+     * other, so the loudest arrival in the window is its own chirp by a wide margin, and every
+     * other slot is then a known distance from it. Deciding instead that the loudest must be the
+     * first chirp would put every handset but one a whole slot out, silently and plausibly.
+     *
+     * A slot nobody could hear comes back as an arrival that will not pass the trust gate rather
+     * than as a gap, which is what stops one unheard handset from costing the pairs it is not in.
+     */
+    fun readSlots(
+        recorded: ShortArray,
+        reference: ShortArray,
+        ownSlot: Int,
+        slotCount: Int,
+        slotFrames: Int,
+        searchRadiusFrames: Int,
+        searchFrom: Int = 0,
+        searchTo: Int = Int.MAX_VALUE,
+        edgeShares: List<Double> = emptyList()
+    ): List<ChirpArrival?> {
+        require(slotCount >= 2) { "a room of one has nothing to align against" }
+        require(ownSlot in 0 until slotCount) { "ownSlot is not one of the slots: $ownSlot" }
+        // The bound [read] states, one dimension wider: once the radius reaches the spacing, each
+        // handset's chirp sits inside its neighbour's window and the two can be told apart only by
+        // which correlates louder - which is a property of the room, not of the schedule.
+        require(searchRadiusFrames < slotFrames) {
+            "searchRadiusFrames must be smaller than slotFrames, or two handsets can be mistaken for each other"
+        }
+        val anchor = ChirpCorrelator.findArrival(recorded, reference, searchFrom, searchTo)
+            ?: return List(slotCount) { null }
+        val window = { centre: Int ->
+            ChirpCorrelator.findArrival(
+                recorded, reference, centre - searchRadiusFrames, centre + searchRadiusFrames, edgeShares
+            )
+        }
+        return (0 until slotCount).map { slot ->
+            // The anchor's own window may hold a neighbour too, so its first arrival can belong to
+            // one - read it again in a window of its own. Only where edges exist to be confused.
+            if (slot == ownSlot && edgeShares.isEmpty()) anchor
+            else window(anchor.index + (slot - ownSlot) * slotFrames)
+        }
+    }
+
+    /**
+     * One pair's reading, taken out of a window that held the whole room.
+     *
+     * The same reading [read] returns, by the same code rather than merely the same formula. Every
+     * alignment number this project has produced came from that path; a second implementation
+     * answering a slightly different question would end the comparability of all of them while
+     * every test still passed.
+     */
+    fun betweenSlots(
+        slots: List<ChirpArrival?>,
+        earlier: Int,
+        later: Int,
+        slotFrames: Int,
+        separationMetres: Double,
+        sampleRate: Int = ChirpGenerator.SAMPLE_RATE,
+        edgeShares: List<Double> = emptyList()
+    ): AlignmentReading {
+        require(earlier < later) { "the earlier slot is the one that chirps first" }
+        return readingOf(
+            slots.getOrNull(earlier),
+            slots.getOrNull(later),
+            (later - earlier) * slotFrames,
+            separationMetres,
+            sampleRate,
+            edgeShares
+        )
+    }
+
+    /**
+     * Two arrivals in time order and the gap expected between them, turned into a reading.
+     *
+     * Hoisted out of [read] rather than copied into [betweenSlots]: its two callers differ only in
+     * how they decide which arrival is which, and everything after that decision is the
+     * measurement itself. Written twice it would drift, and the drift would be invisible - two
+     * paths producing numbers that are close rather than equal is what nobody checks.
+     */
+    private fun readingOf(
+        first: ChirpArrival?,
+        second: ChirpArrival?,
+        staggerFrames: Int,
+        separationMetres: Double,
+        sampleRate: Int,
+        edgeShares: List<Double>
+    ): AlignmentReading {
+        require(separationMetres.isFinite() && separationMetres >= 0) {
+            "separationMetres is required: the distance between the two handsets, in metres"
+        }
         val trustworthy = first != null && second != null &&
             first.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO &&
             second.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO &&
