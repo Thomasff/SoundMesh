@@ -29,6 +29,11 @@ import kotlin.math.abs
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -160,11 +165,51 @@ class HomeActions(
  */
 internal fun offersPairCalibration(state: HomeState): Boolean = state.role != Role.NONE
 
+/**
+ * The four edges of the screen, lit in this handset's own colour.
+ *
+ * The colour is the handset's name, and a name is only useful where the thing it names is. A chip
+ * at the top of a screen names the phone to whoever is holding it; a room of phones lying face up
+ * on tables and shelves is looked at from a chair several metres away, and from there a 28dp
+ * circle is nothing. The whole edge of a screen is the largest thing a phone can say from that
+ * distance without covering up what it is saying it about.
+ *
+ * Nothing is drawn for a handset with no colour yet, which is every handset before its host has a
+ * room to hand colours out in. A default colour would be worse than none: two handsets sharing one
+ * is exactly the confusion the colours exist to end.
+ */
+private fun Modifier.badgeEdge(colour: Color?): Modifier {
+    if (colour == null) return this
+    return drawWithContent {
+        drawContent()
+        // Over the content rather than under it: the screen scrolls, and an edge drawn beneath
+        // whatever happens to be at the top of the list is an edge that comes and goes.
+        val band = size.minDimension * 0.045f
+        val inward = listOf(colour.copy(alpha = 0.85f), Color.Transparent)
+        val outward = inward.reversed()
+        drawRect(Brush.verticalGradient(inward, 0f, band), size = Size(size.width, band))
+        drawRect(
+            Brush.verticalGradient(outward, size.height - band, size.height),
+            topLeft = Offset(0f, size.height - band),
+            size = Size(size.width, band)
+        )
+        drawRect(Brush.horizontalGradient(inward, 0f, band), size = Size(band, size.height))
+        drawRect(
+            Brush.horizontalGradient(outward, size.width - band, size.width),
+            topLeft = Offset(size.width - band, 0f),
+            size = Size(band, size.height)
+        )
+    }
+}
+
 @Composable
 fun HomeScreen(state: HomeState, actions: HomeActions) {
+    val edge = state.selfPlace?.let { BadgePalette.colourOf(it, MaterialTheme.colorScheme.primary) }
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // Ahead of the padding below, so the edge is the screen's edge and not the text's.
+            .badgeEdge(edge)
             // Android 15 draws every app edge to edge, so without this the title sits under the
             // status bar clock. Visible on the Magic6 and not on the X10, which is Android 10.
             .safeDrawingPadding()
