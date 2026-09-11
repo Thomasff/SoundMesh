@@ -98,7 +98,29 @@ data class SpatialField(
      * Which handsets carry the far half of whichever split [splitAxis] names - the sides, or the
      * high. Every handset the drawing names and this does not carries the near half.
      */
-    val otherHalfIds: Set<String> = emptySet()
+    val otherHalfIds: Set<String> = emptySet(),
+    /**
+     * The host instant from which this rule applies, or zero for as soon as it is seen.
+     *
+     * [gainAt] has never needed one: it is a function of the instant, so two handsets evaluating
+     * it on the same chunk agree whatever moment they were told the rule. [foldFor] and
+     * [spectrumFor] are not functions of the instant - they change when a message lands, and two
+     * handsets are told a few milliseconds apart. While they disagree the room is playing two
+     * halves that were taken out of the mix under different rules, so they no longer add back up
+     * to it, which is the property the whole split rests on.
+     *
+     * How much that costs was measured 09-11 rather than assumed, because the fix is not free in
+     * control lag. Over the small steps a finger makes while dragging a slider it is -39 dB under
+     * the music, which is where a listener could not hear a chunk edge on 09-09. Over one large
+     * change - the first rule of a session, a knob thrown across its range, a handset catching up
+     * after a stall - it is -10 to -14 dB, which is not a subtlety. So this is here for the large
+     * ones.
+     *
+     * Zero, or an instant already past, means apply at once. That is what a handset told too late
+     * does, and it is exactly what every rule did before this field existed - so the failure this
+     * degrades to is the behaviour it replaced, never worse than it.
+     */
+    val effectiveAtHostNanos: Long = 0L
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }

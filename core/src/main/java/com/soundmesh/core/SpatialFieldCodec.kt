@@ -20,15 +20,17 @@ object SpatialFieldCodec {
     const val MAGIC = "soundmesh-spatial"
 
     /**
-     * Three since the split gained a second axis to run along.
+     * Four since a rule carries the instant it starts applying at.
      *
      * Both ends refuse anything else rather than reading what they recognise, which is the whole
      * point of the number: a build that defaulted a missing part to the middle would render a room
-     * the sender did not draw while believing it agreed with them.
+     * the sender did not draw while believing it agreed with them. The instant is the same case in
+     * its own shape - a receiver that dropped it would pick its own moment to swap halves on, and
+     * picking your own moment is the fault it exists to remove.
      */
-    const val VERSION = 3
+    const val VERSION = 4
 
-    private const val HEADER_FIELDS = 10
+    private const val HEADER_FIELDS = 11
     private const val POSITION_FIELDS = 4
 
     // Written out rather than taken from an enum because there is no enum: which part a handset
@@ -52,7 +54,7 @@ object SpatialFieldCodec {
         lines.add(
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
                 "${field.epochHostNanos} ${field.separation} ${field.splitAxis.name} " +
-                "${field.crossoverHz} ${field.layout.positions.size}"
+                "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
             require(position.peerId.isNotEmpty() && position.peerId.none { it.isWhitespace() }) {
@@ -90,7 +92,9 @@ object SpatialFieldCodec {
         val splitAxis = SplitAxis.valueOf(header[7])
         val crossoverHz = header[8].toDoubleOrNull()
             ?: throw IllegalArgumentException("unreadable crossover: ${header[8]}")
-        val count = header[9].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[9]}")
+        val effectiveAtHostNanos = header[9].toLongOrNull()
+            ?: throw IllegalArgumentException("unreadable effective instant: ${header[9]}")
+        val count = header[10].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[10]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -128,7 +132,8 @@ object SpatialFieldCodec {
             separation = separation,
             splitAxis = splitAxis,
             crossoverHz = crossoverHz,
-            otherHalfIds = otherHalfIds
+            otherHalfIds = otherHalfIds,
+            effectiveAtHostNanos = effectiveAtHostNanos
         )
     }
 }

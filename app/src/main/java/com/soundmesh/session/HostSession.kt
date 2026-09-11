@@ -331,16 +331,23 @@ class HostSession(
     }
 
     /**
-     * Makes [field] the rule the whole room plays under, this handset included.
+     * Makes [field] the rule the whole room plays under, this handset included, from a shared
+     * instant a little way off.
      *
-     * No instant is passed and none is needed: the rule is a function of the host instant and the
-     * instants are already in the chunks, so every handset starts obeying it on the same chunk
-     * without anybody being told when. The sinks are told first only because their copy has a
-     * network between it and the speaker.
+     * This used to say no instant was needed, because the rule is a function of the host instant
+     * and the instants are already in the chunks. That was true of the gain law it was written
+     * for and quietly stopped being true when the fold and the spectrum arrived underneath it:
+     * those step when a message lands, and the sinks are told over a network while this handset
+     * is told by a method call. See [com.soundmesh.core.SpatialField.effectiveAtHostNanos].
+     *
+     * A rule that arrives after its own instant is taken at once, so the only thing a lead that
+     * is too short can cost is the behaviour this had before - which is why it is set from what
+     * a person notices rather than from what the link promises.
      */
     fun publishSpatialField(field: SpatialField) {
-        spatialServer?.publish(field)
-        renderer.applySpatialField(field)
+        val stamped = field.copy(effectiveAtHostNanos = System.nanoTime() + SPATIAL_LEAD_NANOS)
+        spatialServer?.publish(stamped)
+        renderer.applySpatialField(stamped)
     }
 
     /**
@@ -585,6 +592,21 @@ class HostSession(
     private companion object {
         /** playAtHostNanos = generation instant + this lead. The harness's own value. */
         const val LEAD_NANOS = 1_500_000_000L
+
+        /**
+         * How far ahead a new spatial rule is stamped to take effect.
+         *
+         * Long enough that every handset has been told before the instant arrives, and short
+         * enough that a slider still feels attached to the sound. It is not [LEAD_NANOS]: chunks
+         * are stamped a second and a half out but shaped at release, a few tens of milliseconds
+         * before they are heard, so this only has to cover one control message and the output
+         * depth under it - single digit milliseconds on a link the clock sync is converging on.
+         *
+         * Two hundred is that with two orders of margin, and well under where a control starts
+         * feeling detached from what it does. Being too short costs nothing that was not already
+         * being paid: a handset told late applies at once, which is what all of them did before.
+         */
+        const val SPATIAL_LEAD_NANOS = 200_000_000L
 
         /** ~3s of audio at 20ms/chunk. */
         const val SCHEDULER_CAPACITY_CHUNKS = 150

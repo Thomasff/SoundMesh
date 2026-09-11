@@ -174,6 +174,45 @@ class SpatialShapedTest {
      * whole-room normalisation scales it to unity, so what comes back is the fold with no placement
      * gain folded into the arithmetic.
      */
+    /**
+     * A rule waits for the instant it was stamped with, so every handset swaps on the same chunk.
+     *
+     * The gain has never needed this - it is a function of the host instant, so two handsets
+     * evaluating it at the same instant agree whenever they happen to have been told. The fold
+     * and the spectrum are not: they step when a message lands, and two handsets are told a few
+     * milliseconds apart. Measured 09-11 on the pair that splits a mix by frequency: one chunk of
+     * disagreement over a single large change - the first rule of a session, a knob thrown across
+     * its range - leaves the two halves summing to 10-14 dB under the music instead of to the
+     * music. Over the small steps a finger makes while dragging it is -39 dB, which is the
+     * territory a listener could not hear a 09-09 chunk edge in.
+     */
+    @Test
+    fun aRuleWaitsForTheInstantItWasStampedWith() {
+        val was = solo(0.0)
+        val next = solo(1.0).copy(effectiveAtHostNanos = 5_000L)
+
+        // Early: the chunk is heard before the instant, so it plays under the rule in force.
+        assertSame(was, ruleInForce(was, next, playAtHostNanos = 4_999L))
+        // And on the instant, and after it.
+        assertSame(next, ruleInForce(was, next, playAtHostNanos = 5_000L))
+        assertSame(next, ruleInForce(was, next, playAtHostNanos = 6_000L))
+    }
+
+    /**
+     * An unstamped rule applies at once, which is what a handset that has fallen behind gets and
+     * what every rule got before this existed. Late is the failure this degrades to, and late is
+     * exactly as good as it was before - never worse.
+     */
+    @Test
+    fun aRuleWithNoInstantOnItAppliesAtOnce() {
+        val next = solo(1.0)
+
+        assertSame(next, ruleInForce(solo(0.0), next, playAtHostNanos = 0L))
+        // Nothing waiting leaves the room where it is, including a room under no rule at all.
+        assertSame(next, ruleInForce(next, null, playAtHostNanos = 0L))
+        assertEquals(null, ruleInForce(null, null, playAtHostNanos = 0L))
+    }
+
     private fun solo(separation: Double) = SpatialField(
         SpatialMode.SPLIT,
         SpatialLayout(listOf(SpatialPosition("solo", 0.0, 1.0))),

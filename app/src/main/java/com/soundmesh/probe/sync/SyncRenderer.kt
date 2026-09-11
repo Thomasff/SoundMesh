@@ -77,6 +77,26 @@ internal fun trackProfileJson(
  * it did before spatial audio existed, while a silent handset is one dropping out of a room the
  * listener is still looking at, with nothing on screen saying why.
  */
+/**
+ * Which rule a chunk heard at [playAtHostNanos] is played under.
+ *
+ * [waiting] is the newest rule this handset has been told about and [inForce] is the one its
+ * last chunk was played under. A rule stamped with an instant is held back until a chunk that
+ * is heard at or after it, so every handset in the room swaps on the same chunk however far
+ * apart they were told - which is the whole of what this buys. See
+ * [com.soundmesh.core.SpatialField.effectiveAtHostNanos] for what the disagreement costs and
+ * why only the large changes are worth this.
+ *
+ * A rule whose instant has already passed is taken at once, so a handset told late lands on the
+ * behaviour every handset had before this existed rather than on something worse.
+ */
+internal fun ruleInForce(
+    inForce: SpatialField?,
+    waiting: SpatialField?,
+    playAtHostNanos: Long
+): SpatialField? =
+    if (waiting != null && playAtHostNanos >= waiting.effectiveAtHostNanos) waiting else inForce
+
 internal fun spatialShaped(
     sequence: Int,
     playAtHostNanos: Long,
@@ -243,7 +263,11 @@ class SyncRenderer(
     // Written from whichever thread the rule arrived on and read by the render loop. A rule is a
     // whole object replaced at once, never edited in place, so a reader sees either the old room
     // or the new one and never a room half way between two drawings.
+    /** The newest rule this handset has been told about, which may not be due yet. */
     @Volatile private var spatialField: SpatialField? = null
+
+    /** The rule the last chunk was played under. Touched only by the render thread. */
+    private var spatialInForce: SpatialField? = null
     @Volatile private var untilHostNanos = Long.MIN_VALUE
     @Volatile private var adjustments = 0
     // Which arm ran. A spatial run and a flat one are the same binary, the same log and the same
@@ -602,7 +626,8 @@ class SyncRenderer(
                         // Read once: it is written from another thread, and a rule that changed
                         // between the shaping and the remembering would leave the next chunk
                         // ramping away from a rule that was never applied.
-                        val rule = spatialField
+                        val rule = ruleInForce(spatialInForce, spatialField, decision.chunk.playAtHostNanos)
+                        spatialInForce = rule
                         val payload = spatialShaped(
                             decision.chunk.sequence,
                             decision.chunk.playAtHostNanos,
@@ -927,14 +952,20 @@ class SyncRenderer(
         ((pcm[at].toInt() and 0xFF) or (pcm[at + 1].toInt() shl 8)).toShort().toInt()
 
     /**
-     * Puts a new spatial rule in force from the next chunk written.
+     * Hands the renderer a new spatial rule, to take effect on the chunk the rule names.
      *
-     * Nothing here decides when it takes effect on the timeline, because the rule is a function of
-     * the host instant and the instants are already in the chunks. Called from whichever thread
-     * the rule arrived on. Null puts the room back to flat.
+     * When that is depends on the rule rather than on this call: see [ruleInForce]. What this
+     * used to say was that nothing here decides when it takes effect because the rule is a
+     * function of the host instant - which was true of the gain law and stopped being true when
+     * the fold and the spectrum were added underneath it, without the sentence changing.
+     *
+     * Called from whichever thread the rule arrived on. Null puts the room back to flat, and
+     * does not wait: flat is the room being switched off rather than moved, and holding the old
+     * rule for another fraction of a second would be playing a room the listener has dismissed.
      */
     fun applySpatialField(field: SpatialField?) {
         spatialField = field
+        if (field == null) spatialInForce = null
     }
 
     /**

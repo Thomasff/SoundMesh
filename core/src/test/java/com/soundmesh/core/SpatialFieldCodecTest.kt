@@ -167,6 +167,33 @@ class SpatialFieldCodecTest {
     }
 
     /**
+     * The instant a rule starts applying is the whole of what keeps two handsets from swapping
+     * halves at different moments, so a build that dropped it in transit would leave every
+     * receiver picking its own moment while believing it agreed.
+     */
+    @Test
+    fun theInstantTheRuleStartsApplyingSurvivesTheRoundTrip() {
+        val field = SpatialField(
+            SpatialMode.PAN,
+            SpatialLayout(listOf(SpatialPosition("a", 1.0, 0.0), SpatialPosition("b", -1.0, 0.0))),
+            separation = 1.0,
+            splitAxis = SplitAxis.LOW_HIGH,
+            crossoverHz = 1200.0,
+            otherHalfIds = setOf("b"),
+            effectiveAtHostNanos = 1_234_567_890_123L
+        )
+
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(field))
+
+        assertEquals(1_234_567_890_123L, back.effectiveAtHostNanos)
+        // Beside the rest of the header, because a field appended to a line is exactly the change
+        // that shifts every field after it by one and reads the count as a crossover.
+        assertEquals(field.crossoverHz, back.crossoverHz, 0.0)
+        assertEquals(field.otherHalfIds, back.otherHalfIds)
+        assertEquals(field.layout.peerIds, back.layout.peerIds)
+    }
+
+    /**
      * A part names its own axis on the wire, so a line reads as what it is out of a log and a
      * message whose header and handsets disagree is caught rather than read. Nothing on the sending
      * side can produce one; a truncated or spliced message can.
