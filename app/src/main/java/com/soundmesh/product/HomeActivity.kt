@@ -32,6 +32,7 @@ import com.soundmesh.probe.R
 import com.soundmesh.session.CAPTURING_HOST_STREAM
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.StreamingChunkSource
+import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandClient
@@ -536,7 +537,12 @@ class HomeActivity : ComponentActivity() {
             // which is the number on screen with no colour beside it.
             selfPlace = session?.badgePlace() ?: room?.colours?.get(state.selfId),
             standingBy = RoomCommands.standingBy(),
-            onStandby = hostLine?.connected == true
+            onStandby = hostLine?.connected == true,
+            // Only while a capture is actually running. Silence from a source that is not open
+            // is not a reading, and a stale one on screen is worse than none.
+            captureSilentSeconds =
+                if (session == null || !state.capturing) null
+                else (CaptureSilence.silentNanos() / 1_000_000_000L).toInt()
         )
         announceSession(session != null)
     }

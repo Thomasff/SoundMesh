@@ -103,6 +103,14 @@ data class HomeState(
      */
     val standingBy: Int = 0,
     val onStandby: Boolean = false,
+    /**
+     * How many seconds the capture has been handing over exactly zero, or null when it is not.
+     *
+     * On screen because the failure it names is invisible from every other direction: the session
+     * says PLAYING, the counters are healthy, the drift is fine, and the room is silent. A
+     * listener who cannot see this has nothing to tell anybody except that the music stopped.
+     */
+    val captureSilentSeconds: Int? = null,
     val running: Boolean = false,
     val sessionState: SessionState? = null,
     val failure: String? = null,
@@ -356,6 +364,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
             Text(state.pairingPayload, style = MaterialTheme.typography.bodySmall)
         }
     }
+    CaptureSilenceLine(state)
     StandbyLine(state)
     PlayControls(state, actions, canPlay = state.capturing || state.songName != null)
 }
@@ -374,6 +383,29 @@ private fun SinkPanel(state: HomeState, actions: HomeActions) {
     }
     StandbyLine(state)
     PlayControls(state, actions, canPlay = state.paired != null)
+}
+
+/**
+ * Said only once the silence has gone on longer than a song could plausibly be quiet for.
+ *
+ * A gap between tracks is a second or two of nothing and is not a fault; a path that has stopped
+ * producing does not come back on its own. The threshold is what separates them, and it is short
+ * enough that somebody watching a silent room reaches it before they reach for the phone.
+ */
+internal fun capturesNothingWorthSaying(seconds: Int?): Boolean =
+    seconds != null && seconds >= CAPTURE_SILENCE_SECONDS
+
+/** Longer than any gap between two tracks, shorter than anybody's patience with a silent room. */
+const val CAPTURE_SILENCE_SECONDS = 4
+
+@Composable
+private fun CaptureSilenceLine(state: HomeState) {
+    if (!capturesNothingWorthSaying(state.captureSilentSeconds)) return
+    Text(
+        stringResource(R.string.capture_silent, state.captureSilentSeconds ?: 0),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error
+    )
 }
 
 /**

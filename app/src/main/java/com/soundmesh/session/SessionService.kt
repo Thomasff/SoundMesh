@@ -22,6 +22,7 @@ import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureChunkSource
+import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.HostIdentity
@@ -212,6 +213,9 @@ class SessionService : Service() {
         val projection = SyncProjectionService.acquired
             ?: throw IllegalStateException("no media projection to capture with")
         val source = CaptureChunkSource.open(this, projection, null) {}
+        // From here rather than from inside the capture, because this is the only arrangement
+        // where silence means anything: a host playing a file is the source of its own audio.
+        CaptureSilence.watch()
         // Null on a handset nobody has measured, and a run then plays as early as O65 did. Logged
         // rather than refused: the session is still worth having, and silence about it is what let
         // nineteen milliseconds hide behind "a little bit faster, but you can hardly tell".
@@ -219,12 +223,15 @@ class SessionService : Service() {
         Log.i(LOG_TAG, "the $CAPTURING_HOST_USAGE output leads media by ${lead ?: "an unmeasured amount"}")
         advertise()
         return HostSession(
-            readChunk = { source.readChunk() ?: throw IllegalStateException("capture ended") },
+            readChunk = {
+                (source.readChunk() ?: throw IllegalStateException("capture ended"))
+                    .also(CaptureSilence::sawChunk)
+            },
             deadbandFrames = deadbandFrames(intent),
             trimFrames = trimFrames(intent),
             playbackUsage = CAPTURING_HOST_USAGE,
             outputLeadNanos = (lead ?: 0L) * 1_000L,
-            closeSource = source::close,
+            closeSource = { CaptureSilence.forget(); source.close() },
             spatialId = HostIdentity(filesDir).current()
         )
     }
