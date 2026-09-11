@@ -33,7 +33,15 @@ object OnDeviceAlignment {
         staggerNanos: Long,
         chirpRepeats: Int,
         chirpIntervalNanos: Long,
-        uncertaintyFrames: Int = CalibrationWindow.DEFAULT_UNCERTAINTY_FRAMES
+        uncertaintyFrames: Int = CalibrationWindow.DEFAULT_UNCERTAINTY_FRAMES,
+        /**
+         * What counts as an arrival, or empty to take the loudest one.
+         *
+         * Handed in rather than decided here because it is an arm of the protocol, not a property
+         * of a recording: the arms that align are read the way every archived run of them was
+         * read, and only the arm whose answer is a distance reads the first arrival instead.
+         */
+        edgeShares: List<Double> = emptyList()
     ): List<AlignmentReading> = (0 until maxOf(chirpRepeats, 1)).map { pair ->
         val from = firstChirpAtHostNanos + pair * chirpIntervalNanos
         val window = CalibrationWindow.searchWindow(
@@ -49,7 +57,8 @@ object OnDeviceAlignment {
             searchRadiusFrames = SEARCH_RADIUS_FRAMES,
             separationMetres = 0.0,
             searchFrom = window.first,
-            searchTo = window.last
+            searchTo = window.last,
+            edgeShares = edgeShares
         )
     }
 

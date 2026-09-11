@@ -1,6 +1,7 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -65,7 +66,12 @@ class AlignmentResultCodecTest {
 
     @Test
     fun rejectsAnUnknownVersion() {
-        val text = AlignmentResultCodec.encode("O40", SINK, 0L, listOf(readable(0.1))).replace("alignment 3 ", "alignment 4 ")
+        // Written off the constant rather than a literal, so a format change breaks the format
+        // test and not this one - the last bump broke this one instead, which said nothing.
+        val text = AlignmentResultCodec.encode("O40", SINK, 0L, listOf(readable(0.1))).replace(
+            "${AlignmentResultCodec.MAGIC} ${AlignmentResultCodec.VERSION} ",
+            "${AlignmentResultCodec.MAGIC} ${AlignmentResultCodec.VERSION + 1} "
+        )
 
         assertThrows(IllegalArgumentException::class.java) { AlignmentResultCodec.decode(text) }
     }
@@ -138,5 +144,26 @@ class AlignmentResultCodecTest {
         val text = CalibrationReplyCodec.encode(CalibrationReply(1L, 2L, true)).replace("calibration 2 ", "calibration 3 ")
 
         assertThrows(IllegalArgumentException::class.java) { CalibrationReplyCodec.decode(text) }
+    }
+
+    /**
+     * The sweep has to cross, because the spread it sizes is a property of the pair and only the
+     * host holds both halves. A sink that kept it to itself would leave the host unable to say
+     * whether the distance it just computed rests on the one fitted number in the measurement.
+     */
+    @Test
+    fun carriesWhatEachThresholdWouldHaveSaid() {
+        val reading = readable(1.0).copy(rawMsByShare = listOf(5.83, -0.25, 12.0))
+
+        val back = AlignmentResultCodec.decode(AlignmentResultCodec.encode("C93", "sink", 0, listOf(reading)))
+
+        assertEquals(listOf(5.83, -0.25, 12.0), back.readings[0].rawMsByShare)
+    }
+
+    @Test
+    fun roundTripsAReadingThatSweptNothing() {
+        val encoded = AlignmentResultCodec.encode("C90", "sink", 0, listOf(readable(1.0)))
+
+        assertTrue(AlignmentResultCodec.decode(encoded).readings[0].rawMsByShare.isEmpty())
     }
 }

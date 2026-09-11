@@ -19,6 +19,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.AlignmentPairing
 import com.soundmesh.core.AlignmentReading
 import com.soundmesh.core.CalibrationPlan
@@ -289,6 +290,21 @@ internal fun defaultTimingFor(caseId: String?): ArmSchedule = when (caseId) {
 internal fun keepsCorrection(caseId: String): Boolean = caseId != CASE_DISTANCE
 
 /**
+ * What counts as an arrival on this arm: the loudest lag, or the first one that clears a share
+ * of it.
+ *
+ * Only the arm whose answer is a distance takes the first arrival. Every reflection travels
+ * further than the straight line it bounced off, so the direct sound is the earliest arrival by
+ * construction - but nothing makes it the loudest, and 09-11 measured the loudest landing 12-21
+ * ms late with a clear line of sight, which read two metres as seven. The arms that align keep
+ * the loudest: short-range alignment is already good, the M2 gate was passed with it, and every
+ * archived correction was produced by it - a different reading rule would end that comparison
+ * for a fault they do not have.
+ */
+internal fun edgeSharesFor(caseId: String): List<Double> =
+    if (caseId == CASE_DISTANCE) AlignmentAnalysis.DISTANCE_EDGE_SHARES else emptyList()
+
+/**
  * How far apart the two handsets were, from the pairs that could be read, or null if none could.
  *
  * The median rather than the mean, which the five-pair schedule could afford not to care about
@@ -303,7 +319,15 @@ internal fun keepsCorrection(caseId: String): Boolean = caseId != CASE_DISTANCE
  * conditional on the one that is made of it.
  */
 internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
-    val metres = pairs.filterNotNull().map { it.separationMetres }
+    // A pair whose answer slides when the threshold slides has not found a direct sound, and it
+    // is wrong in a way the agreement test below cannot see: measured 09-11, three runs with a
+    // body between the handsets agreed with themselves to 0.35 m and were 1.3 m out, while the
+    // same geometry with a clear line of sight agreed to 0.07 m and was right. Across eighteen
+    // pairs the two cases did not overlap - 0.05-0.52 m clear against 1.06-2.59 m blocked.
+    // A null spread means nothing was swept, which is every arm but the distance one.
+    val metres = pairs.filterNotNull()
+        .filter { (it.separationSpreadMetres ?: 0.0) <= STEADY_ENOUGH_SPREAD_METRES }
+        .map { it.separationMetres }
     if (metres.isEmpty()) return null
     val middle = medianOf(metres)
     // A stored distance is replaced, not averaged, so one unreadable run can wipe out a good
@@ -322,6 +346,17 @@ internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
 
 /** How far apart the pairs of one run may sit and still be read as one distance. */
 internal const val SEPARATION_AGREEMENT_METRES = 0.30
+
+/**
+ * How far a pair may move across the threshold sweep and still be used.
+ *
+ * Set between the two measured populations rather than at either edge, and deliberately nearer
+ * the bad one: the cost is not symmetric. Rejecting a good pair costs a repeat - seventeen
+ * seconds - while accepting a bad one writes a distance that is metres out and says nothing.
+ * At 1.0 m the 09-11 samples rejected 5 of 36 good pairs and all 9 bad ones, with nothing
+ * missed.
+ */
+internal const val STEADY_ENOUGH_SPREAD_METRES = 1.0
 
 private fun medianOf(values: List<Double>): Double {
     val sorted = values.sorted()
@@ -450,6 +485,10 @@ internal fun pairedReportJson(
         "\"failure\":${combined.failure?.let { "\"${it.name}\"" } ?: "null"}," +
         "\"combinedMs\":${numbers(combined.pairs.map { it?.alignmentErrorMs })}," +
         "\"separationMetres\":${numbers(combined.pairs.map { it?.separationMetres })}," +
+        // Beside the answer, not instead of it: a pair that was left out of the stored distance
+        // still has to be readable afterwards, or a run that measured nothing looks the same as a
+        // run that measured something and was overruled.
+        "\"separationSpreadMetres\":${numbers(combined.pairs.map { it?.separationSpreadMetres })}," +
         "\"verdict\":${verdictJson(combined.verdict)}," +
         "\"emission\":{\"hostMs\":${numbers(hostOwn)},\"sinkMs\":${numbers(sinkOwn)}," +
         "\"hostSeenBySinkMs\":${numbers(hostSeenBySink)},\"sinkSeenByHostMs\":${numbers(sinkSeenByHost)}," +
@@ -961,7 +1000,8 @@ class PeerCalibrateActivity : ComponentActivity() {
             role = CalibrationRole.HOST,
             plan = plan,
             hostNanosNow = { System.nanoTime() },
-            audioSource = audioSource()
+            audioSource = audioSource(),
+            edgeShares = edgeSharesFor(plan.caseId)
         ).run()
         // Written before anything is answered, so a refused run still leaves its evidence.
         // Named with the peer, not just the case: a case id names a directory this only ever
@@ -1147,7 +1187,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                         appliedMicros * 1_000L
                 },
                 offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos },
-                audioSource = audioSource()
+                audioSource = audioSource(),
+                edgeShares = edgeSharesFor(caseId)
             ).run()
             // Spliced in rather than passed to the runner: the clock belongs to this screen, and
             // the reason to record it is that the constant is only as good as the offset the

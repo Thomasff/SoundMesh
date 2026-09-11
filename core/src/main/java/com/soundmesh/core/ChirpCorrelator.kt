@@ -25,7 +25,19 @@ data class ChirpArrival(
      * a good measurement. Anything on the boundary has to be treated as a chirp that may lie
      * outside the window entirely.
      */
-    val atSearchEdge: Boolean
+    val atSearchEdge: Boolean,
+    /**
+     * The first lag reaching each requested share of [peak], in the order the shares were asked
+     * for, or empty when none were.
+     *
+     * Kept beside [index] rather than replacing it because the two answer different questions and
+     * both are wanted: [peak] and [ratio] describe the window as a whole and are what the trust
+     * gate reads, while an edge is where the arrival began. Answering several shares at once is
+     * the point - the scores are computed once and picked from many times, so asking how much the
+     * answer moves with the share costs one comparison per lag rather than another pass over the
+     * recording.
+     */
+    val edgeIndices: List<Int> = emptyList()
 )
 
 /**
@@ -53,7 +65,13 @@ object ChirpCorrelator {
      * recording deliberately holds two equally strong chirps, so each would rate the other as its
      * rival and no real measurement would ever look trustworthy.
      */
-    fun findArrival(recorded: ShortArray, reference: ShortArray, searchFrom: Int, searchTo: Int): ChirpArrival? {
+    fun findArrival(
+        recorded: ShortArray,
+        reference: ShortArray,
+        searchFrom: Int,
+        searchTo: Int,
+        edgeShares: List<Double> = emptyList()
+    ): ChirpArrival? {
         val from = maxOf(0, searchFrom)
         val to = minOf(searchTo, recorded.size - reference.size)
         if (to < from) return null
@@ -73,8 +91,22 @@ object ChirpCorrelator {
             peak = scores[bestAt],
             floor = floor,
             ratio = if (floor == 0.0) Double.POSITIVE_INFINITY else scores[bestAt] / floor,
-            atSearchEdge = bestAt == 0 || bestAt == scores.size - 1
+            atSearchEdge = bestAt == 0 || bestAt == scores.size - 1,
+            edgeIndices = edgeShares.map { share -> from + firstLagReaching(scores, share * scores[bestAt]) }
         )
+    }
+
+    /**
+     * Where the arrival starts, given what counts as having started.
+     *
+     * Falls back to the loudest lag when nothing reaches [level], which can only happen for a
+     * share above one; at or below one the peak itself always qualifies.
+     */
+    private fun firstLagReaching(scores: DoubleArray, level: Double): Int {
+        for (index in scores.indices) if (scores[index] >= level) return index
+        var bestAt = 0
+        for (index in 1 until scores.size) if (scores[index] > scores[bestAt]) bestAt = index
+        return bestAt
     }
 
     /** The upper median, sorting a copy so the caller's scores keep their order. */

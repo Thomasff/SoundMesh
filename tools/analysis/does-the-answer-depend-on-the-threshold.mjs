@@ -56,6 +56,9 @@ const edgeAt = (scores, from, share) => {
 }
 
 const root = process.argv[2]
+// Half the window each arrival is read in, in ms. The runtime uses SEARCH_RADIUS_FRAMES = 12000,
+// which is 250 - so this is how the two are checked for having read the same thing.
+const HALF_WIDTH_MS = Number(process.argv[3] ?? 45)
 const rows = []
 for (const tag of readdirSync(root).sort()) {
   const dir = join(root, tag)
@@ -63,7 +66,7 @@ for (const tag of readdirSync(root).sort()) {
   const reference = readWav(join(dir, 'M6-chirp.wav'))
   const host = { pcm: readWav(join(dir, 'M6-calibration.wav')), report: JSON.parse(readFileSync(join(dir, 'M6-run.json'), 'utf8')), peerIs: 'first' }
   const sink = { pcm: readWav(join(dir, 'X10-calibration.wav')), report: JSON.parse(readFileSync(join(dir, 'sink-last.json'), 'utf8')), peerIs: 'second' }
-  const half = Math.round(0.045 * SAMPLE_RATE)
+  const half = Math.round(HALF_WIDTH_MS / 1000 * SAMPLE_RATE)
   // One pass of the correlation per window, reused by every threshold: the curves do not depend
   // on the share, only the pick does, so sweeping thresholds costs nothing beyond the first pass.
   for (let p = 0; p < host.report.pairs.length; p++) {

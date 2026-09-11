@@ -14,6 +14,7 @@ import com.soundmesh.core.PairedAlignment
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -797,11 +798,60 @@ class PeerCalibrateActivityTest {
         )
     }
 
-    private fun facing(metres: Double) = FacingPair(
+    private fun facing(metres: Double, spreadMetres: Double? = null) = FacingPair(
         alignmentErrorMs = 0.0,
         separationMetres = metres,
         flightTimeMs = metres / 343.0 * 1000,
         rawHostMs = 0.0,
-        rawSinkMs = 0.0
+        rawSinkMs = 0.0,
+        separationSpreadMetres = spreadMetres
     )
+
+    /**
+     * Only the arm whose answer is a distance pays for the extra pass. The arms that align are
+     * read the way every archived run of them was read, because the correction they produce is
+     * compared against that history and a different reading rule would end the comparison.
+     */
+    @Test
+    fun onlyTheDistanceArmReadsTheFirstArrival() {
+        assertEquals(0.20, edgeSharesFor(CASE_DISTANCE).first(), 1e-9)
+        for (case in listOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)) {
+            assertTrue(case, edgeSharesFor(case).isEmpty())
+        }
+    }
+
+    /** The pick is the first share; the rest are there to say how much the pick rests on it. */
+    @Test
+    fun sweepsMoreThresholdsThanItPicksWith() {
+        assertTrue(edgeSharesFor(CASE_DISTANCE).size > 1)
+    }
+
+    /**
+     * The gate the eighteen pairs of 09-11 drew: a run whose answer slides when the threshold
+     * slides has not found a direct sound, and it is wrong in a way its own repeatability cannot
+     * show - the blocked runs agreed with themselves better than the clear ones did.
+     */
+    @Test
+    fun leavesOutAPairWhoseAnswerMovesWithTheThreshold() {
+        val pairs = listOf(
+            facing(2.0, spreadMetres = 0.1),
+            facing(2.0, spreadMetres = 0.1),
+            facing(7.0, spreadMetres = 2.4)
+        )
+
+        assertEquals(2.0, measuredSeparationMetres(pairs)!!, 1e-9)
+    }
+
+    @Test
+    fun writesNothingWhenEveryPairMovesWithTheThreshold() {
+        val pairs = listOf(facing(2.0, spreadMetres = 2.4), facing(7.0, spreadMetres = 1.8))
+
+        assertNull(measuredSeparationMetres(pairs))
+    }
+
+    /** The arms that align sweep nothing, so an absent spread has to mean kept, not rejected. */
+    @Test
+    fun keepsAPairThatWasNeverAskedToSweepAnything() {
+        assertEquals(0.2, measuredSeparationMetres(listOf(facing(0.2), facing(0.2)))!!, 1e-9)
+    }
 }

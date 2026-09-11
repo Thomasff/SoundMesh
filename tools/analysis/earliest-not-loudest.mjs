@@ -66,6 +66,9 @@ const leadingEdge = (scores, from, share, floor) => {
 }
 
 const root = process.argv[2]
+// Half the window each arrival is read in, in ms. The runtime uses SEARCH_RADIUS_FRAMES = 12000,
+// which is 250 - so this is how the two are checked for having read the same thing.
+const HALF_WIDTH_MS = Number(process.argv[3] ?? 45)
 const shares = [1.0, 0.3, 0.2, 0.15, 0.1, 0.05, 'floor20']
 const rows = []
 for (const tag of readdirSync(root)) {
@@ -83,7 +86,7 @@ for (const tag of readdirSync(root)) {
         const peer = side.peerIs === 'first' ? pair.firstIndex : pair.secondIndex
         if (own == null || peer == null) return null
         // A window wide enough to hold the whole plateau but not the next chirp's copies.
-        const half = Math.round(0.045 * SAMPLE_RATE)
+        const half = Math.round(HALF_WIDTH_MS / 1000 * SAMPLE_RATE)
         // The floor comes from a stretch with no chirp in it, so a window dominated by one
         // arrival cannot raise its own noise estimate.
         const quiet = medianOf(curve(side.pcm, reference, peer - Math.round(0.9 * SAMPLE_RATE), peer - Math.round(0.8 * SAMPLE_RATE)))

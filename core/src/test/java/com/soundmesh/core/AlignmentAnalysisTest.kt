@@ -135,7 +135,11 @@ class AlignmentAnalysisTest {
         assertEquals(0.5, combined!!.alignmentErrorMs, 1e-9)
     }
 
-    private fun reading(alignmentErrorMs: Double, propagationCorrectionMs: Double = 0.0) = AlignmentReading(
+    private fun reading(
+        alignmentErrorMs: Double,
+        propagationCorrectionMs: Double = 0.0,
+        rawMsByShare: List<Double> = emptyList()
+    ) = AlignmentReading(
         firstIndex = 0,
         secondIndex = stagger,
         measuredStaggerFrames = stagger,
@@ -144,6 +148,104 @@ class AlignmentAnalysisTest {
         separationMetres = 0.0,
         confidence = AlignmentConfidence.OK,
         ratios = listOf(1000.0, 1000.0),
-        atSearchEdge = listOf(false, false)
+        atSearchEdge = listOf(false, false),
+        rawMsByShare = rawMsByShare
     )
+
+    private fun readEdges(recorded: ShortArray, shares: List<Double>) = AlignmentAnalysis.read(
+        recorded = recorded,
+        reference = ChirpGenerator.generateMono(),
+        staggerFrames = stagger,
+        searchRadiusFrames = 4800,
+        separationMetres = 0.0,
+        edgeShares = shares
+    )
+
+    /** A direct sound and a louder bounce of it, for each of the pair. The bounce is later. */
+    private fun withBounces() = recording(
+        listOf(9000, 9600, 9000 + stagger, 9600 + stagger),
+        listOf(0.4, 1.2, 0.4, 1.2)
+    )
+
+    @Test
+    fun takesTheLoudestArrivalWhenNoShareIsAskedFor() {
+        val result = read(withBounces())
+
+        assertEquals(9600, result.firstIndex)
+        assertEquals(9600 + stagger, result.secondIndex)
+    }
+
+    /**
+     * The reason a distance is read from the edge: every reflection travels further than the
+     * straight line, so the first arrival is the direct sound whether or not it is the loudest.
+     */
+    @Test
+    fun takesTheFirstArrivalOfEachChirpWhenAShareIsAskedFor() {
+        val result = readEdges(withBounces(), listOf(0.2))
+
+        assertEquals(9000.0, result.firstIndex!!.toDouble(), 100.0)
+        assertEquals((9000 + stagger).toDouble(), result.secondIndex!!.toDouble(), 100.0)
+    }
+
+    /**
+     * The window the louder chirp was found in holds both of them, so its own first arrival
+     * belongs to whichever came first - not to the chirp it found. Reading the winner again in a
+     * window of its own is what keeps the second chirp from being handed the first one's edge.
+     */
+    @Test
+    fun doesNotHandTheSecondChirpTheFirstChirpsEdge() {
+        val result = readEdges(withBounces(), listOf(0.2))
+
+        assertTrue("secondIndex was ${result.secondIndex}", result.secondIndex!! > stagger)
+    }
+
+    @Test
+    fun reportsWhatEachShareWouldHaveSaid() {
+        val result = readEdges(withBounces(), listOf(0.2, 0.1, 0.05))
+
+        assertEquals(3, result.rawMsByShare.size)
+        for (raw in result.rawMsByShare) assertEquals(0.0, raw, 0.5)
+    }
+
+    @Test
+    fun saysNothingPerShareWhenNoShareWasAskedFor() {
+        assertTrue(read(withBounces()).rawMsByShare.isEmpty())
+    }
+
+    /**
+     * What a run can say about itself without a second opinion.
+     *
+     * The threshold is the one fitted number in the measurement, and 09-11 measured it fitted to
+     * more than the room: with a clear line of sight the best share is 20%, and with a body in the
+     * way it slides to 5-10%. Repeatability cannot catch that - the blocked runs were *more*
+     * self-consistent than the clear ones and still wrong by 1.3 m. What a run can see is whether
+     * its own answer depends on the fitted number. A clean onset lands every share on the same
+     * lag; an absent one lands each share on a different reflection.
+     */
+    @Test
+    fun sizesHowFarTheAnswerMovesWhenTheThresholdMoves() {
+        val host = reading(0.0, rawMsByShare = listOf(0.0, 0.0, 0.0))
+        val sink = reading(5.83, rawMsByShare = listOf(5.83, 5.83 + 2.92, 5.83 - 2.92))
+
+        val pair = AlignmentAnalysis.combineFacing(host, sink)!!
+
+        assertEquals(1.0, pair.separationMetres, 0.02)
+        assertEquals(1.0, pair.separationSpreadMetres!!, 0.02)
+    }
+
+    @Test
+    fun cannotSizeItWhenNeitherSideSweptAnything() {
+        val pair = AlignmentAnalysis.combineFacing(reading(0.0), reading(0.0))!!
+
+        assertNull(pair.separationSpreadMetres)
+    }
+
+    @Test
+    fun cannotSizeItWhenTheTwoSidesSweptDifferentShares() {
+        val host = reading(0.0, rawMsByShare = listOf(0.0, 0.0))
+        val sink = reading(5.83, rawMsByShare = listOf(5.83))
+
+        assertNull(AlignmentAnalysis.combineFacing(host, sink)!!.separationSpreadMetres)
+    }
+
 }

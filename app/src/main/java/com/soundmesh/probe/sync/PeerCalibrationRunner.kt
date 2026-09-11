@@ -50,7 +50,9 @@ class PeerCalibrationRunner(
     private val hostNanosNow: () -> Long,
     /** The clock offset in force, for the renderer's report. Zero on the host. */
     private val offsetNanosNow: () -> Long = { 0L },
-    private val audioSource: CalibrationAudioSource = CalibrationAudioSource.MIC
+    private val audioSource: CalibrationAudioSource = CalibrationAudioSource.MIC,
+    /** What counts as an arrival on this arm. See [OnDeviceAlignment.readRun]. */
+    private val edgeShares: List<Double> = emptyList()
 ) {
     private val tone = TonePcmSource()
 
@@ -171,7 +173,8 @@ class PeerCalibrationRunner(
                 firstChirpAtHostNanos = plan.firstChirpAtHostNanos,
                 staggerNanos = plan.staggerNanos,
                 chirpRepeats = plan.repeats,
-                chirpIntervalNanos = plan.intervalNanos
+                chirpIntervalNanos = plan.intervalNanos,
+                edgeShares = edgeShares
             )
         }.getOrElse { return refused("the recording could not be correlated: ${it.javaClass.simpleName}") }
         val elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000

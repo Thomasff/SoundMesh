@@ -82,9 +82,19 @@ object CalibrationReplyCodec {
  */
 object AlignmentResultCodec {
     const val MAGIC = "soundmesh-alignment"
-    const val VERSION = 3
+    const val VERSION = 4
 
-    private const val FIELDS_PER_READING = 11
+    private const val FIELDS_PER_READING = 12
+
+    /**
+     * What separates the per-share readings inside their one field.
+     *
+     * They travel as one field rather than several because the count is not fixed: an arm that
+     * sweeps no thresholds sends none, and the distance arm sends five. A variable number of
+     * space-separated fields would make the per-reading field count unable to catch a truncated
+     * line, which is the failure this format is shaped around.
+     */
+    private const val SHARE_SEPARATOR = ","
     private const val NULL = "null"
 
     fun encode(
@@ -110,7 +120,8 @@ object AlignmentResultCodec {
                     reading.ratios.getOrNull(0).orNull(),
                     reading.ratios.getOrNull(1).orNull(),
                     reading.atSearchEdge.getOrNull(0).orNull(),
-                    reading.atSearchEdge.getOrNull(1).orNull()
+                    reading.atSearchEdge.getOrNull(1).orNull(),
+                    reading.rawMsByShare.joinToString(SHARE_SEPARATOR).ifEmpty { NULL }
                 ).joinToString(" ")
             )
         }
@@ -153,7 +164,8 @@ object AlignmentResultCodec {
                 separationMetres = fields[5].toDoubleField(),
                 confidence = AlignmentConfidence.valueOf(fields[6]),
                 ratios = listOf(fields[7].toDoubleOrNullable(), fields[8].toDoubleOrNullable()),
-                atSearchEdge = listOf(fields[9].toBooleanOrNullable(), fields[10].toBooleanOrNullable())
+                atSearchEdge = listOf(fields[9].toBooleanOrNullable(), fields[10].toBooleanOrNullable()),
+                rawMsByShare = fields[11].toSweep()
             )
         }
         return AlignmentResultMessage(caseId, sinkId, appliedOffsetMicros, readings)
@@ -166,6 +178,9 @@ object AlignmentResultCodec {
     }
 
     private fun Any?.orNull(): String = this?.toString() ?: NULL
+
+    private fun String.toSweep(): List<Double> =
+        if (this == NULL) emptyList() else split(SHARE_SEPARATOR).map { it.toDoubleField() }
 
     private fun String.toIntOrNullable(): Int? =
         if (this == NULL) null else toIntOrNull() ?: throw IllegalArgumentException("unreadable integer: $this")

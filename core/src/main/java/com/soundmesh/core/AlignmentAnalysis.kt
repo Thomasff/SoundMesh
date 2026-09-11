@@ -19,7 +19,16 @@ data class AlignmentReading(
     val separationMetres: Double,
     val confidence: AlignmentConfidence,
     val ratios: List<Double?>,
-    val atSearchEdge: List<Boolean?>
+    val atSearchEdge: List<Boolean?>,
+    /**
+     * What this reading would have said at each threshold it was asked to try, in milliseconds
+     * before the distance correction, in the order the shares were asked for.
+     *
+     * Empty unless shares were asked for, and empty when the reading is not trustworthy: a run
+     * that could not find its chirps has nothing to say about what its answer rests on. It is
+     * read by [FacingPair.separationSpreadMetres], which is where the two sides meet.
+     */
+    val rawMsByShare: List<Double> = emptyList()
 )
 
 /**
@@ -31,7 +40,20 @@ data class FacingPair(
     val separationMetres: Double,
     val flightTimeMs: Double,
     val rawHostMs: Double,
-    val rawSinkMs: Double
+    val rawSinkMs: Double,
+    /**
+     * How far this separation moves when the leading-edge threshold moves, or null when the two
+     * sides did not sweep the same shares.
+     *
+     * The threshold is the one fitted number in the distance measurement, and 09-11 measured it
+     * fitted to more than the room: with a clear line of sight the best share is 20%, and with a
+     * body between the handsets it slides to 5-10%. Repeatability cannot catch that - the blocked
+     * runs were *more* self-consistent than the clear ones and still wrong by 1.3 m. This can,
+     * because a clean onset puts every share on the same lag while an absent one puts each share
+     * on a different reflection. Measured over eighteen pairs: 0.05-0.52 m with a clear line of
+     * sight, 1.06-2.59 m with it blocked, and nothing in between.
+     */
+    val separationSpreadMetres: Double? = null
 )
 
 /**
@@ -46,6 +68,24 @@ data class FacingPair(
 object AlignmentAnalysis {
     /** Metres per second. Room temperature air; a degree either way is far below the 5 ms gate. */
     const val SPEED_OF_SOUND_M_S = 343.0
+
+    /**
+     * The thresholds a distance is read at: the first is the pick, the rest only say how much the
+     * pick rests on it.
+     *
+     * 20% is fitted, and 09-11 measured what it is fitted to. Its lower bound is not: a 120 ms
+     * chirp sweeping 7 kHz has a time-bandwidth product near 840 and sidelobes below -30 dB, so
+     * anything above about 3% cannot be a sidelobe. The upper bound is the fitted half - it
+     * depends on how far the reflections sit below the direct sound, which is a property of the
+     * room and of whether anything stands between the handsets. With a clear line of sight 20%
+     * was the best of the sweep; with a body in the way the best slid to 5-10%.
+     *
+     * Which is why the rest of the sweep ships too. It is not there to find a better pick - it is
+     * there so a run can report how far its own answer moves across the whole range, which is the
+     * only thing measured so far that tells the two cases apart. See
+     * [FacingPair.separationSpreadMetres].
+     */
+    val DISTANCE_EDGE_SHARES = listOf(0.20, 0.30, 0.15, 0.10, 0.05)
 
     /**
      * Reads one chirp pair out of [recorded].
@@ -69,7 +109,8 @@ object AlignmentAnalysis {
         separationMetres: Double,
         searchFrom: Int = 0,
         searchTo: Int = Int.MAX_VALUE,
-        sampleRate: Int = ChirpGenerator.SAMPLE_RATE
+        sampleRate: Int = ChirpGenerator.SAMPLE_RATE,
+        edgeShares: List<Double> = emptyList()
     ): AlignmentReading {
         require(separationMetres.isFinite() && separationMetres >= 0) {
             "separationMetres is required: the distance between the two handsets, in metres"
@@ -82,25 +123,40 @@ object AlignmentAnalysis {
         }
         val best = ChirpCorrelator.findArrival(recorded, reference, searchFrom, searchTo)
         val window = { centre: Int ->
-            ChirpCorrelator.findArrival(recorded, reference, centre - searchRadiusFrames, centre + searchRadiusFrames)
+            ChirpCorrelator.findArrival(
+                recorded, reference, centre - searchRadiusFrames, centre + searchRadiusFrames, edgeShares
+            )
         }
+        // The window the winner was found in holds both chirps, so its own first arrival belongs
+        // to whichever came first rather than to the chirp it found. Reading the winner again in
+        // a window of its own is what keeps the later chirp from being handed the earlier edge.
+        // Only when edges were asked for: the extra pass buys nothing otherwise, and a window
+        // centred on the winner cannot find a different winner.
+        val here = best?.let { if (edgeShares.isEmpty()) it else window(it.index) }
         val after = best?.let { window(it.index + staggerFrames) }
         val before = best?.let { window(it.index - staggerFrames) }
         val partnerIsAfter = (after?.peak ?: -1.0) >= (before?.peak ?: -1.0)
         val partner = if (partnerIsAfter) after else before
-        val first = if (partnerIsAfter) best else partner
-        val second = if (partnerIsAfter) partner else best
+        val first = if (partnerIsAfter) here else partner
+        val second = if (partnerIsAfter) partner else here
         val trustworthy = first != null && second != null &&
             first.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO &&
             second.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO &&
             !first.atSearchEdge && !second.atSearchEdge
-        val measuredStaggerFrames = if (trustworthy) second!!.index - first!!.index else null
+        // Which lag each chirp is read at: the loudest, or the first that counts as an arrival.
+        // Every reflection travels further than the straight line it bounced off, so the direct
+        // sound is the earliest arrival by construction - but nothing makes it the loudest, and
+        // 09-11 measured the loudest landing 12-21 ms late with a clear line of sight.
+        val at = { arrival: ChirpArrival, share: Int ->
+            if (edgeShares.isEmpty()) arrival.index else arrival.edgeIndices[share]
+        }
+        val measuredStaggerFrames = if (trustworthy) at(second!!, 0) - at(first!!, 0) else null
         // Added back, not subtracted: the partner's chirp arrives late through the air, which drags
         // the raw difference down, so a wider separation must push the error further positive.
         val propagationCorrectionMs = separationMetres / SPEED_OF_SOUND_M_S * 1000
         return AlignmentReading(
-            firstIndex = first?.index,
-            secondIndex = second?.index,
+            firstIndex = first?.let { at(it, 0) },
+            secondIndex = second?.let { at(it, 0) },
             measuredStaggerFrames = measuredStaggerFrames,
             alignmentErrorMs = measuredStaggerFrames?.let {
                 (it - staggerFrames).toDouble() / sampleRate * 1000 + propagationCorrectionMs
@@ -109,7 +165,10 @@ object AlignmentAnalysis {
             separationMetres = separationMetres,
             confidence = if (trustworthy) AlignmentConfidence.OK else AlignmentConfidence.UNRELIABLE,
             ratios = listOf(first?.ratio, second?.ratio),
-            atSearchEdge = listOf(first?.atSearchEdge, second?.atSearchEdge)
+            atSearchEdge = listOf(first?.atSearchEdge, second?.atSearchEdge),
+            rawMsByShare = if (!trustworthy) emptyList() else edgeShares.indices.map {
+                (at(second!!, it) - at(first!!, it) - staggerFrames).toDouble() / sampleRate * 1000
+            }
         )
     }
 
@@ -145,7 +204,23 @@ object AlignmentAnalysis {
             separationMetres = flightTimeMs / 1000 * SPEED_OF_SOUND_M_S,
             flightTimeMs = flightTimeMs,
             rawHostMs = rawHostMs,
-            rawSinkMs = rawSinkMs
+            rawSinkMs = rawSinkMs,
+            separationSpreadMetres = spreadOf(hostSide.rawMsByShare, sinkSide.rawMsByShare)
         )
+    }
+
+    /**
+     * The separation computed once per share, widest minus narrowest.
+     *
+     * Null rather than zero when there is nothing to compare - a pair that swept no shares, or two
+     * sides that swept different ones, has not answered the question, while zero is the answer
+     * that means the run is at its most trustworthy.
+     */
+    private fun spreadOf(hostByShare: List<Double>, sinkByShare: List<Double>): Double? {
+        if (hostByShare.isEmpty() || hostByShare.size != sinkByShare.size) return null
+        val metres = hostByShare.indices.map {
+            (sinkByShare[it] - hostByShare[it]) / 2 / 1000 * SPEED_OF_SOUND_M_S
+        }
+        return metres.max() - metres.min()
     }
 }
