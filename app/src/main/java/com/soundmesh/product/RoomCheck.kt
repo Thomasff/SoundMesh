@@ -15,6 +15,18 @@ import kotlin.math.hypot
  * distance between two phones and the drawing gives the distance between two icons. The listener
  * never enters it, which is just as well - nobody has measured where they are sitting.
  *
+ * It looks from every handset in turn rather than only from this one, and that is the whole of
+ * what a measured room adds over a measured pair. A pair of phones can only ever produce the
+ * distance between the two of them, so until a room ran, every length this had went from here
+ * to somewhere - and two handsets swapped with each other at the same distance from here are
+ * invisible in that set. From a third phone they are not: it stands somewhere else, so the two
+ * are two different lengths to it.
+ *
+ * The comparison stays between two lengths that share an end. That is not caution about the
+ * arithmetic, it is about what can be said afterwards: two lengths sharing a handset disagree
+ * in a way that names two icons and asks whether they are the right way round, and two lengths
+ * with four different ends between them disagree in a way nobody can act on.
+ *
  * It asks the measurement for an ordering rather than a length, which sounds like the cheaper
  * of the two and is not: an ordering the wrong way round is an accusation. What that costs is
  * written under [CLEARLY_LONGER], and which runs are allowed to produce a distance at all is
@@ -47,22 +59,40 @@ object RoomCheck {
     /**
      * Two handsets the drawing puts the wrong way round, or null when nothing contradicts.
      *
-     * [measuredMetres] holds the distances from [selfId] to peers it has been calibrated against.
-     * A peer with no measurement simply takes no part, which is the ordinary case: the room can
-     * have handsets in it that this one has never run a calibration with.
+     * [measuredMetres] is keyed by the two handsets a distance is between, and is expected to
+     * hold both orders of every pair it knows - see [com.soundmesh.probe.sync.StoredRoomField],
+     * which is where most of them come from. A pair with no measurement simply takes no part,
+     * which is the ordinary state: a room can hold handsets that nothing has ever measured.
      */
     fun contradiction(
         icons: List<RoomIcon>,
-        selfId: String,
-        measuredMetres: Map<String, Double>
+        measuredMetres: Map<Pair<String, String>, Double>
     ): Pair<String, String>? {
-        val self = icons.firstOrNull { it.peerId == selfId } ?: return null
+        for (from in icons) {
+            seenFrom(icons, from, measuredMetres)?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * The same question asked from one handset: of the peers it has a measured distance to, are
+     * two of them drawn in the opposite order to the one that was measured.
+     *
+     * The first viewpoint that finds something answers, rather than the worst or the most
+     * frequent. What comes out of here is one sentence asking a person to look at two icons, and
+     * a second sentence about the same swap seen from somewhere else adds nothing to it.
+     */
+    private fun seenFrom(
+        icons: List<RoomIcon>,
+        from: RoomIcon,
+        measuredMetres: Map<Pair<String, String>, Double>
+    ): Pair<String, String>? {
         val drawn = icons
-            .filter { it.peerId != selfId }
+            .filter { it.peerId != from.peerId }
             .mapNotNull { icon ->
-                val metres = measuredMetres[icon.peerId] ?: return@mapNotNull null
+                val metres = measuredMetres[from.peerId to icon.peerId] ?: return@mapNotNull null
                 if (metres <= 0.0) return@mapNotNull null
-                val apart = hypot((icon.x - self.x).toDouble(), (icon.y - self.y).toDouble())
+                val apart = hypot((icon.x - from.x).toDouble(), (icon.y - from.y).toDouble())
                 if (apart <= 0.0) return@mapNotNull null
                 Triple(icon.peerId, apart, metres)
             }

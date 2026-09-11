@@ -145,6 +145,20 @@ class PeerCalibrateRoomTest {
         assertTrue(source.contains("if (slot < 0 || slot != message.ownSlot) continue"))
     }
 
+    /**
+     * The whole field is kept where the room screen can read it, not just the pairs this handset
+     * is an end of.
+     *
+     * The per-peer files hold those, and they held them before a room could be measured. What had
+     * nowhere to live is the distance between two other handsets - which is the one a swap between
+     * two phones equally far from here shows up in, and nothing else can produce it.
+     */
+    @Test
+    fun theWholeFieldIsKeptAndNotOnlyTheHostsOwnPairs() {
+        assertTrue(source.contains("StoredRoomField(filesDir).write(field.separationMetres)"))
+        assertTrue(source.contains("StoredSeparation(filesDir, peer).write(metres)"))
+    }
+
     // -- the window widening with the room ----------------------------------------------------
 
     /**

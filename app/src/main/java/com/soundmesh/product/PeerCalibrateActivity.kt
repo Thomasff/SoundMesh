@@ -60,6 +60,7 @@ import com.soundmesh.probe.sync.RoomResultServer
 import com.soundmesh.probe.sync.holdingRadio
 import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.StoredCalibration
+import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
@@ -1219,11 +1220,14 @@ class PeerCalibrateActivity : ComponentActivity() {
                 "HOST-${plan.caseId}-ROOM",
                 roomReportJson(plan, field, heardFrom, timing.planLeadNanos)
             )
-            // The pairs this handset is one end of are the only ones there is anywhere to keep:
-            // a distance is filed under the peer it was measured against, and two other
-            // handsets facing each other have no such place here. The rest are in the report.
-            // What may be kept is what [separationToStore] would keep - a room always sweeps
-            // the thresholds, so the narrower rule and the wider one are the same rule here.
+            // The whole field, which is what the room screen reads to check a drawing against.
+            // The per-peer files below are the same distances for the pairs this handset is an
+            // end of; this is the only place the rest of them have ever had.
+            runCatching { StoredRoomField(filesDir).write(field.separationMetres) }
+            // And the per-peer files, which is where every other arm writes a distance and
+            // where the pair flow reads one. What may be kept is what [separationToStore] would
+            // keep - a room always sweeps the thresholds, so the narrower rule and the wider one
+            // are the same rule here.
             for (entry in field.separationMetres) {
                 val peer = when (hostId) {
                     entry.key.first -> entry.key.second

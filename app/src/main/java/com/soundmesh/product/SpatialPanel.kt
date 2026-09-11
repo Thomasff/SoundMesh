@@ -64,19 +64,18 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
         // Said quietly and never acted on. The measurement cannot know which side is left, so it
         // can never correct a drawing - only point at two icons and ask whether they are the right
         // way round. Acting on it would be the app overruling the one thing only a person knows.
-        state.selfId?.let { self ->
-            RoomCheck.contradiction(state.icons, self, state.measuredMetres)?.let { (farther, nearer) ->
-                Text(
-                    stringResource(
-                        R.string.room_disagrees,
-                        badgeWords(farther, state.colours[farther]),
-                        badgeWords(nearer, state.colours[nearer])
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
+        RoomCheck.contradiction(state.icons, state.measuredMetres)?.let { (farther, nearer) ->
+            Text(
+                stringResource(
+                    R.string.room_disagrees,
+                    badgeWords(farther, state.colours[farther]),
+                    badgeWords(nearer, state.colours[nearer])
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
         }
+        MeasuredDistances(state)
         ModePicker(state, actions)
         if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
         SeparationControl(state, actions)
@@ -109,13 +108,18 @@ data class RoomState(
      */
     val silentIds: Set<String> = emptySet(),
     /**
-     * How far this handset measured itself from each peer it has calibrated with, in metres.
+     * How far apart two handsets were measured to be, in metres, keyed by the two of them and
+     * held both ways round.
+     *
+     * Keyed by a pair rather than by a peer because a room measures distances this handset is
+     * not an end of, and those are the ones worth having: two handsets swapped with each other
+     * at the same distance from here cannot be told apart by any length that starts here.
      *
      * Read when the roster changes rather than every pass: it comes off disk, and the roster is
-     * re-read five times a second. Empty is the ordinary state - a pair nobody has calibrated has
-     * no measurement, and neither has a room whose phones have only ever met this one.
+     * re-read five times a second. Empty is the ordinary state - nothing has measured a room
+     * whose phones have never run a calibration.
      */
-    val measuredMetres: Map<String, Double> = emptyMap(),
+    val measuredMetres: Map<Pair<String, String>, Double> = emptyMap(),
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -136,6 +140,55 @@ class RoomActions(
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
 )
+
+/**
+ * Which measured distances belong on the screen, in the order they are read out.
+ *
+ * One way round of each pair: the field holds both, so that a caller with two names need not
+ * know which sorts first, and a list that took it at face value would print every distance
+ * twice.
+ *
+ * Only pairs still in the drawing. A field outlives the room it was measured in - it is
+ * replaced when the next room is measured, and not when somebody goes home - so a line about a
+ * handset that is no longer here is a line about nothing the person can look at.
+ */
+internal fun measuredLines(
+    icons: List<RoomIcon>,
+    measured: Map<Pair<String, String>, Double>
+): List<Pair<Pair<String, String>, Double>> {
+    val room = icons.map { it.peerId }.toSet()
+    return measured
+        .filterKeys { it.first < it.second && it.first in room && it.second in room }
+        .toList()
+        .sortedBy { it.first.first + it.first.second }
+}
+
+/**
+ * What the last measurement made of the room, one pair at a time.
+ *
+ * On screen rather than only in a run's report, because this is the only place a person can
+ * hold the numbers against the room they are standing in. Until they can, a check that fires on
+ * their drawing is an accusation with nothing visible behind it.
+ *
+ * Numbers without the colour words, which is the one place in the app that drops half of a
+ * handset's name on purpose: the colours are on the icons a few millimetres above, and a room
+ * of four spelled out in full is ten pairs of "7 号（绿）" that nobody reads.
+ */
+@Composable
+private fun MeasuredDistances(state: RoomState) {
+    val shown = measuredLines(state.icons, state.measuredMetres)
+    if (shown.isEmpty()) return
+    Text(
+        stringResource(
+            R.string.room_measured,
+            shown.joinToString("   ") { (names, metres) ->
+                "${PeerBadge.numberOf(names.first)}-${PeerBadge.numberOf(names.second)} " +
+                    "%.2f".format(metres)
+            }
+        ),
+        style = MaterialTheme.typography.bodySmall
+    )
+}
 
 @Composable
 private fun RoomDrawing(state: RoomState, actions: RoomActions) {

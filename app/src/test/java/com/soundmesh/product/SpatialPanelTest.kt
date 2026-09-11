@@ -53,4 +53,33 @@ class SpatialPanelTest {
         assertEquals(a, nearestPeerId(listOf(room[0]), 0.3f, (0.3 + GRAB_RADIUS * 0.99).toFloat()))
         assertNull(nearestPeerId(listOf(room[0]), 0.3f, (0.3 + GRAB_RADIUS * 1.01).toFloat()))
     }
+
+    /**
+     * The field holds both orders of every pair, so that a caller with two names need not know
+     * which sorts first. A list that took it at face value would print every distance twice.
+     */
+    @Test
+    fun eachMeasuredPairIsReadOutOnce() {
+        val measured = mapOf((a to b) to 2.02, (b to a) to 2.02)
+
+        // Kept in the order the two names sort in, which is the one order that does not depend
+        // on who connected first.
+        assertEquals(listOf((b to a) to 2.02), measuredLines(room, measured))
+    }
+
+    /**
+     * A field outlives the room it was measured in - it is replaced when the next room is
+     * measured, not when somebody goes home - so a distance to a handset that is no longer in the
+     * drawing is a line about nothing the person can look at.
+     */
+    @Test
+    fun aDistanceToAHandsetNoLongerInTheDrawingIsNotReadOut() {
+        val gone = "1122334455667788"
+        val measured = mapOf(
+            (a to b) to 2.02, (b to a) to 2.02,
+            (a to gone) to 3.00, (gone to a) to 3.00
+        )
+
+        assertEquals(listOf((b to a) to 2.02), measuredLines(room, measured))
+    }
 }

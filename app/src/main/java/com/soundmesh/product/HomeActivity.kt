@@ -34,6 +34,8 @@ import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
+import com.soundmesh.probe.sync.StoredRoomField
+import java.io.File
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
@@ -508,9 +510,7 @@ class HomeActivity : ComponentActivity() {
         }
         // Read here and not every pass: these come off disk, and this loop runs five times a
         // second. The roster changing is the only thing that can bring a new one into play.
-        val measured = icons.mapNotNull { icon ->
-            StoredSeparation(filesDir, icon.peerId).read()?.let { icon.peerId to it }
-        }.toMap()
+        val measured = measuredDistances(filesDir, roster.firstOrNull(), icons.map { it.peerId })
         return previous.copy(
             icons = icons,
             measuredMetres = measured,
@@ -542,4 +542,39 @@ class HomeActivity : ComponentActivity() {
         const val LOG_TAG = "SoundMeshHome"
         const val AUDIO_MIME = "audio/*"
     }
+}
+
+/**
+ * Every distance this handset holds about a room, keyed by the two handsets it is between.
+ *
+ * Two files behind it, one fact each. A distance [self] is an end of comes from the per-peer
+ * file, which every arm that measures a distance writes and which is therefore the freshest
+ * thing there is about that pair. A distance between two other handsets can only have come from
+ * a room measuring the lot in one window, and has nowhere else it could live.
+ *
+ * Both files can hold the same pair - a room measures the ones this handset is in no
+ * differently - and neither records when it was written, so which one answers has to be
+ * decided here rather than by whichever is read second. The per-peer file answers: it is the
+ * one every arm that measures a distance writes, the room included, so for a pair they share
+ * it cannot be the staler of the two. Which is why the room is read first and written over,
+ * and not the other way round.
+ *
+ * File scope so it can be judged on what it produces. Inside the screen it would be reachable
+ * only by standing in a room with three phones in it.
+ */
+internal fun measuredDistances(
+    directory: File,
+    self: String?,
+    room: List<String>
+): Map<Pair<String, String>, Double> {
+    val distances = LinkedHashMap<Pair<String, String>, Double>()
+    for (entry in StoredRoomField(directory).read()) distances[entry.key] = entry.value
+    if (self == null) return distances
+    for (peerId in room) {
+        if (peerId == self) continue
+        val metres = StoredSeparation(directory, peerId).read() ?: continue
+        distances[self to peerId] = metres
+        distances[peerId to self] = metres
+    }
+    return distances
 }
