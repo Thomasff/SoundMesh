@@ -310,6 +310,46 @@ object AlignmentAnalysis {
     }
 
     /**
+     * Every pair in the room, out of the window each handset recorded for itself.
+     *
+     * [slotsByHandset] is keyed by the slot each handset was given, which is also its name in the
+     * answer: a key of 0 to 2 is the pair between the handset that chirped first and the one that
+     * chirped third. A pair whose two halves did not both report comes back null rather than
+     * missing, because a room that quietly answered fewer pairs than it has looks like a room with
+     * fewer handsets in it.
+     *
+     * Which side each handset goes on is the whole of what this adds, and getting it wrong is not
+     * visible downstream: [combineFacing] takes the half difference, so the two swapped returns a
+     * negative separation and an alignment error of the opposite sign - a working room with every
+     * distance inside out. The handset in the later slot is the host side, because it hears its own
+     * chirp across centimetres and its partner's across the room, which is the sign convention that
+     * function's algebra is written in.
+     */
+    fun facingPairs(
+        slotsByHandset: Map<Int, List<ChirpArrival?>>,
+        slotFrames: Int,
+        sampleRate: Int = ChirpGenerator.SAMPLE_RATE,
+        edgeShares: List<Double> = emptyList()
+    ): Map<Pair<Int, Int>, FacingPair?> {
+        val slots = slotsByHandset.keys.sorted()
+        val answers = LinkedHashMap<Pair<Int, Int>, FacingPair?>()
+        for (earlier in slots) {
+            for (later in slots) {
+                if (later <= earlier) continue
+                // Zero on both sides: the flight time is what the half difference is about to
+                // measure, so correcting for a distance here would be assuming the answer.
+                val side = { own: Int ->
+                    slotsByHandset[own]?.let {
+                        betweenSlots(it, earlier, later, slotFrames, 0.0, sampleRate, edgeShares)
+                    }
+                }
+                answers[earlier to later] = combineFacing(side(later), side(earlier))
+            }
+        }
+        return answers
+    }
+
+    /**
      * The separation computed once per share, widest minus narrowest.
      *
      * Null rather than zero when there is nothing to compare - a pair that swept no shares, or two
