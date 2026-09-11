@@ -206,6 +206,7 @@ class HomeActivity : ComponentActivity() {
                     } ?: room
                 }
             },
+            setDelayCompensation = { on -> updateRoom { it.copy(delayCompensation = on) } },
             pickMode = { mode -> updateRoom { it.copy(mode = mode) } },
             setPan = { pan -> updateRoom { it.copy(pan = pan) } },
             setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
@@ -270,7 +271,10 @@ class HomeActivity : ComponentActivity() {
             crossoverHz = room.crossoverHz.toDouble()
                 .coerceIn(SpatialField.LOWEST_CROSSOVER_HZ, SpatialField.HIGHEST_CROSSOVER_HZ),
             otherHalfIds = room.otherHalfIds,
-            metresPerUnit = room.metresPerUnit
+            // Zeroed rather than carried with a flag beside it: no scale is exactly what a room
+            // that never measured its listener sends, so the switch off and the feature absent
+            // are the same message on the wire and the same code on every handset.
+            metresPerUnit = if (room.delayCompensation) room.metresPerUnit else 0.0
         )
     }
 

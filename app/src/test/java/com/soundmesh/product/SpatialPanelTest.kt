@@ -222,4 +222,27 @@ class SpatialPanelTest {
         assertEquals(false, overheadRoundCanPlaceTheListener(three.take(2)))
         assertEquals(true, overheadRoundCanPlaceTheListener(three))
     }
+
+    /**
+     * Switching the delay off sends what a room that never measured its listener sends.
+     *
+     * One message on the wire and one path on every handset, rather than a flag beside the scale
+     * that each end has to remember to read. The scale itself is kept, so switching back on costs
+     * nothing and the A and the B differ in the delay and in nothing else - which is what makes
+     * the comparison mean anything: the only instrument that can judge this is an ear, and an ear
+     * cannot tell a correction that works from one that never started.
+     */
+    @Test
+    fun `switching the delay off is the same message as never having measured`() {
+        val measured = RoomState(icons = three, metresPerUnit = 0.5)
+
+        assertTrue(delayLines(measured.icons, measured.metresPerUnit).any { it.second > 0.0 })
+        assertEquals(
+            emptyList<Pair<String, Double>>(),
+            delayLines(measured.icons, metresPerUnit = 0.0)
+        )
+        // And the scale survives the switch, or turning it back on would need another minute of
+        // somebody standing still.
+        assertEquals(0.5, measured.copy(delayCompensation = false).metresPerUnit, 0.0)
+    }
 }

@@ -78,7 +78,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
             )
         }
         ListenerDistances(state, actions)
-        ArrivalDelays(state)
+        ArrivalDelays(state, actions)
         MeasuredDistances(state)
         FitOffer(state, actions)
         ModePicker(state, actions)
@@ -147,6 +147,17 @@ data class RoomState(
      * scale belongs to the old room. Only the arrival delay reads it.
      */
     val metresPerUnit: Double = 0.0,
+    /**
+     * Whether the room is holding the near handsets back, when it knows how far away they are.
+     *
+     * On by default, because a measured room that plays without it is the thing the measuring
+     * was for. It is a switch rather than a fixed rule for one reason: a correction that works
+     * sounds like nothing, and so does one that never started. Without a way back to the room
+     * as it was a moment ago, nobody can tell those two apart by ear - and the ear is the only
+     * instrument that can answer this one. The scale is kept while it is off, so the two states
+     * differ in the delay and in nothing else.
+     */
+    val delayCompensation: Boolean = true,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -172,6 +183,8 @@ class RoomActions(
     val fitToMeasured: () -> Unit,
     /** Opens the screen that runs the overhead round, which is the only thing that can. */
     val measureListener: () -> Unit,
+    /** Holds the near handsets back, or stops: the A and the B of the only test there is. */
+    val setDelayCompensation: (Boolean) -> Unit,
     val pickMode: (SpatialMode) -> Unit,
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
@@ -304,9 +317,17 @@ internal fun listenerLines(
  * handset always - it is the one everybody else is waiting for.
  */
 @Composable
-private fun ArrivalDelays(state: RoomState) {
+private fun ArrivalDelays(state: RoomState, actions: RoomActions) {
     val shown = delayLines(state.icons, state.metresPerUnit)
     if (shown.isEmpty()) return
+    OutlinedButton(onClick = { actions.setDelayCompensation(!state.delayCompensation) }) {
+        Text(
+            stringResource(
+                if (state.delayCompensation) R.string.room_delay_on else R.string.room_delay_off
+            )
+        )
+    }
+    if (!state.delayCompensation) return
     Text(
         stringResource(
             R.string.room_arrival_delay,

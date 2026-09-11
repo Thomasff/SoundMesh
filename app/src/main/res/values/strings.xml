@@ -220,6 +220,8 @@
     <string name="room_fit">按测量摆正图标</string>
     <string name="room_fit_done">图标已按测量摆正。拖动任意一台可以再来一次。</string>
     <string name="room_measured">量到的间距（米）：%1$s</string>
+    <string name="room_delay_on">延时补偿：开（点一下关掉，用来对比）</string>
+    <string name="room_delay_off">延时补偿：关（点一下打开）</string>
     <string name="room_arrival_delay">为了一起到达，各台延后（毫秒）：%1$s</string>
     <string name="room_listener_unmeasured">还没量过你坐在哪，图上按你坐在正中算。量过之后，音量和先后才是从你那儿算的。</string>
     <string name="room_listener_needs_three">要量你坐在哪，房间里至少得三台：举着的那台量不到它自己到你的距离。</string>
