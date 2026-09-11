@@ -70,6 +70,9 @@
     <string name="pair_calibrate_clock">正在和另一台对时钟，大约二十秒。这一步不发声。</string>
     <string name="pair_calibrate_running">正在测。两台都别碰，保持安静，大约一分钟。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
+    <string name="pair_calibrate_room_waiting">在等房间里的手机连过来。每一台都按一次开始，都按完了这台会自己开始。</string>
+    <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
+    <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。</string>
     <string name="pair_calibrate_stop">停止</string>
     <string name="pair_calibrate_stop_hint">正在测的这一台会测完，之后不再等新的手机。</string>
     <string name="pair_calibrate_stopping">这一台测完就结束，不再等下一台了。</string>

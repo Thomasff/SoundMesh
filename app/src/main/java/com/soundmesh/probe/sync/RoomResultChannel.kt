@@ -164,8 +164,9 @@ class RoomResultClient(private val hostAddress: String, private val port: Int) {
          *
          * Longer than a pair's wait has to be, and for a reason a pair does not have: this wait
          * covers the host gathering everybody else, not just the arithmetic. The handset that
-         * delivers first waits out every handset that delivers after it.
+         * delivers first waits out the host's own correlation pass and then every handset that
+         * delivers after it - two passes, where a pair's 120 s covers one.
          */
-        internal const val REPLY_TIMEOUT_MILLIS = 45_000
+        internal const val REPLY_TIMEOUT_MILLIS = 180_000
     }
 }

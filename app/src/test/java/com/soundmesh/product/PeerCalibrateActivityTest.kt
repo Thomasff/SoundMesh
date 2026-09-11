@@ -138,9 +138,9 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theCasesSitPastEverySeriesTheHarnessHasArchived() {
-        val cases = Regex("const val CASE_(?:MEASURE|VERIFY|SLOW_LINK|DISTANCE) = \"([A-Z])([0-9]+)\"")
+        val cases = Regex("const val CASE_(?:MEASURE|VERIFY|SLOW_LINK|DISTANCE|ROOM) = \"([A-Z])([0-9]+)\"")
             .findAll(source).map { it.groupValues[2].toInt() }.toList()
-        assertEquals(4, cases.size)
+        assertEquals(5, cases.size)
         assertTrue("a case id could be an archived run's directory", cases.all { it >= 90 })
     }
 
@@ -328,9 +328,11 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun everyAttemptIsAlsoFiledUnderANameNoLaterRunCanClaim() {
-        // Four call sites past the declaration: the host's run, the sink's run, the run the link
-        // gate turned away, and the combined report the host writes once both halves are in.
-        assertEquals(4, source.split("fileAttempt(").size - 2)
+        // Six call sites past the declaration. Four for a pair: the host's run, the sink's run,
+        // the run the link gate turned away, and the combined report the host writes once both
+        // halves are in. Two more for a room: this handset's own hearing of the window, filed
+        // before anything is combined, and the field the whole room came to.
+        assertEquals(6, source.split("fileAttempt(").size - 2)
         assertTrue(
             "filing a second copy of the evidence is what ends a finished run",
             source.contains("runCatching { PeerRunLog(")
@@ -516,7 +518,7 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun theThreeArmsAreThreeDifferentPlaces() {
-        assertEquals(4, setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK, CASE_DISTANCE).size)
+        assertEquals(5, setOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK, CASE_DISTANCE, CASE_ROOM).size)
     }
 
     /**
