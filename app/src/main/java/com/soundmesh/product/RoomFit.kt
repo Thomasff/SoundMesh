@@ -35,6 +35,19 @@ import kotlin.math.hypot
  * too late in a second way as well - once this has run, drawn and measured agree by construction,
  * and the check can never fire again.
  */
+/**
+ * A fitted room, and the one thing the drawing has never carried: how large it is.
+ *
+ * The drawing is dimensionless and every gain is happy with that - a gain is a ratio of two
+ * radii, so the same room drawn larger renders identically. The arrival delay is the first
+ * reader that is not a ratio: two metres is 5.8 ms whatever the drawing looks like.
+ */
+data class FittedRoom(
+    val icons: List<RoomIcon>,
+    /** How many metres one unit of the drawing is, or zero when this fit cannot say. */
+    val metresPerUnit: Double
+)
+
 object RoomFit {
     /**
      * How far the least the measurements can disagree with any room before they are refused.
@@ -96,7 +109,21 @@ object RoomFit {
         measuredMetres: Map<Pair<String, String>, Double>,
         listenerMetres: Map<String, Double> = emptyMap(),
         priorWeight: Double = DEFAULT_PRIOR_WEIGHT
-    ): List<RoomIcon>? {
+    ): List<RoomIcon>? = fitted(icons, measuredMetres, listenerMetres, priorWeight)?.icons
+
+    /**
+     * The same answer with the scale it was found at, which [corrected] throws away.
+     *
+     * Two functions rather than one return type everywhere because almost nothing wants the
+     * scale: the drawing does not, the gains do not, and the check that reads the drawing
+     * against the measurement does not. One reader does, and it is new.
+     */
+    fun fitted(
+        icons: List<RoomIcon>,
+        measuredMetres: Map<Pair<String, String>, Double>,
+        listenerMetres: Map<String, Double> = emptyMap(),
+        priorWeight: Double = DEFAULT_PRIOR_WEIGHT
+    ): FittedRoom? {
         require(priorWeight > 0.0) {
             "a fit with no prior is free to rotate and mirror the room, and every gain reads that"
         }
@@ -121,13 +148,34 @@ object RoomFit {
 
         // Brought back onto the drawing before the mirror is looked for, not after: the shrink
         // that does it is uniform about the listener, which cannot turn anything over.
-        val fitted = contained(centredOnListener(placed(nodes, edges, priorWeight)))
-            .filterNot { it.peerId == LISTENER }
+        val placement = centredOnListener(placed(nodes, edges, priorWeight))
+        val shrink = shrinkOf(placement)
+        val fitted = contained(placement, shrink).filterNot { it.peerId == LISTENER }
         val moved = edges.flatMap { listOf(it.first, it.second) }.toSet()
         val before = icons.filter { it.peerId in moved }
         val after = fitted.filter { it.peerId in moved }
         if (turnedInsideOut(before, after)) return null
-        return fitted
+        return FittedRoom(fitted, metresPerUnit(placement, shrink, toListener.isNotEmpty()))
+    }
+
+    /**
+     * How many metres one unit of this drawing turned out to be, or zero when it may not be used.
+     *
+     * Zero unless the overhead round measured the listener, and that is a decision rather than a
+     * missing case. A room measured handset to handset knows perfectly well how large it is; what
+     * it does not know is where anybody is sitting, because the listener is assumed to be in the
+     * middle of the handsets. The only reader of this is the arrival delay, and a delay measured
+     * from an assumed listener holds the wrong handset back - which adds the error it was meant
+     * to remove rather than merely failing to remove it.
+     *
+     * The shrink is carried in because [contained] may have scaled the whole answer down to fit
+     * the screen, and a scale read before that shrink is wrong by exactly it.
+     */
+    private fun metresPerUnit(placement: Placement, shrink: Double, listenerMeasured: Boolean): Double {
+        if (!listenerMeasured) return 0.0
+        val unitsPerMetre = placement.unitsPerMetre * shrink
+        if (unitsPerMetre <= 0.0 || !unitsPerMetre.isFinite()) return 0.0
+        return 1.0 / unitsPerMetre
     }
 
     /**
@@ -308,12 +356,7 @@ object RoomFit {
      * radii, and both survive it - whereas moving one icon in off the edge would quietly undo the
      * correction that put it there.
      */
-    private fun contained(placement: Placement): List<RoomIcon> {
-        val reach = placement.index.values.maxOf {
-            maxOf(abs(placement.x[it]), abs(placement.y[it]))
-        }
-        val room = SpatialRoom.CENTRE.toDouble() - MARGIN
-        val shrink = if (reach > room) room / reach else 1.0
+    private fun contained(placement: Placement, shrink: Double): List<RoomIcon> {
         return placement.index.entries
             .sortedBy { it.value }
             .map { (peerId, at) ->
@@ -325,6 +368,15 @@ object RoomFit {
                     )
                 )
             }
+    }
+
+    /** How much [contained] has to shrink the answer by, or one when it already fits. */
+    private fun shrinkOf(placement: Placement): Double {
+        val reach = placement.index.values.maxOf {
+            maxOf(abs(placement.x[it]), abs(placement.y[it]))
+        }
+        val room = SpatialRoom.CENTRE.toDouble() - MARGIN
+        return if (reach > room) room / reach else 1.0
     }
 
     /** How much of the drawing is kept clear of the edge, so an icon stays whole and draggable. */

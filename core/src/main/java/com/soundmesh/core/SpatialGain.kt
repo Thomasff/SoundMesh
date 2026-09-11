@@ -2,6 +2,7 @@ package com.soundmesh.core
 
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -120,10 +121,29 @@ data class SpatialField(
      * does, and it is exactly what every rule did before this field existed - so the failure this
      * degrades to is the behaviour it replaced, never worse than it.
      */
-    val effectiveAtHostNanos: Long = 0L
+    val effectiveAtHostNanos: Long = 0L,
+    /**
+     * How many metres one unit of the drawing is, or zero when nothing knows.
+     *
+     * The one number in this system that carries a unit, and it exists for exactly one reader:
+     * [arrivalDelayNanosFor]. Every gain is a ratio of two radii and does not change when the
+     * same room is drawn larger, which is why [SpatialLayout] has no scale and has never needed
+     * one. Time is not a ratio. Two metres is 5.8 ms whatever the drawing looks like.
+     *
+     * Zero means the room has never been measured **with the listener in it**, and that is the
+     * ordinary state rather than a fault. A room that measured only handset to handset knows how
+     * large it is and still cannot say how far anybody is sitting from anything - the listener is
+     * assumed to be in the middle of the handsets, which is where nobody sits. A delay computed
+     * from an assumed listener holds the wrong handset back, and holding the wrong handset back
+     * is worse than holding none: the error it adds is the error it was meant to remove, doubled.
+     */
+    val metresPerUnit: Double = 0.0
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
+        require(metresPerUnit >= 0.0 && metresPerUnit.isFinite()) {
+            "a room cannot be a negative number of metres across: $metresPerUnit"
+        }
         require(pan in -1.0..1.0) { "pan runs from -1 to +1: $pan" }
         require(separation in 0.0..1.0) { "separation runs from 0 to 1: $separation" }
         require(crossoverHz in LOWEST_CROSSOVER_HZ..HIGHEST_CROSSOVER_HZ) {
@@ -134,6 +154,31 @@ data class SpatialField(
         require(otherHalfIds.all { layout.contains(it) }) {
             "these handsets carry the sides but are not in the drawing: ${otherHalfIds.filterNot { layout.contains(it) }}"
         }
+    }
+
+    /**
+     * How long [peerId] holds its output back, so that what it plays arrives with the rest.
+     *
+     * The other half of the fix [SpatialLayout.distanceGainOf] describes itself as half of. That
+     * one corrects the level a handset is heard at and says outright that it leaves the time
+     * alone; this is the time. Sound covers 34 cm in a millisecond, so two handsets a metre apart
+     * in depth are heard 2.9 ms apart, and past a millisecond or so the earlier one takes the
+     * image outright however the levels are set - the near handset becomes where the music is.
+     *
+     * Every handset waits for the furthest one, because that is the only direction this can go.
+     * The far handset is already as early as it can be; nothing here can play in the past. So the
+     * whole room gains the furthest handset's head start of buffer, which at five metres is under
+     * fifteen milliseconds and sits inside the scheduler's three seconds without being noticed.
+     *
+     * Zero for every handset when [metresPerUnit] is zero, which is every room that has not been
+     * measured with the listener in it, and every build of the far end that predates this.
+     */
+    fun arrivalDelayNanosFor(peerId: String): Long {
+        require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
+        if (metresPerUnit <= 0.0) return 0L
+        val behindMetres = (layout.furthestReach - layout.reachOf(peerId)) * metresPerUnit
+        val nanos = behindMetres / AlignmentAnalysis.SPEED_OF_SOUND_M_S * 1_000_000_000.0
+        return nanos.roundToLong().coerceIn(0L, MAX_ARRIVAL_DELAY_NANOS)
     }
 
     /** Where the source is at [hostNanos], as an azimuth. Meaningless for [SpatialMode.SPLIT]. */
@@ -326,5 +371,17 @@ data class SpatialField(
 
         /** Twelve decibels. See [highTrim]: past this the room is being turned down, not tilted. */
         const val MAX_LOW_TILT = 4.0
+
+        /**
+         * The longest wait [arrivalDelayNanosFor] will ask any handset for: fifty milliseconds.
+         *
+         * Seventeen metres of depth, which is not a room anybody carries phones into. It is not a
+         * tuning knob but a guard on one input: the scale comes from a fit, a fit can be wrong, and
+         * a scale wrong by a factor of a hundred asks a handset to go quiet for a second and a half
+         * while everything on screen still reads healthy. Clipped rather than refused, because the
+         * room the clip lands on is the furthest handset's, which is where an uncorrected room
+         * already was.
+         */
+        const val MAX_ARRIVAL_DELAY_NANOS = 50_000_000L
     }
 }

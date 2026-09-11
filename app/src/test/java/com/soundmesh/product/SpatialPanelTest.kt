@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -185,5 +186,25 @@ class SpatialPanelTest {
         assertNotNull(fitOffer(moved))
         assertEquals(RoomIcon(c, 0.70f, 0.55f), moved.icons.first { it.peerId == c })
         assertEquals(three[0], moved.icons[0])
+    }
+
+    /**
+     * The one line on the screen that says the delay is switched on. Everything else about the
+     * feature is inaudible on purpose: it exists to make two handsets sound like one.
+     */
+    @Test
+    fun `what each handset waits is read out, in the order the room is drawn in`() {
+        val lines = delayLines(three, metresPerUnit = 1.0)
+
+        assertEquals(three.map { it.peerId }, lines.map { it.first })
+        // c is the furthest of the three and so waits for nobody; the other two wait for it.
+        assertEquals(0.0, lines.first { it.first == c }.second, 0.0)
+        assertTrue(lines.first { it.first == a }.second > 0.0)
+    }
+
+    /** And nothing at all until the overhead round and the fit have both happened. */
+    @Test
+    fun `a room with no measured scale reads out no delays`() {
+        assertEquals(emptyList<Pair<String, Double>>(), delayLines(three, metresPerUnit = 0.0))
     }
 }

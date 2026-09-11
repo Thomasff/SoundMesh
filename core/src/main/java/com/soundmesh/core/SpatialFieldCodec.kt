@@ -20,17 +20,22 @@ object SpatialFieldCodec {
     const val MAGIC = "soundmesh-spatial"
 
     /**
-     * Four since a rule carries the instant it starts applying at.
+     * Five since a rule carries how large the room is.
      *
      * Both ends refuse anything else rather than reading what they recognise, which is the whole
      * point of the number: a build that defaulted a missing part to the middle would render a room
      * the sender did not draw while believing it agreed with them. The instant is the same case in
      * its own shape - a receiver that dropped it would pick its own moment to swap halves on, and
      * picking your own moment is the fault it exists to remove.
+     *
+     * The scale is the same case a third time and the loudest of them. A handset that dropped it
+     * would default to no arrival delay and go on playing exactly as it did before the delay
+     * existed - which is the one failure this whole feature is about, arriving silently, on the
+     * one handset of the room whose owner did not update.
      */
-    const val VERSION = 4
+    const val VERSION = 5
 
-    private const val HEADER_FIELDS = 11
+    private const val HEADER_FIELDS = 12
     private const val POSITION_FIELDS = 4
 
     // Written out rather than taken from an enum because there is no enum: which part a handset
@@ -54,7 +59,8 @@ object SpatialFieldCodec {
         lines.add(
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
                 "${field.epochHostNanos} ${field.separation} ${field.splitAxis.name} " +
-                "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.layout.positions.size}"
+                "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.metresPerUnit} " +
+                "${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
             require(position.peerId.isNotEmpty() && position.peerId.none { it.isWhitespace() }) {
@@ -94,7 +100,9 @@ object SpatialFieldCodec {
             ?: throw IllegalArgumentException("unreadable crossover: ${header[8]}")
         val effectiveAtHostNanos = header[9].toLongOrNull()
             ?: throw IllegalArgumentException("unreadable effective instant: ${header[9]}")
-        val count = header[10].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[10]}")
+        val metresPerUnit = header[10].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable scale: ${header[10]}")
+        val count = header[11].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[11]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -133,7 +141,8 @@ object SpatialFieldCodec {
             splitAxis = splitAxis,
             crossoverHz = crossoverHz,
             otherHalfIds = otherHalfIds,
-            effectiveAtHostNanos = effectiveAtHostNanos
+            effectiveAtHostNanos = effectiveAtHostNanos,
+            metresPerUnit = metresPerUnit
         )
     }
 }

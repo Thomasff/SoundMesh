@@ -78,6 +78,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
             )
         }
         ListenerDistances(state)
+        ArrivalDelays(state)
         MeasuredDistances(state)
         FitOffer(state, actions)
         ModePicker(state, actions)
@@ -136,6 +137,16 @@ data class RoomState(
      * where nobody sits.
      */
     val listenerMetres: Map<String, Double> = emptyMap(),
+    /**
+     * How many metres one unit of the drawing is, or zero while nothing knows.
+     *
+     * Comes out of the fit rather than off disk, because it is a property of the answer and not
+     * of any one measurement: the fit is what reconciles every measured length with the drawing
+     * into one room at one size. Zero until the overhead round has measured the listener and the
+     * fit has been taken - and zero again the moment a fresh measurement lands, because the old
+     * scale belongs to the old room. Only the arrival delay reads it.
+     */
+    val metresPerUnit: Double = 0.0,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -188,10 +199,27 @@ internal fun withIconMoved(room: RoomState, moved: RoomIcon): RoomState = room.c
  * Afterwards would be too late a second time over: once this has run, drawn and measured agree
  * by construction and the check can never fire again.
  */
-internal fun fitOffer(state: RoomState): List<RoomIcon>? {
+internal fun fitOffer(state: RoomState): FittedRoom? {
     if (state.fitted) return null
     if (RoomCheck.contradiction(state.icons, state.measuredMetres) != null) return null
-    return RoomFit.corrected(state.icons, state.measuredMetres, state.listenerMetres)
+    return RoomFit.fitted(state.icons, state.measuredMetres, state.listenerMetres)
+}
+
+/**
+ * How long each handset waits for the furthest one, in milliseconds, in the drawing's order.
+ *
+ * Empty until the listener has been measured and the fit taken, which is what makes this the
+ * one line on the screen that says the delay is switched on. Everything else about the feature
+ * is inaudible by design: it exists to make two handsets sound like one.
+ */
+internal fun delayLines(icons: List<RoomIcon>, metresPerUnit: Double): List<Pair<String, Double>> {
+    if (metresPerUnit <= 0.0) return emptyList()
+    // Caught rather than thrown, for the reason HomeActivity.publish catches: this runs off a
+    // five-a-second refresh on the main thread, and a roster that arrived wrong would take the
+    // whole app down over one line of small print.
+    val layout = runCatching { SpatialRoom.layoutOf(icons) }.getOrNull() ?: return emptyList()
+    val field = SpatialField(SpatialMode.SPLIT, layout, metresPerUnit = metresPerUnit)
+    return layout.peerIds.map { it to field.arrivalDelayNanosFor(it) / 1_000_000.0 }
 }
 
 /**
@@ -249,6 +277,28 @@ internal fun listenerLines(
  * one and a half milliseconds, and past a millisecond the earlier handset takes the image
  * outright however the levels are set.
  */
+/**
+ * What the room is doing about the near handsets being heard first.
+ *
+ * On screen because it is the only evidence: a delay that works sounds like nothing at all, and
+ * a delay that never switched on sounds like nothing at all as well. Zero for the furthest
+ * handset always - it is the one everybody else is waiting for.
+ */
+@Composable
+private fun ArrivalDelays(state: RoomState) {
+    val shown = delayLines(state.icons, state.metresPerUnit)
+    if (shown.isEmpty()) return
+    Text(
+        stringResource(
+            R.string.room_arrival_delay,
+            shown.joinToString("   ") { (peerId, millis) ->
+                "${PeerBadge.numberOf(peerId)} " + "%.1f".format(millis)
+            }
+        ),
+        style = MaterialTheme.typography.bodySmall
+    )
+}
+
 @Composable
 private fun ListenerDistances(state: RoomState) {
     val shown = listenerLines(state.icons, state.listenerMetres)

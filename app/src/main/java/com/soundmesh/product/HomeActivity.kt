@@ -189,7 +189,11 @@ class HomeActivity : ComponentActivity() {
             moveIcon = { moved -> updateRoom { withIconMoved(it, moved) } },
             // Nothing happens if it refuses; the offer is only on screen while it would not.
             fitToMeasured = {
-                updateRoom { room -> fitOffer(room)?.let { room.copy(icons = it, fitted = true) } ?: room }
+                updateRoom { room ->
+                    fitOffer(room)?.let {
+                        room.copy(icons = it.icons, metresPerUnit = it.metresPerUnit, fitted = true)
+                    } ?: room
+                }
             },
             pickMode = { mode -> updateRoom { it.copy(mode = mode) } },
             setPan = { pan -> updateRoom { it.copy(pan = pan) } },
@@ -254,7 +258,8 @@ class HomeActivity : ComponentActivity() {
             splitAxis = room.splitAxis,
             crossoverHz = room.crossoverHz.toDouble()
                 .coerceIn(SpatialField.LOWEST_CROSSOVER_HZ, SpatialField.HIGHEST_CROSSOVER_HZ),
-            otherHalfIds = room.otherHalfIds
+            otherHalfIds = room.otherHalfIds,
+            metresPerUnit = room.metresPerUnit
         )
     }
 
@@ -520,6 +525,9 @@ class HomeActivity : ComponentActivity() {
             listenerMetres = StoredListenerDistance.all(filesDir),
             // A fresh reading is a fresh reason to offer, whatever was done with the last one.
             fitted = false,
+            // And the scale goes with it: it came out of a fit of the previous numbers, and a
+            // stale one delays the right handset by the wrong amount rather than not at all.
+            metresPerUnit = 0.0,
             colours = host.roomPlaces(),
             silentIds = silent,
             otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
@@ -561,7 +569,8 @@ class HomeActivity : ComponentActivity() {
             room = room.copy(
                 measuredMetres = measured,
                 listenerMetres = listener,
-                fitted = false
+                fitted = false,
+                metresPerUnit = 0.0
             )
         )
     }

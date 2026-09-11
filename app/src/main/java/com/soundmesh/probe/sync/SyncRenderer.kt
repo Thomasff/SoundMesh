@@ -266,6 +266,15 @@ class SyncRenderer(
     /** The newest rule this handset has been told about, which may not be due yet. */
     @Volatile private var spatialField: SpatialField? = null
 
+    /**
+     * How long this handset holds everything back so that its sound arrives with the rest.
+     *
+     * Zero on every run that has no spatial rule, which is every calibration run there has ever
+     * been - the chirp the alignment is measured with must land where it was told to land, and a
+     * delay under it would be measured as the alignment error it exists to sit beside.
+     */
+    @Volatile private var arrivalDelayNanos = 0L
+
     /** The rule the last chunk was played under. Touched only by the render thread. */
     private var spatialInForce: SpatialField? = null
     @Volatile private var untilHostNanos = Long.MIN_VALUE
@@ -551,9 +560,21 @@ class SyncRenderer(
     fun acquisitionDurationNanos(): Long? {
         val start = acquisitionStartHostNanos
         if (start == UNDEFINED) return null
-        val end = if (acquisitionConvergedAtHostNanos != UNDEFINED) acquisitionConvergedAtHostNanos else hostNanosNow()
+        val end = if (acquisitionConvergedAtHostNanos != UNDEFINED) acquisitionConvergedAtHostNanos else playHostNanos()
         return end - start
     }
+
+    /**
+     * The host clock this handset plays against: the real one, moved back by [arrivalDelayNanos].
+     *
+     * One place rather than a subtraction at the release gate, and that is the whole of why it
+     * exists. The gate is not the only thing that reads the clock - the trim decides how much of
+     * a chunk is already past, and the drift controller compares where playback is against where
+     * the timeline says it should be. Delaying at the gate alone would leave the controller
+     * measuring the delay as error and quietly correcting it away, a frame at a time, until the
+     * room was back where it started with nothing on screen having changed.
+     */
+    private fun playHostNanos(): Long = hostNanosNow() - arrivalDelayNanos
 
     fun run() {
         val minimum = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
@@ -595,10 +616,10 @@ class SyncRenderer(
             // carries it forward a chunk at a time, exactly as the write stream advances.
             var timelineNextHostNanos = UNDEFINED
             var nextDriftCheckHostNanos = UNDEFINED
-            while (hostNanosNow() < untilHostNanos) {
-                if (timelineNextHostNanos != UNDEFINED && hostNanosNow() >= nextDriftCheckHostNanos) {
+            while (playHostNanos() < untilHostNanos) {
+                if (timelineNextHostNanos != UNDEFINED && playHostNanos() >= nextDriftCheckHostNanos) {
                     sampleDrift(track, timestamp, writtenFrames, timelineNextHostNanos)
-                    nextDriftCheckHostNanos = hostNanosNow() + driftIntervalNanos()
+                    nextDriftCheckHostNanos = playHostNanos() + driftIntervalNanos()
                 }
                 // Taken before poll on purpose: poll has already counted the chunk it returns, so
                 // this is the only reading that excludes the chirp's own first chunk.
@@ -607,7 +628,7 @@ class SyncRenderer(
                 // The instant the next frame written will be heard. Both poll's release test and
                 // the trim below are asked about the same instant on purpose: poll decides whether
                 // the chunk is due, the trim decides how much of it already is not.
-                val heardAtHostNanos = hostNanosNow() + depthNanos
+                val heardAtHostNanos = playHostNanos() + depthNanos
                 // Cumulative on the track, so the last read is the run's total. Polled here rather
                 // than once at the end because the track is released before report() is called.
                 runCatching { trackUnderruns = track.underrunCount }
@@ -616,8 +637,8 @@ class SyncRenderer(
                         if (timelineNextHostNanos == UNDEFINED) {
                             // First chunk pins the timeline: acquisition starts now, sampling
                             // immediately rather than waiting a full DRIFT_INTERVAL_NANOS.
-                            acquisitionStartHostNanos = hostNanosNow()
-                            nextDriftCheckHostNanos = hostNanosNow()
+                            acquisitionStartHostNanos = playHostNanos()
+                            nextDriftCheckHostNanos = playHostNanos()
                         }
                         // Shaped before the trim, not after: a trim shortens what is written
                         // without moving the instant any surviving frame lands on, so frame j of
@@ -845,7 +866,7 @@ class SyncRenderer(
         if (firstPendingFrames == null) firstPendingFrames = pendingFrames
         if (pendingFrames < minPendingFrames) minPendingFrames = pendingFrames
         if (pendingFrames > maxPendingFrames) maxPendingFrames = pendingFrames
-        val errorFrames = playbackErrorFrames(hostNanosNow(), pendingFrames, timelineNextHostNanos, SAMPLE_RATE)
+        val errorFrames = playbackErrorFrames(playHostNanos(), pendingFrames, timelineNextHostNanos, SAMPLE_RATE)
         val decision = drift.observe(errorFrames)
         lastFilteredError = decision.filteredErrorFrames
         val magnitude = abs(decision.filteredErrorFrames)
@@ -866,7 +887,7 @@ class SyncRenderer(
         )
         val isAcquiring = phaseState.phase == RendererPhase.ACQUIRING
         if (wasAcquiring && !isAcquiring) {
-            acquisitionConvergedAtHostNanos = hostNanosNow()
+            acquisitionConvergedAtHostNanos = playHostNanos()
             // Banked at the instant it converged, so the running total never has to reconstruct a
             // window whose start has since been overwritten by the next fallback.
             completedAcquiringNanos += acquisitionConvergedAtHostNanos - acquisitionStartHostNanos
@@ -878,7 +899,7 @@ class SyncRenderer(
             reacquisitions++
             reacquisitionErrorSumFrames += magnitude
             if (decision.filteredErrorFrames < 0) reacquisitionsNegative++
-            acquisitionStartHostNanos = hostNanosNow()
+            acquisitionStartHostNanos = playHostNanos()
             acquisitionConvergedAtHostNanos = UNDEFINED
         }
     }
@@ -966,7 +987,18 @@ class SyncRenderer(
     fun applySpatialField(field: SpatialField?) {
         spatialField = field
         if (field == null) spatialInForce = null
+        // Read off the rule as it arrives rather than through ruleInForce, because it is not the
+        // same kind of quantity as the gains that wait. The instant matters for those: two
+        // handsets swapping halves of the mix a few milliseconds apart play two halves that no
+        // longer add back up to it. Nothing adds up across handsets here - this one is how far
+        // away this phone is, which was true before the message arrived and stays true after.
+        arrivalDelayNanos =
+            if (field == null || spatialPeerId == null || !field.layout.contains(spatialPeerId)) 0L
+            else field.arrivalDelayNanosFor(spatialPeerId)
     }
+
+    /** How long this handset is waiting for the furthest one, in nanoseconds. */
+    fun arrivalDelayNanos(): Long = arrivalDelayNanos
 
     /**
      * The exception the render loop died of, if any. Exposed on its own (not just inside
@@ -1016,7 +1048,7 @@ class SyncRenderer(
                 completedAcquiringNanos,
                 acquisitionStartHostNanos.takeIf { it != UNDEFINED },
                 acquisitionConvergedAtHostNanos.takeIf { it != UNDEFINED },
-                hostNanosNow
+                ::playHostNanos
             )}," +
             "\"reacquisitionErrorSumFrames\":$reacquisitionErrorSumFrames," +
             "\"reacquisitionsNegative\":$reacquisitionsNegative," +
@@ -1042,6 +1074,7 @@ class SyncRenderer(
             "\"lowLatency\":$lowLatency,\"playbackUsage\":\"${playbackUsage.name}\"," +
             "\"spatialPeerId\":${spatialPeerId?.let { "\"$it\"" } ?: "null"}," +
             "\"spatialChunks\":$spatialChunks," +
+            "\"arrivalDelayNanos\":$arrivalDelayNanos," +
             "\"trackProfile\":" + trackProfileJson(
                 trackMinBufferBytes, trackRequestedBytes, trackBufferFrames,
                 trackCapacityFrames, trackPerformanceMode, trackSampleRate, firstPendingFrames

@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.soundmesh.core.SpatialField
+import com.soundmesh.core.SpatialMode
 import org.junit.Test
 import kotlin.math.PI
 import kotlin.math.abs
@@ -231,5 +233,72 @@ class RoomFitListenerTest {
             "worst bearing was ${worstBearingError(fitted)} degrees out",
             worstBearingError(fitted) > 25.0
         )
+    }
+
+    // ---- the scale, which is what the delay is computed from ---------------------------------
+
+    /** Metres between two handsets, as the fit ended up believing them to be. */
+    private fun fittedApart(fit: FittedRoom, one: String, two: String): Double {
+        val first = fit.icons.first { it.peerId == one }
+        val second = fit.icons.first { it.peerId == two }
+        return hypot((first.x - second.x).toDouble(), (first.y - second.y).toDouble()) *
+            fit.metresPerUnit
+    }
+
+    /**
+     * The drawing has never carried a size and has never needed to: every gain is a ratio. The
+     * arrival delay is the first reader that is not, so the fit now says what it found.
+     */
+    @Test
+    fun `the fit says how large the room is, in metres it was told`() {
+        val fit = RoomFit.fitted(sketch, measured, listenerMetres)!!
+
+        assertEquals(apartInMetres(a, b), fittedApart(fit, a, b), 0.3)
+        assertEquals(apartInMetres(b, c), fittedApart(fit, b, c), 0.3)
+    }
+
+    /**
+     * And says nothing when the listener was never measured, which is a decision rather than a
+     * gap: such a room knows its own size perfectly well and still cannot say where anybody is
+     * sitting. A delay taken from an assumed listener holds the wrong handset back.
+     */
+    @Test
+    fun `a room measured handset to handset alone reports no scale`() {
+        assertEquals(0.0, RoomFit.fitted(sketch, measured)!!.metresPerUnit, 0.0)
+    }
+
+    /**
+     * What the scale is for, end to end: how much later the near handsets have to play.
+     *
+     * Truth here is 2.5 m against 1.56 m, which is 2.7 ms - nearly three times the millisecond
+     * past which the earlier handset takes the image outright. The fit does not land on it and is
+     * not meant to: with two measured listener edges against a prior of 0.3 the listener stops a
+     * little short, exactly as it does for the gain. What it has to do is take most of it out.
+     */
+    @Test
+    fun `the delay the room ends up asking for is most of the delay it should`() {
+        val measured = bothWays(
+            mapOf(
+                (a to b) to apartIn(realisticMetres, a, b),
+                (a to c) to apartIn(realisticMetres, a, c),
+                (b to c) to apartIn(realisticMetres, b, c)
+            )
+        )
+        val fromListener = realisticMetres
+            .filterKeys { it != held }
+            .mapValues { hypot(it.value.first, it.value.second) }
+
+        val fit = RoomFit.fitted(realistic, measured, fromListener)!!
+        val field = SpatialField(
+            SpatialMode.SPLIT,
+            SpatialRoom.layoutOf(fit.icons)!!,
+            metresPerUnit = fit.metresPerUnit
+        )
+
+        val want = (2.5 - hypot(1.2, 1.0)) / 343.0 * 1000
+        val got = field.arrivalDelayNanosFor(b) / 1_000_000.0
+        assertEquals(0L, field.arrivalDelayNanosFor(a))
+        assertTrue("wanted $want ms, waits $got ms", abs(got - want) < 1.0)
+        assertTrue("waits $got ms, which is not most of $want ms", got > want / 2)
     }
 }

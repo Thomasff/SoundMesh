@@ -91,6 +91,23 @@ class SpatialLayout(val positions: List<SpatialPosition>) {
         return (hypot(position.x, position.y) / furthest).coerceAtLeast(CLOSEST_SHARE)
     }
 
+    /**
+     * How far [peerId] is from the listener, in whatever units the drawing was made in.
+     *
+     * Still no metres here, and that is the whole division of labour: this says the room is a
+     * shape, and whoever knows how large the room is multiplies. Every gain reads the ratio of
+     * two of these and so never needs the multiplier; the arrival delay is the one thing that
+     * does, and it lives on SpatialField beside the number that supplies it.
+     */
+    fun reachOf(peerId: String): Double {
+        val position = positions.firstOrNull { it.peerId == peerId }
+            ?: throw IllegalArgumentException("no handset named $peerId in this layout")
+        return hypot(position.x, position.y)
+    }
+
+    /** The furthest handset's [reachOf], which is what every other one is late against. */
+    val furthestReach: Double get() = furthest
+
     fun contains(peerId: String): Boolean = positions.any { it.peerId == peerId }
 
     companion object {

@@ -209,4 +209,31 @@ class SpatialFieldCodecTest {
 
         assertTrue(thrown.exceptionOrNull() is IllegalArgumentException)
     }
+
+    /**
+     * How large the room is crosses the wire, because the half-second of delay it decides is
+     * applied on the handset and not here.
+     */
+    @Test
+    fun carriesHowLargeTheRoomIs() {
+        val measured = field.copy(metresPerUnit = 2.5)
+
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(measured))
+
+        assertEquals(2.5, back.metresPerUnit, 0.0)
+        for (peerId in measured.layout.peerIds) {
+            assertEquals(
+                measured.arrivalDelayNanosFor(peerId),
+                back.arrivalDelayNanosFor(peerId)
+            )
+        }
+    }
+
+    /** And a room nobody measured the listener in says so rather than saying nothing. */
+    @Test
+    fun carriesTheAbsenceOfAScaleToo() {
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(field))
+
+        assertEquals(0.0, back.metresPerUnit, 0.0)
+    }
 }
