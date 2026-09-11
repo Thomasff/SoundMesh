@@ -100,6 +100,9 @@ class HomeActivity : ComponentActivity() {
     /** Whether the room has already been told about the session that is up, so it is told once. */
     private var toldTheRoom = false
 
+    /** How many were standing by when they were last told, so a handset arriving is an event. */
+    private var toldThisMany = 0
+
     private val refresh = object : Runnable {
         override fun run() {
             readSession()
@@ -549,6 +552,17 @@ class HomeActivity : ComponentActivity() {
      */
     private fun announceSession(running: Boolean) {
         if (state.role != Role.HOST) return
+        val joined = state.standingBy > toldThisMany
+        toldThisMany = state.standingBy
+        // Said again to a handset that has only just arrived, and only while the room is playing.
+        // Nothing is replayed on the channel itself - see RoomCommandServer - so this is the host
+        // deciding to repeat itself rather than the channel remembering, which is the difference
+        // that matters: it happens while somebody is looking at a room that is playing. What it
+        // is for is the handset that just finished measuring and put itself back on this screen.
+        if (running && toldTheRoom && joined) {
+            RoomCommands.send(RoomCommand.PLAY)
+            return
+        }
         if (running == toldTheRoom) return
         toldTheRoom = running
         RoomCommands.send(if (running) RoomCommand.PLAY else RoomCommand.STOP)
@@ -635,7 +649,8 @@ class HomeActivity : ComponentActivity() {
             Role.SINK -> {
                 RoomCommands.stop()
                 val host = state.paired ?: return
-                hostLine = RoomCommandClient(host.address, COMMAND_PORT) { command ->
+                val self = state.selfId ?: HostIdentity(filesDir).current()
+                hostLine = RoomCommandClient(host.address, COMMAND_PORT, self) { command ->
                     // On to the main thread: this arrives on the socket thread, and everything it
                     // leads to is either an activity being started or a service being asked for.
                     handler.post { obey(command) }
@@ -679,6 +694,11 @@ class HomeActivity : ComponentActivity() {
                 .putExtra("room", true)
                 .putExtra("overhead", overhead)
                 .putExtra("auto", true)
+                // Which is what sends it back here when the round ends. A handset that was
+                // opened by somebody pressing something is theirs to close; one that opened
+                // itself has to put itself away, or it sits on a finished result holding the
+                // clock port and standing by for nothing.
+                .putExtra("sent", true)
         )
     }
 

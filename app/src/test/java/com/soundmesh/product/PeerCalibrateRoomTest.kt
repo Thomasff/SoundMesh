@@ -342,15 +342,19 @@ class PeerCalibrateRoomTest {
      * that looks exactly like a right one.
      */
     @Test
-    fun theOverheadRoundGivesTheListenerTimeToSitDown() {
-        assertTrue(source.contains("if (overhead()) it.copy(planLeadNanos = OVERHEAD_PLAN_LEAD_NANOS)"))
-        // Longer than the settle that precedes it, or the extra time would be lost in the noise
-        // of a round that was already waiting. Read out of the source because the companion that
-        // holds both is private, which is right: nothing outside that class needs either number.
-        val lead = Regex("OVERHEAD_PLAN_LEAD_NANOS = ([0-9_]+)L").find(source)!!.groupValues[1]
-        val settle = Regex("ROOM_SETTLE_MILLIS = ([0-9_]+)").find(source)!!.groupValues[1]
-        assertTrue(lead.replace("_", "").toLong() / 1_000_000L > settle.replace("_", "").toLong())
-        // And the command line still wins, so a sweep can shorten it.
+    fun aRoundStartedByTheHostPutsItselfAwayAfterwards() {
+        // The whole of the fault it fixes is that it did not: a handset left sitting on a
+        // finished result holds the clock port and is standing by for nobody, so the next thing
+        // the host says reaches nothing and the next session cannot bind.
+        assertTrue(source.contains("private fun putItselfAway()"))
+        assertTrue(source.contains("if (!intent.getBooleanExtra(\"sent\", false)) return"))
+        // And a round nobody is watching ends rather than running on holding those same ports.
+        assertTrue(source.contains("if (isFinishing) stopServing()"))
+        // The lead is the shipped one again. It was fifteen seconds while the listener had to
+        // walk round pressing a button on every handset; the host says go now, and whoever
+        // pressed it is already sitting down holding the phone.
+        assertFalse(source.contains("OVERHEAD_PLAN_LEAD_NANOS"))
+        // And the command line still wins, so a sweep can move it.
         assertTrue(source.contains("planLeadNanos = millisExtra(\"plan_lead_millis\", shipped.planLeadNanos)"))
     }
 }

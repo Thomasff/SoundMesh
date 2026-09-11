@@ -970,9 +970,7 @@ class PeerCalibrateActivity : ComponentActivity() {
      * otherwise.
      */
     private fun timingFor(caseId: String?): ArmSchedule {
-        val shipped = defaultTimingFor(caseId).let {
-            if (overhead()) it.copy(planLeadNanos = OVERHEAD_PLAN_LEAD_NANOS) else it
-        }
+        val shipped = defaultTimingFor(caseId)
         return shipped.copy(
             repeats = intent.getIntExtra("chirp_repeats", shipped.repeats),
             intervalNanos = millisExtra("chirp_interval_millis", shipped.intervalNanos),
@@ -1112,8 +1110,43 @@ class PeerCalibrateActivity : ComponentActivity() {
                 show(getString(R.string.pair_calibrate_failed, it.javaClass.simpleName))
             }
             running = false
-            handler.post { state = state.copy(running = false) }
+            handler.post {
+                state = state.copy(running = false)
+                putItselfAway()
+            }
         }, "SoundMeshPeerCalibrate").start()
+    }
+
+    /**
+     * Goes back where it came from, for a round nobody opened this screen to watch.
+     *
+     * A handset that got here because its host said so has to leave the same way. Left sitting on
+     * a finished result it is holding the clock port - which the next round and the next session
+     * both need - and it is not standing by either, because the channel only lives on the home
+     * screen. So the host asks the room to measure again and nothing answers, then asks it to
+     * play and nothing answers, and every one of those looks like the network. Reported on 09-11
+     * as a room that measured once and then would not do anything at all.
+     *
+     * A few seconds late, so whatever the round has to say is on screen long enough to read.
+     */
+    private fun putItselfAway() {
+        if (!intent.getBooleanExtra("sent", false)) return
+        handler.postDelayed({ if (!running) finish() }, LINGER_MILLIS)
+    }
+
+    /**
+     * A round nobody is looking at is a round nobody wants.
+     *
+     * Without this, leaving this screen with the back button leaves the run going: it holds the
+     * clock port, the room port and the plan port, and the next thing to want any of them - a
+     * session on the home screen, or a second round from a fresh instance of this screen - fails
+     * to bind. The screen it fails on is a new instance with nothing running, so it says there is
+     * no calibration in flight while the ports say otherwise. That is 09-11, exactly: "回到主页,
+     * 点击播放,显示放不了,让我停止对时。但是我到对时页面发现并没有正在对时".
+     */
+    override fun onDestroy() {
+        if (isFinishing) stopServing()
+        super.onDestroy()
     }
 
     /**
@@ -1820,19 +1853,12 @@ class PeerCalibrateActivity : ComponentActivity() {
         const val ROOM_PORT = 45127
 
         /**
-         * How long the overhead round waits after everybody has asked, before the first chirp.
+         * How long a round started by the host stays on screen before it puts itself away.
          *
-         * Every other round is measuring phones that are already where they will be, so two
-         * seconds is generous. This one is measuring a person, and the person has to press the
-         * last button, raise the handset over their head, walk back, sit down and stop moving.
-         * Eight seconds of settle plus two of lead is not that walk, and a listener who is still
-         * moving when the first chirp goes is measured somewhere they are not going to be.
-         *
-         * Here rather than in ROOM_SETTLE_MILLIS, which cannot grow: the settle is bounded by
-         * ROOM_WINDOW_MILLIS, which is bounded in turn by how long a sink will wait for its plan.
-         * The lead is after every handset already holds the plan, so it costs nothing but time.
+         * Long enough to read what it says and short enough that nobody is waiting on it. The
+         * host reports the whole room anyway; this is only the one handset saying how it got on.
          */
-        const val OVERHEAD_PLAN_LEAD_NANOS = 15_000_000_000L
+        const val LINGER_MILLIS = 3_000L
 
         /**
          * How long the room waits between one handset asking and the next, before deciding

@@ -1,5 +1,6 @@
 package com.soundmesh.probe.sync
 
+import com.soundmesh.core.HostId
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomCommandCodec
 import java.net.InetSocketAddress
@@ -26,7 +27,9 @@ const val COMMAND_PORT = 45128
  * because the host said "play" ten minutes ago is a phone nobody told to do anything.
  */
 class RoomCommandServer(private val port: Int) {
-    private val clients = Collections.synchronizedList(ArrayList<Socket>())
+    private class Standing(val socket: Socket, val peerId: String)
+
+    private val clients = Collections.synchronizedList(ArrayList<Standing>())
 
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
@@ -35,11 +38,11 @@ class RoomCommandServer(private val port: Int) {
         // Bound on the caller's thread, for the reason ChunkServer.start states: a stop() landing
         // before an async bind completed would find the socket null and miss the close.
         //
-        // Reusable because this end is opened and closed by somebody changing what their phone
-        // is being, which they do several times a minute while trying things. Sockets accepted
-        // on this port sit in TIME_WAIT for a while after they close, and without this the next
-        // bind fails - so picking host, then sink, then host again would leave a host nobody
-        // could stand by for, with nothing on screen saying so.
+        // Reusable because this end is opened and closed by somebody changing what their phone is
+        // being, which they do several times a minute while trying things. Sockets accepted on
+        // this port sit in TIME_WAIT for a while after they close, and without this the next bind
+        // fails - so picking host, then sink, then host again would leave a host nobody could
+        // stand by for, with nothing on screen saying so.
         val bound = ServerSocket()
         bound.reuseAddress = true
         bound.bind(InetSocketAddress(port))
@@ -51,11 +54,61 @@ class RoomCommandServer(private val port: Int) {
                     while (running) {
                         val socket = bound.accept()
                         socket.tcpNoDelay = true
-                        clients.add(socket)
+                        // The name is read on the new thread, not here: a handset that connects
+                        // and then says nothing would otherwise hold the accept loop for as long
+                        // as it stayed connected, and nobody else could stand by behind it.
+                        Thread({ hold(socket) }, "SoundMeshCommandHeld").start()
                     }
                 }
             }
         }.start()
+    }
+
+    /**
+     * Holds one handset's socket for as long as it is there, under the name it gave.
+     *
+     * Named, and that is the whole difference between counting handsets and counting sockets. A
+     * handset that rescans a code, or that walks out of range and back, opens a second connection
+     * - and the first one is still here, because nothing has been written to it and a socket
+     * nobody writes to is a socket nobody notices die. Counting those, a host says three handsets
+     * are standing by in a room of two, which is what a listener hit on 09-11 by scanning twice.
+     *
+     * [SpatialFieldServer] carries the same rule for the same reason and got there first. The new
+     * connection wins: the old one is only still here because nothing has been sent down it.
+     */
+    private fun hold(socket: Socket) {
+        val stream = runCatching { socket.getInputStream().buffered() }.getOrNull()
+        val announced = runCatching {
+            // Bounded, or a socket that connects and says nothing parks this thread for the life
+            // of the process. Cleared afterwards: a named handset is expected to stay quiet.
+            socket.soTimeout = ANNOUNCE_TIMEOUT_MILLIS
+            val name = SpatialFrame.read(stream!!)
+            socket.soTimeout = 0
+            name
+        }.getOrNull()
+        if (stream == null || !HostId.isValid(announced)) {
+            runCatching { socket.close() }
+            return
+        }
+        val standing = Standing(socket, announced!!)
+        val replaced = synchronized(clients) {
+            val stale = clients.filter { it.peerId == standing.peerId }
+            clients.removeAll(stale)
+            clients.add(standing)
+            stale
+        }
+        // Outside the lock, and closed rather than dropped: the thread parked on that socket ends
+        // when the socket does, and a held socket per departed handset is a leak with a name.
+        for (old in replaced) runCatching { old.socket.close() }
+        // Then parked on a read that is never answered, which is what makes this a count rather
+        // than a guess at one: the read ends the moment that handset closes its end, and this is
+        // the only place that finds out without having something to send.
+        runCatching {
+            socket.use {
+                while (running && stream.read() >= 0) Unit
+            }
+        }
+        clients.remove(standing)
     }
 
     /**
@@ -73,15 +126,15 @@ class RoomCommandServer(private val port: Int) {
         val frame = SpatialFrame.encode(RoomCommandCodec.encode(command))
         val told = synchronized(clients) { ArrayList(clients) }
         Thread({
-            for (socket in told) {
+            for (standing in told) {
                 runCatching {
-                    socket.getOutputStream().apply {
+                    standing.socket.getOutputStream().apply {
                         write(frame)
                         flush()
                     }
                 }.onFailure {
-                    clients.remove(socket)
-                    runCatching { socket.close() }
+                    clients.remove(standing)
+                    runCatching { standing.socket.close() }
                 }
             }
         }, "SoundMeshCommandSend").start()
@@ -91,7 +144,7 @@ class RoomCommandServer(private val port: Int) {
      * How many handsets are standing by.
      *
      * On screen rather than only in a log, because it is the answer to the question somebody asks
-     * a second after pressing the button: a phone that was not holding a socket is a phone that
+     * a second after pressing the button: a phone that was not holding the line is a phone that
      * did not hear, and without this the only way to find that out is that it never started.
      */
     fun standingBy(): Int = clients.size
@@ -100,9 +153,14 @@ class RoomCommandServer(private val port: Int) {
         running = false
         runCatching { server?.close() }
         synchronized(clients) {
-            for (socket in clients) runCatching { socket.close() }
+            for (standing in clients) runCatching { standing.socket.close() }
             clients.clear()
         }
+    }
+
+    private companion object {
+        /** Long enough for a slow link, short enough that a silent socket is not a parked thread. */
+        const val ANNOUNCE_TIMEOUT_MILLIS = 5_000
     }
 }
 
@@ -111,12 +169,14 @@ class RoomCommandServer(private val port: Int) {
  *
  * Reconnects for as long as it is open, because the host end comes and goes - it is bound while
  * somebody is being a host and closed while they are not, and a sink that gave up on the first
- * refused connection would need a person to press something, which is the entire thing this exists
- * to remove.
+ * refused connection would need a person to press something, which is the entire thing this
+ * exists to remove.
  */
 class RoomCommandClient(
     private val hostAddress: String,
     private val port: Int,
+    /** This handset's own name, said first, so the host counts handsets and not sockets. */
+    private val selfId: String,
     private val onCommand: (RoomCommand) -> Unit
 ) : AutoCloseable {
     @Volatile private var running = false
@@ -137,6 +197,10 @@ class RoomCommandClient(
                 Socket().also { socket = it }.use { open ->
                     open.connect(InetSocketAddress(hostAddress, port), CONNECT_TIMEOUT_MILLIS)
                     open.tcpNoDelay = true
+                    open.getOutputStream().apply {
+                        write(SpatialFrame.encode(selfId))
+                        flush()
+                    }
                     connected = true
                     val stream = open.getInputStream()
                     while (running) {
@@ -160,7 +224,7 @@ class RoomCommandClient(
 
     private companion object {
         const val CONNECT_TIMEOUT_MILLIS = 3_000
-        /** Long enough to cost nothing while nobody is hosting, short enough to feel like nothing. */
+        /** Long enough to cost nothing while nobody hosts, short enough to feel like nothing. */
         const val RETRY_MILLIS = 3_000L
     }
 }

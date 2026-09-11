@@ -71,11 +71,11 @@
     <string name="pair_calibrate_running">正在测。两台都别碰，保持安静，大约一分钟。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
     <string name="pair_calibrate_room_title">几台一起量距离</string>
-    <string name="pair_calibrate_room_intro">一次把房间里每两台之间的距离都量出来，不用一对一对地来。\n\n把每台手机摆好，其他手机开着这个应用停在首页就行——只在主机上按下面这个按钮，它们会自己跟着开始。哪台没停在首页，就得去那台上手动按一次。\n\n按完约 10 秒开始响，响的时候谁都别碰。</string>
+    <string name="pair_calibrate_room_intro">量的是**手机之间**的距离，一次量完所有组合。\n\n每台手机都摆到它该在的位置，其他手机开着这个应用停在首页别动，然后**只在这台上按一下**，它们会自己跟着开始。哪台没停在首页，就得走过去在那台上按一次——首页写着有几台在待命。\n\n按完约 10 秒开始响，响的时候谁都别碰。</string>
     <string name="pair_calibrate_room_start">几台一起量</string>
-    <string name="pair_calibrate_overhead_hint">想让声音同时到你耳朵，还得知道你坐在哪。至少要三台：举着的那台量不到它自己到你的距离，所以两台只剩一条边，定不出位置。\n\n① 其他手机摆好、开着首页别动；② 拿着这台坐到你平时听歌的位置；③ 按下面这个按钮，然后把这台举到头顶正上方，别动。约 20 秒后才开始响，响完再放下。\n\n④ 把这台放回它该在的位置，再按一次上面的「几台一起量」，量一轮。</string>
+    <string name="pair_calibrate_overhead_hint">这一轮量的是**你坐的位置**。至少要三台：举着的那台量不到它自己到你的距离，两台只剩一条边，定不出位置。\n\n**一共两轮，都只在这台上按。**\n\n第一轮，按下面那个「举过头顶，量我坐在哪」：其他手机先摆好、停在首页；你拿着这台坐到平时听歌的地方，按一下，然后把这台举到头顶正上方别动。约 10 秒后开始响，响完放下。\n\n第二轮，按上面那个「几台一起量」：先把这台也放回它该在的位置，再按一下。\n\n为什么要两轮：举着的时候这台不在它的位置上，量不准手机之间的距离；而放好之后，又没人拿着它量你。</string>
     <string name="pair_calibrate_overhead_start">举过头顶，量我坐在哪</string>
-    <string name="pair_calibrate_room_waiting">在等房间里的手机连过来。每一台都按一次开始，都按完了这台会自己开始。</string>
+    <string name="pair_calibrate_room_waiting">在等其他手机连过来，它们会自己开始，不用去按。如果一直停在这里，多半是有手机没停在首页——走过去在那台上按一次「几台一起量」就行。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
     <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。</string>
     <string name="pair_calibrate_stop">停止</string>
