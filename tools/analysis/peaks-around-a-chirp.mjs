@@ -4,7 +4,15 @@
  * The on-device analysis takes the loudest peak, looks one stagger either side of it, and keeps
  * whichever side correlates louder. That is two numbers out of a curve with many, and when the
  * two handsets are far enough apart for one chirp to be a hundred times louder than the other,
- * the two numbers stop being enough to say what happened. This prints the curve.
+ * the two numbers stop being enough to say what happened. This prints more of them.
+ *
+ * It does NOT print the curve, and reading it as though it did cost a day. After taking a peak
+ * it blanks one reference length either side - 120 ms - so the next peak it is able to report
+ * is always 120 ms or more away, and the one after that 240 ms or more. Run it on a chirp
+ * followed by nothing but reverberation and it reports evenly spaced copies that are not there.
+ * Whenever the spacing between what it reports is near the reference length, suspect this first:
+ * `is-the-chirp-played-twice.mjs` prints the curve with no guard and no threshold, and sweeps
+ * the guard to show what moves with it.
  *
  * Usage: node tools/analysis/peaks-around-a-chirp.mjs <dir-with-the-pulled-wavs>
  */
@@ -74,6 +82,9 @@ const host = { name: 'HOST (M6)', pcm: readWav(join(dir, 'M6-calibration.wav')),
 const sink = { name: 'SINK (X10)', pcm: readWav(join(dir, 'X10-calibration.wav')), report: JSON.parse(readFileSync(join(dir, 'sink-last.json'), 'utf8')) }
 
 console.log(`reference ${reference.length} frames (${(reference.length / SAMPLE_RATE * 1000).toFixed(1)} ms)`)
+// Printed because it is the answer to the question this tool's output invites: peaks nearer
+// than this to one another cannot be reported, so a spacing near it means nothing.
+console.log(`peaks nearer than ${(reference.length / SAMPLE_RATE * 1000).toFixed(1)} ms to a louder one are not reported`)
 const ms = frames => (frames / SAMPLE_RATE * 1000)
 
 for (const side of [host, sink]) {
