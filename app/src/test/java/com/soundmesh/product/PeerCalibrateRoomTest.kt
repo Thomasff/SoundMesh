@@ -154,8 +154,31 @@ class PeerCalibrateRoomTest {
      */
     @Test
     fun theWholeFieldIsKeptAndNotOnlyTheHostsOwnPairs() {
-        assertTrue(source.contains("StoredRoomField(filesDir).write(field.separationMetres)"))
+        val field = mapOf((three to one) to 2.0, (one to two) to 3.0)
+
+        assertEquals(field, roomFieldToStore(field, three, overhead = false))
         assertTrue(source.contains("StoredSeparation(filesDir, peer).write(metres)"))
+    }
+
+    /**
+     * A round taken with one handset above somebody's head still measures every pair that handset
+     * is not an end of, and those are ordinary separations: two phones on a table are the same
+     * distance apart whoever is holding a third. What it must not keep as a separation is the pairs
+     * the held handset is in - those are how far the person was, and the handset is about to be put
+     * back somewhere else entirely.
+     */
+    @Test
+    fun anOverheadRoundKeepsOnlyThePairsItWasNotAnEndOf() {
+        val field = mapOf((three to one) to 2.0, (two to three) to 1.5, (one to two) to 3.0)
+
+        assertEquals(mapOf((one to two) to 3.0), roomFieldToStore(field, three, overhead = true))
+    }
+
+    /** The distances it was an end of go to the listener's files, not to nowhere. */
+    @Test
+    fun anOverheadRoundFilesItsOwnDistancesUnderTheListener() {
+        assertTrue(source.contains("StoredListenerDistance(filesDir, peer).write(metres)"))
+        assertTrue(source.contains("StoredListenerDistance(filesDir, sinkId).write(keep)"))
     }
 
     // -- the window widening with the room ----------------------------------------------------

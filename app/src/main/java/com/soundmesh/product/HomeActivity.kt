@@ -35,6 +35,7 @@ import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.StoredRoomField
+import com.soundmesh.probe.sync.StoredListenerDistance
 import java.io.File
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
@@ -516,6 +517,7 @@ class HomeActivity : ComponentActivity() {
         return previous.copy(
             icons = icons,
             measuredMetres = measured,
+            listenerMetres = StoredListenerDistance.all(filesDir),
             // A fresh reading is a fresh reason to offer, whatever was done with the last one.
             fitted = false,
             colours = host.roomPlaces(),
@@ -553,8 +555,15 @@ class HomeActivity : ComponentActivity() {
             room.icons.firstOrNull()?.peerId,
             room.icons.map { it.peerId }
         )
-        if (measured == room.measuredMetres) return
-        state = state.copy(room = room.copy(measuredMetres = measured, fitted = false))
+        val listener = StoredListenerDistance.all(filesDir)
+        if (measured == room.measuredMetres && listener == room.listenerMetres) return
+        state = state.copy(
+            room = room.copy(
+                measuredMetres = measured,
+                listenerMetres = listener,
+                fitted = false
+            )
+        )
     }
 
     override fun onPause() {

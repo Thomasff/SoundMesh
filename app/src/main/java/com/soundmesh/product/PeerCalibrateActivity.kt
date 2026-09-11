@@ -61,6 +61,7 @@ import com.soundmesh.probe.sync.holdingRadio
 import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
+import com.soundmesh.probe.sync.StoredListenerDistance
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
@@ -421,6 +422,26 @@ internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
  * [AlignmentAnalysis.combineFacing], which takes the alignment from the loudest lag and the
  * distance from the leading edge out of one pass.
  */
+/**
+ * Which of a room's measured pairs are still separations when one handset was held overhead.
+ *
+ * The ones that handset is an end of are not: they are how far the person was from each of the
+ * others, and the handset itself is about to be put back somewhere else entirely. The rest are
+ * untouched by where it was held - two handsets on a table are the same distance apart whoever
+ * is holding a third - so an overhead round measures those for free and there is no reason to
+ * throw them away.
+ *
+ * Dropped rather than written somewhere else, because the field is keyed by two handsets and the
+ * listener is not one. The per-handset files beside it are where those go.
+ */
+internal fun roomFieldToStore(
+    separationMetres: Map<Pair<String, String>, Double?>,
+    hostId: String,
+    overhead: Boolean
+): Map<Pair<String, String>, Double?> =
+    if (!overhead) separationMetres
+    else separationMetres.filterKeys { it.first != hostId && it.second != hostId }
+
 internal fun separationToStore(pairs: List<FacingPair?>): Double? =
     if (pairs.filterNotNull().none { it.separationSpreadMetres != null }) null
     else measuredSeparationMetres(pairs)
@@ -979,6 +1000,20 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun roomAsked(): Boolean = intent.getBooleanExtra("room", false)
 
     /**
+     * `--ez overhead true` says this handset is being held above somebody's head, not standing
+     * where it will play.
+     *
+     * It changes nothing about the measurement and everything about where the answer is filed.
+     * The distances this handset is an end of are the listener's - the one thing in the room
+     * nobody has ever been able to measure - and the ones it is not an end of are ordinary
+     * separations, unaffected by where this handset happens to be. Filed together they would be
+     * the same two names meaning two different things, and the second round would erase the first.
+     *
+     * Only the handset being held needs it: it is the only one that writes anything.
+     */
+    private fun overhead(): Boolean = intent.getBooleanExtra("overhead", false)
+
+    /**
      * The capture source, default MIC as every archived run used.
      *
      * MIC is the vendor processing chain, whose convergence is time-varying and could be landing on
@@ -1207,7 +1242,11 @@ class PeerCalibrateActivity : ComponentActivity() {
             // The whole field, which is what the room screen reads to check a drawing against.
             // The per-peer files below are the same distances for the pairs this handset is an
             // end of; this is the only place the rest of them have ever had.
-            runCatching { StoredRoomField(filesDir).write(field.separationMetres) }
+            runCatching {
+                StoredRoomField(filesDir).write(
+                    roomFieldToStore(field.separationMetres, hostId, overhead())
+                )
+            }
             // And the per-peer files, which is where every other arm writes a distance and
             // where the pair flow reads one. What may be kept is what [separationToStore] would
             // keep - a room always sweeps the thresholds, so the narrower rule and the wider one
@@ -1219,7 +1258,10 @@ class PeerCalibrateActivity : ComponentActivity() {
                     else -> continue
                 }
                 val metres = entry.value ?: continue
-                runCatching { StoredSeparation(filesDir, peer).write(metres) }
+                runCatching {
+                    if (overhead()) StoredListenerDistance(filesDir, peer).write(metres)
+                    else StoredSeparation(filesDir, peer).write(metres)
+                }
             }
             show(getString(
                 R.string.pair_calibrate_room_done,
@@ -1345,7 +1387,10 @@ class PeerCalibrateActivity : ComponentActivity() {
             // this run measured goes on the screen for the person who ran it, and only what it
             // can vouch for goes on disk for a check nobody will be watching.
             val keep = separationToStore(combined.pairs)
-            if (keep != null) runCatching { StoredSeparation(filesDir, sinkId).write(keep) }
+            if (keep != null) runCatching {
+                if (overhead()) StoredListenerDistance(filesDir, sinkId).write(keep)
+                else StoredSeparation(filesDir, sinkId).write(keep)
+            }
             outcome = combined.verdict?.clusterMeanMs?.let { mean ->
                 getString(R.string.pair_calibrate_host_done, mean, metres ?: 0.0)
             } ?: metres?.takeIf { plan.caseId == CASE_DISTANCE }?.let {

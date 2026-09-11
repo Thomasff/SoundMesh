@@ -2,6 +2,7 @@ package com.soundmesh.product
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -96,6 +97,36 @@ class SpatialPanelTest {
         (a to c) to 2.5613, (c to a) to 2.5613,
         (b to c) to 2.8284, (c to b) to 2.8284
     )
+
+    // What an overhead round would have said about the same three, with the person a metre behind
+    // the middle of them - which is where people sit and where the drawing cannot say they are.
+    private val threeFromTheListener = mapOf(a to 2.0, b to 1.5811, c to 1.5811)
+
+    /**
+     * The offer takes the listener along when there is one, which is the whole of what an overhead
+     * round buys: the drawing says where the handsets are and it can never say where the person is.
+     */
+    @Test
+    fun `the fit is offered what the overhead round measured`() {
+        val without = fitOffer(RoomState(icons = three, measuredMetres = threeMeasured))!!
+        val with = fitOffer(
+            RoomState(
+                icons = three,
+                measuredMetres = threeMeasured,
+                listenerMetres = threeFromTheListener
+            )
+        )!!
+
+        assertNotEquals(without, with)
+    }
+
+    /** A distance to somebody who went home is a line about nothing the person can look at. */
+    @Test
+    fun `a listener distance to a handset no longer in the drawing is not read out`() {
+        val lines = listenerLines(listOf(three[0]), threeFromTheListener)
+
+        assertEquals(listOf(a to 2.0), lines)
+    }
 
     /** Nothing to offer about a room nothing has measured, which is most rooms. */
     @Test

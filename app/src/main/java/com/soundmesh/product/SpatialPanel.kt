@@ -77,6 +77,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
                 color = MaterialTheme.colorScheme.error
             )
         }
+        ListenerDistances(state)
         MeasuredDistances(state)
         FitOffer(state, actions)
         ModePicker(state, actions)
@@ -123,6 +124,18 @@ data class RoomState(
      * whose phones have never run a calibration.
      */
     val measuredMetres: Map<Pair<String, String>, Double> = emptyMap(),
+    /**
+     * How far the listener was from each handset, in metres, when an overhead round measured it.
+     *
+     * Keyed by one handset rather than by a pair because the listener is the other end of every
+     * one of them, and the listener is not a handset: it has no icon, no colour and no name, and
+     * it is the only thing in the drawing a person cannot check by looking at the room.
+     *
+     * Empty is the ordinary state. Everything still works from the drawing alone, with the
+     * listener where it has always been assumed to be - in the middle of the handsets, which is
+     * where nobody sits.
+     */
+    val listenerMetres: Map<String, Double> = emptyMap(),
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -178,7 +191,7 @@ internal fun withIconMoved(room: RoomState, moved: RoomIcon): RoomState = room.c
 internal fun fitOffer(state: RoomState): List<RoomIcon>? {
     if (state.fitted) return null
     if (RoomCheck.contradiction(state.icons, state.measuredMetres) != null) return null
-    return RoomFit.corrected(state.icons, state.measuredMetres)
+    return RoomFit.corrected(state.icons, state.measuredMetres, state.listenerMetres)
 }
 
 /**
@@ -204,6 +217,20 @@ internal fun measuredLines(
 }
 
 /**
+ * What an overhead round measured, in the order the icons are drawn.
+ *
+ * Only handsets still in the drawing, for the reason the pair lines are filtered: a distance
+ * outlives the room it was taken in, and a line about a handset that went home is a line about
+ * nothing the person can look at.
+ */
+internal fun listenerLines(
+    icons: List<RoomIcon>,
+    listenerMetres: Map<String, Double>
+): List<Pair<String, Double>> = icons.mapNotNull { icon ->
+    listenerMetres[icon.peerId]?.let { icon.peerId to it }
+}
+
+/**
  * What the last measurement made of the room, one pair at a time.
  *
  * On screen rather than only in a run's report, because this is the only place a person can
@@ -214,6 +241,29 @@ internal fun measuredLines(
  * handset's name on purpose: the colours are on the icons a few millimetres above, and a room
  * of four spelled out in full is ten pairs of "7 号（绿）" that nobody reads.
  */
+/**
+ * Where the person was sitting, if anybody ever measured it.
+ *
+ * Above the pair lengths because it is the one that changes what is heard the most and the one
+ * nothing else can check. A listener half a metre from where the drawing assumed is worth about
+ * one and a half milliseconds, and past a millisecond the earlier handset takes the image
+ * outright however the levels are set.
+ */
+@Composable
+private fun ListenerDistances(state: RoomState) {
+    val shown = listenerLines(state.icons, state.listenerMetres)
+    if (shown.isEmpty()) return
+    Text(
+        stringResource(
+            R.string.room_listener_measured,
+            shown.joinToString("   ") { (peerId, metres) ->
+                "${PeerBadge.numberOf(peerId)} " + "%.2f".format(metres)
+            }
+        ),
+        style = MaterialTheme.typography.bodySmall
+    )
+}
+
 @Composable
 private fun MeasuredDistances(state: RoomState) {
     val shown = measuredLines(state.icons, state.measuredMetres)
