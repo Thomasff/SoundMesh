@@ -24,7 +24,20 @@ data class CalibrationPlan(
     val firstChirpAtHostNanos: Long,
     val staggerNanos: Long,
     val repeats: Int,
-    val intervalNanos: Long
+    val intervalNanos: Long,
+    /**
+     * Who chirps in which slot, in order, or empty for the pair this has always described.
+     *
+     * A room of more than two is the same schedule with more slots: slot k chirps k staggers after
+     * the first, everybody records the whole window, and every pair falls out of one pass. Naming
+     * the handsets rather than counting them is what lets the answer say which pair it is about -
+     * a count would leave each side to assume an order, and two sides assuming different orders is
+     * a measurement of the wrong pair that looks exactly like a measurement of the right one.
+     *
+     * Empty is not the same as a room of two named handsets on the wire, but it schedules
+     * identically: the pair convention is slot 0 for the sink and slot 1 for the host.
+     */
+    val slotIds: List<String> = emptyList()
 )
 
 /**
@@ -48,7 +61,16 @@ data class CalibrationRequest(val caseId: String, val sinkId: String)
  */
 object CalibrationPlanCodec {
     const val MAGIC = "soundmesh-plan"
-    const val VERSION = 1
+
+    /**
+     * Two since a plan can name a room rather than a pair.
+     *
+     * Refused rather than read leniently by a build that speaks version one, which is the right
+     * outcome and a loud one: a sink that skipped the slots would chirp in the pair's slot while
+     * the room expected it somewhere else, and every reading in that window would be of a chirp
+     * that was not where the schedule said.
+     */
+    const val VERSION = 2
 
     /** The ask, which travels the other way and is its own message. */
     const val REQUEST_MAGIC = "soundmesh-plan-request"
@@ -80,13 +102,17 @@ object CalibrationPlanCodec {
     fun encode(plan: CalibrationPlan): String {
         requireField(plan.caseId, "caseId")
         requireField(plan.hostId, "hostId")
+        plan.slotIds.forEach { requireField(it, "slotIds") }
+        // A dash rather than nothing: the line is split on spaces, so an empty last field would
+        // vanish into the separator and arrive as a plan with one field missing.
+        val slots = if (plan.slotIds.isEmpty()) "-" else plan.slotIds.joinToString(",")
         return "$MAGIC $VERSION ${plan.caseId} ${plan.hostId} ${plan.firstChirpAtHostNanos} " +
-            "${plan.staggerNanos} ${plan.repeats} ${plan.intervalNanos}"
+            "${plan.staggerNanos} ${plan.repeats} ${plan.intervalNanos} $slots"
     }
 
     fun decode(text: String): CalibrationPlan {
         val fields = text.trim().split(" ")
-        require(fields.size == 8 && fields[0] == MAGIC) { "not a calibration plan: $text" }
+        require(fields.size == 9 && fields[0] == MAGIC) { "not a calibration plan: $text" }
         require(fields[1] == VERSION.toString()) { "unsupported calibration plan version: ${fields[1]}" }
         return CalibrationPlan(
             caseId = fields[2],
@@ -94,7 +120,8 @@ object CalibrationPlanCodec {
             firstChirpAtHostNanos = fields[4].asLong(),
             staggerNanos = fields[5].asLong(),
             repeats = fields[6].asLong().toInt(),
-            intervalNanos = fields[7].asLong()
+            intervalNanos = fields[7].asLong(),
+            slotIds = if (fields[8] == "-") emptyList() else fields[8].split(",")
         )
     }
 

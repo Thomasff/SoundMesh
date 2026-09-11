@@ -54,20 +54,46 @@ object CalibrationSchedule {
      */
     const val RECORD_TAIL_NANOS = 2_000_000_000L
 
-    fun of(plan: CalibrationPlan, role: CalibrationRole, chirpNanos: Long): CalibrationTiming {
+    /**
+     * The pair's schedule, named by role rather than by slot.
+     *
+     * The host takes the last slot and the sink the first, which for the pair this has always
+     * described are slots one and zero - the convention every archived run was made under and the
+     * one [AlignmentAnalysis.combineFacing] reads its signs from.
+     */
+    fun of(plan: CalibrationPlan, role: CalibrationRole, chirpNanos: Long): CalibrationTiming =
+        of(plan, if (role == CalibrationRole.HOST) slotsIn(plan) - 1 else 0, chirpNanos)
+
+    /**
+     * The schedule for the handset holding [ownSlot] of however many the plan has.
+     *
+     * One window, one chirp per handset, everybody recording all of it. Which is the pair schedule
+     * with two slots, deliberately and not by coincidence: the arithmetic below is the arithmetic
+     * that was here before slots existed, and a plan naming nobody still goes through it unchanged.
+     */
+    fun of(plan: CalibrationPlan, ownSlot: Int, chirpNanos: Long): CalibrationTiming {
         require(plan.repeats >= 1) { "a calibration with no chirps has nothing to correlate" }
         require(plan.intervalNanos > 0) { "repeats sharing an instant cannot be told apart" }
-        require(plan.staggerNanos > 0) { "the two chirps of a pair are told apart by the stagger" }
+        require(plan.staggerNanos > 0) { "handsets sharing an instant cannot be told apart" }
         require(chirpNanos > 0) { "a chirp of no length is not a chirp" }
+        // A handset named twice would chirp twice in one window under one name, and every reading
+        // of it would be of whichever of the two the correlation happened to like.
+        require(plan.slotIds.size == plan.slotIds.distinct().size) {
+            "a room names each handset once: ${plan.slotIds}"
+        }
+        require(ownSlot in 0 until slotsIn(plan)) {
+            "slot $ownSlot is not one of the ${slotsIn(plan)} this plan has"
+        }
 
-        val own = if (role == CalibrationRole.HOST) plan.staggerNanos else 0L
+        val own = ownSlot * plan.staggerNanos
         val warmUpUntil = plan.firstChirpAtHostNanos - GAP_NANOS
         val warmUpFrom = warmUpUntil - WARM_UP_NANOS
-        // The later chirp of the last pair, whichever side this is: each handset hears both, and
-        // the measurement is made of both. A recording closed at this handset's own last chirp
-        // would drop the partner of that pair, which reads afterwards as a quiet room.
+        // The last handset's last chirp, whichever slot this one holds: every handset hears every
+        // chirp and the measurement is made of all of them. A recording closed at this handset's
+        // own last chirp would drop everybody scheduled after it, which reads afterwards as a room
+        // that went quiet rather than as a window that closed early.
         val lastSound = plan.firstChirpAtHostNanos +
-            (plan.repeats - 1) * plan.intervalNanos + plan.staggerNanos + chirpNanos
+            (plan.repeats - 1) * plan.intervalNanos + (slotsIn(plan) - 1) * plan.staggerNanos + chirpNanos
         return CalibrationTiming(
             warmUpFromHostNanos = warmUpFrom,
             warmUpUntilHostNanos = warmUpUntil,
@@ -82,4 +108,10 @@ object CalibrationSchedule {
             recordUntilHostNanos = lastSound + RECORD_TAIL_NANOS
         )
     }
+
+    /**
+     * How many handsets this plan schedules. Two when it names nobody, which is what a plan from
+     * before rooms existed is: the pair it always described, not an empty room.
+     */
+    private fun slotsIn(plan: CalibrationPlan): Int = maxOf(plan.slotIds.size, 2)
 }
