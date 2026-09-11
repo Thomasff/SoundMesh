@@ -358,22 +358,6 @@ internal fun keepsCorrection(caseId: String): Boolean =
     caseId != CASE_DISTANCE && caseId != CASE_ROOM
 
 /**
- * What counts as an arrival on this arm: the loudest lag, or the first one that clears a share
- * of it.
- *
- * Only the arm whose answer is a distance takes the first arrival. Every reflection travels
- * further than the straight line it bounced off, so the direct sound is the earliest arrival by
- * construction - but nothing makes it the loudest, and 09-11 measured the loudest landing 12-21
- * ms late with a clear line of sight, which read two metres as seven. The arms that align keep
- * the loudest: short-range alignment is already good, the M2 gate was passed with it, and every
- * archived correction was produced by it - a different reading rule would end that comparison
- * for a fault they do not have.
- */
-internal fun edgeSharesFor(caseId: String): List<Double> =
-    if (caseId == CASE_DISTANCE || caseId == CASE_ROOM) AlignmentAnalysis.DISTANCE_EDGE_SHARES
-    else emptyList()
-
-/**
  * How far apart the two handsets were, from the pairs that could be read, or null if none could.
  *
  * The median rather than the mean, which the five-pair schedule could afford not to care about
@@ -426,16 +410,16 @@ internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
  * of sight spanned 5.11 to 11.86 m, a ratio of 2.32. Read from the first arrival the same nine
  * recordings spanned 1.97 to 2.19, a ratio of 1.11.
  *
- * A non-null spread is what says the first arrival was read: only the arm asked for a sweep
- * has one, and the sweep is the same pass that finds the onset. Asking the pair rather than
- * the case id keeps the two from drifting apart - the reading rule is what matters here, not
- * which name the run was started under.
+ * A non-null spread is what says the first arrival was read, and the sweep is the same pass
+ * that finds the onset. Asking the pair rather than the case id keeps the two from drifting
+ * apart - the reading rule is what matters here, not which name the run was started under.
  *
- * Which leaves the shipped flow keeping nothing today. Somebody pressing calibrate runs the
- * arm that aligns, and only a command line asks for the one that measures distance, so the
- * room check sits idle rather than firing on correct drawings. That is the honest state of it
- * and not a decision about the check: what it waits on is a distance the product measures for
- * itself.
+ * Every run sweeps now. It used to be only the arm a command line could start, which left the
+ * shipped flow keeping nothing at all: somebody pressing calibrate ran the arm that aligns, so
+ * the room check sat idle rather than firing on correct drawings. The sweep moved to every arm
+ * once the two readings stopped competing for the same answer - see
+ * [AlignmentAnalysis.combineFacing], which takes the alignment from the loudest lag and the
+ * distance from the leading edge out of one pass.
  */
 internal fun separationToStore(pairs: List<FacingPair?>): Double? =
     if (pairs.filterNotNull().none { it.separationSpreadMetres != null }) null
@@ -1188,7 +1172,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 ownSlot = ownSlot,
                 hostNanosNow = { System.nanoTime() },
                 audioSource = audioSource(),
-                edgeShares = edgeSharesFor(plan.caseId)
+                edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
             ).run()
             // Written before anything is combined, so a room that loses everybody still leaves
             // this handset's own hearing of it on disk.
@@ -1211,7 +1195,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                     heard[slot] = message.arrivalsByRepeat
                     heardFrom += message.senderId
                 }
-                field = roomField(plan, heard, edgeSharesFor(plan.caseId))
+                field = roomField(plan, heard, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
                 delivered.associate {
                     it.senderId to RoomReply(plan.slotIds.size, pairsReadableFor(field, it.senderId))
                 }
@@ -1334,7 +1318,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             plan = plan,
             hostNanosNow = { System.nanoTime() },
             audioSource = audioSource(),
-            edgeShares = edgeSharesFor(plan.caseId)
+            edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
         ).run()
         // Written before anything is answered, so a refused run still leaves its evidence.
         // Named with the peer, not just the case: a case id names a directory this only ever
@@ -1536,7 +1520,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 },
                 offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos },
                 audioSource = audioSource(),
-                edgeShares = edgeSharesFor(caseId)
+                edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
             ).run()
             // Spliced in rather than passed to the runner: the clock belongs to this screen, and
             // the reason to record it is that the constant is only as good as the offset the

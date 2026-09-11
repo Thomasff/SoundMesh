@@ -82,9 +82,9 @@ object CalibrationReplyCodec {
  */
 object AlignmentResultCodec {
     const val MAGIC = "soundmesh-alignment"
-    const val VERSION = 4
+    const val VERSION = 5
 
-    private const val FIELDS_PER_READING = 12
+    private const val FIELDS_PER_READING = 13
 
     /**
      * What separates the per-share readings inside their one field.
@@ -121,7 +121,11 @@ object AlignmentResultCodec {
                     reading.ratios.getOrNull(1).orNull(),
                     reading.atSearchEdge.getOrNull(0).orNull(),
                     reading.atSearchEdge.getOrNull(1).orNull(),
-                    reading.rawMsByShare.joinToString(SHARE_SEPARATOR).ifEmpty { NULL }
+                    reading.rawMsByShare.joinToString(SHARE_SEPARATOR).ifEmpty { NULL },
+                    // Both reading rules cross, because the pair is combined on the other side
+                    // and taking one rule from one handset and the other from the other would be
+                    // worse than either. See AlignmentAnalysis.combineFacing.
+                    reading.rawLoudestMs.orNull()
                 ).joinToString(" ")
             )
         }
@@ -165,7 +169,8 @@ object AlignmentResultCodec {
                 confidence = AlignmentConfidence.valueOf(fields[6]),
                 ratios = listOf(fields[7].toDoubleOrNullable(), fields[8].toDoubleOrNullable()),
                 atSearchEdge = listOf(fields[9].toBooleanOrNullable(), fields[10].toBooleanOrNullable()),
-                rawMsByShare = fields[11].toSweep()
+                rawMsByShare = fields[11].toSweep(),
+                rawLoudestMs = fields[12].toDoubleOrNullable()
             )
         }
         return AlignmentResultMessage(caseId, sinkId, appliedOffsetMicros, readings)

@@ -102,7 +102,6 @@ class PeerCalibrateRoomTest {
     fun aRoomMeasuresDistanceAndKeepsNoCorrection() {
         assertEquals(defaultTimingFor(CASE_DISTANCE), defaultTimingFor(CASE_ROOM))
         assertFalse(keepsCorrection(CASE_ROOM))
-        assertEquals(AlignmentAnalysis.DISTANCE_EDGE_SHARES, edgeSharesFor(CASE_ROOM))
     }
 
     /**

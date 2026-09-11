@@ -138,7 +138,8 @@ class AlignmentAnalysisTest {
     private fun reading(
         alignmentErrorMs: Double,
         propagationCorrectionMs: Double = 0.0,
-        rawMsByShare: List<Double> = emptyList()
+        rawMsByShare: List<Double> = emptyList(),
+        rawLoudestMs: Double? = null
     ) = AlignmentReading(
         firstIndex = 0,
         secondIndex = stagger,
@@ -149,7 +150,8 @@ class AlignmentAnalysisTest {
         confidence = AlignmentConfidence.OK,
         ratios = listOf(1000.0, 1000.0),
         atSearchEdge = listOf(false, false),
-        rawMsByShare = rawMsByShare
+        rawMsByShare = rawMsByShare,
+        rawLoudestMs = rawLoudestMs
     )
 
     private fun readEdges(recorded: ShortArray, shares: List<Double>) = AlignmentAnalysis.read(
@@ -248,4 +250,78 @@ class AlignmentAnalysisTest {
         assertNull(AlignmentAnalysis.combineFacing(host, sink)!!.separationSpreadMetres)
     }
 
+    /**
+     * One chirp with a louder bounce after it and one with none, which is what makes the two
+     * reading rules disagree: read at the loudest the pair looks 600 frames closer together than
+     * it is, and read at the leading edge it looks exactly as staggered as it was told to be.
+     */
+    private fun bounceOnOneSideOnly() = recording(
+        listOf(9000, 9600, 9000 + stagger),
+        listOf(0.4, 1.2, 0.6)
+    )
+
+    /**
+     * The whole of route B: one recording, read twice, because the alignment and the distance
+     * want opposite rules and always have.
+     *
+     * Alignment keeps the loudest - short range alignment is already good, the M2 gate was passed
+     * with it, and every archived correction was produced by it. The distance needs the earliest,
+     * because every reflection travels further than the straight line it bounced off. Until this,
+     * asking for the edge moved both, so a run could answer one question or the other.
+     */
+    @Test
+    fun `reads the alignment at the loudest and the distance at the edge out of one recording`() {
+        val result = readEdges(bounceOnOneSideOnly(), AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+
+        // 600 frames of bounce on one side only, at 48 frames per millisecond.
+        assertEquals(-12.5, result.rawLoudestMs!!, 0.5)
+        assertEquals(0.0, result.rawMsByShare[0], 2.0)
+    }
+
+    /**
+     * The guard the whole change rests on: every arm sweeps now, so every archived alignment
+     * number has to survive the extra pass unchanged.
+     *
+     * Asking for edges makes [AlignmentAnalysis.read] read the winner again in a window of its own,
+     * which is a narrower window and so a different noise floor and a different trust ratio. The
+     * lag it finds cannot change - a window centred on the winner cannot find a different winner -
+     * but that is an argument, and the M2 gate and every stored correction depend on it.
+     */
+    @Test
+    fun `asking for the distance leaves the alignment number exactly where it was`() {
+        val recorded = bounceOnOneSideOnly()
+
+        val plain = read(recorded)
+        val swept = readEdges(recorded, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+
+        assertEquals(plain.alignmentErrorMs!!, swept.rawLoudestMs!!, 1e-9)
+        assertEquals(plain.confidence, swept.confidence)
+    }
+
+    @Test
+    fun `a reading that swept no edges has no second answer to give`() {
+        assertNull(read(bounceOnOneSideOnly()).rawLoudestMs)
+    }
+
+    /** The pair, not the side: the half sum is the alignment and it must be the loudest one. */
+    @Test
+    fun `the pair takes its alignment from the loudest and its distance from the edge`() {
+        val host = reading(0.5, rawMsByShare = listOf(0.5), rawLoudestMs = 3.0)
+        val sink = reading(1.5, rawMsByShare = listOf(1.5), rawLoudestMs = 5.0)
+
+        val combined = AlignmentAnalysis.combineFacing(host, sink)!!
+
+        assertEquals(4.0, combined.alignmentErrorMs, 1e-9)
+        assertEquals(0.5, combined.flightTimeMs, 1e-9)
+        assertEquals(0.5 / 1000 * AlignmentAnalysis.SPEED_OF_SOUND_M_S, combined.separationMetres, 1e-9)
+    }
+
+    /** Every arm that does not sweep reads exactly as it always has, which is most of the archive. */
+    @Test
+    fun `a pair that swept no edges combines exactly as it always did`() {
+        val combined = AlignmentAnalysis.combineFacing(reading(0.5), reading(1.5))!!
+
+        assertEquals(1.0, combined.alignmentErrorMs, 1e-9)
+        assertEquals(0.5, combined.flightTimeMs, 1e-9)
+    }
 }

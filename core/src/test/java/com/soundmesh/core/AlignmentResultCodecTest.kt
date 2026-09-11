@@ -1,6 +1,7 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -160,10 +161,26 @@ class AlignmentResultCodecTest {
         assertEquals(listOf(5.83, -0.25, 12.0), back.readings[0].rawMsByShare)
     }
 
+    /**
+     * The loudest reading has to cross beside the edge one, because the pair is combined on the
+     * other side and each half is taken from both sides or from neither. A sink that kept its
+     * loudest reading to itself would be combined against the host's loudest with its own edge
+     * reading - a half sum of two different rules, which is worse than either of them.
+     */
+    @Test
+    fun carriesTheLoudestReadingBesideTheEdgeOne() {
+        val reading = readable(1.0).copy(rawMsByShare = listOf(0.0), rawLoudestMs = -12.5)
+
+        val back = AlignmentResultCodec.decode(AlignmentResultCodec.encode("C90", "sink", 0, listOf(reading)))
+
+        assertEquals(-12.5, back.readings[0].rawLoudestMs!!, 1e-9)
+    }
+
     @Test
     fun roundTripsAReadingThatSweptNothing() {
         val encoded = AlignmentResultCodec.encode("C90", "sink", 0, listOf(readable(1.0)))
 
         assertTrue(AlignmentResultCodec.decode(encoded).readings[0].rawMsByShare.isEmpty())
+        assertNull(AlignmentResultCodec.decode(encoded).readings[0].rawLoudestMs)
     }
 }

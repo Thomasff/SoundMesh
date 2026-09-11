@@ -831,25 +831,6 @@ class PeerCalibrateActivityTest {
     )
 
     /**
-     * Only the arm whose answer is a distance pays for the extra pass. The arms that align are
-     * read the way every archived run of them was read, because the correction they produce is
-     * compared against that history and a different reading rule would end the comparison.
-     */
-    @Test
-    fun onlyTheDistanceArmReadsTheFirstArrival() {
-        assertEquals(0.20, edgeSharesFor(CASE_DISTANCE).first(), 1e-9)
-        for (case in listOf(CASE_MEASURE, CASE_VERIFY, CASE_SLOW_LINK)) {
-            assertTrue(case, edgeSharesFor(case).isEmpty())
-        }
-    }
-
-    /** The pick is the first share; the rest are there to say how much the pick rests on it. */
-    @Test
-    fun sweepsMoreThresholdsThanItPicksWith() {
-        assertTrue(edgeSharesFor(CASE_DISTANCE).size > 1)
-    }
-
-    /**
      * The gate the eighteen pairs of 09-11 drew: a run whose answer slides when the threshold
      * slides has not found a direct sound, and it is wrong in a way its own repeatability cannot
      * show - the blocked runs agreed with themselves better than the clear ones did.

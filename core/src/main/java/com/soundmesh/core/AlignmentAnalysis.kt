@@ -28,7 +28,22 @@ data class AlignmentReading(
      * that could not find its chirps has nothing to say about what its answer rests on. It is
      * read by [FacingPair.separationSpreadMetres], which is where the two sides meet.
      */
-    val rawMsByShare: List<Double> = emptyList()
+    val rawMsByShare: List<Double> = emptyList(),
+    /**
+     * The same stagger read at the loudest lag instead of the leading edge, in milliseconds and
+     * before the distance correction.
+     *
+     * Null exactly when no shares were swept, because then [alignmentErrorMs] is already the
+     * loudest reading and there is nothing to carry twice.
+     *
+     * It exists because the two answers a run gives want opposite rules. A distance must be read
+     * at the earliest arrival - every reflection travels further than the straight line it
+     * bounced off - while an alignment keeps the loudest, which is what the M2 gate was passed
+     * with and what every archived correction was produced by. Before this, asking for the edge
+     * moved both, so a run could answer one question or the other, and the product asked for the
+     * alignment - which is why nothing it ran ever measured a distance.
+     */
+    val rawLoudestMs: Double? = null
 )
 
 /**
@@ -251,6 +266,8 @@ object AlignmentAnalysis {
             if (edgeShares.isEmpty()) arrival.index else arrival.edgeIndices[share]
         }
         val measuredStaggerFrames = if (trustworthy) at(second!!, 0) - at(first!!, 0) else null
+        // The loudest reading of the same pair, kept whenever the reading above is not already it.
+        val loudestStaggerFrames = if (trustworthy) second!!.index - first!!.index else null
         // Added back, not subtracted: the partner's chirp arrives late through the air, which drags
         // the raw difference down, so a wider separation must push the error further positive.
         val propagationCorrectionMs = separationMetres / SPEED_OF_SOUND_M_S * 1000
@@ -268,7 +285,9 @@ object AlignmentAnalysis {
             atSearchEdge = listOf(first?.atSearchEdge, second?.atSearchEdge),
             rawMsByShare = if (!trustworthy) emptyList() else edgeShares.indices.map {
                 (at(second!!, it) - at(first!!, it) - staggerFrames).toDouble() / sampleRate * 1000
-            }
+            },
+            rawLoudestMs = if (edgeShares.isEmpty() || loudestStaggerFrames == null) null
+            else (loudestStaggerFrames - staggerFrames).toDouble() / sampleRate * 1000
         )
     }
 
@@ -291,14 +310,21 @@ object AlignmentAnalysis {
      * on the capture side enters only one, so the half sum carries the emission jitter and the half
      * difference cannot - which separates the two without inferring either.
      *
+     * The two halves are read by different rules once the run swept thresholds, which is the
+     * whole of why it sweeps. The half sum is the alignment and takes the loudest lag from both
+     * sides ([AlignmentReading.rawLoudestMs]); the half difference is the flight time and takes
+     * the leading edge from both. Mixing the rules across the two sides would be worse than
+     * either, so each is taken from both sides or from neither.
+     *
      * Returns null unless both sides were trustworthy: half a pair says nothing on its own.
      */
     fun combineFacing(hostSide: AlignmentReading?, sinkSide: AlignmentReading?): FacingPair? {
         val hostError = hostSide?.alignmentErrorMs ?: return null
         val sinkError = sinkSide?.alignmentErrorMs ?: return null
-        val rawHostMs = hostError - hostSide.propagationCorrectionMs
-        val rawSinkMs = sinkError - sinkSide.propagationCorrectionMs
-        val flightTimeMs = (rawSinkMs - rawHostMs) / 2
+        val rawHostMs = hostSide.rawLoudestMs ?: (hostError - hostSide.propagationCorrectionMs)
+        val rawSinkMs = sinkSide.rawLoudestMs ?: (sinkError - sinkSide.propagationCorrectionMs)
+        val flightTimeMs = edgeFlightTimeMs(hostSide.rawMsByShare, sinkSide.rawMsByShare)
+            ?: ((rawSinkMs - rawHostMs) / 2)
         return FacingPair(
             alignmentErrorMs = (rawHostMs + rawSinkMs) / 2,
             separationMetres = flightTimeMs / 1000 * SPEED_OF_SOUND_M_S,
@@ -356,6 +382,19 @@ object AlignmentAnalysis {
      * sides that swept different ones, has not answered the question, while zero is the answer
      * that means the run is at its most trustworthy.
      */
+    /**
+     * The flight time at the first threshold of the sweep, which is the pick, or null when the
+     * two sides did not sweep the same ones.
+     *
+     * The same half difference [combineFacing] has always taken, off the leading edge instead of
+     * the loudest lag. 09-11 measured what that is worth: nine readings of one unchanged two
+     * metre gap spanned 5.11 to 11.86 m read at the loudest and 1.97 to 2.19 read at the edge.
+     */
+    private fun edgeFlightTimeMs(hostByShare: List<Double>, sinkByShare: List<Double>): Double? {
+        if (hostByShare.isEmpty() || hostByShare.size != sinkByShare.size) return null
+        return (sinkByShare[0] - hostByShare[0]) / 2
+    }
+
     private fun spreadOf(hostByShare: List<Double>, sinkByShare: List<Double>): Double? {
         if (hostByShare.isEmpty() || hostByShare.size != sinkByShare.size) return null
         val metres = hostByShare.indices.map {
