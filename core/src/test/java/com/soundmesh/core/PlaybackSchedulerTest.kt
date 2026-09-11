@@ -232,6 +232,101 @@ class PlaybackSchedulerTest {
         assertTrue(scheduler.poll(1_999_500_000) is PlaybackDecision.Silence)
     }
 
+    /**
+     * What one handset writes, chunk by chunk, when it is driven the way the render loop drives it.
+     *
+     * Each decision advances the clock by exactly the frames it produced, which is what the render
+     * loop's own instant does: it asks about the moment the next frame written will be heard, and
+     * writing a frame moves that moment on by one frame.
+     */
+    private fun writeStream(
+        scheduler: PlaybackScheduler,
+        fromHostNanos: Long,
+        polls: Int
+    ): List<Pair<Long, String>> {
+        val written = ArrayList<Pair<Long, String>>()
+        var now = fromHostNanos
+        repeat(polls) {
+            val frames = when (val decision = scheduler.poll(now)) {
+                is PlaybackDecision.Play -> {
+                    written += now to "chunk ${decision.chunk.sequence}"
+                    framesPerChunk
+                }
+                is PlaybackDecision.Silence -> {
+                    written += now to "silence ${decision.frames}"
+                    decision.frames
+                }
+                else -> 0
+            }
+            now += frames.toLong() * 1_000_000_000L / PlaybackScheduler.SAMPLE_RATE
+        }
+        return written
+    }
+
+    /**
+     * A handset that never receives one chunk goes on writing every later one at the same instant
+     * as a handset that received them all.
+     *
+     * The property the room rests on once the handsets stop playing the same waveform. While they
+     * all play the whole mix, a hole is that handset's own blip; once one carries the low half and
+     * another the high, a hole that also shifted what came after it would leave the two halves
+     * permanently out of step - a phase break rather than a dropout, and one nothing recovers from.
+     *
+     * Already true when this was written, and written down because it was not obvious: the gap fill
+     * measures the real distance to the next chunk's instant rather than writing a whole chunk, so
+     * the write stream is pinned to the host clock and a missing chunk costs exactly its own
+     * duration. That came from O37, which was chasing a crackle rather than this.
+     */
+    @Test
+    fun aMissingChunkCostsItsOwnDurationAndNothingAfterIt() {
+        val whole = scheduler()
+        val holed = scheduler()
+        for (sequence in 0 until 4) {
+            val at = sequence * chunkNanos
+            whole.submit(chunk(sequence, at))
+            // The one that never arrived: a chunk the network lost, not one that came late.
+            if (sequence != 1) holed.submit(chunk(sequence, at))
+        }
+
+        val wholeStream = writeStream(whole, 0L, polls = 4)
+        val holedStream = writeStream(holed, 0L, polls = 4)
+
+        // Where each surviving chunk was written, which is the thing that must not move.
+        val wholeAt = wholeStream.filter { it.second.startsWith("chunk") }.associate { it.second to it.first }
+        val holedAt = holedStream.filter { it.second.startsWith("chunk") }.associate { it.second to it.first }
+        for (sequence in listOf("chunk 2", "chunk 3")) {
+            assertEquals(sequence, wholeAt[sequence], holedAt[sequence])
+        }
+        // And the hole is exactly one chunk of silence, not a whole chunk plus a shifted stream.
+        // At the instant the missing chunk was due, and exactly as long as it would have been.
+        assertEquals(listOf(chunkNanos to "silence $framesPerChunk"), holedStream.filter { it.second.startsWith("silence") })
+    }
+
+    /**
+     * And the same when the chunk arrives too late to play rather than not at all, which is the
+     * other way a handset loses one - a stall on the link, not a loss.
+     */
+    @Test
+    fun aChunkDroppedForBeingLateDoesNotMoveTheOnesAfterIt() {
+        val whole = scheduler()
+        val late = scheduler()
+        for (sequence in 0 until 4) {
+            val at = sequence * chunkNanos
+            whole.submit(chunk(sequence, at))
+            late.submit(chunk(sequence, at))
+        }
+
+        val wholeStream = writeStream(whole, 0L, polls = 4)
+        // Started a whole chunk in: chunk 0 is now unrecoverably late and is dropped.
+        val lateStream = writeStream(late, chunkNanos, polls = 4)
+
+        val wholeAt = wholeStream.filter { it.second.startsWith("chunk") }.associate { it.second to it.first }
+        val lateAt = lateStream.filter { it.second.startsWith("chunk") }.associate { it.second to it.first }
+        for (sequence in listOf("chunk 1", "chunk 2", "chunk 3")) {
+            assertEquals(sequence, wholeAt[sequence], lateAt[sequence])
+        }
+    }
+
     @Test
     fun leavesTheReleaseExactWhenNoToleranceIsAskedFor() {
         val scheduler = scheduler()
