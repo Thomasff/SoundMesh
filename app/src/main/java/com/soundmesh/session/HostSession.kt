@@ -316,6 +316,17 @@ class HostSession(
     fun roomPlaces(): Map<String, Int> = spatialServer?.places() ?: emptyMap()
 
     /**
+     * Who is actually being sent audio, which is a different list from [roomPeerIds] and the
+     * difference is the reading.
+     *
+     * This one is nearly live because it is written to fifty times a second, so a handset that
+     * stopped falls out of it within a chunk. The room's roster is the slow one - it only lets go
+     * of a name when something written to that socket fails - and a name in the slow list and not
+     * in the fast one is a handset that stopped playing.
+     */
+    fun audioPeerIds(): List<String> = chunkServer.peerIds()
+
+    /**
      * Tells the room which song it is on, when that has changed since the last time it was told.
      *
      * Called once a chunk, which is fifty times a second, and is an int compare on all but one of

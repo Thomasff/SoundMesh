@@ -217,6 +217,42 @@ class HostReportTest {
         assertEquals("2/2", valueOf(text, R.string.counter_sinks))
     }
 
+    /**
+     * Which handset stopped, by name, rather than a pair of numbers that disagree.
+     *
+     * Both halves were already in the report and only their disagreement was on screen: two
+     * counts that differ say a handset left and cannot say which, so the reading was a prompt to
+     * go and look at the phones. The rosters carry names, so the answer was there the whole time.
+     */
+    @Test
+    fun namesTheHandsetThatIsInTheRoomAndNotBeingSentAudio() {
+        val text = report(sinks = 1, room = listOf(host, near, far), audio = listOf(near))
+
+        assertEquals("${PeerBadge.numberOf(far)}", valueOf(text, R.string.counter_silent))
+    }
+
+    /**
+     * Nobody missing is a reading. A row that appeared only on a bad session could not be
+     * watched, and this one is watched while somebody stands in the next room listening.
+     */
+    @Test
+    fun saysNobodyIsMissingRatherThanSayingNothing() {
+        val text = report(sinks = 2, room = listOf(host, near, far))
+
+        assertEquals("—", valueOf(text, R.string.counter_silent))
+    }
+
+    /**
+     * The host is in its own roster and is not sent its own audio, so the naive difference makes
+     * every healthy session report the host as the handset that dropped.
+     */
+    @Test
+    fun doesNotCallTheHostMissingForNotPostingItselfAudio() {
+        val text = report(sinks = 0, room = listOf(host), audio = emptyList())
+
+        assertEquals("—", valueOf(text, R.string.counter_silent))
+    }
+
     /** A host by itself is a room of one, not an empty one. Nobody has connected and it says so. */
     @Test
     fun aHostAloneIsARoomOfOne() {

@@ -59,6 +59,20 @@ object SessionReadout {
             // is the limit that keeps this row from being the thing that says which one dropped.
             if (room.isNotEmpty()) {
                 rows += Counter(R.string.counter_room, room.joinToString(" ") { "${PeerBadge.numberOf(it)}" })
+                // Which handset stopped, which the two counts below can only say happened. Both
+                // rosters were already in the report and both carry names; only their sizes were
+                // ever shown. The host is dropped from the comparison first because it is in its
+                // own room and is not sent its own audio - without that every healthy session
+                // reports the host as the handset that went missing.
+                val audio = text(report, "audioPeerIds")
+                    ?.split(",")
+                    ?.filter { it.isNotEmpty() }
+                    .orEmpty()
+                val silent = room.drop(1).filterNot { it in audio }
+                rows += Counter(
+                    R.string.counter_silent,
+                    if (silent.isEmpty()) "—" else silent.joinToString(" ") { "${PeerBadge.numberOf(it)}" }
+                )
             }
             // Two numbers, and neither is a reading on its own: how many sockets are open says
             // nothing about how many were expected, and how many announced themselves says nothing

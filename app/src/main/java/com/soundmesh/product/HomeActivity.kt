@@ -494,9 +494,18 @@ class HomeActivity : ComponentActivity() {
      */
     private fun readRoom(session: SyncSession?): RoomState? {
         val host = session as? HostSession ?: return null
-        val previous = state.room ?: RoomState(selfId = host.roomPeerIds().firstOrNull())
-        val icons = SpatialRoom.reconciled(previous.icons, host.roomPeerIds())
-        if (icons.map { it.peerId } == previous.icons.map { it.peerId }) return previous
+        val roster = host.roomPeerIds()
+        val previous = state.room ?: RoomState(selfId = roster.firstOrNull())
+        val icons = SpatialRoom.reconciled(previous.icons, roster)
+        // The host is dropped first because it is in its own room and is not sent its own audio.
+        val audio = host.audioPeerIds()
+        val silent = roster.drop(1).filterNot { it in audio }.toSet()
+        if (icons.map { it.peerId } == previous.icons.map { it.peerId }) {
+            // A handset stopping does not change the roster, so this cannot share the early
+            // return above. Not published either: nothing about the rule changed, and a handset
+            // that comes back has to find the room it left.
+            return if (silent == previous.silentIds) previous else previous.copy(silentIds = silent)
+        }
         // Read here and not every pass: these come off disk, and this loop runs five times a
         // second. The roster changing is the only thing that can bring a new one into play.
         val measured = icons.mapNotNull { icon ->
@@ -506,6 +515,7 @@ class HomeActivity : ComponentActivity() {
             icons = icons,
             measuredMetres = measured,
             colours = host.roomPlaces(),
+            silentIds = silent,
             otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
         ).also(::publish)
     }

@@ -100,6 +100,15 @@ data class RoomState(
      */
     val colours: Map<String, Int> = emptyMap(),
     /**
+     * Handsets in the room that are not being sent audio: the ones that have stopped playing.
+     *
+     * Drawn rather than only counted because the drawing is the one screen that already says
+     * which handset is which. Two counts that disagree can say a handset left and cannot say
+     * which one, and the symptom - one phone gone quiet - reads as the content split having
+     * gone wrong rather than as a handset having dropped off the network.
+     */
+    val silentIds: Set<String> = emptySet(),
+    /**
      * How far this handset measured itself from each peer it has calibrated with, in metres.
      *
      * Read when the roster changes rather than every pass: it comes off disk, and the roster is
@@ -187,6 +196,7 @@ private fun RoomDrawing(state: RoomState, actions: RoomActions) {
                 BadgePalette.labelColourOf(place, label),
                 PeerBadge.numberOf(icon.peerId),
                 if (icon.peerId == state.selfId) self else null,
+                icon.peerId in state.silentIds,
                 measurer
             )
         }
@@ -217,11 +227,18 @@ private fun DrawScope.drawHandset(
     number: Int,
     /** Drawn as a ring when this icon is the handset in the listener's hand, or null when not. */
     selfRing: Color?,
+    /** True for a handset in the room that is not being sent audio: one that has stopped. */
+    silent: Boolean,
     measurer: TextMeasurer
 ) {
     val centre = Offset(icon.x * size.width, icon.y * size.height)
     val radius = size.minDimension * 0.06f
-    drawCircle(colour, radius = radius, center = centre)
+    // Hollow rather than a different colour or a missing icon. Its colour is its name, so it has
+    // to stay - and an icon that vanished would say the handset left the room, which is a
+    // different thing from one that is here and silent, and points at a different phone to pick
+    // up. Empty is what the eye reads as nothing coming out of it.
+    if (silent) drawCircle(colour, radius = radius, center = centre, style = Stroke(width = 4f))
+    else drawCircle(colour, radius = radius, center = centre)
     // Which one is in your hand was said by the colour until the colour became the name. A ring
     // rather than a second hue, because a colour that meant both would have to give one of the
     // two up the moment a second handset joined - and the one it would give up is the name.
@@ -233,7 +250,7 @@ private fun DrawScope.drawHandset(
     // this said before, and nobody ever read one out loud.
     val text = measurer.measure(
         "$number",
-        TextStyle(fontSize = 10.sp, color = labelColour)
+        TextStyle(fontSize = 10.sp, color = if (silent) colour else labelColour)
     )
     drawText(
         text,
