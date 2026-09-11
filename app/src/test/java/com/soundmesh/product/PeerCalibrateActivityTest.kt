@@ -798,6 +798,27 @@ class PeerCalibrateActivityTest {
         )
     }
 
+    /**
+     * A distance the room screen may check a drawing against has to have been read from the
+     * first arrival, and a swept spread is the only thing in a pair that says it was.
+     *
+     * The arms that align measure a separation too - it falls out of the same algebra - but
+     * they read the loudest lag. Nine readings of one unchanged two metre gap with a clear
+     * line of sight spanned 5.11 to 11.86 m on 09-11, a ratio of 2.32, and the check those
+     * numbers feed accuses a correct drawing as soon as two distances' errors differ by its
+     * own margin squared - 1.5 squared is 2.25. So the answer is shown and not kept.
+     */
+    @Test
+    fun onlyADistanceReadFromTheFirstArrivalIsKeptOnDisk() {
+        val swept = listOf(facing(1.98, 0.09), facing(2.02, 0.12), facing(2.00, 0.07))
+        assertEquals(2.00, separationToStore(swept)!!, 1e-9)
+        // The same three distances from an arm that never asked where the onset was. The run
+        // measured them and they agree with each other; what is missing is the evidence that
+        // agreeing means anything, which is what the blocked runs of 09-11 cost.
+        assertNull(separationToStore(listOf(facing(1.98), facing(2.02), facing(2.00))))
+        assertNull(separationToStore(emptyList<FacingPair?>()))
+    }
+
     private fun facing(metres: Double, spreadMetres: Double? = null) = FacingPair(
         alignmentErrorMs = 0.0,
         separationMetres = metres,

@@ -15,6 +15,11 @@ import kotlin.math.hypot
  * distance between two phones and the drawing gives the distance between two icons. The listener
  * never enters it, which is just as well - nobody has measured where they are sitting.
  *
+ * It asks the measurement for an ordering rather than a length, which sounds like the cheaper
+ * of the two and is not: an ordering the wrong way round is an accusation. What that costs is
+ * written under [CLEARLY_LONGER], and which runs are allowed to produce a distance at all is
+ * decided in PeerCalibrateActivity.separationToStore.
+ *
  * It says nothing at all with fewer than two measured distances, and a two-handset room only ever
  * has one: one measured length against one drawn length is a scale, and scale is the thing the
  * drawing deliberately does not carry. The check needs a third phone to have anything to compare.
@@ -27,6 +32,15 @@ object RoomCheck {
      * is what it was asked for - so it is only the ordering that can be trusted, and only when
      * both sides agree the two lengths are plainly different. Anything narrower would flag honest
      * sketches, and a warning that fires on correct drawings is one a person learns to ignore.
+     *
+     * Wide is not free, and widening it further does not help. A drawing that is right is
+     * accused when the measured ratio inverts the drawn one, which takes the two distances'
+     * errors differing by a factor of this squared - 2.25 - and takes less than that as the
+     * drawing grows more decisive. So the margin is a demand on the measurement, and raising
+     * it raises the demand on the drawing in exactly the same step. Measured 09-11: nine
+     * readings of one unchanged two metre gap, clear line of sight, spanned 5.11 to 11.86 m
+     * read from the loudest lag - a ratio of 2.32, past the bound with the drawing exactly
+     * right - and 1.97 to 2.19 m read from the first arrival, a ratio of 1.11.
      */
     const val CLEARLY_LONGER = 1.5
 

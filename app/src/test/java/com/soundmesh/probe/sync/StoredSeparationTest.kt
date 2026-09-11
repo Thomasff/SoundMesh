@@ -6,6 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 class StoredSeparationTest {
     @get:Rule val folder = TemporaryFolder()
@@ -68,6 +69,18 @@ class StoredSeparationTest {
         val thrown = runCatching { StoredSeparation(folder.root, "../elsewhere") }
 
         assertTrue(thrown.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    /**
+     * The files written before the distance was read from the first arrival hold numbers that
+     * are metres out, and nothing inside one says how it was read. The name is what retires
+     * them, because there is no telling a good one from a bad one after the fact.
+     */
+    @Test
+    fun aFileLeftByTheOlderReadingIsNotADistance() {
+        File(folder.root, "separation-m-$peer").writeText("8.75")
+
+        assertNull(store().read())
     }
 
     /** A half written file reads as no measurement rather than as a distance of whatever parsed. */

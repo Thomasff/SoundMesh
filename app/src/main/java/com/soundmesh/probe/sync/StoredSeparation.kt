@@ -52,6 +52,16 @@ class StoredSeparation(private val directory: File, private val peerId: String) 
     private fun file() = File(directory, "$FILE_PREFIX$peerId")
 
     companion object {
-        const val FILE_PREFIX = "separation-m-"
+        /**
+         * Renamed when the distance stopped being read from the loudest lag.
+         *
+         * What the old name left behind is metres out - measured 09-11, one unchanged two
+         * metre gap read anywhere between 5.11 and 11.86 - and a file holds a number and
+         * nothing else, so there is no telling a good one from a bad one after the fact. A
+         * new name retires the whole of the old set at once, and retires it for a pair that
+         * may never run another calibration, which is what a migration could not do. They are
+         * left where they are rather than deleted: a few bytes each, and nothing reads them.
+         */
+        const val FILE_PREFIX = "separation-edge-m-"
     }
 }

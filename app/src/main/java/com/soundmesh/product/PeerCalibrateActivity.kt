@@ -344,6 +344,34 @@ internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
     return middle.takeIf { it > 0.0 }
 }
 
+/**
+ * The separation this run may keep on disk, or null when it measured none it can vouch for.
+ *
+ * Narrower than [measuredSeparationMetres] on purpose. That one answers what the run measured,
+ * and this one answers whether a drawing may be called wrong on the strength of it - which is
+ * the only thing a stored distance is ever used for. [RoomCheck] compares two of them as a
+ * ratio at a margin of [RoomCheck.CLEARLY_LONGER], so it accuses a correct drawing as soon as
+ * two distances' errors differ by that margin squared, 2.25, and by less than that as the
+ * drawing grows more decisive. A distance read from the loudest lag is nowhere near that
+ * bound: measured 09-11, nine readings of one unchanged two metre gap taken with a clear line
+ * of sight spanned 5.11 to 11.86 m, a ratio of 2.32. Read from the first arrival the same nine
+ * recordings spanned 1.97 to 2.19, a ratio of 1.11.
+ *
+ * A non-null spread is what says the first arrival was read: only the arm asked for a sweep
+ * has one, and the sweep is the same pass that finds the onset. Asking the pair rather than
+ * the case id keeps the two from drifting apart - the reading rule is what matters here, not
+ * which name the run was started under.
+ *
+ * Which leaves the shipped flow keeping nothing today. Somebody pressing calibrate runs the
+ * arm that aligns, and only a command line asks for the one that measures distance, so the
+ * room check sits idle rather than firing on correct drawings. That is the honest state of it
+ * and not a decision about the check: what it waits on is a distance the product measures for
+ * itself.
+ */
+internal fun separationToStore(pairs: List<FacingPair?>): Double? =
+    if (pairs.filterNotNull().none { it.separationSpreadMetres != null }) null
+    else measuredSeparationMetres(pairs)
+
 /** How far apart the pairs of one run may sit and still be read as one distance. */
 internal const val SEPARATION_AGREEMENT_METRES = 0.30
 
@@ -1024,8 +1052,11 @@ class PeerCalibrateActivity : ComponentActivity() {
             // Kept rather than only shown, and kept outside the verdict: the separation is the
             // half difference of the two recordings and the alignment is the half sum, so a run
             // that will not cluster still measured the room. Guarded, because a room screen's
-            // check is not worth a failed calibration.
-            if (metres != null) runCatching { StoredSeparation(filesDir, sinkId).write(metres) }
+            // check is not worth a failed calibration. Shown and kept are two questions: what
+            // this run measured goes on the screen for the person who ran it, and only what it
+            // can vouch for goes on disk for a check nobody will be watching.
+            val keep = separationToStore(combined.pairs)
+            if (keep != null) runCatching { StoredSeparation(filesDir, sinkId).write(keep) }
             outcome = combined.verdict?.clusterMeanMs?.let { mean ->
                 getString(R.string.pair_calibrate_host_done, mean, metres ?: 0.0)
             } ?: metres?.takeIf { plan.caseId == CASE_DISTANCE }?.let {
