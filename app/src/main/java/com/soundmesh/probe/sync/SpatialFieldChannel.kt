@@ -2,6 +2,8 @@ package com.soundmesh.probe.sync
 
 import com.soundmesh.core.HostId
 import com.soundmesh.core.NowPlayingCodec
+import com.soundmesh.core.RoomBadgeCodec
+import com.soundmesh.core.RoomColours
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialFieldCodec
 import java.io.InputStream
@@ -86,7 +88,11 @@ internal object SpatialFrame {
  * its instant is worthless and so is the next one, while for a rule the newest is exactly the one
  * wanted and everything before it is superseded.
  */
-class SpatialFieldServer(private val port: Int) {
+class SpatialFieldServer(
+    private val port: Int,
+    /** This handset's own name, so the room it hands out colours to includes the host. */
+    private val selfId: String? = null
+) {
     private class Client(val socket: Socket, val stream: OutputStream, val peerId: String) {
         val rules = ArrayBlockingQueue<ByteArray>(1)
 
@@ -95,6 +101,9 @@ class SpatialFieldServer(private val port: Int) {
         // nothing. Sharing the slot would mean a song changing while somebody drags an icon
         // silently throws that drawing away, which is the drag doing nothing for no visible reason.
         val songs = ArrayBlockingQueue<ByteArray>(1)
+
+        // And a third, on the same terms as the song: it supersedes only itself.
+        val badges = ArrayBlockingQueue<ByteArray>(1)
 
         fun offerLatest(into: ArrayBlockingQueue<ByteArray>, frame: ByteArray) {
             into.clear()
@@ -112,9 +121,28 @@ class SpatialFieldServer(private val port: Int) {
     // between two songs would otherwise show nothing until the next one started, which on a
     // seventeen minute song is a long time to look broken.
     @Volatile private var currentSong: ByteArray? = null
+
+    // Remembered for a stronger reason than either of the two above: a sink has no other way to
+    // learn its colour, and the table only changes when the roster does - so a sink that joined
+    // between two changes would otherwise wait for a fourth handset to arrive before it could
+    // say what colour it is.
+    @Volatile private var currentBadges: ByteArray? = null
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
     @Volatile private var unnamedSinks = 0
+
+    /**
+     * Who holds which colour, kept here because this is the only thing that knows when the room
+     * changed.
+     *
+     * The screen was the obvious other home and is the wrong one: a colour a sink can see has to
+     * survive the host's screen being closed, which is most of a session. Joining and leaving are
+     * events here and a poll anywhere else, and the table has to move on exactly those two.
+     *
+     * Guarded by the clients lock, which is also what the roster it is derived from is guarded by.
+     */
+    private val colours = RoomColours()
+    @Volatile private var heldPlaces: Map<String, Int> = emptyMap()
 
     fun start() {
         // Bound on the caller's thread for the reason ChunkServer.start states: a stop() landing
@@ -122,6 +150,8 @@ class SpatialFieldServer(private val port: Int) {
         val bound = ServerSocket(port)
         server = bound
         running = true
+        // A host by itself is a room of one, and it has a colour before anybody arrives to see it.
+        refreshBadges()
         Thread {
             runCatching {
                 bound.use {
@@ -163,6 +193,37 @@ class SpatialFieldServer(private val port: Int) {
         }
     }
 
+    /**
+     * Says which handset holds which colour, from now until the roster changes.
+     *
+     * Guarded rather than allowed to throw, on the same terms as [publishNowPlaying]: this is
+     * decoration on a screen, and a room that kept playing without colours is every build before
+     * this one.
+     */
+    fun publishBadges(places: Map<String, Int>) {
+        val frame = runCatching { SpatialFrame.encode(RoomBadgeCodec.encode(places)) }.getOrNull() ?: return
+        currentBadges = frame
+        synchronized(clients) {
+            for (client in clients) client.offerLatest(client.badges, frame)
+        }
+    }
+
+    /** Who holds which colour, for whoever is drawing the room on this handset. */
+    fun places(): Map<String, Int> = heldPlaces
+
+    /**
+     * Settles colours for whoever is in the room now, and tells them.
+     *
+     * Called on the two events that can change the answer and on nothing else. A handset already
+     * holding a colour keeps it - see [RoomColours] for why that matters more than it looks.
+     */
+    private fun refreshBadges() {
+        heldPlaces = synchronized(clients) {
+            colours.reconcile(listOfNotNull(selfId) + clients.map { it.peerId })
+        }
+        publishBadges(heldPlaces)
+    }
+
     private fun serve(socket: Socket) {
         val client = runCatching {
             // Bounded, or a sink that connects and then says nothing parks this thread and holds
@@ -196,10 +257,18 @@ class SpatialFieldServer(private val port: Int) {
         // Outside the lock, and closed rather than dropped: the thread parked on that socket ends
         // when the socket does, and a sender thread per departed handset is a leak with a name.
         for (old in replaced) runCatching { old.socket.close() }
+        // Before the rule rather than after: the rule is what the room sounds like and this is
+        // what it looks like, and the handset that just joined is in neither until now.
+        refreshBadges()
         // After the name, not before: the roster is what a drawing is made of, so the first rule a
         // sink is told is one that could have been drawn knowing it was here.
         current?.let { client.offerLatest(client.rules, it) }
         currentSong?.let { client.offerLatest(client.songs, it) }
+        // Stale by one roster on purpose: this handset is in the room now and the table was made
+        // before it arrived, so it is not in the table. What fixes that is the caller noticing the
+        // roster grew and publishing a new one - the same thing that puts the handset in the
+        // drawing. Sending the old one anyway is what colours everybody else in the meantime.
+        currentBadges?.let { client.offerLatest(client.badges, it) }
         runCatching {
             client.socket.use {
                 while (running) {
@@ -208,14 +277,19 @@ class SpatialFieldServer(private val port: Int) {
                     // screen, not an instant to be met.
                     val rule = client.rules.poll(POLL_MILLIS, TimeUnit.MILLISECONDS)
                     val song = client.songs.poll()
-                    if (rule == null && song == null) continue
+                    val badges = client.badges.poll()
+                    if (rule == null && song == null && badges == null) continue
                     rule?.let { client.stream.write(it) }
                     song?.let { client.stream.write(it) }
+                    badges?.let { client.stream.write(it) }
                     client.stream.flush()
                 }
             }
         }
         clients.remove(client)
+        // A colour is held for as long as its handset is here, and this is where it stops being
+        // here. Nothing else notices: no other thread is told, and the roster is only ever asked.
+        refreshBadges()
     }
 
     fun clientCount(): Int = clients.size
@@ -276,6 +350,12 @@ class SpatialFieldClient(
      * it would have compiled and quietly wired the wrong handler in every call site at once.
      */
     private val onNowPlaying: (String) -> Unit = {},
+    /**
+     * Which handset holds which colour. Default empty for the same reason as [onNowPlaying], and
+     * placed before [onField] for the reason stated there - which is a rule about this parameter
+     * list rather than about either handler.
+     */
+    private val onBadges: (Map<String, Int>) -> Unit = {},
     private val onField: (SpatialField) -> Unit
 ) {
     init {
@@ -307,6 +387,9 @@ class SpatialFieldClient(
                         if (NowPlayingCodec.looksLikeOne(text)) {
                             val name = runCatching { NowPlayingCodec.decode(text) }.getOrNull()
                             if (name == null) unreadable++ else onNowPlaying(name)
+                        } else if (RoomBadgeCodec.looksLikeOne(text)) {
+                            val places = runCatching { RoomBadgeCodec.decode(text) }.getOrNull()
+                            if (places == null) unreadable++ else onBadges(places)
                         } else {
                             val field = runCatching { SpatialFieldCodec.decode(text) }.getOrNull()
                             if (field == null) unreadable++ else onField(field)

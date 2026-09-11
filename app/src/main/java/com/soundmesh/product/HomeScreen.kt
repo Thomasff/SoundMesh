@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -50,6 +51,16 @@ enum class Role { NONE, HOST, SINK }
  */
 data class HomeState(
     val role: Role = Role.NONE,
+    /**
+     * This handset's own name, and where in the palette it sits.
+     *
+     * On screen from the first launch rather than from the first session, because the number is
+     * a property of the handset and not of the room - it is the same number before anything is
+     * running, and being able to say "I am 42" into a phone call is most of the point. The
+     * colour is the room's half and is null until there is a room to have handed one out.
+     */
+    val selfId: String? = null,
+    val selfPlace: Int? = null,
     val songName: String? = null,
     /**
      * Where that song lives, which is what the service is handed when play is pressed.
@@ -162,6 +173,19 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(stringResource(R.string.home_title), style = MaterialTheme.typography.headlineMedium)
+        // Above the role and before anything is running. Which phone this is does not depend on
+        // either, and the moment somebody needs it is the moment they are holding two phones and
+        // an instruction that names one of them.
+        state.selfId?.let { self ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BadgeChip(self, state.selfPlace, diameter = 28.dp)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    stringResource(R.string.badge_this_phone, badgeWords(self, state.selfPlace)),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
         when (state.role) {
             Role.NONE -> RolePicker(actions)
             Role.HOST -> HostPanel(state, actions)

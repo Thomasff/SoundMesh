@@ -174,6 +174,16 @@ class SinkSession(
     // The last name the host said. Written from the channel thread, read by the screen.
     @Volatile private var playing: String? = null
 
+    /**
+     * Which colour this handset holds in the room, or null until the host has said.
+     *
+     * Null is ordinary rather than a fault, and there are two of them: a host on an older build
+     * never sends a table, and a host on this one sends it a moment after this handset joins.
+     * Both show as a number with no colour, which is the identity with one half missing rather
+     * than nothing at all.
+     */
+    @Volatile private var place: Int? = null
+
     // Rules that arrived and could not be read, carried across reconnections. Non-zero means the
     // two handsets are running different builds, which otherwise presents as this phone alone
     // ignoring the room's shape - and nobody looks at one silent feature to find a version skew.
@@ -408,7 +418,8 @@ class SinkSession(
                 SyncActivity.SPATIAL_PORT,
                 name,
                 onNowPlaying = { playing = it },
-                renderer::applySpatialField
+                onBadges = { place = it[name] },
+                onField = renderer::applySpatialField
             )
                 .takeIf { runCatching { it.start() }.isSuccess }
         }
@@ -506,6 +517,8 @@ class SinkSession(
      * every connection as it registers.
      */
     override fun nowPlaying(): String? = playing
+
+    override fun badgePlace(): Int? = place
 
     /**
      * Keeps [SessionFlags] told what is true, at a cadence fast enough for the state a person sees.

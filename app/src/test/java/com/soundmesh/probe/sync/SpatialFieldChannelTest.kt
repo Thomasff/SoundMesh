@@ -6,6 +6,7 @@ import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SpatialPosition
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -407,6 +408,69 @@ class SpatialFieldChannelTest {
             // The rule still arrives, which is the half that matters: the name was stepped over.
             awaitTrue("the rule to arrive after an unknown message") { seen.get() != null }
             assertEquals(SpatialMode.ROTATE, seen.get()!!.mode)
+        } finally {
+            client.stop()
+            server.stop()
+        }
+    }
+    /**
+     * A sink is told its colour without anybody touching anything, and the host is in the table.
+     *
+     * Both halves are quiet when wrong. A table that reached nobody shows as a handset with a
+     * number and no colour, which is also what an older host looks like. A table that left the
+     * host out shows as a room where one icon is a different colour on two screens - and the two
+     * screens are read side by side, which is the only way anybody would find out.
+     */
+    @Test
+    fun aSinkIsToldWhichColourItHoldsAndTheHostIsInTheTableToo() {
+        val port = freePort()
+        val server = SpatialFieldServer(port, selfId = there)
+        val table = AtomicReference<Map<String, Int>?>(null)
+        val client = SpatialFieldClient("127.0.0.1", port, here, onBadges = { table.set(it) }) {}
+        server.start()
+        try {
+            client.start()
+
+            awaitTrue("the table to name both handsets") { table.get()?.size == 2 }
+            val seen = table.get()!!
+            assertEquals(server.places(), seen)
+            assertNotEquals("two handsets, one colour", seen[here], seen[there])
+        } finally {
+            client.stop()
+            server.stop()
+        }
+    }
+
+    /**
+     * A colour goes back to the room once the departure is noticed, which is on the next thing the
+     * room is told rather than when the socket closes.
+     *
+     * Written this way because the first version of it asserted the departure was noticed at once,
+     * and it is not: what notices a handset has gone is a write that fails, and while nobody
+     * touches a control there is nothing to write. That is older than this table and deliberate -
+     * the audio channel writes fifty times a second and so has a roster that is nearly live, and
+     * comparing the two rosters is how a room says a handset stopped playing. A colour released
+     * late costs one of twelve in a room of three; noticing here would cost that comparison.
+     */
+    @Test
+    fun aColourGoesBackOnceSomethingWrittenNoticesTheHandsetLeft() {
+        val port = freePort()
+        val server = SpatialFieldServer(port, selfId = there)
+        val client = SpatialFieldClient("127.0.0.1", port, here) {}
+        server.start()
+        try {
+            client.start()
+            awaitTrue("the sink to be given a colour") { server.places().containsKey(here) }
+
+            client.stop()
+
+            awaitTrue("the colour to be given back") {
+                // Inside the wait rather than before it: a socket the peer has closed takes one
+                // write without complaining and fails on a later one.
+                server.publishNowPlaying("anything")
+                !server.places().containsKey(here)
+            }
+            assertTrue("the host kept its own", server.places().containsKey(there))
         } finally {
             client.stop()
             server.stop()

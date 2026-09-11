@@ -266,7 +266,7 @@ class HostSession(
 
     // Null when this session has no name of its own: an unbound port rather than an idle one, so a
     // build without the feature is not listening on 45126 either.
-    private val spatialServer = spatialId?.let { SpatialFieldServer(SyncActivity.SPATIAL_PORT) }
+    private val spatialServer = spatialId?.let { SpatialFieldServer(SyncActivity.SPATIAL_PORT, it) }
     // How long the slowest call to broadcast took, and how many chunks the source produced.
     //
     // Instrumentation rather than a health counter, and it earned its place: it is what measured
@@ -305,6 +305,15 @@ class HostSession(
      */
     fun roomPeerIds(): List<String> =
         listOfNotNull(spatialId) + (spatialServer?.peerIds() ?: emptyList())
+
+    /**
+     * Which colour each handset in the room holds.
+     *
+     * Read from the control channel rather than worked out here, because the sinks are told the
+     * same table over that channel - and a colour the drawing shows that the handset itself does
+     * not is worse than no colour, since the two screens are read side by side.
+     */
+    fun roomPlaces(): Map<String, Int> = spatialServer?.places() ?: emptyMap()
 
     /**
      * Tells the room which song it is on, when that has changed since the last time it was told.

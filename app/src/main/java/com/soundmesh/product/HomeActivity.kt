@@ -37,7 +37,6 @@ import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
-import com.soundmesh.core.RoomColours
 import com.soundmesh.core.SpatialField
 import com.soundmesh.session.HostSession
 import com.soundmesh.session.SessionService
@@ -71,17 +70,6 @@ class HomeActivity : ComponentActivity() {
     /** Reads the output a capturing host is heard on. It cannot set it - see AccessibilityVolume. */
     private val hostOutputVolume by lazy { HostOutputVolume(getSystemService(AudioManager::class.java)) }
     private val handler = Handler(Looper.getMainLooper())
-
-    /**
-     * Which colour each handset in the room holds, for as long as it is in the room.
-     *
-     * Held by the screen rather than by the session because it is only ever looked at: nothing
-     * about playback depends on it, and a handset that joins while nobody has this screen open
-     * is coloured the moment somebody does. It outlives one [RoomState] on purpose - the state
-     * is rebuilt whenever the roster changes, and a colour that was rebuilt with it would be a
-     * colour that changed every time somebody left.
-     */
-    private val roomColours = RoomColours()
     private val refresh = object : Runnable {
         override fun run() {
             readSession()
@@ -465,6 +453,7 @@ class HomeActivity : ComponentActivity() {
         val chosen = stillPermitted(store.chosen(), held)
         state = state.copy(
             paired = PairedHost(filesDir).read(),
+            selfId = HostIdentity(filesDir).current(),
             pairingPayload = HostPairingCode.of(HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT),
             songName = chosen?.name,
             songUri = chosen?.uri,
@@ -475,6 +464,7 @@ class HomeActivity : ComponentActivity() {
     private fun readSession() {
         val session = SessionService.ACTIVE
         if (session != null) awaitingSession = false
+        val room = readRoom(session)
         state = state.copy(
             running = session != null,
             sessionState = session?.state(),
@@ -483,7 +473,11 @@ class HomeActivity : ComponentActivity() {
             paused = session?.paused() == true,
             failure = if (awaitingSession) SessionService.FAILURE else null,
             counters = SessionReadout.counters(session?.report()),
-            room = readRoom(session)
+            room = room,
+            // Two different places for one reading, because a host holds the whole table and a
+            // sink is told only the line about itself. Both read null before a room exists,
+            // which is the number on screen with no colour beside it.
+            selfPlace = session?.badgePlace() ?: room?.colours?.get(state.selfId)
         )
     }
 
@@ -511,7 +505,7 @@ class HomeActivity : ComponentActivity() {
         return previous.copy(
             icons = icons,
             measuredMetres = measured,
-            colours = roomColours.reconcile(icons.map { it.peerId }),
+            colours = host.roomPlaces(),
             otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
         ).also(::publish)
     }

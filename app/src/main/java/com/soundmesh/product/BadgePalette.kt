@@ -128,6 +128,7 @@ fun BadgeChip(peerId: String, place: Int?, modifier: Modifier = Modifier, diamet
 @Composable
 fun badgeWords(peerId: String, place: Int?): String {
     val number = PeerBadge.numberOf(peerId)
-    val name = BadgePalette.nameOf(place) ?: return "$number"
+    val name = BadgePalette.nameOf(place)
+        ?: return stringResource(R.string.badge_number_only, number)
     return stringResource(R.string.badge_in_words, number, stringResource(name))
 }

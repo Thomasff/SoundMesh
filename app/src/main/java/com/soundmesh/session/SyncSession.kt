@@ -124,6 +124,15 @@ interface SyncSession {
     fun nowPlaying(): String? = null
 
     /**
+     * Which colour this handset holds in the room, or null when nothing has said.
+     *
+     * Only a sink answers, and not because a host has no colour - it has one, and hands them out
+     * - but because the host reads its own off the room it is drawing, where the rest of that
+     * table already is. A sink has no room, only the one line of it that is about itself.
+     */
+    fun badgePlace(): Int? = null
+
+    /**
      * Told by the service that owns the audio focus, not asked for by the session.
      *
      * A session that lost the focus stays wired up - its clock keeps exchanging, its link keeps

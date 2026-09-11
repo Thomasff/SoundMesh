@@ -169,7 +169,8 @@
     <string name="counter_sinks">从机（在收/报过名）</string>
 
     <string name="badge_in_words">%1$d 号（%2$s）</string>
-    <string name="badge_this_phone">这台是 %1$d 号（%2$s）</string>
+    <string name="badge_number_only">%1$d 号</string>
+    <string name="badge_this_phone">这台是 %1$s</string>
     <string name="badge_red">红</string>
     <string name="badge_orange">橙</string>
     <string name="badge_yellow">黄</string>
