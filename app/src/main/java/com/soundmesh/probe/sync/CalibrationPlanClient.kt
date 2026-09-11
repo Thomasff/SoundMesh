@@ -36,11 +36,11 @@ class CalibrationPlanClient(private val hostAddress: String, private val port: I
             CalibrationPlanCodec.decode(String(socket.getInputStream().readBytes(), Charsets.UTF_8))
         }
 
-    private companion object {
+    internal companion object {
         /**
          * The host answers with arithmetic on numbers it already holds. This bounds a host that
          * died between accepting and answering.
          */
-        const val REPLY_TIMEOUT_MILLIS = 30_000
+        internal const val REPLY_TIMEOUT_MILLIS = 30_000
     }
 }

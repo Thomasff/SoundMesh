@@ -4,6 +4,7 @@ import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.CalibrationPlanCodec
 import com.soundmesh.core.CalibrationRequest
 import java.net.ServerSocket
+import java.net.Socket
 import java.net.SocketTimeoutException
 
 /**
@@ -81,6 +82,97 @@ class CalibrationPlanServer(private val port: Int) {
             }
         }.getOrNull()
     }
+
+    /**
+     * Gathers a room, then answers all of it with one plan.
+     *
+     * [awaitRequest] mints a plan on the accept because a pair's plan names only the two handsets
+     * already in the conversation. A room's names every slot, so it does not exist until everybody
+     * has asked - which inverts the order without changing when the plan is minted: still at the
+     * end, because it names instants a few seconds out in this handset's clock and one minted
+     * while waiting for somebody to pick up a second phone would already be in the past.
+     *
+     * [firstWaitMillis] is for somebody to pick up the first phone. [settleMillis] is the gap
+     * after which nobody else is coming, which is the gap between two people pressing two buttons
+     * rather than anything about the link. [roomWindowMillis] caps the whole gathering from the
+     * first ask, and is checked against how long a sink will wait: the handset that asked first
+     * waits out the entire gathering, so a room held open longer than that answers into a socket
+     * nobody is listening on - and the sink reports a host that never replied while this side
+     * reports a room it served.
+     *
+     * An ask that cannot be read costs that handset and not the room: it is counted in
+     * [refusedSinks] and its socket closed. The alternative makes one out-of-date phone
+     * indistinguishable from a broken host.
+     */
+    fun awaitRoom(
+        firstWaitMillis: Int,
+        settleMillis: Int,
+        roomWindowMillis: Int,
+        planFor: (List<CalibrationRequest>) -> CalibrationPlan
+    ): CalibrationPlan? {
+        require(roomWindowMillis < CalibrationPlanClient.REPLY_TIMEOUT_MILLIS) {
+            "a room held open for $roomWindowMillis ms outlasts what a sink will wait for"
+        }
+        val bound = server ?: run {
+            failureCode = "PLAN_UNBOUND"
+            return null
+        }
+        refusedSinks = 0
+        val waiting = ArrayList<Pair<Socket, CalibrationRequest>>()
+        var closesAt = Long.MAX_VALUE
+        return runCatching {
+            while (true) {
+                val budget = if (waiting.isEmpty()) firstWaitMillis else {
+                    val left = (closesAt - System.nanoTime()) / 1_000_000
+                    minOf(settleMillis.toLong(), left).coerceAtLeast(1L).toInt()
+                }
+                bound.soTimeout = budget
+                val socket = try {
+                    bound.accept()
+                } catch (quiet: SocketTimeoutException) {
+                    // Nobody else is coming. With an empty room that is the failure the pair path
+                    // reports; with a room behind us it is how gathering ends.
+                    if (waiting.isEmpty()) throw quiet else break
+                }
+                socket.soTimeout = settleMillis
+                val request = runCatching {
+                    val asked = String(socket.getInputStream().readBytes(), Charsets.UTF_8).trim()
+                    CalibrationPlanCodec.decodeRequest(asked)
+                }.getOrNull()
+                if (request == null) {
+                    refusedSinks++
+                    runCatching { socket.close() }
+                    continue
+                }
+                if (waiting.isEmpty()) closesAt = System.nanoTime() + roomWindowMillis * 1_000_000L
+                waiting += socket to request
+                if (System.nanoTime() >= closesAt) break
+            }
+            // Minted once, here, and written to everybody: a room whose handsets hold schedules
+            // minted a moment apart is two rooms that will not add up.
+            val plan = planFor(waiting.map { it.second })
+            val encoded = CalibrationPlanCodec.encode(plan).toByteArray(Charsets.UTF_8)
+            for ((socket, _) in waiting) {
+                runCatching {
+                    socket.getOutputStream().apply { write(encoded); flush() }
+                }
+            }
+            plan
+        }.also {
+            for ((socket, _) in waiting) runCatching { socket.close() }
+        }.onFailure {
+            failureCode = when (it) {
+                is SocketTimeoutException -> TIMEOUT
+                is IllegalArgumentException -> "PLAN_REFUSED"
+                else -> "PLAN_UNREADABLE"
+            }
+        }.getOrNull()
+    }
+
+    /** Handsets whose ask could not be read, and were let go while the room went on. */
+    @Volatile
+    var refusedSinks: Int = 0
+        private set
 
     fun stop() {
         runCatching { server?.close() }
