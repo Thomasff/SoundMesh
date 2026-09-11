@@ -27,11 +27,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.soundmesh.core.CalibrationRole
+import com.soundmesh.core.RoomCommand
 import com.soundmesh.probe.R
 import com.soundmesh.session.CAPTURING_HOST_STREAM
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.StreamingChunkSource
+import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.HostIdentity
+import com.soundmesh.probe.sync.RoomCommandClient
+import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
@@ -82,6 +86,19 @@ class HomeActivity : ComponentActivity() {
      * a room of phones is a handful of strings.
      */
     private val whereTheyWere = HashMap<String, RoomIcon>()
+
+    /**
+     * The line this handset holds open to its host while it is a sink sitting on this screen.
+     *
+     * Only from this screen, and only while it is in front. An app in the background is not
+     * allowed to start an activity, so a command arriving then could not be obeyed anyway - and a
+     * handset that went off and did something because of a message received while nobody was
+     * looking at it is not a thing this should be able to do at all.
+     */
+    private var hostLine: RoomCommandClient? = null
+
+    /** Whether the room has already been told about the session that is up, so it is told once. */
+    private var toldTheRoom = false
 
     private val refresh = object : Runnable {
         override fun run() {
@@ -167,7 +184,7 @@ class HomeActivity : ComponentActivity() {
     }
 
     private val actions = HomeActions(
-        pickRole = { role -> state = state.copy(role = role, problem = null); readPairing() },
+        pickRole = { role -> state = state.copy(role = role, problem = null); readPairing(); takeUpTheRoom() },
         chooseSong = { releaseProjection(); chooseSong.launch(arrayOf(AUDIO_MIME)) },
         chooseFolder = { releaseProjection(); chooseFolder.launch(null) },
         captureAudio = ::captureAudio,
@@ -514,8 +531,27 @@ class HomeActivity : ComponentActivity() {
             // Two different places for one reading, because a host holds the whole table and a
             // sink is told only the line about itself. Both read null before a room exists,
             // which is the number on screen with no colour beside it.
-            selfPlace = session?.badgePlace() ?: room?.colours?.get(state.selfId)
+            selfPlace = session?.badgePlace() ?: room?.colours?.get(state.selfId),
+            standingBy = RoomCommands.standingBy(),
+            onStandby = hostLine?.connected == true
         )
+        announceSession(session != null)
+    }
+
+    /**
+     * Tells everybody standing by to start when this host own session comes up, and to stop when
+     * it goes away.
+     *
+     * On the session appearing rather than on the button being pressed, and that is the whole of
+     * it: a sink starts by dialling this host chunk port, and a sink told to play a moment before
+     * that port was bound gets a refused connection and a failure on its screen. The session
+     * appearing is the first instant the answer would be yes.
+     */
+    private fun announceSession(running: Boolean) {
+        if (state.role != Role.HOST) return
+        if (running == toldTheRoom) return
+        toldTheRoom = running
+        RoomCommands.send(if (running) RoomCommand.PLAY else RoomCommand.STOP)
     }
 
     /**
@@ -579,7 +615,71 @@ class HomeActivity : ComponentActivity() {
         // it - a handset that changed network is otherwise showing an address it no longer has.
         readPairing()
         rereadDistances()
+        takeUpTheRoom()
         handler.post(refresh)
+    }
+
+    /**
+     * Opens whichever end of the standing channel this handset is, and closes the other.
+     *
+     * Called on every resume and on every change of role, because both change the answer and
+     * neither has an event of its own that the other would see.
+     */
+    private fun takeUpTheRoom() {
+        stopStandingBy()
+        when (state.role) {
+            // Left open when this screen goes away, unlike the sink end. The host tells the room
+            // to go and measure from inside the calibration screen - see RoomCommands - and this
+            // screen is paused by then.
+            Role.HOST -> RoomCommands.serve()
+            Role.SINK -> {
+                RoomCommands.stop()
+                val host = state.paired ?: return
+                hostLine = RoomCommandClient(host.address, COMMAND_PORT) { command ->
+                    // On to the main thread: this arrives on the socket thread, and everything it
+                    // leads to is either an activity being started or a service being asked for.
+                    handler.post { obey(command) }
+                }.also { it.start() }
+            }
+            Role.NONE -> RoomCommands.stop()
+        }
+    }
+
+    private fun stopStandingBy() {
+        hostLine?.close()
+        hostLine = null
+    }
+
+    /**
+     * Does what the host asked.
+     *
+     * Each one is guarded by the state it would change, so a command that arrives twice - or that
+     * arrives about something this handset is already doing - is nothing rather than a second
+     * session. The host says what the room should be doing, not what should happen next.
+     */
+    private fun obey(command: RoomCommand) {
+        when (command) {
+            RoomCommand.PLAY -> if (!state.running) play()
+            RoomCommand.STOP -> if (state.running) actions.stop()
+            RoomCommand.MEASURE_ROOM -> goAndMeasure(overhead = false)
+            RoomCommand.MEASURE_OVERHEAD -> goAndMeasure(overhead = true)
+        }
+    }
+
+    /**
+     * Opens the calibration screen on this handset and starts it, with nobody touching it.
+     *
+     * Allowed because this screen is in front: an app in the background cannot start an activity
+     * on Android 10 and later, which is also why [hostLine] is closed the moment it is not.
+     */
+    private fun goAndMeasure(overhead: Boolean) {
+        startActivity(
+            Intent(this, PeerCalibrateActivity::class.java)
+                .putExtra("role", CalibrationRole.SINK.name)
+                .putExtra("room", true)
+                .putExtra("overhead", overhead)
+                .putExtra("auto", true)
+        )
     }
 
     /**
@@ -615,6 +715,7 @@ class HomeActivity : ComponentActivity() {
 
     override fun onPause() {
         handler.removeCallbacks(refresh)
+        stopStandingBy()
         super.onPause()
     }
 

@@ -93,6 +93,16 @@ data class HomeState(
     val problem: Int? = null,
     val pairingPayload: String? = null,
     val paired: PairingCode? = null,
+    /**
+     * How many handsets are standing by for this host, and whether this sink is one of them.
+     *
+     * On screen because it is the answer to the question somebody asks one second after pressing
+     * a button that was supposed to start three phones: a handset not holding the line is a
+     * handset that did not hear, and without this the only way to find that out is that it never
+     * started and nothing anywhere said why.
+     */
+    val standingBy: Int = 0,
+    val onStandby: Boolean = false,
     val running: Boolean = false,
     val sessionState: SessionState? = null,
     val failure: String? = null,
@@ -346,6 +356,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
             Text(state.pairingPayload, style = MaterialTheme.typography.bodySmall)
         }
     }
+    StandbyLine(state)
     PlayControls(state, actions, canPlay = state.capturing || state.songName != null)
 }
 
@@ -361,7 +372,30 @@ private fun SinkPanel(state: HomeState, actions: HomeActions) {
         OutlinedButton(onClick = actions.scan) { Text(stringResource(R.string.pair_scan)) }
         Text(stringResource(R.string.pair_scan_hint), style = MaterialTheme.typography.bodySmall)
     }
+    StandbyLine(state)
     PlayControls(state, actions, canPlay = state.paired != null)
+}
+
+/**
+ * Whether this handset can be started from the host, said in one line.
+ *
+ * The whole feature is invisible when it works - somebody presses one button and three phones do
+ * something - so the only thing a person can check beforehand is this. A host that says two and a
+ * room of three is the one case worth catching, and it is caught by looking rather than by having
+ * the third phone sit there silently while the other two play.
+ */
+@Composable
+private fun StandbyLine(state: HomeState) {
+    Text(
+        when (state.role) {
+            Role.HOST -> stringResource(R.string.standby_host, state.standingBy)
+            Role.SINK ->
+                if (state.onStandby) stringResource(R.string.standby_sink)
+                else stringResource(R.string.standby_sink_alone)
+            Role.NONE -> return
+        },
+        style = MaterialTheme.typography.bodySmall
+    )
 }
 
 @Composable

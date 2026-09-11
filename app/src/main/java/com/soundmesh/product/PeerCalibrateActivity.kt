@@ -47,7 +47,9 @@ import com.soundmesh.probe.sync.AlignmentResultClient
 import com.soundmesh.probe.sync.AlignmentResultServer
 import com.soundmesh.probe.sync.Calibration
 import com.soundmesh.probe.sync.CalibrationPlanClient
+import com.soundmesh.core.RoomCommand
 import com.soundmesh.probe.sync.CalibrationPlanServer
+import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
@@ -1182,6 +1184,14 @@ class PeerCalibrateActivity : ComponentActivity() {
             clockServer.start()
             roomServer.start()
             planServer.start()
+            // Every server is bound, so this is the first instant a handset dialling in would be
+            // answered rather than refused: CalibrationPlanClient opens a socket and throws if
+            // nothing is listening, it does not retry. So the room is told from here and not from
+            // the screen that started this - which is also why the command server outlives that
+            // screen. Handsets not standing by are unaffected; somebody presses those by hand.
+            RoomCommands.send(
+                if (overhead()) RoomCommand.MEASURE_OVERHEAD else RoomCommand.MEASURE_ROOM
+            )
             Log.i(
                 LOG_TAG,
                 "the room servers are up: clock ${SyncActivity.CLOCK_PORT}, " +
