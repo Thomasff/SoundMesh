@@ -61,9 +61,11 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
         if (state.icons.size < 2) {
             Text(stringResource(R.string.room_alone), style = MaterialTheme.typography.bodySmall)
         }
-        // Said quietly and never acted on. The measurement cannot know which side is left, so it
-        // can never correct a drawing - only point at two icons and ask whether they are the right
-        // way round. Acting on it would be the app overruling the one thing only a person knows.
+        // Said quietly and never acted on, unlike the lengths below it. A measurement can correct
+        // how far apart two icons are; it cannot know which of them is which, so all it can do
+        // here is point at two and ask whether they are the right way round. Acting on it would
+        // be the app overruling the one thing only a person knows - and it also has to be
+        // settled before the lengths are touched, which is what fitOffer refuses on.
         RoomCheck.contradiction(state.icons, state.measuredMetres)?.let { (farther, nearer) ->
             Text(
                 stringResource(
@@ -76,6 +78,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
             )
         }
         MeasuredDistances(state)
+        FitOffer(state, actions)
         ModePicker(state, actions)
         if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
         SeparationControl(state, actions)
@@ -128,11 +131,21 @@ data class RoomState(
     /** Where the low half stops. Only on screen while the split runs along that axis. */
     val crossoverHz: Float = SpatialField.DEFAULT_CROSSOVER_HZ.toFloat(),
     /** Which handsets carry the sides. Everything in [icons] and not in here carries the middle. */
-    val otherHalfIds: Set<String> = emptySet()
+    val otherHalfIds: Set<String> = emptySet(),
+    /**
+     * Whether the drawing as it stands has already been moved onto the measurement.
+     *
+     * Here so that the offer can be made once and not again. Fitting a fit walks the drawing
+     * further off what the person drew every time - see RoomFitTest - and the weight that stops
+     * that only works while the thing it is anchored to is a person's opinion. Anything that
+     * makes the drawing somebody's opinion again clears this: a drag, or a fresh measurement.
+     */
+    val fitted: Boolean = false
 )
 
 class RoomActions(
     val moveIcon: (RoomIcon) -> Unit,
+    val fitToMeasured: () -> Unit,
     val pickMode: (SpatialMode) -> Unit,
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
@@ -140,6 +153,33 @@ class RoomActions(
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
 )
+
+/**
+ * The drawing with one icon where the finger left it, and the offer open again.
+ *
+ * Moving an icon is the person saying where a handset is, which is exactly the thing the fit
+ * is weighted against - so a drawing that has just been touched is a new opinion and deserves
+ * a fresh answer, even if it was fitted a moment ago.
+ */
+internal fun withIconMoved(room: RoomState, moved: RoomIcon): RoomState = room.copy(
+    icons = room.icons.map { if (it.peerId == moved.peerId) moved else it },
+    fitted = false
+)
+
+/**
+ * The drawing moved onto the measured shape, or null when there is nothing to offer.
+ *
+ * Null while [RoomCheck] is pointing at two icons, and that ordering is the point rather than
+ * caution. The fit moves positions to match labels, so a drawing with two icons on the wrong
+ * handsets would be moved onto each other's measured places, confidently and without a word.
+ * Afterwards would be too late a second time over: once this has run, drawn and measured agree
+ * by construction and the check can never fire again.
+ */
+internal fun fitOffer(state: RoomState): List<RoomIcon>? {
+    if (state.fitted) return null
+    if (RoomCheck.contradiction(state.icons, state.measuredMetres) != null) return null
+    return RoomFit.corrected(state.icons, state.measuredMetres)
+}
 
 /**
  * Which measured distances belong on the screen, in the order they are read out.
@@ -188,6 +228,26 @@ private fun MeasuredDistances(state: RoomState) {
         ),
         style = MaterialTheme.typography.bodySmall
     )
+}
+
+/**
+ * The one button on this screen that changes the drawing without a finger on an icon.
+ *
+ * A button rather than a snap that happens on its own. The person put those icons there, and
+ * something that quietly moves them afterwards reads as the app arguing; offered instead, the
+ * before and the after are both theirs to look at. It goes under the measured lengths because
+ * those lengths are what it acts on.
+ */
+@Composable
+private fun FitOffer(state: RoomState, actions: RoomActions) {
+    if (state.fitted) {
+        Text(stringResource(R.string.room_fit_done), style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    if (fitOffer(state) == null) return
+    OutlinedButton(onClick = actions.fitToMeasured) {
+        Text(stringResource(R.string.room_fit))
+    }
 }
 
 @Composable

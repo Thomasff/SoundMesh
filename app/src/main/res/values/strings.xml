@@ -212,6 +212,8 @@
     <string name="room_part_middle">中间</string>
     <string name="room_part_sides">两边</string>
     <string name="room_alone">还没有别的手机连上来。一台手机也能摆，但听不出方向。</string>
+    <string name="room_fit">按测量摆正图标</string>
+    <string name="room_fit_done">图标已按测量摆正。拖动任意一台可以再来一次。</string>
     <string name="room_measured">量到的间距（米）：%1$s</string>
     <string name="room_disagrees">测距说 %1$s 比 %2$s 远，你画的正相反——这两个图标是不是拖反了？</string>
     <string name="failure_port_in_use">起不来：对时和播放用的是同一个端口，多半是对时那边还开着。到「对时」那页按停止，等几秒再试一次。</string>

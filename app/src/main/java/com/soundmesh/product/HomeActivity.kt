@@ -185,9 +185,11 @@ class HomeActivity : ComponentActivity() {
             )
         },
         room = RoomActions(
-            moveIcon = { moved -> updateRoom { it.copy(icons = it.icons.map { icon ->
-                if (icon.peerId == moved.peerId) moved else icon
-            }) } },
+            moveIcon = { moved -> updateRoom { withIconMoved(it, moved) } },
+            // Nothing happens if it refuses; the offer is only on screen while it would not.
+            fitToMeasured = {
+                updateRoom { room -> fitOffer(room)?.let { room.copy(icons = it, fitted = true) } ?: room }
+            },
             pickMode = { mode -> updateRoom { it.copy(mode = mode) } },
             setPan = { pan -> updateRoom { it.copy(pan = pan) } },
             setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
@@ -514,6 +516,8 @@ class HomeActivity : ComponentActivity() {
         return previous.copy(
             icons = icons,
             measuredMetres = measured,
+            // A fresh reading is a fresh reason to offer, whatever was done with the last one.
+            fitted = false,
             colours = host.roomPlaces(),
             silentIds = silent,
             otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
@@ -526,7 +530,31 @@ class HomeActivity : ComponentActivity() {
         // result arrives. The pairing code is re-encoded for the same reason ShowCodeActivity does
         // it - a handset that changed network is otherwise showing an address it no longer has.
         readPairing()
+        rereadDistances()
         handler.post(refresh)
+    }
+
+    /**
+     * The room's measured distances re-read, because a calibration runs in another activity and
+     * coming back here is where its result arrives.
+     *
+     * Not on the refresh loop, which runs five times a second against a file on disk, and not on
+     * the roster changing either - the roster is exactly what does not change when the same three
+     * phones measure themselves and come back. Left there, a run would produce numbers no screen
+     * ever showed until somebody left the room.
+     *
+     * A reading that came back the same is dropped rather than stored, so that returning to this
+     * screen does not re-offer a fit the person has already taken.
+     */
+    private fun rereadDistances() {
+        val room = state.room ?: return
+        val measured = measuredDistances(
+            filesDir,
+            room.icons.firstOrNull()?.peerId,
+            room.icons.map { it.peerId }
+        )
+        if (measured == room.measuredMetres) return
+        state = state.copy(room = room.copy(measuredMetres = measured, fitted = false))
     }
 
     override fun onPause() {
