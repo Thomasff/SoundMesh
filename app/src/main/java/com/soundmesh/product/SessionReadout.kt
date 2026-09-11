@@ -1,6 +1,7 @@
 package com.soundmesh.product
 
 import androidx.annotation.StringRes
+import com.soundmesh.core.PeerBadge
 import com.soundmesh.probe.R
 
 /** One row of the state panel: what it is called, and what it currently reads. */
@@ -52,18 +53,20 @@ object SessionReadout {
                 ?.split(",")
                 ?.filter { it.isNotEmpty() }
                 .orEmpty()
-            // The same four characters the drawing labels its icons with, so one screen's "3f2a"
-            // is the other screen's "3f2a". (The pair calibration screen shows six; the two have
-            // never been reconciled, and one is a prefix of the other.)
+            // The same numbers the drawing labels its icons with, so one screen's "42" is the
+            // other screen's "42". The colour is the other half of that name and cannot come
+            // here: this is built from the report alone and the report carries no colour, which
+            // is the limit that keeps this row from being the thing that says which one dropped.
             if (room.isNotEmpty()) {
-                rows += Counter(R.string.counter_room, room.joinToString(" ") { it.take(NAME_CHARS) })
+                rows += Counter(R.string.counter_room, room.joinToString(" ") { "${PeerBadge.numberOf(it)}" })
             }
             // Two numbers, and neither is a reading on its own: how many sockets are open says
             // nothing about how many were expected, and how many announced themselves says nothing
             // about how many are still listening. It is their disagreement that says a handset
             // left. It cannot say which one - the audio sockets carry a name of their own now,
-            // but this screen is not shown it - so this is a prompt to look at the phones rather
-            // than an answer about them.
+            // and the report even carries it, but naming a handset takes a colour this row has no
+            // way to reach - so this is still a prompt to look at the phones rather than an
+            // answer about them.
             rows += Counter(
                 R.string.counter_sinks,
                 if (room.isEmpty()) "$sinks" else "$sinks/${room.size - 1}"
@@ -110,7 +113,4 @@ object SessionReadout {
         Regex("\"$name\":\"([^\"]*)\"").find(report)?.groupValues?.get(1)
 
     private const val CHUNK_MILLIS = 20
-
-    /** How much of a handset's name is enough to tell two phones apart in one room. */
-    private const val NAME_CHARS = 4
 }

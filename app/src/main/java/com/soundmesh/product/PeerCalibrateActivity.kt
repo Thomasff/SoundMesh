@@ -23,6 +23,7 @@ import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.AlignmentPairing
 import com.soundmesh.core.AlignmentReading
 import com.soundmesh.core.CalibrationPlan
+import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.ChirpGenerator
@@ -1333,7 +1334,16 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun hostArtifact(sinkId: String): String = "peer-calibration-$sinkId.json"
 
     /** Enough of a handset's name to tell two apart in a room, for a screen a person reads. */
-    private fun shortName(sinkId: String): String = sinkId.take(SHORT_NAME_LENGTH)
+    /**
+     * What a handset is called on this screen: its number, the same one the room draws on it.
+     *
+     * Six characters of the real name was what this showed, against the room's four, and the
+     * two were never reconciled - so one screen's handset and the other screen's handset looked
+     * like different strings to anybody comparing them. The colour that completes this name
+     * cannot reach here: pairing runs over its own channel, between two handsets, with no room
+     * around them to have assigned one.
+     */
+    private fun shortName(sinkId: String): String = "${PeerBadge.numberOf(sinkId)}"
 
     /**
      * Adds one sink's answer to what the screen shows, replacing that sink's previous one.
@@ -1393,9 +1403,6 @@ class PeerCalibrateActivity : ComponentActivity() {
             (intervalNanos * ChirpGenerator.SAMPLE_RATE / 1_000_000_000L).toInt()
 
         /** Next after AlignmentResultServer's 45125. */
-        /** Six hexadecimal characters: 24 bits, read by a person to tell two phones apart. */
-        const val SHORT_NAME_LENGTH = 6
-
         const val PLAN_PORT = 45126
 
         /** How long the host holds the screen open waiting for somebody to pick up the other phone. */

@@ -1,5 +1,6 @@
 package com.soundmesh.session
 
+import com.soundmesh.core.PeerBadge
 import com.soundmesh.probe.R
 import com.soundmesh.product.SessionReadout
 import org.junit.Assert.assertEquals
@@ -145,13 +146,24 @@ class HostReportTest {
         assertEquals("0", valueOf(report(sinks = 1, room = listOf(host, near)), R.string.counter_source_late))
     }
 
-    /** The host first, because that is the order the drawing is in and the order a listener reads. */
+    /**
+     * The host first, because that is the order the drawing is in and the order a listener reads.
+     *
+     * Written through [PeerBadge] rather than as the three numbers it happens to give today: what
+     * this row has to get right is that it shows each handset's badge number, in roster order,
+     * separated by spaces. Which number a name maps to is [com.soundmesh.core.PeerBadgeTest]'s
+     * question, and spelling it out twice would make a changed derivation fail here as well,
+     * where nothing is wrong.
+     */
     @Test
     fun theWholeRosterIsOneValueTheScreenCanReadBack() {
         val text = report(sinks = 2, room = listOf(host, near, far))
 
         assertTrue(text.contains("\"roomPeerIds\":\"$host,$near,$far\""))
-        assertEquals("a1b2 0918 1122", valueOf(text, R.string.counter_room))
+        assertEquals(
+            "${PeerBadge.numberOf(host)} ${PeerBadge.numberOf(near)} ${PeerBadge.numberOf(far)}",
+            valueOf(text, R.string.counter_room)
+        )
     }
 
     /**
@@ -210,7 +222,7 @@ class HostReportTest {
     fun aHostAloneIsARoomOfOne() {
         val text = report(sinks = 0, room = listOf(host))
 
-        assertEquals("a1b2", valueOf(text, R.string.counter_room))
+        assertEquals("${PeerBadge.numberOf(host)}", valueOf(text, R.string.counter_room))
         assertEquals("0/0", valueOf(text, R.string.counter_sinks))
     }
 

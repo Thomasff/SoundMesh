@@ -5,6 +5,8 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
@@ -18,6 +20,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -31,6 +34,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.SpatialField
 import kotlin.math.roundToInt
 import com.soundmesh.core.SplitAxis
@@ -65,8 +69,8 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
                 Text(
                     stringResource(
                         R.string.room_disagrees,
-                        farther.take(4),
-                        nearer.take(4)
+                        badgeWords(farther, state.colours[farther]),
+                        badgeWords(nearer, state.colours[nearer])
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
@@ -87,6 +91,14 @@ data class RoomState(
     val pan: Float = 0f,
     /** Which icon is this phone, so a listener can tell which one is in their hand. */
     val selfId: String? = null,
+    /**
+     * Where in the palette each handset sits, from [com.soundmesh.core.RoomColours].
+     *
+     * Missing is the ordinary state rather than a fault: a room is read off the spatial
+     * channel, and a handset appears in the drawing as soon as it is named. Everything here
+     * falls back to one colour for all of them, which is what every build before this drew.
+     */
+    val colours: Map<String, Int> = emptyMap(),
     /**
      * How far this handset measured itself from each peer it has calibrated with, in metres.
      *
@@ -168,7 +180,15 @@ private fun RoomDrawing(state: RoomState, actions: RoomActions) {
         drawCircle(outline, radius = size.minDimension / 2f, style = Stroke(width = 2f))
         drawListener(listener, measurer)
         state.icons.forEach { icon ->
-            drawHandset(icon, if (icon.peerId == state.selfId) self else handset, label, measurer)
+            val place = state.colours[icon.peerId]
+            drawHandset(
+                icon,
+                BadgePalette.colourOf(place, handset),
+                BadgePalette.labelColourOf(place, label),
+                PeerBadge.numberOf(icon.peerId),
+                if (icon.peerId == state.selfId) self else null,
+                measurer
+            )
         }
     }
 }
@@ -194,16 +214,25 @@ private fun DrawScope.drawHandset(
     icon: RoomIcon,
     colour: Color,
     labelColour: Color,
+    number: Int,
+    /** Drawn as a ring when this icon is the handset in the listener's hand, or null when not. */
+    selfRing: Color?,
     measurer: TextMeasurer
 ) {
     val centre = Offset(icon.x * size.width, icon.y * size.height)
     val radius = size.minDimension * 0.06f
     drawCircle(colour, radius = radius, center = centre)
-    // The first four characters of the handset's own name. Enough to tell two phones apart in a
-    // room, and the same prefix the calibration screens already show, so one screen's "3f2a" is
-    // the other screen's "3f2a".
+    // Which one is in your hand was said by the colour until the colour became the name. A ring
+    // rather than a second hue, because a colour that meant both would have to give one of the
+    // two up the moment a second handset joined - and the one it would give up is the name.
+    selfRing?.let {
+        drawCircle(it, radius = radius + 4f, center = centre, style = Stroke(width = 3f))
+    }
+    // The handset's number, which is the same number every other screen shows for it and the
+    // same one anybody writing this down would use. Four characters of its real name were what
+    // this said before, and nobody ever read one out loud.
     val text = measurer.measure(
-        icon.peerId.take(4),
+        "$number",
         TextStyle(fontSize = 10.sp, color = labelColour)
     )
     drawText(
@@ -303,11 +332,16 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    if (icon.peerId == state.selfId) stringResource(R.string.room_this_phone)
-                    else icon.peerId.take(4),
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BadgeChip(icon.peerId, state.colours[icon.peerId])
+                    if (icon.peerId == state.selfId) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.room_this_phone),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
                 OutlinedButton(onClick = { actions.togglePart(icon.peerId) }) {
                     Text(stringResource(partLabelOf(state.splitAxis, icon.peerId in state.otherHalfIds)))
                 }

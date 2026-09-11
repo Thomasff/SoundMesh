@@ -1,5 +1,6 @@
 package com.soundmesh.session
 
+import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialMode
@@ -71,7 +72,7 @@ class HostRoomTest {
         val report = HostSession({ ByteArray(0) }, spatialId = self, flags = flags).report()
 
         assertEquals(
-            "a1b2",
+            "${PeerBadge.numberOf(self)}",
             SessionReadout.counters(report).first { it.label == R.string.counter_room }.value
         )
         assertEquals(

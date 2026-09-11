@@ -37,6 +37,7 @@ import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
+import com.soundmesh.core.RoomColours
 import com.soundmesh.core.SpatialField
 import com.soundmesh.session.HostSession
 import com.soundmesh.session.SessionService
@@ -70,6 +71,17 @@ class HomeActivity : ComponentActivity() {
     /** Reads the output a capturing host is heard on. It cannot set it - see AccessibilityVolume. */
     private val hostOutputVolume by lazy { HostOutputVolume(getSystemService(AudioManager::class.java)) }
     private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * Which colour each handset in the room holds, for as long as it is in the room.
+     *
+     * Held by the screen rather than by the session because it is only ever looked at: nothing
+     * about playback depends on it, and a handset that joins while nobody has this screen open
+     * is coloured the moment somebody does. It outlives one [RoomState] on purpose - the state
+     * is rebuilt whenever the roster changes, and a colour that was rebuilt with it would be a
+     * colour that changed every time somebody left.
+     */
+    private val roomColours = RoomColours()
     private val refresh = object : Runnable {
         override fun run() {
             readSession()
@@ -499,6 +511,7 @@ class HomeActivity : ComponentActivity() {
         return previous.copy(
             icons = icons,
             measuredMetres = measured,
+            colours = roomColours.reconcile(icons.map { it.peerId }),
             otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
         ).also(::publish)
     }

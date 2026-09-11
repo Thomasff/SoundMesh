@@ -168,6 +168,21 @@
     <string name="counter_room">房间里（本机在前）</string>
     <string name="counter_sinks">从机（在收/报过名）</string>
 
+    <string name="badge_in_words">%1$d 号（%2$s）</string>
+    <string name="badge_this_phone">这台是 %1$d 号（%2$s）</string>
+    <string name="badge_red">红</string>
+    <string name="badge_orange">橙</string>
+    <string name="badge_yellow">黄</string>
+    <string name="badge_lime">黄绿</string>
+    <string name="badge_green">绿</string>
+    <string name="badge_teal">青绿</string>
+    <string name="badge_cyan">青</string>
+    <string name="badge_sky">天蓝</string>
+    <string name="badge_blue">蓝</string>
+    <string name="badge_purple">紫</string>
+    <string name="badge_magenta">品红</string>
+    <string name="badge_pink">粉</string>
+
     <string name="room_title">房间摆位</string>
     <string name="room_hint">拖动手机图标，摆成它们相对你的大致方位和远近。中间那个点是你，不用拖。整张图画多大都一样，算数的是各台之间的比例。摆得远的那台会自动放响一点补回距离——只补了音量，没补声音多跑的那段时间。</string>
     <string name="room_you">你</string>
