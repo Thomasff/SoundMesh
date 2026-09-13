@@ -886,6 +886,29 @@ private fun estimateJson(estimate: ClockEstimate?): String =
     } ?: "null"
 
 /**
+ * Waits up to [budgetMillis] for [ready], and answers whether it came true inside that.
+ *
+ * A bounded look rather than a fixed sleep: the thing waited for is usually already true, and a
+ * wait that costs its budget whether or not it was needed gets removed by the next person to
+ * notice a screen sitting still for no reason.
+ */
+internal fun awaitBriefly(
+    budgetMillis: Long,
+    nowNanos: () -> Long = System::nanoTime,
+    rest: (Long) -> Unit = { Thread.sleep(it) },
+    ready: () -> Boolean
+): Boolean {
+    val until = nowNanos() + budgetMillis * 1_000_000L
+    while (!ready()) {
+        if (nowNanos() >= until) return false
+        rest(BRIEF_POLL_MILLIS)
+    }
+    return true
+}
+
+private const val BRIEF_POLL_MILLIS = 50L
+
+/**
  * What the stop button can mean for the arm about to run. See [StopOffer].
  *
  * A room begins at [StopOffer.ROOM_GATHERING] and moves to [StopOffer.ROOM_UNDER_WAY] the moment
@@ -1015,6 +1038,16 @@ class PeerCalibrateActivity : ComponentActivity() {
 
     /** What the link looked like when the clock had filled its window, or null if unmeasured. */
     @Volatile private var link: LinkQuality? = null
+
+    /**
+     * Whether this round ended because the host called it off, as opposed to ending on its own.
+     *
+     * Read by [putItselfAway]: a called-off round has no result for anybody to read here, and the
+     * person who pressed the button is standing at the host watching for these handsets to come
+     * back to their home screens. Every millisecond spent lingering is a millisecond in which the
+     * next press reaches nobody.
+     */
+    @Volatile private var roundCalledOff = false
 
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
@@ -1270,6 +1303,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         // Cleared here rather than when the session ends, so a stop pressed as the last round
         // finished cannot end the next session before it has served anybody.
         stopping = false
+        roundCalledOff = false
         state = state.copy(
             running = true,
             stopOffer = stopOfferFor(role(), roomAsked()),
@@ -1338,7 +1372,7 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private fun putItselfAway() {
         if (!intent.getBooleanExtra("sent", false)) return
-        handler.postDelayed({ if (!running) finish() }, LINGER_MILLIS)
+        handler.postDelayed({ if (!running) finish() }, if (roundCalledOff) 0L else LINGER_MILLIS)
     }
 
     /**
@@ -1451,6 +1485,13 @@ class PeerCalibrateActivity : ComponentActivity() {
             RoomCommands.listenForExcuses { peerId, excuse ->
                 events.write("room-excuse $peerId ${excuse.name}")
                 record(peerId, reasonFor(excuse))
+            }
+            // Handsets told to leave their home screens a moment ago are on their way back to
+            // them, and a room told while they are in the air reaches nobody at all. Reported on
+            // 09-13: call a round off, press again straight away, and the host says it told
+            // nobody. This costs nothing when they are already there - the first look answers.
+            if (!awaitBriefly(ROOM_RETURN_GRACE_MILLIS) { RoomCommands.standingBy() > 0 }) {
+                events.write("room-nobody-standing after ${ROOM_RETURN_GRACE_MILLIS}ms of waiting")
             }
             val told = RoomCommands.send(
                 if (overhead()) RoomCommand.MEASURE_OVERHEAD else RoomCommand.MEASURE_ROOM
@@ -1909,6 +1950,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 // Somebody pressed a button on the host. Said in those words rather than as the
                 // failure every unreadable answer shares, because there is nothing here to fix.
                 events.write("room-called-off by the host while this handset was waiting")
+                roundCalledOff = true
                 return show(getString(R.string.pair_calibrate_room_called_off))
             }
             // The host id is the file name the correction is stored under. A plan from somebody
@@ -2219,6 +2261,15 @@ class PeerCalibrateActivity : ComponentActivity() {
 
         /** How long the host holds the screen open waiting for somebody to pick up the other phone. */
         const val PLAN_WAIT_MILLIS = 300_000
+
+        /**
+         * How long a room waits for handsets to come back to their home screens before telling it.
+         *
+         * Sized for the trip back from this screen to that one, not for anything on the network:
+         * a handset whose round was called off finishes and resumes the home screen in a couple of
+         * hundred milliseconds, and this is a few of those.
+         */
+        const val ROOM_RETURN_GRACE_MILLIS = 2_000L
 
         /** Long enough for the whole schedule; the exchange runs the length of the calibration. */
         const val CLOCK_SECONDS = 120

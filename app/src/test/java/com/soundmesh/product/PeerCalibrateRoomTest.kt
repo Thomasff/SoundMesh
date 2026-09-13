@@ -540,6 +540,36 @@ class PeerCalibrateRoomTest {
         assertEquals(StopOffer.NONE, stopOfferFor(null, roomRound = true))
     }
 
+    /**
+     * The wait before a room is told, which exists because of what one costs when it is skipped.
+     *
+     * Handsets told to leave their home screens are on their way back to them for a couple of
+     * hundred milliseconds afterwards, and a room told during that flight reaches nobody. On
+     * 2026-09-13 somebody called a round off and pressed again straight away, and the host
+     * reported that it had told nobody. What it must not do is cost its budget when the room is
+     * already there, which is the ordinary case and the one nobody would forgive a pause in.
+     */
+    @Test
+    fun waitsForTheRoomToComeBackAndNotAMomentLongerThanThat() {
+        var now = 0L
+        val rested = mutableListOf<Long>()
+        val rest = { millis: Long -> rested += millis; now += millis * 1_000_000L }
+
+        // Already standing by: answered on the first look, nothing slept.
+        assertTrue(awaitBriefly(2_000, { now }, rest) { true })
+        assertTrue("waited for a room that was already there", rested.isEmpty())
+
+        // Back on the third look, and the wait ends there rather than at its budget.
+        var looks = 0
+        assertTrue(awaitBriefly(2_000, { now }, rest) { looks++ >= 2 })
+        assertEquals(2, rested.size)
+
+        // Never comes back: bounded, and says so rather than answering true.
+        rested.clear()
+        assertFalse(awaitBriefly(300, { now }, rest) { false })
+        assertTrue("waited past its budget", rested.size <= 300 / 50 + 1)
+    }
+
     private fun facing(edgeMs: Double?) = com.soundmesh.core.FacingPair(
         alignmentErrorMs = 0.0,
         separationMetres = 0.0,
