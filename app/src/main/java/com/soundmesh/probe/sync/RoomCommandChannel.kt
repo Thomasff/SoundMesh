@@ -122,7 +122,16 @@ class RoomCommandServer(private val port: Int) {
      * A socket that will not take it is dropped rather than retried. What it is being told is
      * "now", and there is no version of now that is worth queueing.
      */
-    fun send(command: RoomCommand) {
+    /**
+     * Says it, and answers how many handsets it was said to.
+     *
+     * The count is the open lines at this instant rather than a delivery receipt, and that is
+     * the distinction worth having: a host that told nobody and a host that told three handsets
+     * that then failed to arrive look identical from here otherwise, and on 09-13 that was
+     * exactly the fork a listener was stuck at - four presses, no handset ever arriving, and no
+     * way to tell which half of the room was at fault.
+     */
+    fun send(command: RoomCommand): Int {
         val frame = SpatialFrame.encode(RoomCommandCodec.encode(command))
         val told = synchronized(clients) { ArrayList(clients) }
         Thread({
@@ -138,6 +147,7 @@ class RoomCommandServer(private val port: Int) {
                 }
             }
         }, "SoundMeshCommandSend").start()
+        return told.size
     }
 
     /**
@@ -254,9 +264,7 @@ object RoomCommands {
     }
 
     @Synchronized
-    fun send(command: RoomCommand) {
-        server?.send(command)
-    }
+    fun send(command: RoomCommand): Int = server?.send(command) ?: 0
 
     @Synchronized
     fun standingBy(): Int = server?.standingBy() ?: 0

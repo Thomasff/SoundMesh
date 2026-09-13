@@ -1243,7 +1243,11 @@ class PeerCalibrateActivity : ComponentActivity() {
             // nothing is listening, it does not retry. So the room is told from here and not from
             // the screen that started this - which is also why the command server outlives that
             // screen. Handsets not standing by are unaffected; somebody presses those by hand.
-            RoomCommands.send(
+            // How many it was said to, kept for the whole wait. The count of handsets standing
+            // by is not the denominator to show against arrivals: obeying means leaving the
+            // home screen, so a handset that is on its way here has already stopped being
+            // counted, and a screen reading "1 of 0" says nothing anybody can act on.
+            val told = RoomCommands.send(
                 if (overhead()) RoomCommand.MEASURE_OVERHEAD else RoomCommand.MEASURE_ROOM
             )
             Log.i(
@@ -1252,15 +1256,12 @@ class PeerCalibrateActivity : ComponentActivity() {
                     "room $ROOM_PORT, plan $PLAN_PORT"
             )
             show(
-                getString(
-                    R.string.pair_calibrate_room_waiting,
-                    RoomCommands.standingBy(),
-                    ROOM_WINDOW_MILLIS / 1000
-                )
+                if (told == 0) getString(R.string.pair_calibrate_room_told_nobody)
+                else getString(R.string.pair_calibrate_room_waiting, told, ROOM_WINDOW_MILLIS / 1000)
             )
             events.write(
                 "room-gathering opened as ${if (overhead()) "overhead" else "room"}, " +
-                    "waiting up to ${ROOM_WINDOW_MILLIS / 1000}s"
+                    "told $told handsets, waiting up to ${ROOM_WINDOW_MILLIS / 1000}s"
             )
             timing = timingFor(CASE_ROOM)
             val plan = planServer.awaitRoom(
@@ -1268,8 +1269,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                 ROOM_SETTLE_MILLIS,
                 ROOM_WINDOW_MILLIS,
                 onJoined = { joined ->
-                    events.write("room-joined $joined of ${RoomCommands.standingBy()} standing by")
-                    show(getString(R.string.pair_calibrate_room_joined, joined, RoomCommands.standingBy()))
+                    events.write("room-joined $joined of $told told")
+                    show(getString(R.string.pair_calibrate_room_joined, joined, told))
                 }
             ) { asks ->
                 // Every ask has to be this arm's. A handset running the pair flow would be

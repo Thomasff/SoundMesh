@@ -226,4 +226,48 @@ class RoomCommandChannelTest {
             server.stop()
         }
     }
+
+    /**
+     * Saying it answers how many it was said to.
+     *
+     * 09-13: a listener pressed the one button four times over three minutes and no handset ever
+     * arrived. From the host there was no way to tell whether nobody had been told or everybody
+     * had been told and nobody came - two faults in two different handsets, one screen showing
+     * the same thing for both. The count of handsets standing by cannot answer it either: obeying
+     * means leaving the home screen, so by the time one arrives it has stopped being counted.
+     */
+    @Test
+    fun `saying it answers how many handsets were told`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val first = standBy(port, one, onCommand)
+        val second = standBy(port, two, onCommand)
+        try {
+            assertTrue(connected(first))
+            assertTrue(connected(second))
+            val until = System.nanoTime() + 5_000_000_000L
+            while (server.standingBy() < 2 && System.nanoTime() < until) Thread.sleep(20)
+
+            assertEquals(2, server.send(RoomCommand.PLAY))
+        } finally {
+            first.close()
+            second.close()
+            server.stop()
+        }
+    }
+
+    /** And a host nobody is standing by for says nothing to nobody, which is the case to show. */
+    @Test
+    fun `a host with nobody standing by tells nobody`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        try {
+            assertEquals(0, server.send(RoomCommand.MEASURE_ROOM))
+        } finally {
+            server.stop()
+        }
+    }
 }
