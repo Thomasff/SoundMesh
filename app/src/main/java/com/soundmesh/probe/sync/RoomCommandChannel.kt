@@ -3,6 +3,8 @@ package com.soundmesh.probe.sync
 import com.soundmesh.core.HostId
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomCommandCodec
+import com.soundmesh.core.RoomExcuse
+import com.soundmesh.core.RoomExcuseCodec
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -66,6 +68,19 @@ class RoomCommandServer(private val port: Int) {
 
     private val clients = Collections.synchronizedList(ArrayList<Standing>())
 
+    /** The last reason each handset gave for not measuring, newest per handset. */
+    private val excuses = Collections.synchronizedMap(LinkedHashMap<String, RoomExcuse>())
+
+    /**
+     * Told the moment an excuse arrives rather than left to be polled.
+     *
+     * The whole value of the message is that somebody can still act on it: a handset waiting on
+     * its own permission dialog is fixable in the ten seconds before the gathering window closes,
+     * and unfixable a minute later. A screen that only learns afterwards is a log.
+     */
+    @Volatile
+    var onExcuse: ((String, RoomExcuse) -> Unit)? = null
+
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
 
@@ -121,6 +136,16 @@ class RoomCommandServer(private val port: Int) {
             socket.soTimeout = 0
             name
         }.getOrNull()
+        // A handset that is not going to measure says so here and hangs up. It is not standing
+        // by - it is on its way to doing nothing - so it is never added to the list, and the
+        // count of who is holding the line stays a count of who is holding the line.
+        val excuse = announced?.let { RoomExcuseCodec.decode(it) }
+        if (excuse != null) {
+            excuses[excuse.first] = excuse.second
+            runCatching { onExcuse?.invoke(excuse.first, excuse.second) }
+            runCatching { socket.close() }
+            return
+        }
         if (stream == null || !HostId.isValid(announced)) {
             runCatching { socket.close() }
             return
@@ -219,8 +244,20 @@ class RoomCommandServer(private val port: Int) {
     /** How many said neither way, which today means a build older than this message. */
     fun unsaid(): Int = synchronized(clients) { clients.count { it.carrying == Carried.UNSAID } }
 
+    /** What each handset last said about why it is not measuring. */
+    fun excuses(): Map<String, RoomExcuse> = synchronized(excuses) { LinkedHashMap(excuses) }
+
+    /**
+     * Drops them, which is what starting a round does.
+     *
+     * Kept per round rather than forever: an excuse is about one press of one button, and a
+     * handset that could not measure an hour ago is not a fact about the round now starting.
+     */
+    fun forgetExcuses() = synchronized(excuses) { excuses.clear() }
+
     fun stop() {
         running = false
+        onExcuse = null
         runCatching { server?.close() }
         synchronized(clients) {
             for (standing in clients) runCatching { standing.socket.close() }
@@ -360,4 +397,48 @@ object RoomCommands {
 
     @Synchronized
     fun approximate(): Int = server?.approximate() ?: 0
+
+    @Synchronized
+    fun excuses(): Map<String, RoomExcuse> = server?.excuses() ?: emptyMap()
+
+    @Synchronized
+    fun forgetExcuses() {
+        server?.forgetExcuses()
+    }
+
+    /**
+     * Who to tell when a handset says why it is not measuring, or null for nobody.
+     *
+     * Set by the screen that is gathering a room and cleared when it stops, because that screen
+     * is where somebody is standing while it matters.
+     */
+    @Synchronized
+    fun listenForExcuses(listener: ((String, RoomExcuse) -> Unit)?) {
+        server?.onExcuse = listener
+    }
 }
+
+/**
+ * Says why this handset is not going to measure, up the channel the host already holds open.
+ *
+ * On a thread of its own and swallowing everything, because every caller is a refusal: the run is
+ * not happening either way, and a handset that crashed while apologising would be a worse bug
+ * than the one being apologised for. Nothing is retried for the same reason the commands are not
+ * queued - what is being said is about now.
+ */
+fun tellHostWhy(hostAddress: String, port: Int, selfId: String, excuse: RoomExcuse) {
+    Thread({
+        runCatching {
+            Socket().use { open ->
+                open.connect(InetSocketAddress(hostAddress, port), EXCUSE_TIMEOUT_MILLIS)
+                open.tcpNoDelay = true
+                open.getOutputStream().apply {
+                    write(SpatialFrame.encode(RoomExcuseCodec.encode(selfId, excuse)))
+                    flush()
+                }
+            }
+        }
+    }, "SoundMeshExcuse").start()
+}
+
+private const val EXCUSE_TIMEOUT_MILLIS = 3_000

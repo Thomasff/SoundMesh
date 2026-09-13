@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.core.RoomCommand
+import com.soundmesh.core.RoomExcuse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -378,6 +379,53 @@ class RoomCommandChannelTest {
             assertEquals("a room round was called no correction at all", 0, server.uncalibrated())
         } finally {
             client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset that says why it is not measuring is heard, and is not standing by.
+     *
+     * Both halves matter and the second one more. It is on its way to doing nothing, so counting
+     * it would put the host back where 09-13 left it: a number on screen that does not mean what
+     * it says. The count of who is holding the line has to stay a count of who is holding the line.
+     */
+    @Test
+    fun `a handset says why it is not measuring, and is not counted as standing by`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val heard = ArrayBlockingQueue<Pair<String, RoomExcuse>>(4)
+        server.onExcuse = { peerId, excuse -> heard.offer(peerId to excuse) }
+        try {
+            tellHostWhy("127.0.0.1", port, one, RoomExcuse.NO_MICROPHONE)
+
+            assertEquals(one to RoomExcuse.NO_MICROPHONE, heard.poll(5, TimeUnit.SECONDS))
+            assertEquals(mapOf(one to RoomExcuse.NO_MICROPHONE), server.excuses())
+            // Given a moment to be wrong in: the socket is closed from the far end, and a count
+            // read too early would pass whether or not this works.
+            Thread.sleep(300)
+            assertEquals("an apology was counted as a handset standing by", 0, server.standingBy())
+            assertEquals(0, server.uncalibrated())
+        } finally {
+            server.stop()
+        }
+    }
+
+    /** An excuse is about one press of one button, so a round that starts drops the last one. */
+    @Test
+    fun `starting a round forgets what was said about the last one`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        try {
+            tellHostWhy("127.0.0.1", port, one, RoomExcuse.SLOW_LINK)
+            assertTrue(until { server.excuses().isNotEmpty() })
+
+            server.forgetExcuses()
+
+            assertEquals(emptyMap<String, RoomExcuse>(), server.excuses())
+        } finally {
             server.stop()
         }
     }

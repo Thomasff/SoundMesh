@@ -49,8 +49,11 @@ import com.soundmesh.probe.sync.AlignmentResultServer
 import com.soundmesh.probe.sync.Calibration
 import com.soundmesh.probe.sync.CalibrationPlanClient
 import com.soundmesh.core.RoomCommand
+import com.soundmesh.core.RoomExcuse
 import com.soundmesh.probe.sync.CalibrationPlanServer
+import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.RoomCommands
+import com.soundmesh.probe.sync.tellHostWhy
 import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
@@ -789,6 +792,16 @@ internal fun offeredTo(field: RoomField, hostId: String, peerId: String): Long? 
     return null
 }
 
+/**
+ * The last four of a handset's name, which is what the logs have always shown.
+ *
+ * Not a good answer and knowingly so: these names are hexadecimal and nobody can read one out
+ * loud, so "dcfa did not come" still leaves somebody walking to each phone to find out which one
+ * that is. The proper fix is an identity a person can say, and it is not built. Until it is, this
+ * at least matches what the event log prints, so the two can be lined up.
+ */
+internal fun shortName(peerId: String): String = peerId.takeLast(4)
+
 /** How many of the room's answered pairs [peerId] is one end of. */
 internal fun pairsReadableFor(field: RoomField, peerId: String): Int =
     field.separationMetres.count { (names, metres) ->
@@ -1209,8 +1222,13 @@ class PeerCalibrateActivity : ComponentActivity() {
     )
 
     private fun begin(verifying: Boolean, serveMany: Boolean, allowSlowLink: Boolean) {
-        if (running) return
+        if (running) return tellHost(RoomExcuse.BUSY)
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            // Said before the dialog goes up, not after it is answered. The dialog is on this
+            // handset's screen and the person is standing at a different one, which is the whole
+            // of the problem: on 09-13 a room waited out its window for a phone that was waiting
+            // for somebody who had no way to know it was waiting.
+            tellHost(RoomExcuse.NO_MICROPHONE)
             verifyingAfterPermission = verifying
             serveManyAfterPermission = serveMany
             allowSlowLinkAfterPermission = allowSlowLink
@@ -1218,6 +1236,20 @@ class PeerCalibrateActivity : ComponentActivity() {
             return
         }
         start(verifying, serveMany, allowSlowLink)
+    }
+
+    /**
+     * Tells the host why this handset is not going to measure.
+     *
+     * Only a sink has anybody to tell, and only one that has scanned a pairing code knows an
+     * address to tell it at - a handset that has never been paired is invisible to the host by
+     * construction, and no channel added here would reach it.
+     */
+    private fun tellHost(excuse: RoomExcuse) {
+        if (role() != CalibrationRole.SINK) return
+        val paired = PairedHost(filesDir).read() ?: return
+        events.write("excuse-told ${excuse.name}")
+        tellHostWhy(paired.address, COMMAND_PORT, HostIdentity(filesDir).current(), excuse)
     }
 
     private fun start(verifying: Boolean, serveMany: Boolean, allowSlowLink: Boolean = false) {
@@ -1384,6 +1416,16 @@ class PeerCalibrateActivity : ComponentActivity() {
             // by is not the denominator to show against arrivals: obeying means leaving the
             // home screen, so a handset that is on its way here has already stopped being
             // counted, and a screen reading "1 of 0" says nothing anybody can act on.
+            // Cleared before the ask, because an excuse is about one press of one button: a
+            // handset that could not measure an hour ago is not a fact about this round.
+            RoomCommands.forgetExcuses()
+            // Heard live rather than collected afterwards, and that is the whole value of it: a
+            // handset waiting on its own permission dialog is fixable in the ten seconds before
+            // the window closes and unfixable a minute later.
+            RoomCommands.listenForExcuses { peerId, excuse ->
+                events.write("room-excuse $peerId ${excuse.name}")
+                show(getString(R.string.pair_calibrate_room_excuse, shortName(peerId), reasonFor(excuse)))
+            }
             val told = RoomCommands.send(
                 if (overhead()) RoomCommand.MEASURE_OVERHEAD else RoomCommand.MEASURE_ROOM
             )
@@ -1563,6 +1605,9 @@ class PeerCalibrateActivity : ComponentActivity() {
             ))
         } finally {
             hostPlanServer = null
+            // Nobody is standing at this screen once it is gone, and a listener held past that
+            // is a screen being written to that is not there.
+            RoomCommands.listenForExcuses(null)
             planServer.stop()
             roomServer.stop()
             clockServer.stop()
@@ -1762,6 +1807,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
             }
             if (clockClient.currentEstimate() == null) {
+                tellHost(RoomExcuse.CLOCK_NOT_CONVERGED)
                 return show(getString(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
             }
             // Having an estimate is not the same as having a settled one, and the first run on
@@ -1776,8 +1822,10 @@ class PeerCalibrateActivity : ComponentActivity() {
             while (System.nanoTime() - clockStartedAt < timing.clockFillNanos) {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
             }
-            val converged = clockClient.currentEstimate()
-                ?: return show(getString(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
+            val converged = clockClient.currentEstimate() ?: run {
+                tellHost(RoomExcuse.CLOCK_NOT_CONVERGED)
+                return show(getString(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
+            }
             // Read before the chirps rather than after, because that is the only point at which
             // knowing costs nothing. A link this slow cannot be aligned by any estimator - the bias
             // a two-way exchange carries is half the difference between the one way delays, which
@@ -1813,6 +1861,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                         )
                     )
                 )
+                tellHost(RoomExcuse.SLOW_LINK)
                 return show(getString(
                     R.string.pair_calibrate_slow_link,
                     it.medianRoundTripNanos / 1_000_000.0,
@@ -2065,6 +2114,22 @@ class PeerCalibrateActivity : ComponentActivity() {
             CLOCK_INTERVAL_MILLIS, estimator.windowSize, estimator.bestCount, estimator.keepFractionWhileFilling,
             timing.clockFillNanos, radioHeld, link, atStart, atEnd, exchanges
         )
+    )
+
+    /**
+     * The room's own words for one refusal.
+     *
+     * Written here rather than sent over the wire, and that is the point of the enum: the handset
+     * composing a sentence is the one that just refused to work, and a string arriving from it is
+     * a string nobody checked on its way to a screen.
+     */
+    private fun reasonFor(excuse: RoomExcuse): String = getString(
+        when (excuse) {
+            RoomExcuse.NO_MICROPHONE -> R.string.excuse_no_microphone
+            RoomExcuse.SLOW_LINK -> R.string.excuse_slow_link
+            RoomExcuse.CLOCK_NOT_CONVERGED -> R.string.excuse_clock_not_converged
+            RoomExcuse.BUSY -> R.string.excuse_busy
+        }
     )
 
     private fun show(text: String) {
