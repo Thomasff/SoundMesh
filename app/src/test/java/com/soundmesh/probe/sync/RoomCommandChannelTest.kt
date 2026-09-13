@@ -124,6 +124,39 @@ class RoomCommandChannelTest {
     }
 
     /**
+     * Each "I am still here" puts the clock back, which is the whole point of repeating them.
+     *
+     * The two judgements above are both satisfied by the one said on the way in, so neither of
+     * them would go red if every later one were thrown away - which is exactly the fault this
+     * pair went to hardware with: a handset saying it on connecting and never again, let go of
+     * every eight seconds for the rest of the evening.
+     */
+    @Test
+    fun everySayingOfItPutsTheClockBack() {
+        val port = freePort()
+        val server = RoomCommandServer(port, quietAfterMillis = 400L)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(until { server.standingBy() == 1 })
+
+            // Ten times the window, beaten through: the one said on connecting is long stale.
+            repeat(20) {
+                assertTrue(client.sayHere())
+                Thread.sleep(100)
+                server.letGoOfTheQuiet(System.currentTimeMillis())
+            }
+
+            assertEquals(1, server.standingBy())
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
      * A handset that was let go and dialled again can still say things.
      *
      * The shape reported from a room of two on 2026-09-14: the host let go of a handset every

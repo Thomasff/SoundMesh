@@ -107,7 +107,11 @@ private fun carriedFrom(said: String): Carried? {
  * happened at an instant, and a phone that walks into the room afterwards and starts playing
  * because the host said "play" ten minutes ago is a phone nobody told to do anything.
  */
-class RoomCommandServer(private val port: Int) {
+class RoomCommandServer(
+    private val port: Int,
+    /** Injectable only so that a test can watch the window pass without waiting out its length. */
+    private val quietAfterMillis: Long = GONE_QUIET_MILLIS
+) {
     private class Standing(val socket: Socket, val peerId: String) {
         @Volatile var carrying: Carried = Carried.UNSAID
 
@@ -386,7 +390,7 @@ class RoomCommandServer(private val port: Int) {
     fun letGoOfTheQuiet(now: Long) {
         val quiet = synchronized(clients) {
             val gone = clients.filter { standing ->
-                standing.heardAt?.let { now - it >= GONE_QUIET_MILLIS } == true
+                standing.heardAt?.let { now - it >= quietAfterMillis } == true
             }
             clients.removeAll(gone)
             gone
