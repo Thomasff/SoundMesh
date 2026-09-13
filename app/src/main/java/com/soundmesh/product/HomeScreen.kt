@@ -42,6 +42,7 @@ import com.soundmesh.core.PairingCode
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureSilence
+import com.soundmesh.probe.sync.indexFor
 import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.PairingCodeImage
 
@@ -212,7 +213,18 @@ data class VolumeRow(
     val percent: Int,
     val index: Int,
     val max: Int,
-    val stream: String
+    val stream: String,
+    /**
+     * What this handset was last told to be, or null if nobody has told it anything.
+     *
+     * Kept apart from [percent] because they answer different questions, and until they were
+     * kept apart this control did not work: the thumb was drawn from [percent], which is what
+     * the handset reported, so letting go of it put the thumb back where the handset last was
+     * and left it there until a report arrived. A handset that is slow to report, or not
+     * reporting at all, was a handset with no working control - and the fault was invisible,
+     * because a thumb sitting still looks like a thumb that has been obeyed.
+     */
+    val asked: Int? = null
 )
 
 class HomeActions(
@@ -435,7 +447,7 @@ private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
         stringResource(
             R.string.room_volume_row,
             row.name,
-            dragging ?: row.percent,
+            row.percent,
             row.index,
             row.max,
             stringResource(
@@ -445,8 +457,20 @@ private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
         ),
         style = MaterialTheme.typography.bodySmall
     )
+    // Only when the handset is somewhere else than where it was put, on its own scale. A
+    // percentage asked for lands on a step, and the step read back is a percentage again, so
+    // the two almost never match to the digit - saying so every time would be saying nothing.
+    if (!landedWhereAsked(row.asked, row.index, row.max)) {
+        Text(
+            stringResource(R.string.room_volume_row_missed, row.name, row.asked ?: 0),
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
     Slider(
-        value = (dragging ?: row.percent).toFloat(),
+        // The thumb is where this handset was told to be, and the line above is where it says it
+        // is. Driving the thumb from the report is what made this control unusable.
+        value = (dragging ?: row.asked ?: row.percent).toFloat(),
         onValueChange = { dragging = it.toInt() },
         onValueChangeFinished = {
             dragging?.let { actions.setHandsetVolume(row.peerId, it) }
@@ -819,3 +843,15 @@ internal fun roomVolumeShown(
     dragged -> shown
     else -> onThisPhone()
 }
+
+/**
+ * Whether a handset landed where it was told to, judged on its own scale rather than in percent.
+ *
+ * A percentage is what travels, and it lands on whichever step is nearest on that handset: 34 per
+ * cent of fifteen steps is step five, which reads back as 33 per cent. Comparing the two
+ * percentages would call that a disagreement every single time and the warning would mean nothing.
+ * Comparing the steps calls it agreement, and keeps the word "no" for a stream that actually
+ * refused to move - which is the thing this list exists to be able to say.
+ */
+internal fun landedWhereAsked(asked: Int?, index: Int, max: Int): Boolean =
+    asked == null || indexFor(asked, max) == index

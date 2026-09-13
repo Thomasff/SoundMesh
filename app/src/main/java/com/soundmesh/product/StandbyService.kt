@@ -243,7 +243,11 @@ class StandbyService : Service() {
      * about its volume, because [sayVolumeIfMoved] would then see it agreeing with itself forever.
      */
     private fun sayVolume(now: VolumeReading) {
-        saidVolume = now.takeIf { line?.sayVolume(it.index, it.max, it.stream) == true }
+        val landed = line?.sayVolume(now.index, now.max, now.stream) == true
+        // One line per actual change rather than per poll, and the failing case is the one worth
+        // having: a report that never left looks exactly like one that arrived unchanged.
+        if (!landed) events.write("volume not said: no line to say it on")
+        saidVolume = now.takeIf { landed }
     }
 
     /**

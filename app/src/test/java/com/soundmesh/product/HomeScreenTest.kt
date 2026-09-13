@@ -85,4 +85,30 @@ class HomeScreenTest {
         // A sink has no room to set one for.
         assertNull(roomVolumeShown(isHost = false, dragged = true, shown = 75) { 40 })
     }
+
+    /**
+     * Rounding is not disagreement, and a stream that will not move is.
+     *
+     * The distinction is the whole value of the read-back line. A percentage lands on a step and
+     * reads back as a different percentage almost every time, so a check done in percent would
+     * cry wolf on every single row and there would be no way left to say the one thing worth
+     * saying - that a handset was told something and is somewhere else.
+     */
+    @Test
+    fun callsAStreamThatWouldNotMoveADisagreementAndRoundingNotOne() {
+        // 34% of fifteen steps is step five, which reads back as 33%. Same step, so no complaint.
+        assertTrue(landedWhereAsked(asked = 34, index = 5, max = 15))
+        // And on a handset with a different scale, where the same percentage is a different step.
+        assertTrue(landedWhereAsked(asked = 34, index = 9, max = 25))
+
+        // Told eighty per cent and sitting on step four of fifteen: that is a stream that did not
+        // move, which is exactly what setStreamVolume has been seen doing on these handsets.
+        assertFalse(landedWhereAsked(asked = 80, index = 4, max = 15))
+    }
+
+    /** Nothing to disagree with until somebody has told that handset something. */
+    @Test
+    fun saysNothingAboutAHandsetNobodyHasToldAnything() {
+        assertTrue(landedWhereAsked(asked = null, index = 4, max = 15))
+    }
 }

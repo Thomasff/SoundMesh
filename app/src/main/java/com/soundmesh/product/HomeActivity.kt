@@ -117,6 +117,16 @@ class HomeActivity : ComponentActivity() {
      */
     private var roomVolumeSet = false
 
+    /**
+     * What each handset was last told to be, by id, this one included.
+     *
+     * Kept because it is the only thing that can draw that handset's slider: what it reports is
+     * where it is, and a thumb drawn from that snaps back to the old place the instant a finger
+     * lets go of it. Dropped wholesale by the restore button, which is the one action that means
+     * "nobody has told anybody anything".
+     */
+    private val toldToBe = HashMap<String, Int>()
+
     /** Whether the room has already been told about the session that is up, so it is told once. */
     private var toldTheRoom = false
 
@@ -735,6 +745,13 @@ class HomeActivity : ComponentActivity() {
                 RoomCommands.listenForDepartures { peerId, why ->
                     log.write("standing-left $peerId: $why")
                 }
+                // Written down because a row that does not move has two possible reasons - the
+                // report never arrived, or it arrived saying the same thing - and from the screen
+                // they are the same picture. Two rounds of this bug were spent guessing between
+                // them.
+                RoomCommands.listenForVolumes { peerId, said ->
+                    log.write("standing-volume $peerId: ${said.index}/${said.max} on ${said.stream}")
+                }
             }
             // Handed to a service of its own, which is what lets it outlive this screen: a
             // handset lying face down on a table is the ordinary way a room of them is used, and
@@ -810,15 +827,17 @@ class HomeActivity : ComponentActivity() {
      */
     private fun volumeRows(): List<VolumeRow> {
         if (state.role != Role.HOST) return emptyList()
+        val self = HostIdentity(filesDir).current()
         val mine = handsetVolume.read(state.capturing)
         return listOf(
             VolumeRow(
-                HostIdentity(filesDir).current(),
+                self,
                 handsetName(this),
                 mine.percent,
                 mine.index,
                 mine.max,
-                mine.stream
+                mine.stream,
+                toldToBe[self]
             )
         ) + RoomCommands.volumes().map { (peerId, said) ->
             VolumeRow(
@@ -827,7 +846,8 @@ class HomeActivity : ComponentActivity() {
                 said.percent,
                 said.index,
                 said.max,
-                said.stream
+                said.stream,
+                toldToBe[peerId]
             )
         }
     }
@@ -841,6 +861,9 @@ class HomeActivity : ComponentActivity() {
     private fun setRoomVolume(percent: Int) {
         roomVolumeSet = true
         state = state.copy(roomVolumePercent = percent)
+        // Everybody, including the ones singled out a moment ago: the room slider levels the room.
+        for (row in state.roomVolumes) toldToBe[row.peerId] = percent
+        toldToBe[HostIdentity(filesDir).current()] = percent
         RoomCommands.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
         applyVolume(percent)
     }
@@ -854,12 +877,14 @@ class HomeActivity : ComponentActivity() {
      * the room volume is a room whose slider means nothing in particular.
      */
     private fun setHandsetVolume(peerId: String, percent: Int) {
+        toldToBe[peerId] = percent
         if (peerId == HostIdentity(filesDir).current()) return applyVolume(percent)
-        events.write("volume for one handset: $peerId to $percent%")
-        RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent))
+        val reached = RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent))
+        events.write("volume for one handset: $peerId to $percent%" + if (reached) "" else ", no line to it")
     }
 
     private fun restoreVolume() {
+        toldToBe.clear()
         RoomCommands.send(RoomCommand.RESTORE_VOLUME)
         putVolumeBack()
     }
