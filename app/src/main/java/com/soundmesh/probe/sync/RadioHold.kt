@@ -37,10 +37,15 @@ internal fun <T> holdingRadio(hold: RadioHold?, held: (Boolean) -> Unit, body: (
  * The handset's own WiFi radio, or null if it will not hand one over.
  *
  * WIFI_MODE_FULL_LOW_LATENCY exists from API 29, which is this app's floor, so there is no older
- * mode to fall back to. What it buys is the thing two router runs on 2026-09-08 were spent
- * measuring: round trips whose median was 56 to 70 ms on a link where the hotspot managed 5.5,
- * with a tail past 200 ms - the shape of frames waiting at an access point for a station that is
- * asleep. Whether it buys it is what the next run is for.
+ * mode to fall back to. It was taken for the shape two router runs on 2026-09-08 measured: round
+ * trips whose median was 56 to 70 ms on a link where the hotspot managed 5.5, with a tail past
+ * 200 ms - frames waiting at an access point for a station that is asleep.
+ *
+ * It does not buy that. On 2026-09-13 every refused round reported this hold as taken and still
+ * measured 55 ms, while the same handset, poked into exchanging with its router, measured 11. The
+ * lock is kept because it costs nothing and asks the ROM for the right thing, but [keepingAwake]
+ * is what does it. That also leaves the 09-08 reading in doubt: it was taken with the same idle
+ * handset, so the router it blamed may never have been the slow part.
  */
 internal fun radioHoldOf(context: Context): RadioHold? = runCatching {
     val lock = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)

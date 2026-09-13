@@ -60,7 +60,10 @@ import com.soundmesh.probe.sync.PeerRunLog
 import com.soundmesh.probe.sync.RoomResultClient
 import com.soundmesh.probe.sync.RoomResultServer
 import com.soundmesh.probe.sync.holdingRadio
+import com.soundmesh.probe.sync.keepingAwake
 import com.soundmesh.probe.sync.radioHoldOf
+import com.soundmesh.probe.sync.RouterPoke
+import com.soundmesh.probe.sync.routerPokeOf
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
@@ -1115,14 +1118,31 @@ class PeerCalibrateActivity : ComponentActivity() {
                 // round trip as the request half - a host dozing costs the sink exactly the same
                 // milliseconds. Whether it was actually taken is recorded, not assumed.
                 holdingRadio(radioHoldOf(this), held = { radioHeld = it }) {
-                    when (role()) {
-                        // A room and a pair are different runs rather than a wider and a
-                        // narrower one: this host gathers everybody and hands out one
-                        // schedule naming all of them, where the pair host serves a queue.
-                        CalibrationRole.HOST ->
-                            if (roomAsked()) measureAsRoom() else measureAsHost(serveMany)
-                        CalibrationRole.SINK -> measureAsSink(verifying, allowSlowLink)
-                        null -> show(getString(R.string.pair_calibrate_no_role))
+                    // The lock above is not enough on its own; what keeps a radio awake is having
+                    // something to receive. See keepingAwake for the three numbers that say so.
+                    val poke: RouterPoke? = routerPokeOf(this)
+                    // Said out loud because a poke that reaches nobody measures exactly like no
+                    // poke at all: the first version of this aimed at an unreachable gateway and
+                    // a whole round went by looking like evidence that power save does not matter.
+                    keepingAwake(poke, answered = { answered ->
+                        events.write(
+                            when {
+                                poke == null || answered == null ->
+                                    "radio-awake: this handset named no IPv4 router, so nothing is keeping it awake"
+                                answered -> "radio-awake: " + poke.router.hostAddress + " answered"
+                                else -> "radio-awake: " + poke.router.hostAddress + " did not answer"
+                            }
+                        )
+                    }) {
+                        when (role()) {
+                            // A room and a pair are different runs rather than a wider and a
+                            // narrower one: this host gathers everybody and hands out one
+                            // schedule naming all of them, where the pair host serves a queue.
+                            CalibrationRole.HOST ->
+                                if (roomAsked()) measureAsRoom() else measureAsHost(serveMany)
+                            CalibrationRole.SINK -> measureAsSink(verifying, allowSlowLink)
+                            null -> show(getString(R.string.pair_calibrate_no_role))
+                        }
                     }
                 }
             }.onFailure {
