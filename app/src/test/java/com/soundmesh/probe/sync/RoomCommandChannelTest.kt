@@ -5,7 +5,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -27,8 +29,20 @@ class RoomCommandChannelTest {
     private fun standBy(
         port: Int,
         selfId: String = one,
+        carrying: Long? = null,
         onCommand: (RoomCommand) -> Unit
-    ): RoomCommandClient = RoomCommandClient("127.0.0.1", port, selfId, onCommand).also { it.start() }
+    ): RoomCommandClient =
+        RoomCommandClient("127.0.0.1", port, selfId, carrying, onCommand).also { it.start() }
+
+    /** The announce is read on a thread of its own, so what it said arrives after it connected. */
+    private fun until(condition: () -> Boolean): Boolean {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (System.nanoTime() < deadline) {
+            if (condition()) return true
+            Thread.sleep(20)
+        }
+        return false
+    }
 
     private fun connected(client: RoomCommandClient): Boolean {
         val until = System.nanoTime() + 5_000_000_000L
@@ -138,12 +152,12 @@ class RoomCommandChannelTest {
         val server = RoomCommandServer(port)
         server.start()
         val (heard, onCommand) = waiting()
-        val stale = standBy(port, one, onCommand)
+        val stale = standBy(port, one, onCommand = onCommand)
         try {
             assertTrue(connected(stale))
             while (server.standingBy() == 0) Thread.sleep(20)
 
-            val fresh = standBy(port, one, onCommand)
+            val fresh = standBy(port, one, onCommand = onCommand)
             assertTrue(connected(fresh))
             val until = System.nanoTime() + 10_000_000_000L
             while (server.standingBy() != 1 && System.nanoTime() < until) Thread.sleep(20)
@@ -172,7 +186,7 @@ class RoomCommandChannelTest {
         val server = RoomCommandServer(port)
         server.start()
         val (_, onCommand) = waiting()
-        val client = standBy(port, one, onCommand)
+        val client = standBy(port, one, onCommand = onCommand)
         try {
             assertTrue(connected(client))
             while (server.standingBy() == 0) Thread.sleep(20)
@@ -211,8 +225,8 @@ class RoomCommandChannelTest {
         val server = RoomCommandServer(port)
         server.start()
         val (_, onCommand) = waiting()
-        val first = standBy(port, one, onCommand)
-        val second = standBy(port, two, onCommand)
+        val first = standBy(port, one, onCommand = onCommand)
+        val second = standBy(port, two, onCommand = onCommand)
         try {
             assertTrue(connected(first))
             assertTrue(connected(second))
@@ -242,8 +256,8 @@ class RoomCommandChannelTest {
         val server = RoomCommandServer(port)
         server.start()
         val (_, onCommand) = waiting()
-        val first = standBy(port, one, onCommand)
-        val second = standBy(port, two, onCommand)
+        val first = standBy(port, one, onCommand = onCommand)
+        val second = standBy(port, two, onCommand = onCommand)
         try {
             assertTrue(connected(first))
             assertTrue(connected(second))
@@ -267,6 +281,97 @@ class RoomCommandChannelTest {
         try {
             assertEquals(0, server.send(RoomCommand.MEASURE_ROOM))
         } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * The constant that decides whether a handset plays in time lives on that handset, keyed by
+     * the host it follows, so the host cannot look it up. Said on the way in, because the room
+     * screen is where somebody is standing when it matters - on 2026-09-13 two handsets played a
+     * whole afternoon carrying nothing, and what found it was a listener saying one sounded early.
+     */
+    @Test
+    fun `a handset carrying no constant says so, and the host counts it`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, carrying = null, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+
+            assertTrue("the host never heard what it carries", until { server.uncalibrated() == 1 })
+            assertEquals(1, server.standingBy())
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `a handset carrying a constant is not one of the unmeasured`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, carrying = 35_352L, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+
+            // Waited for, not assumed: uncalibrated() is also 0 before it has said anything.
+            assertTrue("the host never heard what it carries", until { server.unsaid() == 0 })
+            assertEquals(0, server.uncalibrated())
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A build from before this said nothing, and silence is its own answer: calling it
+     * uncalibrated would send somebody to recalibrate a handset that is already fine.
+     */
+    @Test
+    fun `a handset that never says what it carries is not called uncalibrated`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val socket = Socket()
+        try {
+            socket.connect(InetSocketAddress("127.0.0.1", port), 3_000)
+            socket.getOutputStream().apply {
+                write(SpatialFrame.encode(one))
+                flush()
+            }
+
+            assertTrue(until { server.standingBy() == 1 })
+            assertTrue(until { server.unsaid() == 1 })
+            assertEquals("an older build was called uncalibrated", 0, server.uncalibrated())
+        } finally {
+            runCatching { socket.close() }
+            server.stop()
+        }
+    }
+
+    /** A handset that walks out and back is one handset, and one answer, not two. */
+    @Test
+    fun `a handset that reconnects is counted once`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val first = standBy(port, carrying = null, onCommand = onCommand)
+        assertTrue(connected(first))
+        assertTrue(until { server.uncalibrated() == 1 })
+        first.close()
+        val second = standBy(port, carrying = null, onCommand = onCommand)
+        try {
+            assertTrue(connected(second))
+
+            assertTrue(until { server.standingBy() == 1 && server.uncalibrated() == 1 })
+        } finally {
+            second.close()
             server.stop()
         }
     }

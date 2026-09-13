@@ -40,6 +40,7 @@ import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
+import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
 import java.io.File
@@ -546,9 +547,10 @@ class HomeActivity : ComponentActivity() {
             standingBy = RoomCommands.standingBy().also { standing ->
                 if (state.role == Role.HOST && standing != wroteStandingBy) {
                     wroteStandingBy = standing
-                    events.write("standing by: $standing")
+                    events.write("standing by: $standing, ${RoomCommands.uncalibrated()} uncalibrated")
                 }
             },
+            uncalibrated = RoomCommands.uncalibrated(),
             onStandby = hostLine?.connected == true,
             // Only while a capture is actually running. Silence from a source that is not open
             // is not a reading, and a stale one on screen is worse than none.
@@ -674,7 +676,11 @@ class HomeActivity : ComponentActivity() {
                 // The address as well as the fact. A pairing scanned on another network points
                 // at an address nothing answers on, and the screen can only say "not connected".
                 events.write("standby dialling ${host.address}:$COMMAND_PORT")
-                hostLine = RoomCommandClient(host.address, COMMAND_PORT, self) { command ->
+                // Said on the way in, because the host cannot look it up: the correction lives
+                // on the handset that applies it. Read here rather than held, so coming back
+                // from a calibration announces what it just measured.
+                val carrying = StoredCalibration(filesDir, host.hostId).read()?.micros
+                hostLine = RoomCommandClient(host.address, COMMAND_PORT, self, carrying) { command ->
                     // On to the main thread: this arrives on the socket thread, and everything it
                     // leads to is either an activity being started or a service being asked for.
                     handler.post { obey(command) }

@@ -12,6 +12,26 @@ import java.util.Collections
 const val COMMAND_PORT = 45128
 
 /**
+ * What a standing handset said about the correction it carries for this host.
+ *
+ * Three states rather than two, because a build from before this said nothing at all, and
+ * silence is its own answer: calling it uncalibrated would send somebody off to recalibrate a
+ * handset that is already fine.
+ */
+private enum class Carried { UNSAID, NOTHING, SOMETHING }
+
+/** The one thing a standing handset ever says after its name. Anything else is a later build's. */
+private const val CARRYING = "carrying "
+private const val NOTHING_CARRIED = "none"
+
+private fun carriedFrom(said: String): Carried? {
+    if (!said.startsWith(CARRYING)) return null
+    val what = said.removePrefix(CARRYING)
+    if (what == NOTHING_CARRIED) return Carried.NOTHING
+    return if (what.toLongOrNull() != null) Carried.SOMETHING else null
+}
+
+/**
  * The host end of the standing channel: a socket per handset that is sitting on its home screen
  * waiting to be told something.
  *
@@ -27,7 +47,9 @@ const val COMMAND_PORT = 45128
  * because the host said "play" ten minutes ago is a phone nobody told to do anything.
  */
 class RoomCommandServer(private val port: Int) {
-    private class Standing(val socket: Socket, val peerId: String)
+    private class Standing(val socket: Socket, val peerId: String) {
+        @Volatile var carrying: Carried = Carried.UNSAID
+    }
 
     private val clients = Collections.synchronizedList(ArrayList<Standing>())
 
@@ -100,12 +122,20 @@ class RoomCommandServer(private val port: Int) {
         // Outside the lock, and closed rather than dropped: the thread parked on that socket ends
         // when the socket does, and a held socket per departed handset is a leak with a name.
         for (old in replaced) runCatching { old.socket.close() }
-        // Then parked on a read that is never answered, which is what makes this a count rather
-        // than a guess at one: the read ends the moment that handset closes its end, and this is
-        // the only place that finds out without having something to send.
+        // Then parked on a read, which is what makes this a count rather than a guess at one:
+        // the read ends the moment that handset closes its end, and this is the only place that
+        // finds out without having something to send.
+        //
+        // What comes down it, when anything does, is that handset saying what correction it
+        // carries for this host. That constant lives on the handset that applies it, so the host
+        // cannot look it up - and a handset carrying none plays tens of milliseconds out while
+        // every screen says the room is fine.
         runCatching {
             socket.use {
-                while (running && stream.read() >= 0) Unit
+                while (running) {
+                    val said = SpatialFrame.read(stream) ?: break
+                    standing.carrying = carriedFrom(said) ?: standing.carrying
+                }
             }
         }
         clients.remove(standing)
@@ -159,6 +189,12 @@ class RoomCommandServer(private val port: Int) {
      */
     fun standingBy(): Int = clients.size
 
+    /** How many standing handsets said they carry no correction for this host. */
+    fun uncalibrated(): Int = synchronized(clients) { clients.count { it.carrying == Carried.NOTHING } }
+
+    /** How many said neither way, which today means a build older than this message. */
+    fun unsaid(): Int = synchronized(clients) { clients.count { it.carrying == Carried.UNSAID } }
+
     fun stop() {
         running = false
         runCatching { server?.close() }
@@ -187,6 +223,12 @@ class RoomCommandClient(
     private val port: Int,
     /** This handset's own name, said first, so the host counts handsets and not sockets. */
     private val selfId: String,
+    /**
+     * The correction this handset carries for the host it is dialling, in microseconds, or null
+     * if it carries none. Read once per client rather than per connection: the calibration screen
+     * is the only thing that changes it, and coming back from it builds a new client.
+     */
+    private val carrying: Long?,
     private val onCommand: (RoomCommand) -> Unit
 ) : AutoCloseable {
     @Volatile private var running = false
@@ -209,6 +251,11 @@ class RoomCommandClient(
                     open.tcpNoDelay = true
                     open.getOutputStream().apply {
                         write(SpatialFrame.encode(selfId))
+                        // A second frame rather than a longer first one: a host from before this
+                        // validates the first frame as a name and would drop a handset that put
+                        // anything else in it, while a frame it does not expect is read and
+                        // discarded by the loop that is only there to notice the socket close.
+                        write(SpatialFrame.encode(CARRYING + (carrying?.toString() ?: NOTHING_CARRIED)))
                         flush()
                     }
                     connected = true
@@ -268,4 +315,10 @@ object RoomCommands {
 
     @Synchronized
     fun standingBy(): Int = server?.standingBy() ?: 0
+
+    @Synchronized
+    fun uncalibrated(): Int = server?.uncalibrated() ?: 0
+
+    @Synchronized
+    fun unsaid(): Int = server?.unsaid() ?: 0
 }

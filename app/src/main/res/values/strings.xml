@@ -115,6 +115,7 @@
     <string name="pair_scan">扫描主机的码</string>
     <string name="pair_scan_hint">扫到之后按返回键回来</string>
     <string name="standby_host">待命中的手机：%1$d 台。主机这边开始播放、或者开始量距离的时候，它们会自己跟着做，不用一台台去按。</string>
+    <string name="standby_uncalibrated">其中 %1$d 台还没和这台手机对过时。没对过就按零来补，它们会差几十毫秒，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>
     <string name="standby_sink">已待命：主机一按，这台自己开始。留在这一页别退出。</string>
     <string name="standby_sink_alone">没和主机连上，这台还得自己按开始。先扫码配对，并确认主机也开着这个应用的首页。</string>
     <string name="pair_with">已配对 %1$s @ %2$s:%3$d</string>

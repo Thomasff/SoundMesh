@@ -103,6 +103,15 @@ data class HomeState(
      * started and nothing anywhere said why.
      */
     val standingBy: Int = 0,
+    /**
+     * How many of those said they carry no correction for this host.
+     *
+     * Beside the count rather than buried on each handset's own calibration screen, because
+     * nobody watches four screens. On 2026-09-13 two handsets played a whole afternoon carrying
+     * nothing - the app already said so, on a page in each of them that nobody had reason to
+     * open - and what found it was a listener saying one of them sounded early.
+     */
+    val uncalibrated: Int = 0,
     val onStandby: Boolean = false,
     /**
      * How many seconds the capture has been handing over exactly zero, or null when it is not.
@@ -429,6 +438,13 @@ private fun StandbyLine(state: HomeState) {
         },
         style = MaterialTheme.typography.bodySmall
     )
+    if (state.role == Role.HOST && state.uncalibrated > 0) {
+        Text(
+            stringResource(R.string.standby_uncalibrated, state.uncalibrated),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
 }
 
 @Composable
