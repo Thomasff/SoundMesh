@@ -11,6 +11,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.abs
 import java.io.File
 
 /**
@@ -56,10 +57,21 @@ class PeerCalibrateRoomTest {
      * the flight time between them. Its own chirp arrives with none, because its speaker is
      * centimetres from its microphone.
      */
-    private fun hearing(own: Int, slots: Int, flightFrames: (Int, Int) -> Int, quiet: Set<Int> = emptySet()) =
+    private fun hearing(
+        own: Int,
+        slots: Int,
+        flightFrames: (Int, Int) -> Int,
+        quiet: Set<Int> = emptySet(),
+        /**
+         * Frames by which the handset in that slot fired late. Everybody hears it that much
+         * later, itself included: a handset hears its own speaker across centimetres, so a late
+         * emission moves its own reading by exactly as much as it moves everybody elses.
+         */
+        lateBy: (Int) -> Int = { 0 }
+    ) =
         (0 until slots).map { slot ->
             arrival(
-                index = 48_000 + slot * slotFrames + flightFrames(own, slot),
+                index = 48_000 + slot * slotFrames + flightFrames(own, slot) + lateBy(slot),
                 ratio = if (slot in quiet) 3.0 else 40.0
             )
         }
@@ -380,5 +392,37 @@ class PeerCalibrateRoomTest {
     @Test
     fun `a round that measured one distance is still an observation`() {
         assertTrue(saysSomethingAboutTheRoom(mapOf((one to two) to 2.0, (two to three) to null)))
+    }
+
+    /**
+     * The room answers how far apart two handsets fire, not only how far apart they stand.
+     *
+     * The two are orthogonal halves of the same pair of readings - the half difference is the
+     * flight time, the half sum is the firing offset - so a round that measured the room has
+     * already measured this. It is filed because the alternative costs a minute per handset with
+     * somebody walking to each one, and on 2026-09-13 two handsets that had never had it done
+     * played a whole afternoon tens of milliseconds out.
+     */
+    @Test
+    fun `the room answers how far apart two handsets fire, not only how far apart they stand`() {
+        val names = listOf(one, two, three)
+        val flight = { a: Int, b: Int -> if (a == b) 0 else twoMetres }
+        val fiveMillis = (5.0 / 1000 * ChirpGenerator.SAMPLE_RATE).toInt()
+        val heard = (0..2).associateWith { own ->
+            listOf(hearing(own, 3, flight, lateBy = { slot -> if (slot == 0) fiveMillis else 0 }))
+        }
+
+        val field = roomField(plan(names), heard, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+
+        // Which way the sign runs is settled by facingPairs and checked against real handsets.
+        // What is asserted here is the size, that it lands on the pairs that were late, and
+        // that it lands on no other.
+        assertEquals(5.0, abs(field.alignmentErrorMs[one to three]!!), 0.2)
+        assertEquals(5.0, abs(field.alignmentErrorMs[one to two]!!), 0.2)
+        assertEquals(0.0, field.alignmentErrorMs[two to three]!!, 0.2)
+        // And the distances are untouched: one half of the pair of readings cannot move
+        // without the other staying where it was.
+        assertEquals(2.0, field.separationMetres[one to three]!!, 0.05)
+        assertEquals(2.0, field.separationMetres[one to two]!!, 0.05)
     }
 }

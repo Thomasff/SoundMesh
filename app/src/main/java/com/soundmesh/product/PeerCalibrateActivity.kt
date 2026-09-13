@@ -68,6 +68,7 @@ import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
 import com.soundmesh.probe.sync.EventLog
+import java.util.Locale
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
@@ -378,6 +379,20 @@ internal fun keepsCorrection(caseId: String): Boolean =
  * the branch that had a cluster mean - which made the measurement that cancels the clock
  * conditional on the one that is made of it.
  */
+/**
+ * The median of what the repeats said about how far apart a pair fired, or null if none said.
+ *
+ * Deliberately not [measuredSeparationMetres] with a different field. That function refuses a
+ * pair whose answer slides as the threshold slides, and refuses one whose repeats disagree by
+ * more than 30 cm - both bounds are about a distance, in metres, and neither has been shown to
+ * mean anything about this. Borrowing them would put a number past a gate that was never aimed
+ * at it. This is read, compared against constants measured the long way, and only then trusted.
+ */
+internal fun measuredFiringOffsetMs(pairs: List<FacingPair?>): Double? {
+    val millis = pairs.filterNotNull().map { it.alignmentErrorMs }
+    return if (millis.isEmpty()) null else medianOf(millis)
+}
+
 internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
     // A pair whose answer slides when the threshold slides has not found a direct sound, and it
     // is wrong in a way the agreement test below cannot see: measured 09-11, three runs with a
@@ -633,6 +648,21 @@ internal fun pairedReportJson(
  */
 internal data class RoomField(
     val separationMetres: Map<Pair<String, String>, Double?>,
+    /**
+     * How far apart each pair fired, in milliseconds - the other half of the same readings.
+     *
+     * The half difference of the two directions is the flight time and the half sum is this, so
+     * a round that measured the room measured this at the same instant, off the same chirps. It
+     * is carried out rather than dropped because the only other way to learn it costs a minute
+     * per handset with somebody walking to each one - and on 2026-09-13 two handsets nobody had
+     * walked to played a whole afternoon tens of milliseconds out, found by ear.
+     *
+     * Diagnostic until it is checked against handsets whose constant was measured properly: it
+     * is folded by the median alone, with none of the refusals [measuredSeparationMetres]
+     * applies, and the half sum takes the loudest lag where the half difference takes the
+     * leading edge - which is the half that has never been looked at.
+     */
+    val alignmentErrorMs: Map<Pair<String, String>, Double?>,
     val repeats: Int
 )
 
@@ -666,11 +696,13 @@ internal fun roomField(
         for (entry in answered) byPair.getOrPut(entry.key) { ArrayList() }.add(entry.value)
     }
     val metres = LinkedHashMap<Pair<String, String>, Double?>()
+    val firing = LinkedHashMap<Pair<String, String>, Double?>()
     for (entry in byPair) {
         val names = plan.slotIds[entry.key.first] to plan.slotIds[entry.key.second]
         metres[names] = measuredSeparationMetres(entry.value)
+        firing[names] = measuredFiringOffsetMs(entry.value)
     }
-    return RoomField(metres, repeats)
+    return RoomField(metres, firing, repeats)
 }
 
 /** How many of the room's answered pairs [peerId] is one end of. */
@@ -1348,7 +1380,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             val heard = LinkedHashMap<Int, List<List<ChirpArrival?>>>()
             heard[ownSlot] = run.arrivalsByRepeat
             val heardFrom = ArrayList<String>()
-            var field = RoomField(emptyMap(), 0)
+            var field = RoomField(emptyMap(), emptyMap(), 0)
             roomServer.awaitRoom(plan.slotIds.size - 1, ROOM_RESULT_TIMEOUT_MILLIS) { delivered ->
                 for (message in delivered) {
                     val slot = plan.slotIds.indexOf(message.senderId)
@@ -1377,6 +1409,18 @@ class PeerCalibrateActivity : ComponentActivity() {
                 events.write("room-field written, ${toStore.count { it.value != null }} pairs")
             } else {
                 events.write("room-field kept: this round measured no distance between handsets")
+            }
+            // Read, not yet used. The room measured how far apart every pair fires at the same
+            // instant it measured how far apart they stand, and if that number is good enough
+            // it replaces a minute per handset of somebody walking to each one. Whether it is
+            // good enough is a comparison against constants measured the long way, so the first
+            // thing it has to do is be readable afterwards.
+            for (entry in field.alignmentErrorMs) {
+                val millis = entry.value ?: continue
+                events.write(
+                    "room-firing ${entry.key.first} ${entry.key.second} " +
+                        String.format(Locale.US, "%.3f", millis) + "ms"
+                )
             }
             // And the per-peer files, which is where every other arm writes a distance and
             // where the pair flow reads one. What may be kept is what [separationToStore] would
