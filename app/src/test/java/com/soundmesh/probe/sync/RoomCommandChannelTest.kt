@@ -123,6 +123,66 @@ class RoomCommandChannelTest {
         }
     }
 
+    /**
+     * A handset that was let go and dialled again can still say things.
+     *
+     * The shape reported from a room of two on 2026-09-14: the host let go of a handset every
+     * eight seconds, it came back three seconds later, and in between it wrote a line a second
+     * into its own log saying nothing had gone out. This is that cycle, on this side of it.
+     */
+    @Test
+    fun canStillSayThingsAfterBeingLetGoOfAndDiallingAgain() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(client.sayHere())
+
+            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS)
+            assertTrue("it never dialled again", until { server.standingBy() == 1 })
+            assertTrue(connected(client))
+
+            assertTrue("it said: ${client.lastRefusal}", client.sayHere())
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * And when something does not go out it says which of the three faults it was.
+     *
+     * They shared one sentence until 2026-09-14, and that sentence named the one fault it was
+     * not: "no line to say it on", written every second while the host was reading commands off
+     * that very socket. A wrong answer in a log costs a whole round of guessing.
+     */
+    @Test
+    fun saysWhichOfTheThreeReasonsAThingDidNotGoOut() {
+        val port = freePort()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, onCommand = onCommand)
+        try {
+            assertFalse(client.sayHere())
+            assertEquals("there is no socket yet", client.lastRefusal)
+
+            val server = RoomCommandServer(port)
+            server.start()
+            assertTrue(connected(client))
+            assertTrue(client.sayHere())
+            assertNull(client.lastRefusal)
+
+            server.stop()
+            assertTrue(until { !client.connected })
+            assertFalse(client.sayHere())
+            assertEquals("the line is down", client.lastRefusal)
+        } finally {
+            client.close()
+        }
+    }
+
     /** And says nothing about it while it is still saying it is there. */
     @Test
     fun keepsCountingAHandsetThatIsStillSayingIt() {

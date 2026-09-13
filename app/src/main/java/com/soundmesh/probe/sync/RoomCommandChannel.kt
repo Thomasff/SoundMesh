@@ -559,6 +559,17 @@ class RoomCommandClient(
     @Volatile var connected = false
         private set
 
+    /**
+     * Why the last thing this handset tried to say did not go out, or null if it went.
+     *
+     * Held here rather than thrown because none of these is a reason to stop standing by: a line
+     * that is not open right now comes back three seconds later. Held **at all** because the
+     * caller is the only thing that can put it on a screen or in a log, and it has no other way
+     * to tell three quite different faults apart.
+     */
+    @Volatile var lastRefusal: String? = null
+        private set
+
     fun start() {
         running = true
         Thread({ hold() }, "SoundMeshCommandHold").start()
@@ -625,14 +636,8 @@ class RoomCommandClient(
      * mentioned about its volume - and a line that is not open right now is the normal case, not
      * a fault. It comes back three seconds later.
      */
-    fun sayVolume(index: Int, max: Int, stream: String): Boolean = runCatching {
-        val open = socket?.takeIf { connected } ?: return false
-        open.getOutputStream().apply {
-            write(SpatialFrame.encode(sayingVolume(index, max, stream)))
-            flush()
-        }
-        true
-    }.getOrDefault(false)
+    fun sayVolume(index: Int, max: Int, stream: String): Boolean =
+        say(sayingVolume(index, max, stream))
 
     /**
      * Says this handset is still there, and answers whether it went out.
@@ -641,14 +646,34 @@ class RoomCommandClient(
      * is never written to is a socket nobody notices die, at either end. Same shape and same
      * answer as [sayVolume] - a line that is not open right now is the normal case, not a fault.
      */
-    fun sayHere(): Boolean = runCatching {
-        val open = socket?.takeIf { connected } ?: return false
-        open.getOutputStream().apply {
-            write(SpatialFrame.encode(HERE))
-            flush()
-        }
-        true
-    }.getOrDefault(false)
+    fun sayHere(): Boolean = say(HERE)
+
+    /**
+     * Writes one frame up the line, and remembers **why** if it did not go.
+     *
+     * The three reasons are three different faults and until 2026-09-14 they shared one sentence
+     * on one screen: no socket yet, a line that is down, and a write that threw. A handset that
+     * had said nothing for eight seconds could be any of them, and a log that says "no line to
+     * say it on" while the host is reading commands off that very socket is not a clue, it is a
+     * wrong answer that costs a round of guessing.
+     */
+    private fun say(what: String): Boolean {
+        val open = socket ?: return refuse("there is no socket yet")
+        if (!connected) return refuse("the line is down")
+        return runCatching {
+            open.getOutputStream().apply {
+                write(SpatialFrame.encode(what))
+                flush()
+            }
+            lastRefusal = null
+            true
+        }.getOrElse { refuse("the write threw ${it.javaClass.simpleName}: ${it.message}") }
+    }
+
+    private fun refuse(why: String): Boolean {
+        lastRefusal = why
+        return false
+    }
 
     override fun close() {
         running = false

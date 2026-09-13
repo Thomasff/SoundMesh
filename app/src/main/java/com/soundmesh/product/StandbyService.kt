@@ -78,6 +78,12 @@ class StandbyService : Service() {
     /** When this handset last told the host it was still there. */
     private var saidHereAt = 0L
 
+    /** The last thing written about something not going out, so it is written once and not again. */
+    private var complained: String? = null
+
+    /** How many did not go out since then, which is the other half of one line in the log. */
+    private var missed = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -249,10 +255,35 @@ class StandbyService : Service() {
      */
     private fun sayVolume(now: VolumeReading) {
         val landed = line?.sayVolume(now.index, now.max, now.stream) == true
-        // One line per actual change rather than per poll, and the failing case is the one worth
-        // having: a report that never left looks exactly like one that arrived unchanged.
-        if (!landed) events.write("volume not said: no line to say it on")
+        // The failing case is the one worth having: a report that never left looks exactly like
+        // one that arrived unchanged.
+        if (!landed) complain("volume not said") else said("volume")
         saidVolume = now.takeIf { landed }
+    }
+
+    /**
+     * Writes down that something did not go out, once per reason rather than once per attempt.
+     *
+     * Per attempt, this is a line a second for as long as the fault lasts - 1,600 of them in one
+     * evening on 2026-09-14, all identical, hiding the handful of lines that said what was
+     * happening around them. What a person reading this file needs is when it started, what it
+     * says, and when it stopped.
+     */
+    private fun complain(what: String) {
+        val why = line?.lastRefusal ?: "there is no line at all"
+        missed++
+        val said = "$what: $why"
+        if (said == complained) return
+        complained = said
+        events.write(said)
+    }
+
+    /** And the other end of it, which is the line that says the fault is over. */
+    private fun said(what: String) {
+        if (complained == null) return
+        events.write("$what said again, after $missed that did not go out")
+        complained = null
+        missed = 0
     }
 
     /**
@@ -283,7 +314,12 @@ class StandbyService : Service() {
     private fun sayHereIfDue() {
         val now = SystemClock.elapsedRealtime()
         if (now - saidHereAt < SAY_HERE_EVERY_MILLIS) return
-        if (line?.sayHere() == true) saidHereAt = now
+        if (line?.sayHere() == true) {
+            saidHereAt = now
+            said("still here")
+        } else {
+            complain("still-here not said")
+        }
     }
 
     private fun notification(): Notification {
