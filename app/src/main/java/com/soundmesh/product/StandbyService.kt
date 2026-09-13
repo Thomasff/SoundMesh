@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomExcuse
@@ -69,9 +70,13 @@ class StandbyService : Service() {
     private val tellIfMoved = object : Runnable {
         override fun run() {
             sayVolumeIfMoved()
+            sayHereIfDue()
             handler.postDelayed(this, TELL_EVERY_MILLIS)
         }
     }
+
+    /** When this handset last told the host it was still there. */
+    private var saidHereAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -263,6 +268,24 @@ class StandbyService : Service() {
         sayVolume(now)
     }
 
+    /**
+     * Tells the host this handset is still here, every so often, whether or not anything changed.
+     *
+     * The only thing this handset says when nothing has happened, and the reason it has to exist:
+     * holding a socket open says nothing. A phone that walks out of the network leaves this one
+     * ESTABLISHED for as long as the kernel keeps retransmitting, so the host's count of who is
+     * standing by was really a count of who had not yet failed a write - and on a screen that
+     * number is read as "these phones will follow when I press play".
+     *
+     * The clock is checked rather than a counter kept, because the loop it hangs off also carries
+     * the volume poll and is not owed a fixed cadence.
+     */
+    private fun sayHereIfDue() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - saidHereAt < SAY_HERE_EVERY_MILLIS) return
+        if (line?.sayHere() == true) saidHereAt = now
+    }
+
     private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
@@ -312,6 +335,12 @@ class StandbyService : Service() {
         private const val CHANNEL_ID = "soundmesh-standby"
         private const val NOTIFICATION_ID = 4
         private const val TELL_EVERY_MILLIS = 1_000L
+
+        /**
+         * How often this handset says it is still there. Four of these fit in the window the host
+         * waits before letting go - see RoomCommandServer.GONE_QUIET_MILLIS.
+         */
+        private const val SAY_HERE_EVERY_MILLIS = 2_000L
     }
 
     /** True while there is a socket to the host actually open, which is what standing by means. */

@@ -51,6 +51,23 @@ private fun volumeFrom(said: String): VolumeSaid? {
     return VolumeSaid(index, max, fields[2])
 }
 
+/**
+ * What a standing handset says every couple of seconds to mean nothing has happened to it.
+ *
+ * The only thing on this channel that is said when nothing changed, and the reason it has to be:
+ * holding the line open says nothing at all. A handset that walks out of the network leaves its
+ * socket ESTABLISHED for as long as the kernel keeps retransmitting, and nothing is ever written
+ * down it in between, so "how many are standing by" was really "how many sockets nothing has
+ * failed to write to". Those are different numbers and a person reading the screen wants the
+ * first one.
+ *
+ * A word of its own rather than repeating the volume, because the host has to be able to tell a
+ * handset that has gone quiet from one whose build never learned to speak: those are in the room,
+ * hand-distributed, and a handset judged by a signal it does not send reads as dropped while it
+ * sits on somebody's home screen doing everything it is told.
+ */
+private const val HERE = "here"
+
 /** The one thing a standing handset ever says after its name. Anything else is a later build's. */
 private const val CARRYING = "carrying "
 private const val NOTHING_CARRIED = "none"
@@ -93,6 +110,14 @@ private fun carriedFrom(said: String): Carried? {
 class RoomCommandServer(private val port: Int) {
     private class Standing(val socket: Socket, val peerId: String) {
         @Volatile var carrying: Carried = Carried.UNSAID
+
+        /**
+         * When this handset last said it was still there, or null if it never has.
+         *
+         * Null is not "a long time ago": it is a build that does not say it, and the only honest
+         * thing to do with one of those is what every build before this did - count the socket.
+         */
+        @Volatile var heardAt: Long? = null
     }
 
     private val clients = Collections.synchronizedList(ArrayList<Standing>())
@@ -167,6 +192,13 @@ class RoomCommandServer(private val port: Int) {
                 }
             }
         }.start()
+        // A tick of its own, because the thing it is looking for is the absence of events.
+        Thread({
+            while (running) {
+                runCatching { Thread.sleep(SWEEP_MILLIS) }
+                letGoOfTheQuiet(System.currentTimeMillis())
+            }
+        }, "SoundMeshCommandSweep").start()
     }
 
     /**
@@ -238,6 +270,7 @@ class RoomCommandServer(private val port: Int) {
                         StoredHandsetName.cleaned(said.removePrefix(CALLED))
                             ?.let { names[standing.peerId] = it }
                     }
+                    if (said == HERE) standing.heardAt = System.currentTimeMillis()
                     volumeFrom(said)?.let {
                         volumes[standing.peerId] = it
                         volumeAt[standing.peerId] = System.currentTimeMillis()
@@ -328,6 +361,33 @@ class RoomCommandServer(private val port: Int) {
      */
     fun standingBy(): Int = clients.size
 
+    /**
+     * Lets go of every handset that has stopped saying it is there.
+     *
+     * Takes [now] rather than reading the clock, so that the window can be tested without waiting
+     * out its length. Called on a tick of its own - nothing else on this channel happens often
+     * enough to hang it off, and the whole defect being fixed is that a quiet socket produces no
+     * events at all.
+     *
+     * The socket is closed rather than left, for the reason the rest of this class closes them:
+     * the thread parked on that read only ends when the socket does. If the handset was merely
+     * slow it dials again three seconds later and is counted again - the same handful of seconds
+     * it already costs after any other kind of drop.
+     */
+    fun letGoOfTheQuiet(now: Long) {
+        val quiet = synchronized(clients) {
+            val gone = clients.filter { standing ->
+                standing.heardAt?.let { now - it >= GONE_QUIET_MILLIS } == true
+            }
+            clients.removeAll(gone)
+            gone
+        }
+        for (standing in quiet) {
+            runCatching { standing.socket.close() }
+            left(standing.peerId, "it stopped saying it was there")
+        }
+    }
+
     /** How many standing handsets said they carry no correction for this host. */
     fun uncalibrated(): Int = synchronized(clients) { clients.count { it.carrying == Carried.NOTHING } }
 
@@ -403,12 +463,24 @@ class RoomCommandServer(private val port: Int) {
         }
     }
 
-    private companion object {
+    internal companion object {
         /** Long enough for a slow link, short enough that a silent socket is not a parked thread. */
         const val ANNOUNCE_TIMEOUT_MILLIS = 5_000
 
         /** As many of the id as every screen and every log line has always printed. */
         const val SHORT_NAME_CHARACTERS = 4
+
+        /**
+         * How long a handset can go without saying it is there before it stops being counted.
+         *
+         * Four missed beats at the sink's cadence. Short enough that somebody who walked out of
+         * the room with one phone sees the number drop while they are still standing there;
+         * long enough that a WiFi that dropped a few frames is not a handset that left.
+         */
+        const val GONE_QUIET_MILLIS = 8_000L
+
+        /** How often the absence is looked for. Nothing here is expensive; it is a list walk. */
+        const val SWEEP_MILLIS = 1_000L
     }
 }
 
@@ -485,10 +557,15 @@ class RoomCommandClient(
                         // A third frame on the same terms as the second: a reader that does not
                         // know it discards it, and the socket goes on being what it is for.
                         called?.let { write(SpatialFrame.encode(CALLED + it)) }
-                        // A fourth on the same terms, and the last one that is said unasked.
+                        // A fourth on the same terms.
                         volumeNow?.invoke()?.let {
                             write(SpatialFrame.encode(sayingVolume(it.index, it.max, it.stream)))
                         }
+                        // And a fifth, which is the first of however many: the host counts a
+                        // handset that says this and then stops, and leaves alone one that has
+                        // never said it at all. Said here rather than waiting for the first tick
+                        // so that a handset is never in the second group by accident.
+                        write(SpatialFrame.encode(HERE))
                         flush()
                     }
                     connected = true
@@ -529,6 +606,22 @@ class RoomCommandClient(
         val open = socket?.takeIf { connected } ?: return false
         open.getOutputStream().apply {
             write(SpatialFrame.encode(sayingVolume(index, max, stream)))
+            flush()
+        }
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Says this handset is still there, and answers whether it went out.
+     *
+     * Repeated on a cadence rather than said once, which is the whole point of it: a socket that
+     * is never written to is a socket nobody notices die, at either end. Same shape and same
+     * answer as [sayVolume] - a line that is not open right now is the normal case, not a fault.
+     */
+    fun sayHere(): Boolean = runCatching {
+        val open = socket?.takeIf { connected } ?: return false
+        open.getOutputStream().apply {
+            write(SpatialFrame.encode(HERE))
             flush()
         }
         true

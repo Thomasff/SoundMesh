@@ -62,6 +62,90 @@ class RoomCommandChannelTest {
         return false
     }
 
+    /**
+     * "How many are standing by" used to mean "how many sockets nothing has failed to write to".
+     *
+     * That is not the same number. A handset that walks out of the network leaves every socket to
+     * it ESTABLISHED for as long as the kernel keeps retransmitting - minutes - and nothing on
+     * this channel is ever written in between, so the host goes on saying three phones are waiting
+     * in a room with one. What separates them is that a handset that is there keeps saying so.
+     */
+    @Test
+    fun stopsCountingAHandsetThatStoppedSayingItIsThere() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        val gone = ArrayBlockingQueue<String>(4)
+        server.onLeft = { peerId, _ -> gone.offer(peerId) }
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(client.sayHere())
+            assertTrue(until { server.standingBy() == 1 })
+
+            // Long enough after the last word from it that three beats have been missed.
+            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS)
+
+            assertEquals(0, server.standingBy())
+            assertEquals(one, gone.poll(5, TimeUnit.SECONDS))
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /** And says nothing about it while it is still saying it is there. */
+    @Test
+    fun keepsCountingAHandsetThatIsStillSayingIt() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(client.sayHere())
+            assertTrue(until { server.standingBy() == 1 })
+
+            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS - 1_000L)
+
+            assertEquals(1, server.standingBy())
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset of a build that never learned to say it is there is left alone rather than
+     * declared gone.
+     *
+     * Those builds are in the room: the APKs are handed round by hand, and on 09-14 a handset
+     * running one from two commits earlier obeyed everything and reported nothing. Judging a
+     * handset by a signal it does not send would report every one of them as dropped while it sat
+     * on somebody's home screen doing exactly what it was told.
+     */
+    @Test
+    fun leavesAloneAHandsetThatHasNeverSaidItIsThere() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        try {
+            val socket = Socket()
+            socket.connect(InetSocketAddress("127.0.0.1", port), 3_000)
+            socket.getOutputStream().apply { write(SpatialFrame.encode(two)); flush() }
+            assertTrue(until { server.standingBy() == 1 })
+
+            server.letGoOfTheQuiet(System.currentTimeMillis() + 10 * RoomCommandServer.GONE_QUIET_MILLIS)
+
+            assertEquals(1, server.standingBy())
+            socket.close()
+        } finally {
+            server.stop()
+        }
+    }
+
     @Test
     fun aHandsetStandingByIsToldWhatTheHostSaid() {
         val port = freePort()
