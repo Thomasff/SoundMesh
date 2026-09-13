@@ -64,4 +64,25 @@ class HomeScreenTest {
         assertEquals(0.9f, draggedTo(landedAt = 0.2f, leftAt = 0.9f))
         assertEquals(0.1f, draggedTo(landedAt = 0.8f, leftAt = 0.1f))
     }
+    /**
+     * The room slider appears, and goes on appearing.
+     *
+     * Reported on 2026-09-13: playing a local song, the whole volume panel was gone and there was
+     * no way to set the room's volume at all. The condition for "stop following this phone" was
+     * the flag saying a volume had been changed and not put back - which is read off a file that
+     * outlives the app, so it was already true at the next start, before a role had been picked
+     * and while there was nothing to show. It latched null and the panel never came back.
+     */
+    @Test
+    fun goesOnOfferingTheRoomSliderAfterAVolumeHasBeenSetOnce() {
+        // Before anybody drags it: wherever this phone is, whatever happened in an earlier run.
+        assertEquals(40, roomVolumeShown(isHost = true, dragged = false, shown = null) { 40 })
+        assertEquals(40, roomVolumeShown(isHost = true, dragged = false, shown = 75) { 40 })
+
+        // After a drag: the room's number, and it stops following this phone.
+        assertEquals(75, roomVolumeShown(isHost = true, dragged = true, shown = 75) { 40 })
+
+        // A sink has no room to set one for.
+        assertNull(roomVolumeShown(isHost = false, dragged = true, shown = 75) { 40 })
+    }
 }

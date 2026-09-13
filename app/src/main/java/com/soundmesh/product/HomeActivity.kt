@@ -124,6 +124,17 @@ class HomeActivity : ComponentActivity() {
     /** The last volume this handset said it was at, so only a change is worth a frame. */
     private var saidVolume: VolumeReading? = null
 
+    /**
+     * Whether somebody has dragged the room slider, which is what stops it following this phone.
+     *
+     * Its own flag rather than [HomeState.volumeChanged], which was doing both jobs and got them
+     * both wrong: that one is read off a file that outlives the app, so after any session in
+     * which a volume was set, the next start latched the slider to the value it had before a role
+     * was picked - null - and the whole panel, restore button included, never appeared again.
+     * In memory on purpose: a fresh start should follow this phone again.
+     */
+    private var roomVolumeSet = false
+
     /** Whether the room has already been told about the session that is up, so it is told once. */
     private var toldTheRoom = false
 
@@ -144,11 +155,12 @@ class HomeActivity : ComponentActivity() {
                     // Follows this handset's own volume until somebody drags the slider, which is
                     // what makes it start where the person expects. After a drag the number is
                     // the room's, and following would fight whoever is holding it.
-                    roomVolumePercent = when {
-                        state.role != Role.HOST -> null
-                        state.volumeChanged -> state.roomVolumePercent
-                        else -> handsetVolume.read(state.capturing).percent
-                    },
+                    roomVolumePercent = roomVolumeShown(
+                        isHost = state.role == Role.HOST,
+                        dragged = roomVolumeSet,
+                        shown = state.roomVolumePercent,
+                        onThisPhone = { handsetVolume.read(state.capturing).percent }
+                    ),
                     volumeChanged = handsetVolume.changed()
                 )
             }
@@ -230,7 +242,7 @@ class HomeActivity : ComponentActivity() {
         captureAudio = ::captureAudio,
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
-        stop = { awaitingSession = false; startService(request(SessionService.ACTION_STOP)) },
+        stop = ::stopSession,
         calibrate = { startActivity(Intent(this, CalibrateActivity::class.java)) },
         // Told to the service rather than to the session directly: the session outlives this
         // screen on purpose, and reaching into it from here would be the one place that assumed
@@ -443,11 +455,22 @@ class HomeActivity : ComponentActivity() {
      */
     private fun captureAudio() {
         state = state.copy(problem = null)
+        // The same as pressing stop, and pressed for them. Switching to capturing is choosing a
+        // different thing to play, and until this was here the room went on playing the old one
+        // until the host's new session came up - which is however long somebody takes over the
+        // consent dialog and picking an app, with the room still singing the last song.
+        if (state.running) stopSession()
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             askRecordAudio.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
         askProjection.launch(projectionManager().createScreenCaptureIntent())
+    }
+
+    /** Ends the session, which is also what tells the room to stop - see [announceSession]. */
+    private fun stopSession() {
+        awaitingSession = false
+        startService(request(SessionService.ACTION_STOP))
     }
 
     private fun projectionManager(): MediaProjectionManager =
@@ -707,7 +730,16 @@ class HomeActivity : ComponentActivity() {
             // Left open when this screen goes away, unlike the sink end. The host tells the room
             // to go and measure from inside the calibration screen - see RoomCommands - and this
             // screen is paused by then.
-            Role.HOST -> RoomCommands.serve()
+            Role.HOST -> {
+                RoomCommands.serve()
+                // Said out loud because the count going down has no other trace at all: on
+                // 09-13 a room went from three standing to none and the only evidence was the
+                // number itself, which cannot say whether they left or were dropped.
+                val log = EventLog(filesDir)
+                RoomCommands.listenForDepartures { peerId, why ->
+                    log.write("standing-left $peerId: $why")
+                }
+            }
             Role.SINK -> {
                 RoomCommands.stop()
                 val host = state.paired ?: return events.write(
@@ -779,6 +811,9 @@ class HomeActivity : ComponentActivity() {
     }
 
     private fun putVolumeBack() {
+        // Back to following this phone as well, because "as if this app had never touched it"
+        // includes the number on the slider.
+        roomVolumeSet = false
         handsetVolume.restore()
         val now = handsetVolume.read(state.capturing)
         events.write("volume put back: ${now.index}/${now.max} on ${now.stream}")
@@ -851,6 +886,7 @@ class HomeActivity : ComponentActivity() {
      * music quieter, and the phone in their hand is the loudest one there.
      */
     private fun setRoomVolume(percent: Int) {
+        roomVolumeSet = true
         state = state.copy(roomVolumePercent = percent)
         RoomCommands.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
         applyVolume(percent)

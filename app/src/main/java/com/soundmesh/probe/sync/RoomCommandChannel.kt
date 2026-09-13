@@ -205,7 +205,10 @@ class RoomCommandServer(private val port: Int) {
         }
         // Outside the lock, and closed rather than dropped: the thread parked on that socket ends
         // when the socket does, and a held socket per departed handset is a leak with a name.
-        for (old in replaced) runCatching { old.socket.close() }
+        for (old in replaced) {
+            runCatching { old.socket.close() }
+            left(old.peerId, "it opened a second line, and the newer one wins")
+        }
         // Then parked on a read, which is what makes this a count rather than a guess at one:
         // the read ends the moment that handset closes its end, and this is the only place that
         // finds out without having something to send.
@@ -233,7 +236,7 @@ class RoomCommandServer(private val port: Int) {
                 }
             }
         }
-        clients.remove(standing)
+        if (clients.remove(standing)) left(standing.peerId, "it closed its line")
     }
 
     /**
@@ -269,6 +272,7 @@ class RoomCommandServer(private val port: Int) {
                 }.onFailure {
                     clients.remove(standing)
                     runCatching { standing.socket.close() }
+                    left(standing.peerId, "a write to it failed: ${it.javaClass.simpleName}")
                 }
             }
         }, "SoundMeshCommandSend").start()
@@ -299,6 +303,7 @@ class RoomCommandServer(private val port: Int) {
             }.onFailure {
                 clients.remove(standing)
                 runCatching { standing.socket.close() }
+                left(standing.peerId, "a write to it alone failed: ${it.javaClass.simpleName}")
             }
         }, "SoundMeshCommandSendOne").start()
         return true
@@ -352,6 +357,20 @@ class RoomCommandServer(private val port: Int) {
     /** Told the moment a handset says what its volume came to, so a screen can show it landing. */
     @Volatile
     var onVolume: ((String, VolumeSaid) -> Unit)? = null
+
+    /**
+     * Told when a handset stops standing by, with which of the three ways it went.
+     *
+     * The count on screen going down is the only trace these have otherwise, and a number cannot
+     * say whether a phone was put in a pocket, was replaced by a second line from itself, or had
+     * a write fail under it. Those want three different things from whoever is reading.
+     */
+    @Volatile
+    var onLeft: ((String, String) -> Unit)? = null
+
+    private fun left(peerId: String, why: String) {
+        runCatching { onLeft?.invoke(peerId, why) }
+    }
 
     /**
      * Drops them, which is what starting a round does.
@@ -551,6 +570,12 @@ object RoomCommands {
     @Synchronized
     fun listenForVolumes(listener: ((String, VolumeSaid) -> Unit)?) {
         server?.onVolume = listener
+    }
+
+    /** Who to tell when a handset stops standing by, or null for nobody. */
+    @Synchronized
+    fun listenForDepartures(listener: ((String, String) -> Unit)?) {
+        server?.onLeft = listener
     }
 
     @Synchronized

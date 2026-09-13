@@ -181,6 +181,38 @@ class RoomCommandChannelTest {
     }
 
     /**
+     * A handset going says which of the three ways it went.
+     *
+     * The count on screen going down is the only trace otherwise, and a number cannot tell a
+     * phone put in a pocket from one whose write failed under it from one replaced by a second
+     * line of its own. On 09-13 a room went from three standing to none and there was nothing
+     * afterwards to read.
+     */
+    @Test
+    fun saysWhichWayAHandsetWent() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val gone = ArrayBlockingQueue<Pair<String, String>>(8)
+        server.onLeft = { peerId, why -> gone.offer(peerId to why) }
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(until { server.standingBy() == 1 })
+
+            client.close()
+
+            val went = gone.poll(5, TimeUnit.SECONDS)
+            assertEquals(one, went?.first)
+            assertTrue("$went", went!!.second.isNotEmpty())
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
      * One handset can be told something the rest of the room is not.
      *
      * For the phone standing next to a wall. The room is still the default and this is the

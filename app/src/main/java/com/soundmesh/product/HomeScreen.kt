@@ -795,3 +795,27 @@ internal fun Section(title: Int, content: @Composable () -> Unit) {
         }
     }
 }
+
+/**
+ * Where the room slider sits, or null where there is no slider to sit anywhere.
+ *
+ * Following this phone until somebody drags it is what makes the slider start where the person
+ * expects: at whatever this phone is already playing at. After a drag it is the room's number,
+ * and following would fight whoever is holding it.
+ *
+ * [dragged] has to be exactly "somebody dragged it", which is why it is not the flag saying a
+ * volume has been changed and not yet put back. That one is read off a file which outlives the
+ * app, so it is already true at the next start - before a role has been picked, when there is
+ * nothing to show - and latching on it hid this whole panel, restore button and all, for every
+ * session after the first one that touched a volume.
+ */
+internal fun roomVolumeShown(
+    isHost: Boolean,
+    dragged: Boolean,
+    shown: Int?,
+    onThisPhone: () -> Int
+): Int? = when {
+    !isHost -> null
+    dragged -> shown
+    else -> onThisPhone()
+}
