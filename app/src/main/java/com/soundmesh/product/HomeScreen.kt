@@ -224,8 +224,20 @@ data class VolumeRow(
      * reporting at all, was a handset with no working control - and the fault was invisible,
      * because a thumb sitting still looks like a thumb that has been obeyed.
      */
-    val asked: Int? = null
+    val asked: Int? = null,
+    /** What is wrong with this row, if anything. See [volumeComplaint].  */
+    val complaint: VolumeComplaint = VolumeComplaint.NONE
 )
+
+/**
+ * The two ways a handset can fail to be where it was told to be, which want different sentences.
+ *
+ * They look the same on screen - a row that disagrees with the thumb above it - and they are
+ * nothing alike underneath. One is a stream that took a value and did not move, which is a fault
+ * on that handset and has been seen on these ones. The other is a handset that is doing as it is
+ * told and not saying so, which means the number beside it is simply old.
+ */
+enum class VolumeComplaint { NONE, NOT_SAID, REFUSED }
 
 class HomeActions(
     val pickRole: (Role) -> Unit,
@@ -457,12 +469,13 @@ private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
         ),
         style = MaterialTheme.typography.bodySmall
     )
-    // Only when the handset is somewhere else than where it was put, on its own scale. A
-    // percentage asked for lands on a step, and the step read back is a percentage again, so
-    // the two almost never match to the digit - saying so every time would be saying nothing.
-    if (!landedWhereAsked(row.asked, row.index, row.max)) {
+    if (row.complaint != VolumeComplaint.NONE) {
         Text(
-            stringResource(R.string.room_volume_row_missed, row.name, row.asked ?: 0),
+            if (row.complaint == VolumeComplaint.NOT_SAID) {
+                stringResource(R.string.room_volume_row_silent, row.name)
+            } else {
+                stringResource(R.string.room_volume_row_missed, row.name, row.asked ?: 0)
+            },
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall
         )
@@ -855,3 +868,49 @@ internal fun roomVolumeShown(
  */
 internal fun landedWhereAsked(asked: Int?, index: Int, max: Int): Boolean =
     asked == null || indexFor(asked, max) == index
+
+/**
+ * Whether somebody standing at that handset moved it, as opposed to it refusing to move.
+ *
+ * Both look the same on one reading - a handset that is not where it was told to be - and they
+ * want opposite things. A person who just pressed the volume keys on their own phone should see
+ * the thumb on the host follow them; a stream that took the value and did nothing should leave
+ * the thumb where it was put and be called out for it.
+ *
+ * What tells them apart is whether the reading moved at all. A refusal is a reading that did not
+ * change; a person is a reading that changed to somewhere nobody asked for.
+ */
+internal fun somebodyElseMovedIt(asked: Int?, before: Int?, now: Int, max: Int): Boolean =
+    asked != null && before != null && now != before && now != indexFor(asked, max)
+
+/**
+ * What to say about a handset that is not where it was told to be, if anything.
+ *
+ * Three answers rather than a boolean, and the third one is the point. Reported on 2026-09-14:
+ * one handset showed "did not reach what you asked for" no matter what it was told, while its
+ * volume plainly changed in the room. Both halves were true - it was obeying, and the number
+ * beside it was not what was asked - because that number was the one it reported when it
+ * connected and it has not reported since. "It has not said" and "it would not move" are the two
+ * things worth telling apart here, and a single red line said neither.
+ *
+ * The grace is not politeness. A report crosses a room and back, so for a moment after every
+ * instruction every handset is behind - and a warning that flashes on every drag is one nobody
+ * reads by the end of the evening.
+ */
+internal fun volumeComplaint(
+    asked: Int?,
+    index: Int,
+    max: Int,
+    askedAt: Long,
+    saidAt: Long?,
+    now: Long
+): VolumeComplaint = when {
+    asked == null -> VolumeComplaint.NONE
+    now - askedAt < VOLUME_GRACE_MILLIS -> VolumeComplaint.NONE
+    saidAt == null || saidAt < askedAt -> VolumeComplaint.NOT_SAID
+    landedWhereAsked(asked, index, max) -> VolumeComplaint.NONE
+    else -> VolumeComplaint.REFUSED
+}
+
+/** Long enough for a handset to hear, set its stream and answer across a room. */
+internal const val VOLUME_GRACE_MILLIS = 1_500L

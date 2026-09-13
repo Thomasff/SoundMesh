@@ -118,6 +118,15 @@ class RoomCommandServer(private val port: Int) {
     private val volumes = Collections.synchronizedMap(LinkedHashMap<String, VolumeSaid>())
 
     /**
+     * When each of those arrived.
+     *
+     * Apart from the reading itself, because a handset that says the same number twice is not a
+     * handset that has gone quiet, and from one reading the two are the same picture. That
+     * difference is what two rounds of guesswork on 2026-09-13 were spent on.
+     */
+    private val volumeAt = Collections.synchronizedMap(LinkedHashMap<String, Long>())
+
+    /**
      * Told the moment an excuse arrives rather than left to be polled.
      *
      * The whole value of the message is that somebody can still act on it: a handset waiting on
@@ -231,6 +240,7 @@ class RoomCommandServer(private val port: Int) {
                     }
                     volumeFrom(said)?.let {
                         volumes[standing.peerId] = it
+                        volumeAt[standing.peerId] = System.currentTimeMillis()
                         runCatching { onVolume?.invoke(standing.peerId, it) }
                     }
                 }
@@ -353,6 +363,9 @@ class RoomCommandServer(private val port: Int) {
 
     /** What each handset last said its own volume is, newest per handset. */
     fun volumes(): Map<String, VolumeSaid> = synchronized(volumes) { LinkedHashMap(volumes) }
+
+    /** When that arrived, by the host's own clock, or null for a handset that has never said. */
+    fun volumeSaidAt(peerId: String): Long? = volumeAt[peerId]
 
     /** Told the moment a handset says what its volume came to, so a screen can show it landing. */
     @Volatile
@@ -588,6 +601,9 @@ object RoomCommands {
 
     @Synchronized
     fun volumes(): Map<String, VolumeSaid> = server?.volumes() ?: emptyMap()
+
+    @Synchronized
+    fun volumeSaidAt(peerId: String): Long? = server?.volumeSaidAt(peerId)
 
     /** Who to tell when a handset says what its volume came to, or null for nobody. */
     @Synchronized

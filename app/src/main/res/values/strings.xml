@@ -125,7 +125,8 @@
     <string name="room_volume_level">%1$d%%</string>
     <string name="room_volume_capturing_hint">这台手机在采集别的应用，它自己走闹钟通道；媒体音量会被调到 0，否则你会听到一前一后两遍。还原的时候一起放回去。</string>
     <string name="room_volume_row">%1$s %2$d%%（%3$d/%4$d，%5$s）</string>
-    <string name="room_volume_row_missed">%1$s 没到你要的 %2$d%%——这条流没跟着动。</string>
+    <string name="room_volume_row_missed">%1$s 没到你要的 %2$d%%——它的音量流没跟着动。</string>
+    <string name="room_volume_row_silent">%1$s 收到了命令，但一直没把自己的音量报回来——它旁边这个数字是旧的。</string>
     <string name="room_volume_media">媒体</string>
     <string name="room_volume_alarm">闹钟</string>
     <string name="room_volume_row_hint">每台下面那条只调它自己，不动别人。再拖一次上面的全体音量，所有手机又会拉齐。上面那一行是各自读回来的真值，谁没跟上就看得出来。</string>

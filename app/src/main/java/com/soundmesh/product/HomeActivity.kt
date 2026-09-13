@@ -36,6 +36,7 @@ import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.HostIdentity
+import com.soundmesh.probe.sync.percentOf
 import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
@@ -125,7 +126,16 @@ class HomeActivity : ComponentActivity() {
      * lets go of it. Dropped wholesale by the restore button, which is the one action that means
      * "nobody has told anybody anything".
      */
-    private val toldToBe = HashMap<String, Int>()
+    private val toldToBe = HashMap<String, Told>()
+
+    /**
+     * What each handset's reading was on the pass before, by id.
+     *
+     * The one thing that tells a person pressing the volume keys on their own phone apart from a
+     * stream that took a value and did nothing. Both are "not where it was told to be" on a single
+     * reading; only the pair of readings says which.
+     */
+    private val lastSeenIndex = HashMap<String, Int>()
 
     /** Whether the room has already been told about the session that is up, so it is told once. */
     private var toldTheRoom = false
@@ -829,27 +839,59 @@ class HomeActivity : ComponentActivity() {
         if (state.role != Role.HOST) return emptyList()
         val self = HostIdentity(filesDir).current()
         val mine = handsetVolume.read(state.capturing)
-        return listOf(
-            VolumeRow(
-                self,
-                handsetName(this),
-                mine.percent,
-                mine.index,
-                mine.max,
-                mine.stream,
-                toldToBe[self]
+        val now = System.currentTimeMillis()
+        return listOf(rowFor(self, handsetName(this), mine.index, mine.max, mine.stream, now)) +
+            RoomCommands.volumes().map { (peerId, said) ->
+                rowFor(
+                    peerId,
+                    RoomCommands.nameOf(peerId) ?: peerId.takeLast(SHORT_NAME_CHARACTERS),
+                    said.index,
+                    said.max,
+                    said.stream,
+                    RoomCommands.volumeSaidAt(peerId)
+                )
+            }
+    }
+
+    /**
+     * One row, and the one place that notices a handset moving without having been asked.
+     *
+     * The noticing has to be here rather than beside the sending, because the whole point is that
+     * nothing was sent: somebody picked that phone up and pressed its keys. This loop is the only
+     * thing watching.
+     */
+    private fun rowFor(
+        peerId: String,
+        name: String,
+        index: Int,
+        max: Int,
+        stream: String,
+        // Null for a handset that has never said. This handset's own row reads its streams here
+        // and now, so for it the answer is always this instant.
+        saidAt: Long?
+    ): VolumeRow {
+        val before = lastSeenIndex.put(peerId, index)
+        // Then the host's instruction is no longer the newest word about that handset, and the
+        // thumb goes back to following it.
+        if (somebodyElseMovedIt(toldToBe[peerId]?.percent, before, index, max)) toldToBe.remove(peerId)
+        val told = toldToBe[peerId]
+        return VolumeRow(
+            peerId,
+            name,
+            percentOf(index, max),
+            index,
+            max,
+            stream,
+            told?.percent,
+            volumeComplaint(
+                told?.percent,
+                index,
+                max,
+                told?.at ?: 0L,
+                saidAt,
+                System.currentTimeMillis()
             )
-        ) + RoomCommands.volumes().map { (peerId, said) ->
-            VolumeRow(
-                peerId,
-                RoomCommands.nameOf(peerId) ?: peerId.takeLast(4),
-                said.percent,
-                said.index,
-                said.max,
-                said.stream,
-                toldToBe[peerId]
-            )
-        }
+        )
     }
 
     /**
@@ -862,8 +904,9 @@ class HomeActivity : ComponentActivity() {
         roomVolumeSet = true
         state = state.copy(roomVolumePercent = percent)
         // Everybody, including the ones singled out a moment ago: the room slider levels the room.
-        for (row in state.roomVolumes) toldToBe[row.peerId] = percent
-        toldToBe[HostIdentity(filesDir).current()] = percent
+        val told = Told(percent, System.currentTimeMillis())
+        for (row in state.roomVolumes) toldToBe[row.peerId] = told
+        toldToBe[HostIdentity(filesDir).current()] = told
         RoomCommands.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
         applyVolume(percent)
     }
@@ -877,7 +920,7 @@ class HomeActivity : ComponentActivity() {
      * the room volume is a room whose slider means nothing in particular.
      */
     private fun setHandsetVolume(peerId: String, percent: Int) {
-        toldToBe[peerId] = percent
+        toldToBe[peerId] = Told(percent, System.currentTimeMillis())
         if (peerId == HostIdentity(filesDir).current()) return applyVolume(percent)
         val reached = RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent))
         events.write("volume for one handset: $peerId to $percent%" + if (reached) "" else ", no line to it")
@@ -948,6 +991,8 @@ class HomeActivity : ComponentActivity() {
         /** Twenty ticks, so charge and heat refresh about every four seconds. */
         private const val HEALTH_EVERY_TICKS = 20
         private const val LOG_TAG = "SoundMeshHome"
+        /** As many of an id as every screen in this app has always printed. */
+        private const val SHORT_NAME_CHARACTERS = 4
         private const val AUDIO_MIME = "audio/*"
     }
 }
@@ -986,3 +1031,12 @@ internal fun measuredDistances(
     }
     return distances
 }
+
+/**
+ * One instruction to one handset: what it was told to be, and when.
+ *
+ * The instant is half of it. Without it there is no way to ask "has it said anything since", which
+ * is the question that separates a handset refusing to move from one that is quietly obeying and
+ * not answering - and those two want opposite things said about them on screen.
+ */
+internal data class Told(val percent: Int, val at: Long)
