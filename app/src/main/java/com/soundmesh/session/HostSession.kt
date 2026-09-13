@@ -9,6 +9,7 @@ import com.soundmesh.core.SessionState
 import com.soundmesh.core.SpatialField
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.sync.ChunkServer
+import com.soundmesh.probe.sync.PeerSilence
 import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.SpatialFieldServer
@@ -38,6 +39,11 @@ import com.soundmesh.probe.sync.SyncRenderer
  * stopped being sent audio, by name. It is shorter than [sinks] by however many sinks are of a
  * build that predates the name, and those are the ones this still cannot tell apart.
  *
+ * [quietPeerIds] is the same room seen from the clock channel, and it is the only one of the
+ * three that moves when a handset leaves the network rather than closing its connections. The two
+ * above are TCP and go on looking established for as long as the kernel keeps retransmitting -
+ * 26.9 seconds measured once, minutes when the handset is simply gone. See PeerSilence.
+ *
  * [replacedSinks] tells the two ways the numbers disagree apart: a connection replaced is a
  * handset that came back, so a run whose sinks and roster disagree with this at zero is a handset
  * that left and did not return.
@@ -50,6 +56,7 @@ internal fun hostReportFields(
     replacedSinks: Int,
     roomPeerIds: List<String>,
     audioPeerIds: List<String>,
+    quietPeerIds: List<String>,
     unnamedSinks: Int,
     lateChunks: Int,
     skippedSongs: Int
@@ -67,6 +74,10 @@ internal fun hostReportFields(
         // against the line above rather than alone: which of them fell silent is the difference
         // of the two lists, and neither list on its own says it.
         ",\"audioPeerIds\":\"${audioPeerIds.joinToString(",")}\"" +
+        // And the room as the clock channel has it, which is the reading that does not wait for a
+        // write to fail. A name in here is a handset that has stopped asking this host for the
+        // time - it is not being read against either list above, it says so on its own.
+        ",\"quietPeerIds\":\"${quietPeerIds.joinToString(",")}\"" +
         // A handset that could not say its name gets no rule and is in no drawing, which from the
         // room looks like one phone quietly staying flat. A build speaking another version would
         // do it to all of them at once, and only this says so.
@@ -245,6 +256,7 @@ class HostSession(
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
+    private val peerSilence = PeerSilence()
     private val chunkServer = ChunkServer(SyncActivity.CHUNK_PORT)
     private val scheduler = PlaybackScheduler(
         SyncRenderer.FRAMES_PER_CHUNK,
@@ -325,6 +337,25 @@ class HostSession(
      * in the fast one is a handset that stopped playing.
      */
     fun audioPeerIds(): List<String> = chunkServer.peerIds()
+
+    /**
+     * Who has stopped asking this host for the time, which is the only one of these three lists
+     * that notices a handset walking out of the network.
+     *
+     * The two above are read off TCP connections and both wait, in the end, for a write to fail.
+     * A write to a handset that is simply gone does not fail: it goes into the send buffer and the
+     * kernel retransmits for minutes. Clock requests are UDP and arrive every two seconds for the
+     * whole of a session, so their absence is the reading. See [PeerSilence].
+     *
+     * Synchronized because it is asked from the screen's loop and from report(), and it is not a
+     * pure question - it remembers when each handset joined, to tell one that has never been heard
+     * from apart from one that has only just arrived.
+     */
+    @Synchronized
+    fun quietPeerIds(): List<String> {
+        val room = spatialServer?.addresses() ?: return emptyList()
+        return peerSilence.quiet(room, clockServer.heardFrom(), System.currentTimeMillis()).toList()
+    }
 
     /**
      * Tells the room which song it is on, when that has changed since the last time it was told.
@@ -477,6 +508,7 @@ class HostSession(
             replacedSinks = chunkServer.replacedSinks(),
             roomPeerIds = roomPeerIds(),
             audioPeerIds = chunkServer.peerIds(),
+            quietPeerIds = quietPeerIds(),
             unnamedSinks = spatialServer?.unnamedSinks() ?: 0,
             lateChunks = lateChunks(),
             skippedSongs = skippedSongs()

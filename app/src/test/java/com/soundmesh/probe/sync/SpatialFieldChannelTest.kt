@@ -268,6 +268,31 @@ class SpatialFieldChannelTest {
     }
 
     /**
+     * And where each of them is, which is what lets the time service's readings be read by name.
+     *
+     * A clock request carries no name - it is answered off its source address, which is all the
+     * time service ever needed. This channel is the one that knows both, so it is the one asked.
+     * Without it the host could only say "something at 192.168.1.20 has gone quiet", and the
+     * whole point of noticing is to say which phone.
+     */
+    @Test
+    fun theHostAlsoLearnsWhereEverySinkIs() {
+        val port = freePort()
+        val server = SpatialFieldServer(port)
+        val sink = SpatialFieldClient("127.0.0.1", port, here) {}
+        server.start()
+        try {
+            sink.start()
+
+            awaitTrue("the sink to be named") { server.peerIds().size == 1 }
+            assertEquals(mapOf(here to "127.0.0.1"), server.addresses())
+        } finally {
+            sink.stop()
+            server.stop()
+        }
+    }
+
+    /**
      * A sink that says nothing usable is let go rather than kept as an anonymous socket the host
      * would have to send rules to without being able to draw it. Counted, because from the room
      * this looks like one handset quietly not joining in - and a build speaking another version

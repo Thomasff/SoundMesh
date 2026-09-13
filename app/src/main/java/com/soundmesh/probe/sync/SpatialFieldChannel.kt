@@ -298,6 +298,18 @@ class SpatialFieldServer(
     fun peerIds(): List<String> = synchronized(clients) { clients.map { it.peerId } }
 
     /**
+     * Where each handset in the room is, as its own connection has it.
+     *
+     * Read by whatever wants to match this roster against a channel that knows addresses and not
+     * names - the time service, which answers clock requests off the packet in its hand. A room
+     * that can only report "something at 192.168.1.20 has gone quiet" has not reported anything.
+     */
+    fun addresses(): Map<String, String> = synchronized(clients) {
+        clients.mapNotNull { client -> client.socket.inetAddress?.hostAddress?.let { client.peerId to it } }
+            .toMap()
+    }
+
+    /**
      * Sinks that connected without a usable name, and were let go.
      *
      * A count rather than a silence, because from the room this looks like one handset simply not

@@ -694,9 +694,10 @@ class HomeActivity : ComponentActivity() {
         // position, which is the same lost drag by a slower route.
         whereTheyWere.putAll(previous.icons.associateBy { it.peerId })
         val icons = SpatialRoom.reconciled(previous.icons, roster, whereTheyWere)
-        // The host is dropped first because it is in its own room and is not sent its own audio.
-        val audio = host.audioPeerIds()
-        val silent = roster.drop(1).filterNot { it in audio }.toSet()
+        // Both channels that can say a handset stopped, read into one set: being sent no audio,
+        // and having stopped asking this host for the time. The second is the only one that moves
+        // when a phone leaves the network rather than closing its connections.
+        val silent = whoStopped(roster, host.audioPeerIds(), host.quietPeerIds()).toSet()
         if (icons.map { it.peerId } == previous.icons.map { it.peerId }) {
             // A handset stopping does not change the roster, so this cannot share the early
             // return above. Not published either: nothing about the rule changed, and a handset

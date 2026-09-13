@@ -3,6 +3,7 @@ package com.soundmesh.probe.sync
 import com.soundmesh.core.ClockExchange
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.util.Collections
 
 /** Wire format of one clock exchange. Request and reply share a layout; a request leaves t2 and t3 zero. */
 object ClockPacket {
@@ -60,6 +61,16 @@ class ClockSyncServer(private val port: Int) {
     @Volatile private var socket: DatagramSocket? = null
     @Volatile private var running = false
 
+    /**
+     * When a clock request last arrived from each address.
+     *
+     * Nothing in the time service needs this - it answers off the packet in its hand. It is here
+     * because this is the only channel a handset leaving the network actually stops using: the
+     * TCP channels go on looking established for minutes while the kernel retransmits into an
+     * empty room. See PeerSilence, which is what reads it.
+     */
+    private val heard = Collections.synchronizedMap(HashMap<String, Long>())
+
     fun start() {
         // Bind on the caller's thread before handing off to the worker: stop() reads `socket`,
         // and a stop() landing before an async bind completed used to find it null and miss the
@@ -78,6 +89,9 @@ class ClockSyncServer(private val port: Int) {
                         continue
                     }
                     if (incoming.length != ClockPacket.BYTES) continue
+                    // After the length check, so that a stray packet on this port cannot make a
+                    // handset that has gone look like one that is still asking.
+                    incoming.address?.hostAddress?.let { heard[it] = System.currentTimeMillis() }
                     val t2 = System.nanoTime()
                     val reply = ClockPacket.encodeReply(buffer.copyOf(ClockPacket.BYTES), t2, System.nanoTime())
                     runCatching { bound.send(DatagramPacket(reply, reply.size, incoming.address, incoming.port)) }
@@ -85,6 +99,9 @@ class ClockSyncServer(private val port: Int) {
             }
         }.start()
     }
+
+    /** A copy, because whoever reads it is on another thread and iterates what it hands back. */
+    fun heardFrom(): Map<String, Long> = synchronized(heard) { HashMap(heard) }
 
     fun stop() {
         running = false

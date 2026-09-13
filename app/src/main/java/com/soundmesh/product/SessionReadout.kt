@@ -5,7 +5,24 @@ import com.soundmesh.core.PeerBadge
 import com.soundmesh.probe.R
 
 /** One row of the state panel: what it is called, and what it currently reads. */
-data class Counter(@StringRes val label: Int, val value: String)
+data class Counter(@StringRes val label: Int, val value: String)
+/**
+ * Who in [room] has stopped, over any of the channels that can say so.
+ *
+ * Here rather than in either caller because there are two: this file builds the row a person reads
+ * off the state panel, and the home screen hollows out the icon of the same handset on the
+ * drawing. Two screens read side by side that disagreed about which phone dropped would be worse
+ * than either of them saying nothing.
+ *
+ * The host is dropped first because it is in its own room and is not sent its own audio - without
+ * that, every healthy session reports the host as the handset that went missing.
+ *
+ * [audio] is who is being sent audio and [quiet] is who has stopped asking for the time. They are
+ * different questions and they are not read against each other: a handset in either is one name on
+ * one screen, because a listener wants to know which phone, not which socket noticed first.
+ */
+internal fun whoStopped(room: List<String>, audio: List<String>, quiet: List<String>): List<String> =
+    room.drop(1).filter { it !in audio || it in quiet }
 
 /**
  * The renderer's own JSON, turned into rows a person can read off a table.
@@ -68,7 +85,15 @@ object SessionReadout {
                     ?.split(",")
                     ?.filter { it.isNotEmpty() }
                     .orEmpty()
-                val silent = room.drop(1).filterNot { it in audio }
+                // And the clock channel's answer, which is a different question with the same
+                // answer: the two lists above are TCP and a handset that left the network is in
+                // both of them for as long as the kernel keeps retransmitting to it. Read as one
+                // row because a listener wants one name, not which socket noticed first.
+                val quiet = text(report, "quietPeerIds")
+                    ?.split(",")
+                    ?.filter { it.isNotEmpty() }
+                    .orEmpty()
+                val silent = whoStopped(room, audio, quiet)
                 rows += Counter(
                     R.string.counter_silent,
                     if (silent.isEmpty()) "—" else silent.joinToString(" ") { "${PeerBadge.numberOf(it)}" }

@@ -31,6 +31,7 @@ class HostReportTest {
         sinks: Int,
         room: List<String>,
         audio: List<String> = room.drop(1),
+        quiet: List<String> = emptyList(),
         lateChunks: Int = 0,
         skippedSongs: Int = 0
     ): String =
@@ -42,6 +43,7 @@ class HostReportTest {
             replacedSinks = 0,
             roomPeerIds = room,
             audioPeerIds = audio,
+            quietPeerIds = quiet,
             unnamedSinks = 0,
             lateChunks = lateChunks,
             skippedSongs = skippedSongs
@@ -227,6 +229,33 @@ class HostReportTest {
     @Test
     fun namesTheHandsetThatIsInTheRoomAndNotBeingSentAudio() {
         val text = report(sinks = 1, room = listOf(host, near, far), audio = listOf(near))
+
+        assertEquals("${PeerBadge.numberOf(far)}", valueOf(text, R.string.counter_silent))
+    }
+
+    /**
+     * And the handset whose sockets all still look fine, which is the one the row was built for
+     * and the one it could never see.
+     *
+     * Measured on 2026-09-11: a sink's WiFi switched off mid-session left every connection to it
+     * ESTABLISHED with half a megabyte queued, so it was still in the roster, still being sent
+     * audio, and the row read "—" for as long as anybody watched. What moves is the clock
+     * channel, which is UDP and stops the moment the handset does.
+     */
+    @Test
+    fun namesTheHandsetThatWentQuietWhileItsSocketsStillLookFine() {
+        val text = report(sinks = 2, room = listOf(host, near, far), quiet = listOf(far))
+
+        assertTrue(text.contains("\"quietPeerIds\":\"$far\""))
+        assertEquals("${PeerBadge.numberOf(far)}", valueOf(text, R.string.counter_silent))
+    }
+
+    /** One handset that both stopped being sent audio and went quiet is one name, not two. */
+    @Test
+    fun namesAHandsetOnceHoweverManyChannelsNoticedItGo() {
+        val text = report(
+            sinks = 1, room = listOf(host, near, far), audio = listOf(near), quiet = listOf(far)
+        )
 
         assertEquals("${PeerBadge.numberOf(far)}", valueOf(text, R.string.counter_silent))
     }

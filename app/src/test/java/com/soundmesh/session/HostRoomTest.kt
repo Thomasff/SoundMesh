@@ -83,5 +83,9 @@ class HostRoomTest {
         // object, and the mistake worth catching is that they are both Lists of the same thing:
         // handing the room's roster to both would read as the host being sent its own audio.
         assertEquals("\"audioPeerIds\":\"\"", Regex("\"audioPeerIds\":\"[^\"]*\"").find(report!!)?.value)
+        // The third list, and this one does defend something even with no socket open: this
+        // session is in its own room, so a quiet list wired to the roster by mistake would read
+        // this handset's own name here - a host that has stopped asking itself for the time.
+        assertEquals("\"quietPeerIds\":\"\"", Regex("\"quietPeerIds\":\"[^\"]*\"").find(report)?.value)
     }
 }
