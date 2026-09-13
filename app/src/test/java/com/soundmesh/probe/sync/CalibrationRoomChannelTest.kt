@@ -172,6 +172,45 @@ class CalibrationRoomChannelTest {
     }
 
     /**
+     * A handset that asks twice costs itself one ask, not the room its whole round.
+     *
+     * 2026-09-13, four handsets: one had been stuck behind a microphone permission dialog and
+     * resumed its old round the instant the dialog was answered, while the host was telling the
+     * room to measure again. It asked twice inside a second. The plan refused the duplicate name -
+     * correctly, a room names each handset once - but refusing it threw, so nobody got a plan at
+     * all: every sink read an empty socket and reported "not a calibration plan:", and all four
+     * phones had to be restarted before anything would measure again. The refusal was right and
+     * its blast radius was not.
+     *
+     * The newer ask wins, which is the rule RoomCommandServer already holds for standing sockets
+     * and for the same reason: nothing is written to a waiting ask, so nothing notices it go stale.
+     */
+    @Test
+    fun aHandsetThatAsksTwiceCostsTheRoomNothing() {
+        val port = freePort()
+        val server = CalibrationPlanServer(port)
+        server.start()
+        try {
+            val gathered = Thread { server.awaitRoom(8_000, 600, 20_000, planFor = ::planNaming) }
+            gathered.start()
+
+            val plans = askAll(port, listOf(one, two, one))
+            gathered.join(20_000)
+
+            val served = plans.filterNotNull()
+            assertEquals("the room was refused over one stale ask", 2, served.size)
+            assertEquals(1, server.supersededAsks)
+            val slots = served.first().slotIds
+            assertEquals("a handset was named twice in one room", slots.size, slots.distinct().size)
+            assertEquals(listOf(one, two).toSet(), slots.toSet() - "ffffffffffffffff")
+            // And both survivors hold the same schedule, which is the whole point of minting once.
+            assertEquals(1, served.map { it.slotIds }.distinct().size)
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
      * The handset that asked first waits out the whole gathering, so a room held open longer than a
      * sink is willing to wait answers into a socket nobody is listening on any more - and the sink
      * reports a host that never replied while the host reports a room it served.

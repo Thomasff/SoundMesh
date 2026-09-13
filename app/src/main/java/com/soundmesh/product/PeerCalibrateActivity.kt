@@ -1425,6 +1425,13 @@ class PeerCalibrateActivity : ComponentActivity() {
                 // are written in and the one CalibrationSchedule's role overload encodes.
                 val slots = asks.map { it.sinkId } + hostId
                 events.write("room-gathered ${slots.size} handsets: ${slots.joinToString(" ")}")
+                // Said out loud, because a handset asking twice is the visible end of something
+                // that went wrong out of sight - on 09-13 it was one stuck behind a permission
+                // dialog resuming a round that had already ended.
+                if (planServer.supersededAsks > 0) events.write(
+                    "room-superseded ${planServer.supersededAsks}: a handset asked twice and " +
+                        "the older ask was dropped"
+                )
                 require(slots.size == slots.distinct().size) {
                     "one handset asked twice, and a room names each of them once: $slots"
                 }
@@ -1884,6 +1891,20 @@ class PeerCalibrateActivity : ComponentActivity() {
                 val kept = room.approximateOffsetMicros?.takeIf { stored == null }?.also {
                     runCatching { StoredApproximateCalibration(filesDir, paired.hostId).write(it) }
                 }
+                // Written down as well as shown, and that is not belt and braces: the screen says
+                // it once to whoever is looking, and the next proper calibration deletes the file
+                // - so without this line there is afterwards no evidence anywhere that the offer
+                // was ever taken. Both outcomes, because "ignored it" is the other half of the
+                // answer and an offer that silently went nowhere reads exactly like no offer.
+                events.write(
+                    when {
+                        kept != null -> "room-offer kept " +
+                            String.format(Locale.US, "%.3f", kept / 1000.0) + "ms"
+                        room.approximateOffsetMicros != null ->
+                            "room-offer ignored: this handset already carries a measured constant"
+                        else -> "room-offer none: the host offered nothing for this pair"
+                    }
+                )
                 return show(
                     if (kept == null) getString(
                         R.string.pair_calibrate_room_sink_done, room.handsets, room.ownPairsReadable

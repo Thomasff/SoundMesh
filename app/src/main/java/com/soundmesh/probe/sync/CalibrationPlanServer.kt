@@ -103,6 +103,14 @@ class CalibrationPlanServer(private val port: Int) {
      * An ask that cannot be read costs that handset and not the room: it is counted in
      * [refusedSinks] and its socket closed. The alternative makes one out-of-date phone
      * indistinguishable from a broken host.
+     *
+     * A handset that asks twice costs the room nothing either: the newer ask replaces the older
+     * one, counted in [supersededAsks]. That is not hypothetical tidiness. On 2026-09-13 a
+     * handset that had been stuck behind a microphone permission dialog resumed its old round
+     * the moment the dialog was answered, while the host was telling the room to measure again -
+     * so it asked twice within a second, [planFor] refused the whole room over the duplicate
+     * name, every sink read an empty socket, and all four handsets had to be restarted. The
+     * refusal was right and its blast radius was not: what is out of date is one ask, not a room.
      */
     fun awaitRoom(
         firstWaitMillis: Int,
@@ -123,6 +131,7 @@ class CalibrationPlanServer(private val port: Int) {
             return null
         }
         refusedSinks = 0
+        supersededAsks = 0
         val waiting = ArrayList<Pair<Socket, CalibrationRequest>>()
         var closesAt = Long.MAX_VALUE
         return runCatching {
@@ -149,7 +158,19 @@ class CalibrationPlanServer(private val port: Int) {
                     runCatching { socket.close() }
                     continue
                 }
-                if (waiting.isEmpty()) closesAt = System.nanoTime() + roomWindowMillis * 1_000_000L
+                // The newer ask wins, on the same terms and for the same reason RoomCommandServer
+                // keeps one socket per name: nothing is ever written to a waiting ask, and a
+                // socket nobody writes to is a socket nobody notices go stale.
+                val stale = waiting.filter { it.second.sinkId == request.sinkId }
+                if (stale.isNotEmpty()) {
+                    waiting.removeAll(stale)
+                    supersededAsks += stale.size
+                    for ((old, _) in stale) runCatching { old.close() }
+                }
+                // Keyed on whether anybody has ever asked rather than on the list being empty:
+                // the list can empty out again above, and a window that restarted there would
+                // hold the room open past what a sink will wait for.
+                if (closesAt == Long.MAX_VALUE) closesAt = System.nanoTime() + roomWindowMillis * 1_000_000L
                 waiting += socket to request
                 runCatching { onJoined(waiting.size) }
                 if (System.nanoTime() >= closesAt) break
@@ -178,6 +199,11 @@ class CalibrationPlanServer(private val port: Int) {
     /** Handsets whose ask could not be read, and were let go while the room went on. */
     @Volatile
     var refusedSinks: Int = 0
+        private set
+
+    /** Asks dropped because the same handset asked again, which is the newer one arriving. */
+    @Volatile
+    var supersededAsks: Int = 0
         private set
 
     fun stop() {
