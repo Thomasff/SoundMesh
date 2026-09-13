@@ -32,9 +32,10 @@ class RoomCommandChannelTest {
         selfId: String = one,
         carrying: Long? = null,
         approximately: Long? = null,
+        called: String? = null,
         onCommand: (RoomCommand) -> Unit
     ): RoomCommandClient =
-        RoomCommandClient("127.0.0.1", port, selfId, carrying, approximately, onCommand)
+        RoomCommandClient("127.0.0.1", port, selfId, carrying, approximately, called, onCommand)
             .also { it.start() }
 
     /** The announce is read on a thread of its own, so what it said arrives after it connected. */
@@ -426,6 +427,83 @@ class RoomCommandChannelTest {
 
             assertEquals(emptyMap<String, RoomExcuse>(), server.excuses())
         } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset says what to call it, and the host still knows after it has gone.
+     *
+     * Kept past the socket on purpose, because every screen that names a handset names one that
+     * has just left this channel: obeying means leaving the home screen, so a handset is never
+     * standing by at the moment its result or its excuse arrives.
+     */
+    @Test
+    fun `a handset says what to call it, and it is still known after it leaves`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, called = "Thomas de Ping Ban", onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue("the host never heard what to call it", until { server.nameOf(one) != null })
+
+            client.close()
+
+            assertTrue(until { server.standingBy() == 0 })
+            assertEquals("the name went with the socket", "Thomas de Ping Ban", server.nameOf(one))
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * Two handsets called the same thing are told apart, and only then.
+     *
+     * A name is chosen by a person, so a room of two identical phones is the expected case rather
+     * than a strange one. The fallback is the half of the identity that cannot collide - which is
+     * unreadable, which is why it appears only when the readable half has run out.
+     */
+    @Test
+    fun `two handsets called the same thing are told apart by their ids`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val first = standBy(port, one, called = "phone", onCommand = onCommand)
+        val second = standBy(port, two, called = "phone", onCommand = onCommand)
+        try {
+            assertTrue(connected(first))
+            assertTrue(connected(second))
+            assertTrue(until { server.nameOf(one) != null && server.nameOf(two) != null })
+
+            assertEquals("phone (${one.takeLast(4)})", server.nameOf(one))
+            assertEquals("phone (${two.takeLast(4)})", server.nameOf(two))
+        } finally {
+            first.close()
+            second.close()
+            server.stop()
+        }
+    }
+
+    /** A handset from before this says nothing, and nothing is not a name. */
+    @Test
+    fun `a handset that never says what to call it has no name here`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, called = null, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(until { server.standingBy() == 1 })
+            Thread.sleep(300)
+
+            assertNull(server.nameOf(one))
+        } finally {
+            client.close()
             server.stop()
         }
     }

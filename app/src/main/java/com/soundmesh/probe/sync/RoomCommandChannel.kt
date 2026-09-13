@@ -22,6 +22,9 @@ const val COMMAND_PORT = 45128
  */
 private enum class Carried { UNSAID, NOTHING, SOMETHING, APPROXIMATE }
 
+/** What a standing handset says after its id and its correction: what to call it on a screen. */
+private const val CALLED = "called "
+
 /** The one thing a standing handset ever says after its name. Anything else is a later build's. */
 private const val CARRYING = "carrying "
 private const val NOTHING_CARRIED = "none"
@@ -67,6 +70,15 @@ class RoomCommandServer(private val port: Int) {
     }
 
     private val clients = Collections.synchronizedList(ArrayList<Standing>())
+
+    /**
+     * What to call each handset that has ever stood by here, kept past its socket.
+     *
+     * Kept rather than cleared with the connection, because every screen that names a handset
+     * names one that has just left this channel: obeying means leaving the home screen, so a
+     * handset is never standing by at the moment its result or its excuse arrives.
+     */
+    private val names = Collections.synchronizedMap(LinkedHashMap<String, String>())
 
     /** The last reason each handset gave for not measuring, newest per handset. */
     private val excuses = Collections.synchronizedMap(LinkedHashMap<String, RoomExcuse>())
@@ -173,6 +185,13 @@ class RoomCommandServer(private val port: Int) {
                 while (running) {
                     val said = SpatialFrame.read(stream) ?: break
                     standing.carrying = carriedFrom(said) ?: standing.carrying
+                    // Remembered past this socket on purpose. A handset that is measuring is not
+                    // standing by - it left this channel to go and do what it was told - and a
+                    // screen naming it then is exactly the screen that needs the name.
+                    if (said.startsWith(CALLED)) {
+                        StoredHandsetName.cleaned(said.removePrefix(CALLED))
+                            ?.let { names[standing.peerId] = it }
+                    }
                 }
             }
         }
@@ -244,6 +263,19 @@ class RoomCommandServer(private val port: Int) {
     /** How many said neither way, which today means a build older than this message. */
     fun unsaid(): Int = synchronized(clients) { clients.count { it.carrying == Carried.UNSAID } }
 
+    /**
+     * What to call [peerId] on a screen, or null if this handset has never said.
+     *
+     * Disambiguated here rather than at each screen, and only when it has to be: a name is
+     * chosen by a person and two handsets in one room may well share one, so the fallback is the
+     * half of the identity that cannot collide. Ugly exactly when it needs to be and not before.
+     */
+    fun nameOf(peerId: String): String? = synchronized(names) {
+        val name = names[peerId] ?: return null
+        val shared = names.count { it.value == name } > 1
+        if (shared) "$name (${peerId.takeLast(SHORT_NAME_CHARACTERS)})" else name
+    }
+
     /** What each handset last said about why it is not measuring. */
     fun excuses(): Map<String, RoomExcuse> = synchronized(excuses) { LinkedHashMap(excuses) }
 
@@ -268,6 +300,9 @@ class RoomCommandServer(private val port: Int) {
     private companion object {
         /** Long enough for a slow link, short enough that a silent socket is not a parked thread. */
         const val ANNOUNCE_TIMEOUT_MILLIS = 5_000
+
+        /** As many of the id as every screen and every log line has always printed. */
+        const val SHORT_NAME_CHARACTERS = 4
     }
 }
 
@@ -295,6 +330,11 @@ class RoomCommandClient(
      * this pair. Only read when [carrying] is null, which is the only state it can exist in.
      */
     private val approximately: Long? = null,
+    /**
+     * What to call this handset on somebody else's screen. Null keeps this build silent about it,
+     * which is what a host from before this reads anyway.
+     */
+    private val called: String? = null,
     private val onCommand: (RoomCommand) -> Unit
 ) : AutoCloseable {
     @Volatile private var running = false
@@ -322,6 +362,9 @@ class RoomCommandClient(
                         // anything else in it, while a frame it does not expect is read and
                         // discarded by the loop that is only there to notice the socket close.
                         write(SpatialFrame.encode(CARRYING + what()))
+                        // A third frame on the same terms as the second: a reader that does not
+                        // know it discards it, and the socket goes on being what it is for.
+                        called?.let { write(SpatialFrame.encode(CALLED + it)) }
                         flush()
                     }
                     connected = true
@@ -400,6 +443,9 @@ object RoomCommands {
 
     @Synchronized
     fun excuses(): Map<String, RoomExcuse> = server?.excuses() ?: emptyMap()
+
+    @Synchronized
+    fun nameOf(peerId: String): String? = server?.nameOf(peerId)
 
     @Synchronized
     fun forgetExcuses() {

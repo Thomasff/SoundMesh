@@ -1419,12 +1419,21 @@ class PeerCalibrateActivity : ComponentActivity() {
             // Cleared before the ask, because an excuse is about one press of one button: a
             // handset that could not measure an hour ago is not a fact about this round.
             RoomCommands.forgetExcuses()
+            // And the lines on screen with them, for the same reason: they are one per handset
+            // and they are about the round that just ran.
+            handler.post { state = state.copy(outcomes = emptyList()) }
             // Heard live rather than collected afterwards, and that is the whole value of it: a
             // handset waiting on its own permission dialog is fixable in the ten seconds before
             // the window closes and unfixable a minute later.
+            //
+            // Into the per-handset lines rather than the one message, which is what 09-13 got
+            // wrong: the excuse arrived 152 ms after the room opened and the count of who had
+            // joined overwrote it 1.9 seconds later, so it was on screen for under two seconds
+            // and the person it was for never saw it. There is one message and every later write
+            // wins; these lines are one per handset and stay.
             RoomCommands.listenForExcuses { peerId, excuse ->
                 events.write("room-excuse $peerId ${excuse.name}")
-                show(getString(R.string.pair_calibrate_room_excuse, shortName(peerId), reasonFor(excuse)))
+                record(peerId, reasonFor(excuse))
             }
             val told = RoomCommands.send(
                 if (overhead()) RoomCommand.MEASURE_OVERHEAD else RoomCommand.MEASURE_ROOM
@@ -2091,7 +2100,15 @@ class PeerCalibrateActivity : ComponentActivity() {
         handler.post {
             state = state.copy(
                 outcomes = state.outcomes.filterNot { it.sinkId == sinkId } +
-                    SinkOutcome(sinkId = sinkId, name = shortName(sinkId), text = outcome)
+                    SinkOutcome(
+                        sinkId = sinkId,
+                        // What that handset said to call it, when it has ever stood by here.
+                        // Four hexadecimal characters is what this was, and it is why "which
+                        // handset dropped out" was built once and abandoned: the answer it could
+                        // give was not one anybody could act on.
+                        name = RoomCommands.nameOf(sinkId) ?: shortName(sinkId),
+                        text = outcome
+                    )
             )
         }
     }

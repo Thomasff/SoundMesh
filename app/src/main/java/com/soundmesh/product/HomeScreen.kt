@@ -120,6 +120,15 @@ data class HomeState(
      * remember which phones were measured properly and which were caught up in a hurry.
      */
     val approximate: Int = 0,
+    /**
+     * What this handset is called on everybody else's screen.
+     *
+     * Shown read-only and shown at all for one reason: the host now names handsets out loud -
+     * "the tablet is not joining, it has no microphone permission" - and a person can only act on
+     * that if they know which phone answers to which name. Where it comes from is the phone's own
+     * system name, so changing it is a thing they already know how to do.
+     */
+    val calledHere: String = "",
     val onStandby: Boolean = false,
     /**
      * How many seconds the capture has been handing over exactly zero, or null when it is not.
@@ -599,6 +608,9 @@ private fun StatePanel(state: HomeState) {
             },
             style = MaterialTheme.typography.titleMedium
         )
+        if (state.calledHere.isNotEmpty()) {
+            Reading(stringResource(R.string.state_called_here), state.calledHere)
+        }
         for (counter in state.counters) Reading(stringResource(counter.label), counter.value)
     }
 }

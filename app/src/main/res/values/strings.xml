@@ -80,7 +80,6 @@
     <string name="pair_calibrate_room_joined">已经连过来 %1$d 台（通知了 %2$d 台）。两个数一样就等着，它们在忙。</string>
     <string name="pair_calibrate_room_told_nobody">**一台都没通知到，所以没有手机会自己开始。** 其他手机要开着这个应用、停在首页，才收得到这个指令——退到桌面、切到别的应用、或者还停在上一轮的对时结果页，都收不到。先去把它们都退回首页，首页上会写着待命几台，然后再按一次。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
-    <string name="pair_calibrate_room_excuse">%1$s 那台不参加：%2$s</string>
     <string name="excuse_no_microphone">还没给它录音权限。那台手机屏幕上正弹着框，去点一下「允许」，然后回来重按一次。</string>
     <string name="excuse_slow_link">它到这台的网络往返太慢，测出来的数不能用。</string>
     <string name="excuse_clock_not_converged">它的对时没收敛，多半还是网络。</string>
@@ -137,6 +136,7 @@
     <string name="play_pause">暂停</string>
     <string name="play_resume">继续</string>
 
+    <string name="state_called_here">别人屏幕上管这台叫</string>
     <string name="state_title">状态</string>
     <string name="state_idle">没在播</string>
     <string name="state_syncing">正在对时，马上出声</string>
