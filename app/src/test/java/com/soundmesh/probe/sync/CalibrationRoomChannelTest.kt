@@ -7,6 +7,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import java.net.ServerSocket
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Test
 
@@ -205,6 +207,52 @@ class CalibrationRoomChannelTest {
             assertEquals(listOf(one, two).toSet(), slots.toSet() - "ffffffffffffffff")
             // And both survivors hold the same schedule, which is the whole point of minting once.
             assertEquals(1, served.map { it.slotIds }.distinct().size)
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * A room called off while it is gathering says so to everybody already standing in it.
+     *
+     * Closing their sockets instead produces the 09-13 failure word for word - every sink
+     * reporting "not a calibration plan:" - and somebody who has just pressed a button on the
+     * host should not be handed the message a broken host gives. What the handsets need to hear
+     * is that nobody is going to chirp, which is a different fact from the host having died.
+     */
+    @Test
+    fun tellsTheRoomWhenItIsCalledOffRatherThanDroppingIt() {
+        val port = freePort()
+        val server = CalibrationPlanServer(port)
+        server.start()
+        val joined = CountDownLatch(2)
+        try {
+            val gathered = Thread {
+                server.awaitRoom(8_000, 4_000, 20_000, onJoined = { joined.countDown() }, planFor = ::planNaming)
+            }
+            gathered.start()
+
+            val refusals = Collections.synchronizedList(mutableListOf<Throwable>())
+            val asking = listOf(one, two).map { name ->
+                Thread {
+                    runCatching { CalibrationPlanClient("127.0.0.1", port).request("C94", name) }
+                        .onFailure { refusals += it }
+                }
+            }
+            asking.forEach { it.start() }
+            assertTrue("both handsets joined the room", joined.await(10, TimeUnit.SECONDS))
+
+            server.callOffRoom()
+
+            asking.forEach { it.join(20_000) }
+            gathered.join(20_000)
+
+            assertEquals(2, refusals.size)
+            assertTrue(
+                "a handset was dropped rather than told: " + refusals.map { it.message },
+                refusals.all { it is CalibrationPlanClient.RoomCalledOff }
+            )
+            assertEquals(CalibrationPlanServer.CALLED_OFF, server.failureCode)
         } finally {
             server.stop()
         }

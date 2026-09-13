@@ -2,6 +2,7 @@ package com.soundmesh.product
 
 import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.CalibrationPlan
+import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.CalibrationSchedule
 import com.soundmesh.core.ChirpArrival
 import com.soundmesh.core.ChirpGenerator
@@ -517,6 +518,26 @@ class PeerCalibrateRoomTest {
         )
 
         assertEquals(5_000L, offeredTo(field, three, one))
+    }
+
+    /**
+     * What the stop button is allowed to claim, which is the whole of what was wrong with it.
+     *
+     * It was offered whenever a host was running and it said one thing: the handset being
+     * measured will finish, and no more will be waited for. That is a queue's sentence and the
+     * pair host is a queue. A room is one round, so there was no next handset to stop waiting
+     * for - and whether pressing it did anything at all turned on an invisible line, because a
+     * room can be called off while it gathers and cannot be touched once the chirps start.
+     * Reported from the field on 2026-09-13 as a button that was not greyed out and did nothing.
+     */
+    @Test
+    fun offersToStopOnlyWhatCanBeStopped() {
+        assertEquals(StopOffer.QUEUE, stopOfferFor(CalibrationRole.HOST, roomRound = false))
+        assertEquals(StopOffer.ROOM_GATHERING, stopOfferFor(CalibrationRole.HOST, roomRound = true))
+        // A sink's run is one round with nothing after it, on either arm.
+        assertEquals(StopOffer.NONE, stopOfferFor(CalibrationRole.SINK, roomRound = true))
+        assertEquals(StopOffer.NONE, stopOfferFor(CalibrationRole.SINK, roomRound = false))
+        assertEquals(StopOffer.NONE, stopOfferFor(null, roomRound = true))
     }
 
     private fun facing(edgeMs: Double?) = com.soundmesh.core.FacingPair(

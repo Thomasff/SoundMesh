@@ -33,8 +33,16 @@ class CalibrationPlanClient(private val hostAddress: String, private val port: I
             }
             // The half-close is what tells the host the ask is complete; without it both ends wait.
             socket.shutdownOutput()
-            CalibrationPlanCodec.decode(String(socket.getInputStream().readBytes(), Charsets.UTF_8))
+            val answered = String(socket.getInputStream().readBytes(), Charsets.UTF_8)
+            // Told apart before it is parsed, because everything a plan cannot be parsed from
+            // reads the same afterwards: a host that died, a build that speaks another version
+            // and a person who changed their mind all arrive as "not a calibration plan:".
+            if (answered.trim() == CalibrationPlanServer.CALLED_OFF) throw RoomCalledOff()
+            CalibrationPlanCodec.decode(answered)
         }
+
+    /** The host called the round off while this handset was waiting to be given a schedule. */
+    class RoomCalledOff : RuntimeException("the host called this round off")
 
     internal companion object {
         /**

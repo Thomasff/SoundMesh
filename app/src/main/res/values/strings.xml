@@ -89,6 +89,11 @@
     <string name="pair_calibrate_stop">停止</string>
     <string name="pair_calibrate_stop_hint">正在测的这一台会测完，之后不再等新的手机。</string>
     <string name="pair_calibrate_stopping">这一台测完就结束，不再等下一台了。</string>
+    <string name="pair_calibrate_room_call_off">取消这一轮</string>
+    <string name="pair_calibrate_room_call_off_hint">还没开始发声，现在取消，几台手机都会各自退回首页。</string>
+    <string name="pair_calibrate_room_under_way_hint">已经开始发声了，中途停不下来：其他手机这时候听不到主机说话。这一轮大约一分钟。</string>
+    <string name="pair_calibrate_room_called_off_here">这一轮取消了，已经进来的手机都收到了。</string>
+    <string name="pair_calibrate_room_called_off">主机取消了这一轮。</string>
     <string name="pair_calibrate_served">这一轮一共测了 %1$d 台。</string>
     <string name="pair_calibrate_host_done">这台是主机，测量结果记在另一台上。这一轮量到：偏差 %1$.3f 毫秒，两台间距约 %2$.2f 米。</string>
     <string name="pair_calibrate_distance_done">量好了，两台间距约 %1$.2f 米。可以把手机放下了。</string>

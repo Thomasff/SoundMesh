@@ -885,6 +885,19 @@ private fun estimateJson(estimate: ClockEstimate?): String =
             "\"driftPpm\":${it.driftPpm},\"sampleCount\":${it.sampleCount}}"
     } ?: "null"
 
+/**
+ * What the stop button can mean for the arm about to run. See [StopOffer].
+ *
+ * A room begins at [StopOffer.ROOM_GATHERING] and moves to [StopOffer.ROOM_UNDER_WAY] the moment
+ * the schedule is handed out - the instant after which nothing this host does reaches the other
+ * handsets, because obeying meant leaving the standing channel.
+ */
+internal fun stopOfferFor(role: CalibrationRole?, roomRound: Boolean): StopOffer = when {
+    role != CalibrationRole.HOST -> StopOffer.NONE
+    roomRound -> StopOffer.ROOM_GATHERING
+    else -> StopOffer.QUEUE
+}
+
 /** What one round of serving one sink came to, as far as the loop running them is concerned. */
 internal enum class RoundResult {
     /** A handset was measured. Whatever verdict it got, the round did its job. */
@@ -1257,7 +1270,11 @@ class PeerCalibrateActivity : ComponentActivity() {
         // Cleared here rather than when the session ends, so a stop pressed as the last round
         // finished cannot end the next session before it has served anybody.
         stopping = false
-        state = state.copy(running = true, message = getString(R.string.pair_calibrate_waiting))
+        state = state.copy(
+            running = true,
+            stopOffer = stopOfferFor(role(), roomAsked()),
+            message = getString(R.string.pair_calibrate_waiting)
+        )
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
         Thread({
@@ -1301,7 +1318,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             }
             running = false
             handler.post {
-                state = state.copy(running = false)
+                state = state.copy(running = false, stopOffer = StopOffer.NONE)
                 putItselfAway()
             }
         }, "SoundMeshPeerCalibrate").start()
@@ -1498,9 +1515,18 @@ class PeerCalibrateActivity : ComponentActivity() {
                     slotIds = slots
                 )
             } ?: return show(
-                if (stopping) getString(R.string.pair_calibrate_stopping)
-                else getString(R.string.pair_calibrate_failed, planServer.failureCode ?: "ROOM_LOST")
+                if (planServer.failureCode == CalibrationPlanServer.CALLED_OFF) {
+                    events.write("room-called-off: pressed while the room was still gathering")
+                    getString(R.string.pair_calibrate_room_called_off_here)
+                } else {
+                    getString(R.string.pair_calibrate_failed, planServer.failureCode ?: "ROOM_LOST")
+                }
             )
+            // The last instant anything here could have called the round off. Every handset now
+            // holds the schedule and is about to chirp on it, and none of them is listening to
+            // this host any more - obeying meant leaving the standing channel. A button that
+            // stayed lit from here would be a button that lies, which is what was reported.
+            handler.post { state = state.copy(stopOffer = StopOffer.ROOM_UNDER_WAY) }
             show(getString(R.string.pair_calibrate_running))
             val ownSlot = plan.slotIds.indexOf(hostId)
             val run = PeerCalibrationRunner(
@@ -1877,7 +1903,14 @@ class PeerCalibrateActivity : ComponentActivity() {
                     LinkSurvey.MAX_MEDIAN_ROUND_TRIP_NANOS / 1_000_000.0
                 ))
             }
-            val plan = CalibrationPlanClient(paired.address, PLAN_PORT).request(caseId, sinkId)
+            val plan = try {
+                CalibrationPlanClient(paired.address, PLAN_PORT).request(caseId, sinkId)
+            } catch (off: CalibrationPlanClient.RoomCalledOff) {
+                // Somebody pressed a button on the host. Said in those words rather than as the
+                // failure every unreadable answer shares, because there is nothing here to fix.
+                events.write("room-called-off by the host while this handset was waiting")
+                return show(getString(R.string.pair_calibrate_room_called_off))
+            }
             // The host id is the file name the correction is stored under. A plan from somebody
             // this handset never scanned would file the answer against the wrong peer, and every
             // later session would apply it with nothing in the result to notice it by.
@@ -2040,9 +2073,20 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun stopServing() {
         if (!running) return
         stopping = true
-        show(getString(R.string.pair_calibrate_stopping))
-        // What makes the button take effect now instead of at the end of the wait.
-        runCatching { hostPlanServer?.stop() }
+        // On the record, because until now this button left no trace at all: a round that ended
+        // on its own and a round somebody ended could not be told apart afterwards, and the first
+        // report of it doing nothing had nothing in the timeline to check it against.
+        events.write("stop-pressed while " + state.stopOffer)
+        if (state.stopOffer == StopOffer.ROOM_GATHERING) {
+            show(getString(R.string.pair_calibrate_room_called_off_here))
+            // Says so to the handsets already waiting, instead of closing their sockets under
+            // them - which is the 09-13 message word for word. See [CalibrationPlanServer].
+            runCatching { hostPlanServer?.callOffRoom() }
+        } else {
+            show(getString(R.string.pair_calibrate_stopping))
+            // What makes the button take effect now instead of at the end of the wait.
+            runCatching { hostPlanServer?.stop() }
+        }
     }
 
     private fun forget() {

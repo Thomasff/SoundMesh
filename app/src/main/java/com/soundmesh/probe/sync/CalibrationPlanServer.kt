@@ -20,6 +20,9 @@ import java.net.SocketTimeoutException
 class CalibrationPlanServer(private val port: Int) {
     @Volatile private var server: ServerSocket? = null
 
+    /** Set by [callOffRoom], read by the gathering it interrupts. */
+    @Volatile private var calledOff = false
+
     /** Why [awaitRequest] returned null, or null if it has not. */
     @Volatile
     var failureCode: String? = null
@@ -132,6 +135,7 @@ class CalibrationPlanServer(private val port: Int) {
         }
         refusedSinks = 0
         supersededAsks = 0
+        calledOff = false
         val waiting = ArrayList<Pair<Socket, CalibrationRequest>>()
         var closesAt = Long.MAX_VALUE
         return runCatching {
@@ -185,12 +189,22 @@ class CalibrationPlanServer(private val port: Int) {
                 }
             }
             plan
-        }.also {
+        }.also { outcome ->
+            // Only on the way out without a plan: a room that was answered has already had the
+            // schedule written to these same sockets, and a second message behind it would reach
+            // the sink glued to the end of the first.
+            if (calledOff && outcome.isFailure) {
+                val goodbye = CALLED_OFF.toByteArray(Charsets.UTF_8)
+                for ((socket, _) in waiting) runCatching {
+                    socket.getOutputStream().apply { write(goodbye); flush() }
+                }
+            }
             for ((socket, _) in waiting) runCatching { socket.close() }
         }.onFailure {
-            failureCode = when (it) {
-                is SocketTimeoutException -> TIMEOUT
-                is IllegalArgumentException -> "PLAN_REFUSED"
+            failureCode = when {
+                calledOff -> CALLED_OFF
+                it is SocketTimeoutException -> TIMEOUT
+                it is IllegalArgumentException -> "PLAN_REFUSED"
                 else -> "PLAN_UNREADABLE"
             }
         }.getOrNull()
@@ -205,6 +219,19 @@ class CalibrationPlanServer(private val port: Int) {
     @Volatile
     var supersededAsks: Int = 0
         private set
+
+    /**
+     * Ends a gathering early and tells everybody already in it, rather than dropping them.
+     *
+     * Closing the bound socket is the only thing that wakes the thread parked in accept(), so
+     * that part is [stop]; the flag is what turns a socket closed under a waiting handset into a
+     * sentence it can read. Called off is not a failure of anything - somebody pressed a button -
+     * and it is the one ending this exchange has that nobody needs to debug afterwards.
+     */
+    fun callOffRoom() {
+        calledOff = true
+        stop()
+    }
 
     fun stop() {
         runCatching { server?.close() }
@@ -224,5 +251,14 @@ class CalibrationPlanServer(private val port: Int) {
          * Two literals compared across two files is exactly the drift that has no symptom.
          */
         const val TIMEOUT = "PLAN_TIMEOUT"
+
+        /**
+         * What a called-off room answers with, and the code it reports having done so under.
+         *
+         * One string for both because they are one fact seen from the two ends, and the pair of
+         * them that drifted apart would be a host saying it told the room while the room read
+         * something it could not place.
+         */
+        const val CALLED_OFF = "room-called-off"
     }
 }

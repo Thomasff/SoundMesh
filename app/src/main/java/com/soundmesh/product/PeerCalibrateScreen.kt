@@ -43,9 +43,37 @@ import com.soundmesh.probe.R
  * one question this screen exists to answer is whether this phone is playing off a measurement
  * or off a guess.
  */
+/**
+ * What the stop button can honestly mean at this moment.
+ *
+ * It used to be one button with one sentence - "the handset being measured will finish, and no
+ * more will be waited for" - which is a queue's sentence. The pair host is a queue and that is
+ * true there. A room is one round, so there is no next handset to stop waiting for, and the
+ * sentence pointed at something that was not happening. Worse, whether pressing it did anything
+ * at all depended on an invisible line: while the room is gathering it really does call the
+ * round off, and once the chirps start nothing this host does reaches the other handsets, because
+ * obeying meant leaving the standing channel.
+ *
+ * So the line is drawn here instead of left for somebody to discover by pressing.
+ */
+enum class StopOffer {
+    /** A sink, or nothing running: a button here would sit and do nothing. */
+    NONE,
+
+    /** A pair host serving handset after handset. Stopping means not waiting for the next. */
+    QUEUE,
+
+    /** A room still gathering. Calling it off reaches everybody, because nobody has started. */
+    ROOM_GATHERING,
+
+    /** A room already chirping. Nothing reaches the other handsets; the button says so. */
+    ROOM_UNDER_WAY
+}
+
 data class PeerCalibrateState(
     val role: CalibrationRole? = null,
     val running: Boolean = false,
+    val stopOffer: StopOffer = StopOffer.NONE,
     val message: String? = null,
     val stored: Long? = null,
     val approximate: Long? = null,
@@ -133,16 +161,34 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 ) {
                     Text(stringResource(R.string.pair_calibrate_start))
                 }
-                // Only a host, and only while it is serving. One press serves handset after
-                // handset until this is pressed or nobody else asks, and a sink has nothing to
-                // stop - its run is one round with nothing after it, so a button there would sit
-                // and do nothing, which is worse than no button at all.
-                if (state.role == CalibrationRole.HOST && state.running) {
-                    OutlinedButton(onClick = actions.stop, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.pair_calibrate_stop))
+                // What this button can mean depends on what is running, and a sink has nothing
+                // to stop at all - its run is one round with nothing after it, so a button there
+                // would sit and do nothing, which is worse than no button at all. See [StopOffer].
+                if (state.stopOffer != StopOffer.NONE) {
+                    val room = state.stopOffer != StopOffer.QUEUE
+                    OutlinedButton(
+                        onClick = actions.stop,
+                        // Greyed rather than hidden: a button that disappears mid-round reads as
+                        // a screen that lost its place. Greyed with a sentence beside it is the
+                        // answer to the question somebody is about to ask by pressing it.
+                        enabled = state.stopOffer != StopOffer.ROOM_UNDER_WAY,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            stringResource(
+                                if (room) R.string.pair_calibrate_room_call_off
+                                else R.string.pair_calibrate_stop
+                            )
+                        )
                     }
                     Text(
-                        stringResource(R.string.pair_calibrate_stop_hint),
+                        stringResource(
+                            when (state.stopOffer) {
+                                StopOffer.ROOM_GATHERING -> R.string.pair_calibrate_room_call_off_hint
+                                StopOffer.ROOM_UNDER_WAY -> R.string.pair_calibrate_room_under_way_hint
+                                else -> R.string.pair_calibrate_stop_hint
+                            }
+                        ),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
