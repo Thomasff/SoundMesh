@@ -1,7 +1,7 @@
 package com.soundmesh.probe.sync
 
 /**
- * How long the capture has been handing over digital silence.
+ * How long the capture has been handing over digital silence, and a record of every time it did.
  *
  * Not a diagnosis, a reading. A listener on 09-12 lost the whole room part way through a song,
  * found that nudging the host's media volume off zero brought it straight back, and that leaving
@@ -20,35 +20,78 @@ package com.soundmesh.probe.sync
  * service, and they do not otherwise meet. Cheap enough to sit in the capture loop: a chunk is
  * 20 ms of audio and the scan stops at the first byte that is not zero, which in music is the
  * first byte.
+ *
+ * [onSpell] is the half that outlives the screen. The red line only helps somebody who is looking
+ * at this app, and somebody playing music is not: on 09-12 it happened in the middle of a song, to
+ * a handset in a pocket, and was over by the time anyone could have looked. So a stretch past
+ * [SPELL_NANOS] is handed to whoever is keeping the record, once, when it ends.
  */
 object CaptureSilence {
+    /**
+     * Longer than any gap between two tracks, shorter than anybody's patience with a silent room.
+     *
+     * One number for two readers on purpose: the red line on the screen and the line in the record
+     * are the same decision about how long is long enough, and two constants that mean one thing
+     * are two constants that drift.
+     */
+    const val SPELL_SECONDS = 4
+    const val SPELL_NANOS = SPELL_SECONDS * 1_000_000_000L
+
+    @Volatile private var watching = false
     @Volatile private var lastSoundNanos = 0L
     @Volatile private var since = 0L
+    @Volatile private var inSpell = false
+    @Volatile private var now: () -> Long = System::nanoTime
+    @Volatile private var onSpell: (Long, Boolean) -> Unit = { _, _ -> }
 
-    /** Called when a capture opens, so a previous session's silence is not this one's. */
-    fun watch() {
-        lastSoundNanos = System.nanoTime()
+    /**
+     * Called when a capture opens, so a previous session's silence is not this one's.
+     *
+     * [now] is a parameter rather than a call because a test for something measured in seconds
+     * would otherwise have to take seconds.
+     */
+    fun watch(
+        now: () -> Long = System::nanoTime,
+        onSpell: (silentNanos: Long, recovered: Boolean) -> Unit = { _, _ -> }
+    ) {
+        this.now = now
+        this.onSpell = onSpell
+        watching = true
+        lastSoundNanos = now()
         since = 0L
+        inSpell = false
     }
 
+    /** A capture that closes mid-spell still files it: never coming back is the louder answer. */
     fun forget() {
-        lastSoundNanos = 0L
+        if (inSpell) file(since, recovered = false)
+        watching = false
         since = 0L
+        inSpell = false
     }
 
     /** Every chunk the capture hands over, on the host's own loop. */
     fun sawChunk(chunk: ByteArray) {
-        if (lastSoundNanos == 0L) return
+        if (!watching) return
         for (byte in chunk) {
             if (byte.toInt() != 0) {
-                lastSoundNanos = System.nanoTime()
+                if (inSpell) file(since, recovered = true)
+                lastSoundNanos = now()
                 since = 0L
                 return
             }
         }
-        since = System.nanoTime() - lastSoundNanos
+        since = now() - lastSoundNanos
+        if (since >= SPELL_NANOS) inSpell = true
     }
 
     /** How long every sample has been zero, or zero while nothing is being captured. */
-    fun silentNanos(): Long = if (lastSoundNanos == 0L) 0L else since
+    fun silentNanos(): Long = if (!watching) 0L else since
+
+    private fun file(silentNanos: Long, recovered: Boolean) {
+        inSpell = false
+        // Whoever keeps the record is on the other side of this call, and a record that throws
+        // must not be able to stop a capture that is working again.
+        runCatching { onSpell(silentNanos, recovered) }
+    }
 }

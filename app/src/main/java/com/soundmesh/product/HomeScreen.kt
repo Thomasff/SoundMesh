@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.R
+import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.PairingCodeImage
 
@@ -395,8 +396,8 @@ private fun SinkPanel(state: HomeState, actions: HomeActions) {
 internal fun capturesNothingWorthSaying(seconds: Int?): Boolean =
     seconds != null && seconds >= CAPTURE_SILENCE_SECONDS
 
-/** Longer than any gap between two tracks, shorter than anybody's patience with a silent room. */
-const val CAPTURE_SILENCE_SECONDS = 4
+/** The same number the record is kept by: see [CaptureSilence.SPELL_SECONDS] for why it is one. */
+const val CAPTURE_SILENCE_SECONDS = CaptureSilence.SPELL_SECONDS
 
 @Composable
 private fun CaptureSilenceLine(state: HomeState) {

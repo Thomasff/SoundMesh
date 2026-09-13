@@ -23,6 +23,7 @@ import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
+import com.soundmesh.probe.sync.CaptureSilenceLog
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.HostIdentity
@@ -215,7 +216,15 @@ class SessionService : Service() {
         val source = CaptureChunkSource.open(this, projection, null) {}
         // From here rather than from inside the capture, because this is the only arrangement
         // where silence means anything: a host playing a file is the source of its own audio.
-        CaptureSilence.watch()
+        val silences = CaptureSilenceLog(filesDir)
+        CaptureSilence.watch { silentNanos, recovered ->
+            // Off the capture loop. A spell is rare enough that a thread each is nothing, and
+            // the alternative is a flash write between two chunks of audio that just came back.
+            Thread({
+                silences.append(System.currentTimeMillis(), silentNanos / 1_000_000L, recovered)
+            }, "SoundMeshSilenceRecord").start()
+            Log.w(LOG_TAG, "the capture handed over ${silentNanos / 1_000_000L} ms of digital silence")
+        }
         // Null on a handset nobody has measured, and a run then plays as early as O65 did. Logged
         // rather than refused: the session is still worth having, and silence about it is what let
         // nineteen milliseconds hide behind "a little bit faster, but you can hardly tell".

@@ -2,6 +2,7 @@ package com.soundmesh.probe.sync
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -87,5 +88,85 @@ class CaptureSilenceTest {
 
         CaptureSilence.sawChunk(silence())
         assertEquals(0L, CaptureSilence.silentNanos())
+    }
+
+    /**
+     * A gap between two songs is not a fault, and what reads this record is looking for a fault.
+     * The threshold is the whole of what tells them apart, so nothing under it is filed at all.
+     */
+    @Test
+    fun `a gap shorter than a spell is not filed`() {
+        var now = 1_000L
+        val filed = ArrayList<Pair<Long, Boolean>>()
+        CaptureSilence.watch({ now }) { nanos, recovered -> filed += nanos to recovered }
+
+        CaptureSilence.sawChunk(music())
+        now += CaptureSilence.SPELL_NANOS - 1
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.sawChunk(music())
+
+        assertEquals(emptyList<Pair<Long, Boolean>>(), filed)
+    }
+
+    /**
+     * The record outlives the screen, which is the point of it.
+     *
+     * A listener who is playing music is not looking at this app, and the one on 09-12 found the
+     * room silent, nudged the volume and carried on - the red line was on a screen in a pocket.
+     */
+    @Test
+    fun `a spell is filed once, when the audio comes back`() {
+        var now = 1_000L
+        val filed = ArrayList<Pair<Long, Boolean>>()
+        CaptureSilence.watch({ now }) { nanos, recovered -> filed += nanos to recovered }
+
+        CaptureSilence.sawChunk(music())
+        repeat(6) {
+            now += CaptureSilence.SPELL_NANOS / 2
+            CaptureSilence.sawChunk(silence())
+        }
+        CaptureSilence.sawChunk(music())
+
+        assertEquals(1, filed.size)
+        assertEquals(3 * CaptureSilence.SPELL_NANOS, filed[0].first)
+        assertTrue("the audio came back", filed[0].second)
+    }
+
+    /**
+     * A capture that is still silent when it closes is the more interesting half of the two.
+     *
+     * It says the path never came back on its own, and a spell only filed on recovery would file
+     * nothing at all in exactly that case.
+     */
+    @Test
+    fun `a capture that closes while still silent files the spell anyway`() {
+        var now = 1_000L
+        val filed = ArrayList<Pair<Long, Boolean>>()
+        CaptureSilence.watch({ now }) { nanos, recovered -> filed += nanos to recovered }
+
+        CaptureSilence.sawChunk(music())
+        now += 9 * CaptureSilence.SPELL_NANOS
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.forget()
+
+        assertEquals(1, filed.size)
+        assertEquals(9 * CaptureSilence.SPELL_NANOS, filed[0].first)
+        assertFalse("it never came back", filed[0].second)
+    }
+
+    /** Closing twice is closing once: the second one has nothing left to say. */
+    @Test
+    fun `a spell is not filed twice by closing twice`() {
+        var now = 1_000L
+        val filed = ArrayList<Pair<Long, Boolean>>()
+        CaptureSilence.watch({ now }) { nanos, recovered -> filed += nanos to recovered }
+
+        CaptureSilence.sawChunk(music())
+        now += 9 * CaptureSilence.SPELL_NANOS
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.forget()
+        CaptureSilence.forget()
+
+        assertEquals(1, filed.size)
     }
 }
