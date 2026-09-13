@@ -67,6 +67,8 @@ class CaptureSilenceTest {
     /** Audio returning clears it, because what a screen shows has to be about now. */
     @Test
     fun `audio coming back ends the silence`() {
+        CaptureSilence.sawChunk(music())
+        Thread.sleep(40)
         CaptureSilence.sawChunk(silence())
         Thread.sleep(40)
         CaptureSilence.sawChunk(silence())
@@ -168,5 +170,44 @@ class CaptureSilenceTest {
         CaptureSilence.forget()
 
         assertEquals(1, filed.size)
+    }
+
+    /**
+     * A capture that has never made a sound is not a capture that stopped making one.
+     *
+     * 09-13: the capture was opened to look at the room drawing and no music was ever started.
+     * Eighty-six seconds of nothing were filed as a fault, on a handset behaving perfectly.
+     */
+    @Test
+    fun `a capture that has never produced audio is not silent`() {
+        var now = 1_000L
+        val filed = ArrayList<Pair<Long, Boolean>>()
+        CaptureSilence.watch({ now }) { nanos, recovered -> filed += nanos to recovered }
+
+        repeat(20) {
+            now += CaptureSilence.SPELL_NANOS
+            CaptureSilence.sawChunk(silence())
+        }
+
+        assertEquals(0L, CaptureSilence.silentNanos())
+        assertEquals(emptyList<Pair<Long, Boolean>>(), filed)
+    }
+
+    /** And once it has made one, it counts from then on, which is the case this exists for. */
+    @Test
+    fun `the first sound is what starts it watching`() {
+        var now = 1_000L
+        val filed = ArrayList<Pair<Long, Boolean>>()
+        CaptureSilence.watch({ now }) { nanos, recovered -> filed += nanos to recovered }
+
+        now += 30 * CaptureSilence.SPELL_NANOS
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.sawChunk(music())
+        now += 2 * CaptureSilence.SPELL_NANOS
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.sawChunk(music())
+
+        assertEquals(1, filed.size)
+        assertEquals(2 * CaptureSilence.SPELL_NANOS, filed[0].first)
     }
 }

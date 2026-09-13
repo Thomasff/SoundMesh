@@ -75,7 +75,8 @@
     <string name="pair_calibrate_room_start">几台一起量</string>
     <string name="pair_calibrate_overhead_hint">这一轮量的是**你坐的位置**。至少要三台：举着的那台量不到它自己到你的距离，两台只剩一条边，定不出位置。\n\n**一共两轮，都只在这台上按。**\n\n第一轮，按下面那个「举过头顶，量我坐在哪」：其他手机先摆好、停在首页；你拿着这台坐到平时听歌的地方，按一下，然后把这台举到头顶正上方别动。约 10 秒后开始响，响完放下。\n\n第二轮，按上面那个「几台一起量」：先把这台也放回它该在的位置，再按一下。\n\n为什么要两轮：举着的时候这台不在它的位置上，量不准手机之间的距离；而放好之后，又没人拿着它量你。</string>
     <string name="pair_calibrate_overhead_start">举过头顶，量我坐在哪</string>
-    <string name="pair_calibrate_room_waiting">在等其他手机连过来，它们会自己开始，不用去按。如果一直停在这里，多半是有手机没停在首页——走过去在那台上按一次「几台一起量」就行。</string>
+    <string name="pair_calibrate_room_waiting">在等其他手机连过来，它们会自己开始，不用去按。主机这边看到 %1$d 台在待命，最多等 %2$d 秒。等不到的话，去看那几台是不是没停在首页——退出首页的手机收不到这个指令。</string>
+    <string name="pair_calibrate_room_joined">已经连过来 %1$d 台，待命的有 %2$d 台。两个数一样就不用管了，等着就行；连过来的少，就是有手机没停在首页。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
     <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。</string>
     <string name="pair_calibrate_stop">停止</string>

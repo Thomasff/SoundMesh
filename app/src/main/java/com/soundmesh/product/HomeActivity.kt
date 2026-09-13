@@ -43,6 +43,7 @@ import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
 import java.io.File
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
@@ -79,6 +80,12 @@ class HomeActivity : ComponentActivity() {
     /** Reads the output a capturing host is heard on. It cannot set it - see AccessibilityVolume. */
     private val hostOutputVolume by lazy { HostOutputVolume(getSystemService(AudioManager::class.java)) }
     private val handler = Handler(Looper.getMainLooper())
+
+    /** One timeline, shared with every other part of the app. See [EventLog]. */
+    private val events: EventLog by lazy { EventLog(filesDir) }
+
+    /** The last count written down, so the record holds the changes rather than every read. */
+    private var wroteStandingBy = -1
     /**
      * Where each handset was last drawn, kept past its leaving.
      *
@@ -536,7 +543,12 @@ class HomeActivity : ComponentActivity() {
             // sink is told only the line about itself. Both read null before a room exists,
             // which is the number on screen with no colour beside it.
             selfPlace = session?.badgePlace() ?: room?.colours?.get(state.selfId),
-            standingBy = RoomCommands.standingBy(),
+            standingBy = RoomCommands.standingBy().also { standing ->
+                if (state.role == Role.HOST && standing != wroteStandingBy) {
+                    wroteStandingBy = standing
+                    events.write("standing by: $standing")
+                }
+            },
             onStandby = hostLine?.connected == true,
             // Only while a capture is actually running. Silence from a source that is not open
             // is not a reading, and a stale one on screen is worse than none.
@@ -647,6 +659,7 @@ class HomeActivity : ComponentActivity() {
      */
     private fun takeUpTheRoom() {
         stopStandingBy()
+        events.write("role ${state.role}")
         when (state.role) {
             // Left open when this screen goes away, unlike the sink end. The host tells the room
             // to go and measure from inside the calibration screen - see RoomCommands - and this
@@ -654,8 +667,13 @@ class HomeActivity : ComponentActivity() {
             Role.HOST -> RoomCommands.serve()
             Role.SINK -> {
                 RoomCommands.stop()
-                val host = state.paired ?: return
+                val host = state.paired ?: return events.write(
+                    "standby not started: this handset has not scanned a host"
+                )
                 val self = state.selfId ?: HostIdentity(filesDir).current()
+                // The address as well as the fact. A pairing scanned on another network points
+                // at an address nothing answers on, and the screen can only say "not connected".
+                events.write("standby dialling ${host.address}:$COMMAND_PORT")
                 hostLine = RoomCommandClient(host.address, COMMAND_PORT, self) { command ->
                     // On to the main thread: this arrives on the socket thread, and everything it
                     // leads to is either an activity being started or a service being asked for.
@@ -679,6 +697,7 @@ class HomeActivity : ComponentActivity() {
      * session. The host says what the room should be doing, not what should happen next.
      */
     private fun obey(command: RoomCommand) {
+        events.write("told to $command")
         when (command) {
             RoomCommand.PLAY -> if (!state.running) play()
             RoomCommand.STOP -> if (state.running) actions.stop()

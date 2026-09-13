@@ -21,6 +21,12 @@ package com.soundmesh.probe.sync
  * 20 ms of audio and the scan stops at the first byte that is not zero, which in music is the
  * first byte.
  *
+ * Nothing is silent until it has made a sound. A capture that has never handed over a single
+ * non-zero sample is not a path that stopped producing - it is a listener who opened the capture
+ * and has not started any music yet, which is what happened on 09-13: the capture was opened to
+ * look at the room drawing, no music was ever played, and eighty-six seconds of nothing were
+ * filed as a fault. So the reading stays at zero until the first sound arrives.
+ *
  * [onSpell] is the half that outlives the screen. The red line only helps somebody who is looking
  * at this app, and somebody playing music is not: on 09-12 it happened in the middle of a song, to
  * a handset in a pocket, and was over by the time anyone could have looked. So a stretch past
@@ -38,6 +44,7 @@ object CaptureSilence {
     const val SPELL_NANOS = SPELL_SECONDS * 1_000_000_000L
 
     @Volatile private var watching = false
+    @Volatile private var heardAnything = false
     @Volatile private var lastSoundNanos = 0L
     @Volatile private var since = 0L
     @Volatile private var inSpell = false
@@ -57,6 +64,7 @@ object CaptureSilence {
         this.now = now
         this.onSpell = onSpell
         watching = true
+        heardAnything = false
         lastSoundNanos = now()
         since = 0L
         inSpell = false
@@ -66,6 +74,7 @@ object CaptureSilence {
     fun forget() {
         if (inSpell) file(since, recovered = false)
         watching = false
+        heardAnything = false
         since = 0L
         inSpell = false
     }
@@ -76,11 +85,13 @@ object CaptureSilence {
         for (byte in chunk) {
             if (byte.toInt() != 0) {
                 if (inSpell) file(since, recovered = true)
+                heardAnything = true
                 lastSoundNanos = now()
                 since = 0L
                 return
             }
         }
+        if (!heardAnything) return
         since = now() - lastSoundNanos
         if (since >= SPELL_NANOS) inSpell = true
     }

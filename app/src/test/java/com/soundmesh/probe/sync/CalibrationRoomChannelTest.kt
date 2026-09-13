@@ -58,7 +58,7 @@ class CalibrationRoomChannelTest {
         server.start()
         val names = listOf(one, two, three)
         try {
-            val gathered = Thread { server.awaitRoom(8_000, 600, 20_000, ::planNaming) }
+            val gathered = Thread { server.awaitRoom(8_000, 600, 20_000, planFor = ::planNaming) }
             gathered.start()
 
             val plans = askAll(port, names)
@@ -114,7 +114,7 @@ class CalibrationRoomChannelTest {
         server.start()
         try {
             val started = System.nanoTime()
-            val gathered = Thread { server.awaitRoom(30_000, 500, 25_000, ::planNaming) }
+            val gathered = Thread { server.awaitRoom(30_000, 500, 25_000, planFor = ::planNaming) }
             gathered.start()
             askAll(port, listOf(one, two))
             gathered.join(20_000)
@@ -136,7 +136,7 @@ class CalibrationRoomChannelTest {
         val server = CalibrationPlanServer(port)
         server.start()
         try {
-            val gathered = Thread { server.awaitRoom(8_000, 800, 20_000, ::planNaming) }
+            val gathered = Thread { server.awaitRoom(8_000, 800, 20_000, planFor = ::planNaming) }
             gathered.start()
             Thread {
                 runCatching {
@@ -164,7 +164,7 @@ class CalibrationRoomChannelTest {
         val server = CalibrationPlanServer(port)
         server.start()
         try {
-            assertNull(server.awaitRoom(300, 300, 20_000, ::planNaming))
+            assertNull(server.awaitRoom(300, 300, 20_000, planFor = ::planNaming))
             assertEquals(CalibrationPlanServer.TIMEOUT, server.failureCode)
         } finally {
             server.stop()
@@ -180,7 +180,7 @@ class CalibrationRoomChannelTest {
     fun refusesToHoldARoomOpenLongerThanASinkWillWait() {
         val server = CalibrationPlanServer(freePort())
         try {
-            server.awaitRoom(1_000, 500, CalibrationPlanClient.REPLY_TIMEOUT_MILLIS, ::planNaming)
+            server.awaitRoom(1_000, 500, CalibrationPlanClient.REPLY_TIMEOUT_MILLIS, planFor = ::planNaming)
             throw AssertionError("expected to be refused")
         } catch (expected: IllegalArgumentException) {
             assertTrue(expected.message!!.contains("wait"))

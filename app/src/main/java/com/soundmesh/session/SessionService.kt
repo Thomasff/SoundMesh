@@ -23,7 +23,7 @@ import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
-import com.soundmesh.probe.sync.CaptureSilenceLog
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.HostIdentity
@@ -89,13 +89,19 @@ class SessionService : Service() {
     }
 
     private fun open(intent: Intent, host: Boolean) {
+        val events = EventLog(filesDir)
+        val part = if (host) "host" else "sink"
         val session = try {
             if (host) openHost(intent) else openSink(intent)
         } catch (error: Throwable) {
             Log.e(LOG_TAG, "could not start a session", error)
+            // Named rather than described: what a person needs to read off this line afterwards
+            // is which of the several ways it can refuse to start actually happened.
+            events.write("session-refused $part ${error.javaClass.simpleName}: ${error.message}")
             failed(error)
             return
         }
+        events.write("session-open $part")
         ACTIVE = session
         try {
             session.start()
@@ -104,6 +110,7 @@ class SessionService : Service() {
             // handset whose peer is not ready yet is an ordinary Tuesday, not a reason to take the
             // process down. It did exactly that on hardware - one refused connection, one dead app.
             Log.e(LOG_TAG, "a session failed while starting", error)
+            events.write("session-failed $part ${error.javaClass.simpleName}: ${error.message}")
             ACTIVE = null
             runCatching { session.stop() }
             failed(error)
@@ -216,12 +223,13 @@ class SessionService : Service() {
         val source = CaptureChunkSource.open(this, projection, null) {}
         // From here rather than from inside the capture, because this is the only arrangement
         // where silence means anything: a host playing a file is the source of its own audio.
-        val silences = CaptureSilenceLog(filesDir)
+        val events = EventLog(filesDir)
         CaptureSilence.watch { silentNanos, recovered ->
+            val ended = if (recovered) "the audio came back" else "it never came back"
             // Off the capture loop. A spell is rare enough that a thread each is nothing, and
             // the alternative is a flash write between two chunks of audio that just came back.
             Thread({
-                silences.append(System.currentTimeMillis(), silentNanos / 1_000_000L, recovered)
+                events.write("capture-silent ${silentNanos / 1_000_000L}ms, $ended")
             }, "SoundMeshSilenceRecord").start()
             Log.w(LOG_TAG, "the capture handed over ${silentNanos / 1_000_000L} ms of digital silence")
         }
@@ -430,6 +438,7 @@ class SessionService : Service() {
     private fun stopSession() {
         val session = ACTIVE
         ACTIVE = null
+        runCatching { EventLog(filesDir).write("session-stop") }
         Thread({
             // Read before the stop, not after: stopping ends the renderer, and the counters this
             // whole file exists to surface are the renderer's. Written to a file because the run

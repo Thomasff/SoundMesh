@@ -108,6 +108,11 @@ class CalibrationPlanServer(private val port: Int) {
         firstWaitMillis: Int,
         settleMillis: Int,
         roomWindowMillis: Int,
+        // Called as each handset arrives, with how many have. Gathering is the longest thing
+        // this screen does and the only one a person can act on while it happens: a handset
+        // that has not arrived is usually one that is not on its home screen, and nobody can
+        // know that from a line that says only that we are waiting.
+        onJoined: (Int) -> Unit = {},
         planFor: (List<CalibrationRequest>) -> CalibrationPlan
     ): CalibrationPlan? {
         require(roomWindowMillis < CalibrationPlanClient.REPLY_TIMEOUT_MILLIS) {
@@ -146,6 +151,7 @@ class CalibrationPlanServer(private val port: Int) {
                 }
                 if (waiting.isEmpty()) closesAt = System.nanoTime() + roomWindowMillis * 1_000_000L
                 waiting += socket to request
+                runCatching { onJoined(waiting.size) }
                 if (System.nanoTime() >= closesAt) break
             }
             // Minted once, here, and written to everybody: a room whose handsets hold schedules

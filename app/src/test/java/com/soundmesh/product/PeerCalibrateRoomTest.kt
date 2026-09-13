@@ -357,4 +357,28 @@ class PeerCalibrateRoomTest {
         // And the command line still wins, so a sweep can move it.
         assertTrue(source.contains("planLeadNanos = millisExtra(\"plan_lead_millis\", shipped.planLeadNanos)"))
     }
+
+    /**
+     * A round that measured nothing does not replace a round that measured something.
+     *
+     * 09-13, from the files rather than from reasoning: four handsets were measured at 12:59 and
+     * six distances stored. At 13:03 an overhead round ran with one handset present. An overhead
+     * round keeps only the pairs the host is not an end of, so with one handset it had none - and
+     * the empty result replaced all six. The drawing is fitted from those distances, so it then
+     * had three edges for four handsets, which does not hold a shape, and a listener reported the
+     * fit as wrong. Nothing in the app said any of this had happened.
+     */
+    @Test
+    fun `a round that measured nothing does not replace the stored room`() {
+        val nothing = mapOf((one to two) to null)
+
+        assertFalse(saysSomethingAboutTheRoom(emptyMap()))
+        assertFalse(saysSomethingAboutTheRoom(nothing))
+    }
+
+    /** And one real distance is an observation, so it does replace what was there. */
+    @Test
+    fun `a round that measured one distance is still an observation`() {
+        assertTrue(saysSomethingAboutTheRoom(mapOf((one to two) to 2.0, (two to three) to null)))
+    }
 }

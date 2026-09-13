@@ -64,6 +64,7 @@ import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
@@ -444,6 +445,22 @@ internal fun roomFieldToStore(
     if (!overhead) separationMetres
     else separationMetres.filterKeys { it.first != hostId && it.second != hostId }
 
+/**
+ * Whether what a round measured is worth putting in place of whatever is stored.
+ *
+ * The stored field is replaced rather than merged, because a merge would mix two layouts and
+ * there is no way afterwards to tell which distance came from which. That is right, and on 09-13
+ * it destroyed a good measurement: a four-handset room had been measured at 12:59, and at 13:03
+ * an overhead round ran with only one handset present. An overhead round measures where a
+ * listener is, so by design it keeps only the pairs the host is not an end of - and with one
+ * handset present there were none. An empty field replaced six good distances, and the drawing
+ * that is fitted from them then had three edges for four handsets, which does not hold a shape.
+ *
+ * Replacing something with nothing is not an observation, it is the absence of one.
+ */
+internal fun saysSomethingAboutTheRoom(toStore: Map<Pair<String, String>, Double?>): Boolean =
+    toStore.any { it.value != null }
+
 internal fun separationToStore(pairs: List<FacingPair?>): Double? =
     if (pairs.filterNotNull().none { it.separationSpreadMetres != null }) null
     else measuredSeparationMetres(pairs)
@@ -816,6 +833,9 @@ internal const val MAX_FAILURES_IN_A_ROW = 3
  */
 class PeerCalibrateActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
+
+    /** One timeline, shared with every other part of the app. See [EventLog]. */
+    private val events: EventLog by lazy { EventLog(filesDir) }
     private var state by mutableStateOf(PeerCalibrateState())
 
     /** One calibration at a time: two would share a microphone, a port and a run directory. */
@@ -1107,6 +1127,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 }
             }.onFailure {
                 Log.e(LOG_TAG, "the pair calibration did not finish", it)
+                events.write("calibration-failed ${it.javaClass.simpleName}: ${it.message}")
                 show(getString(R.string.pair_calibrate_failed, it.javaClass.simpleName))
             }
             running = false
@@ -1230,9 +1251,27 @@ class PeerCalibrateActivity : ComponentActivity() {
                 "the room servers are up: clock ${SyncActivity.CLOCK_PORT}, " +
                     "room $ROOM_PORT, plan $PLAN_PORT"
             )
-            show(getString(R.string.pair_calibrate_room_waiting))
+            show(
+                getString(
+                    R.string.pair_calibrate_room_waiting,
+                    RoomCommands.standingBy(),
+                    ROOM_WINDOW_MILLIS / 1000
+                )
+            )
+            events.write(
+                "room-gathering opened as ${if (overhead()) "overhead" else "room"}, " +
+                    "waiting up to ${ROOM_WINDOW_MILLIS / 1000}s"
+            )
             timing = timingFor(CASE_ROOM)
-            val plan = planServer.awaitRoom(PLAN_WAIT_MILLIS, ROOM_SETTLE_MILLIS, ROOM_WINDOW_MILLIS) { asks ->
+            val plan = planServer.awaitRoom(
+                PLAN_WAIT_MILLIS,
+                ROOM_SETTLE_MILLIS,
+                ROOM_WINDOW_MILLIS,
+                onJoined = { joined ->
+                    events.write("room-joined $joined of ${RoomCommands.standingBy()} standing by")
+                    show(getString(R.string.pair_calibrate_room_joined, joined, RoomCommands.standingBy()))
+                }
+            ) { asks ->
                 // Every ask has to be this arm's. A handset running the pair flow would be
                 // handed a slot it never agreed to chirp in, and the room would then hold one
                 // silent slot with nothing afterwards saying whose it was.
@@ -1247,6 +1286,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 // The host takes the last slot, which is the convention combineFacing's signs
                 // are written in and the one CalibrationSchedule's role overload encodes.
                 val slots = asks.map { it.sinkId } + hostId
+                events.write("room-gathered ${slots.size} handsets: ${slots.joinToString(" ")}")
                 require(slots.size == slots.distinct().size) {
                     "one handset asked twice, and a room names each of them once: $slots"
                 }
@@ -1310,10 +1350,12 @@ class PeerCalibrateActivity : ComponentActivity() {
             // The whole field, which is what the room screen reads to check a drawing against.
             // The per-peer files below are the same distances for the pairs this handset is an
             // end of; this is the only place the rest of them have ever had.
-            runCatching {
-                StoredRoomField(filesDir).write(
-                    roomFieldToStore(field.separationMetres, hostId, overhead())
-                )
+            val toStore = roomFieldToStore(field.separationMetres, hostId, overhead())
+            if (saysSomethingAboutTheRoom(toStore)) {
+                runCatching { StoredRoomField(filesDir).write(toStore) }
+                events.write("room-field written, ${toStore.count { it.value != null }} pairs")
+            } else {
+                events.write("room-field kept: this round measured no distance between handsets")
             }
             // And the per-peer files, which is where every other arm writes a distance and
             // where the pair flow reads one. What may be kept is what [separationToStore] would
@@ -1342,6 +1384,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             planServer.stop()
             roomServer.stop()
             clockServer.stop()
+            events.write("room-ports released")
             Log.i(LOG_TAG, "the room servers are down; the clock port is free again")
         }
     }
