@@ -420,6 +420,12 @@ class PeerCalibrateRoomTest {
         assertEquals(5.0, abs(field.alignmentErrorMs[one to three]!!), 0.2)
         assertEquals(5.0, abs(field.alignmentErrorMs[one to two]!!), 0.2)
         assertEquals(0.0, field.alignmentErrorMs[two to three]!!, 0.2)
+        // And again off the leading edge, which is the reading that is meant to be trusted:
+        // these fakes put every share on one lag, so the two rules coincide here and what is
+        // being checked is that the edge number is plumbed through rather than left null.
+        assertEquals(5.0, abs(field.edgeFiringOffsetMs[one to three]!!), 0.2)
+        assertEquals(5.0, abs(field.edgeFiringOffsetMs[one to two]!!), 0.2)
+        assertEquals(0.0, field.edgeFiringOffsetMs[two to three]!!, 0.2)
         // And the distances are untouched: one half of the pair of readings cannot move
         // without the other staying where it was.
         assertEquals(2.0, field.separationMetres[one to three]!!, 0.05)

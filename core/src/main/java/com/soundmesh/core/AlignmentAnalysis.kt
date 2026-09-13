@@ -68,7 +68,21 @@ data class FacingPair(
      * on a different reflection. Measured over eighteen pairs: 0.05-0.52 m with a clear line of
      * sight, 1.06-2.59 m with it blocked, and nothing in between.
      */
-    val separationSpreadMetres: Double? = null
+    val separationSpreadMetres: Double? = null,
+    /**
+     * How far apart the two fired, read off the leading edge instead of the loudest lag.
+     *
+     * [alignmentErrorMs] is the same half sum taken at the loudest lag, which is the right
+     * reading for what a listener hears and the wrong one for when a speaker actually started:
+     * across a room the loudest arrival is a reflection. 09-11 measured the gap between the two
+     * rules on the other half - nine readings of one unchanged two metre gap spanned 5.11 to
+     * 11.86 m at the loudest and 1.97 to 2.19 at the edge - and 09-13 measured it here: six
+     * pairs whose loudest-lag half sums missed closing their triangles by 1.35 to 6.45 ms
+     * against a properly measured constant whose own spread is 0.14.
+     *
+     * Null when the two sides did not sweep the same shares, which is every arm but the room.
+     */
+    val firingOffsetMs: Double? = null
 )
 
 /**
@@ -331,7 +345,8 @@ object AlignmentAnalysis {
             flightTimeMs = flightTimeMs,
             rawHostMs = rawHostMs,
             rawSinkMs = rawSinkMs,
-            separationSpreadMetres = spreadOf(hostSide.rawMsByShare, sinkSide.rawMsByShare)
+            separationSpreadMetres = spreadOf(hostSide.rawMsByShare, sinkSide.rawMsByShare),
+            firingOffsetMs = edgeFiringOffsetMs(hostSide.rawMsByShare, sinkSide.rawMsByShare)
         )
     }
 
@@ -393,6 +408,17 @@ object AlignmentAnalysis {
     private fun edgeFlightTimeMs(hostByShare: List<Double>, sinkByShare: List<Double>): Double? {
         if (hostByShare.isEmpty() || hostByShare.size != sinkByShare.size) return null
         return (sinkByShare[0] - hostByShare[0]) / 2
+    }
+
+    /**
+     * The other half of the same two readings, at the same threshold: the half sum.
+     *
+     * The flight time cancels out of it exactly as the firing offset cancels out of the half
+     * difference, so one round of chirps answers both and neither costs the other anything.
+     */
+    private fun edgeFiringOffsetMs(hostByShare: List<Double>, sinkByShare: List<Double>): Double? {
+        if (hostByShare.isEmpty() || hostByShare.size != sinkByShare.size) return null
+        return (sinkByShare[0] + hostByShare[0]) / 2
     }
 
     private fun spreadOf(hostByShare: List<Double>, sinkByShare: List<Double>): Double? {

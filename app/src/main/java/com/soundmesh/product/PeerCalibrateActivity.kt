@@ -393,6 +393,12 @@ internal fun measuredFiringOffsetMs(pairs: List<FacingPair?>): Double? {
     return if (millis.isEmpty()) null else medianOf(millis)
 }
 
+/** The same, at the leading edge, which is where the other half of these readings is taken. */
+internal fun measuredEdgeFiringOffsetMs(pairs: List<FacingPair?>): Double? {
+    val millis = pairs.filterNotNull().mapNotNull { it.firingOffsetMs }
+    return if (millis.isEmpty()) null else medianOf(millis)
+}
+
 internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
     // A pair whose answer slides when the threshold slides has not found a direct sound, and it
     // is wrong in a way the agreement test below cannot see: measured 09-11, three runs with a
@@ -663,6 +669,16 @@ internal data class RoomField(
      * leading edge - which is the half that has never been looked at.
      */
     val alignmentErrorMs: Map<Pair<String, String>, Double?>,
+    /**
+     * The same half sum read off the leading edge instead of the loudest lag.
+     *
+     * Both are carried because 09-13 measured the loudest-lag one missing closure by 1.35 to
+     * 6.45 ms - a firing offset is a property of three handsets at once, so (A,B) + (B,C) has
+     * to equal (A,C), and that test needs no reference constant at all. Closing is necessary
+     * and not sufficient: a consistently wrong reading closes too, which is why the answer is
+     * still checked against constants measured the long way.
+     */
+    val edgeFiringOffsetMs: Map<Pair<String, String>, Double?>,
     val repeats: Int
 )
 
@@ -697,12 +713,14 @@ internal fun roomField(
     }
     val metres = LinkedHashMap<Pair<String, String>, Double?>()
     val firing = LinkedHashMap<Pair<String, String>, Double?>()
+    val edgeFiring = LinkedHashMap<Pair<String, String>, Double?>()
     for (entry in byPair) {
         val names = plan.slotIds[entry.key.first] to plan.slotIds[entry.key.second]
         metres[names] = measuredSeparationMetres(entry.value)
         firing[names] = measuredFiringOffsetMs(entry.value)
+        edgeFiring[names] = measuredEdgeFiringOffsetMs(entry.value)
     }
-    return RoomField(metres, firing, repeats)
+    return RoomField(metres, firing, edgeFiring, repeats)
 }
 
 /** How many of the room's answered pairs [peerId] is one end of. */
@@ -1380,7 +1398,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             val heard = LinkedHashMap<Int, List<List<ChirpArrival?>>>()
             heard[ownSlot] = run.arrivalsByRepeat
             val heardFrom = ArrayList<String>()
-            var field = RoomField(emptyMap(), emptyMap(), 0)
+            var field = RoomField(emptyMap(), emptyMap(), emptyMap(), 0)
             roomServer.awaitRoom(plan.slotIds.size - 1, ROOM_RESULT_TIMEOUT_MILLIS) { delivered ->
                 for (message in delivered) {
                     val slot = plan.slotIds.indexOf(message.senderId)
@@ -1419,6 +1437,13 @@ class PeerCalibrateActivity : ComponentActivity() {
                 val millis = entry.value ?: continue
                 events.write(
                     "room-firing ${entry.key.first} ${entry.key.second} " +
+                        String.format(Locale.US, "%.3f", millis) + "ms"
+                )
+            }
+            for (entry in field.edgeFiringOffsetMs) {
+                val millis = entry.value ?: continue
+                events.write(
+                    "room-firing-edge ${entry.key.first} ${entry.key.second} " +
                         String.format(Locale.US, "%.3f", millis) + "ms"
                 )
             }
