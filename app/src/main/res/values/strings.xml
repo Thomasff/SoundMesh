@@ -118,6 +118,15 @@
     <string name="volume_title">闹钟音量</string>
     <string name="volume_level">%1$d / %2$d</string>
     <string name="volume_hint">采集播放走的是闹钟通道，它的音量和媒体音量互不影响。停在这个页面按手机的音量键就能调它，也可以到 设置 → 声音 里调闹钟音量。</string>
+    <string name="room_volume_title">全体音量</string>
+    <string name="room_volume_level">%1$d%%</string>
+    <string name="room_volume_capturing_hint">这台手机在采集别的应用，它自己走闹钟通道；媒体音量会被调到 0，否则你会听到一前一后两遍。还原的时候一起放回去。</string>
+    <string name="room_volume_row">%1$s %2$d%%（%3$d/%4$d，%5$s）</string>
+    <string name="room_volume_media">媒体</string>
+    <string name="room_volume_alarm">闹钟</string>
+    <string name="room_volume_none">还没有手机报回自己的音量。</string>
+    <string name="room_volume_restore">一键还原音量</string>
+    <string name="room_volume_restore_hint">把每台手机放回动它之前的音量。各机的档数不一样，同一个百分比落到的格子也不一样，所以上面那几行是各自读回来的真值，不是照抄滑钮。</string>
     <string name="capture_silent">主机这边收不到声音了，已经 %1$d 秒全是静音。把媒体音量调高一格、再调回去，通常马上就恢复。原因还在查：媒体音量为 0 的时候，这台手机可能把输出通路睡掉了，而抓声抓的正是那条通路。</string>
 
     <string name="pair_title">配对</string>

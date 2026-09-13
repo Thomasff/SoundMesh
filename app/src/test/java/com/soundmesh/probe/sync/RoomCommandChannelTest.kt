@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.core.RoomCommand
+import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.RoomExcuse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -19,9 +20,9 @@ import java.util.concurrent.TimeUnit
 class RoomCommandChannelTest {
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
 
-    private fun waiting(): Pair<ArrayBlockingQueue<RoomCommand>, (RoomCommand) -> Unit> {
-        val heard = ArrayBlockingQueue<RoomCommand>(8)
-        return heard to { command -> heard.offer(command) }
+    private fun waiting(): Pair<ArrayBlockingQueue<RoomOrder>, (RoomOrder) -> Unit> {
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        return heard to { order -> heard.offer(order) }
     }
 
     private val one = "a1b2c3d4e5f60718"
@@ -33,7 +34,7 @@ class RoomCommandChannelTest {
         carrying: Long? = null,
         approximately: Long? = null,
         called: String? = null,
-        onCommand: (RoomCommand) -> Unit
+        onCommand: (RoomOrder) -> Unit
     ): RoomCommandClient =
         RoomCommandClient("127.0.0.1", port, selfId, carrying, approximately, called, onCommand)
             .also { it.start() }
@@ -69,7 +70,7 @@ class RoomCommandChannelTest {
 
             server.send(RoomCommand.MEASURE_OVERHEAD)
 
-            assertEquals(RoomCommand.MEASURE_OVERHEAD, heard.poll(5, TimeUnit.SECONDS))
+            assertEquals(RoomOrder(RoomCommand.MEASURE_OVERHEAD), heard.poll(5, TimeUnit.SECONDS))
         } finally {
             client.close()
             server.stop()
@@ -133,7 +134,7 @@ class RoomCommandChannelTest {
 
                 second.send(RoomCommand.STOP)
 
-                assertEquals(RoomCommand.STOP, heard.poll(10, TimeUnit.SECONDS))
+                assertEquals(RoomOrder(RoomCommand.STOP), heard.poll(10, TimeUnit.SECONDS))
             } finally {
                 second.stop()
             }
@@ -169,11 +170,68 @@ class RoomCommandChannelTest {
             assertEquals(1, server.standingBy())
             // And it is the new line that is kept, not the one that happened to be first.
             server.send(RoomCommand.STOP)
-            assertEquals(RoomCommand.STOP, heard.poll(5, TimeUnit.SECONDS))
+            assertEquals(RoomOrder(RoomCommand.STOP), heard.poll(5, TimeUnit.SECONDS))
             assertNull(heard.poll(500, TimeUnit.MILLISECONDS))
             fresh.close()
         } finally {
             stale.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset says what its volume actually came to, and the host keeps the latest per handset.
+     *
+     * Said rather than assumed, and that is the whole of the message: setStreamVolume has been
+     * seen on these handsets to take a value, throw nothing and move nothing, and under
+     * do-not-disturb it throws instead. A host that showed what it asked for would show a room in
+     * agreement that is not one - and the disagreement is invisible by construction otherwise.
+     */
+    @Test
+    fun keepsWhatEachHandsetSaysItsVolumeCameTo() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            while (server.standingBy() == 0) Thread.sleep(20)
+
+            client.sayVolume(9, 15, "MEDIA")
+
+            assertTrue(until { server.volumes()[one] != null })
+            assertEquals(VolumeSaid(9, 15, "MEDIA"), server.volumes()[one])
+            // The percentage is worked out from the two numbers, because that is the only form
+            // of it every handset in a room can be compared in.
+            assertEquals(60, server.volumes()[one]!!.percent)
+
+            // A state and not an event: the newest replaces the last rather than joining it.
+            client.sayVolume(3, 15, "MEDIA")
+
+            assertTrue(until { server.volumes()[one]?.index == 3 })
+            assertEquals(1, server.volumes().size)
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /** Nobody has said anything about a handset that has never been told to change. */
+    @Test
+    fun saysNothingAboutAHandsetThatHasNotSaid() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            while (server.standingBy() == 0) Thread.sleep(20)
+
+            assertTrue(server.volumes().isEmpty())
+        } finally {
+            client.close()
             server.stop()
         }
     }

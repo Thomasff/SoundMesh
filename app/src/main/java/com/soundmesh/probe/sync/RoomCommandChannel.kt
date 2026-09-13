@@ -4,6 +4,7 @@ import com.soundmesh.core.HostId
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomCommandCodec
 import com.soundmesh.core.RoomExcuse
+import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.RoomExcuseCodec
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -24,6 +25,31 @@ private enum class Carried { UNSAID, NOTHING, SOMETHING, APPROXIMATE }
 
 /** What a standing handset says after its id and its correction: what to call it on a screen. */
 private const val CALLED = "called "
+
+/**
+ * What a standing handset says its volume actually is, after being told to change it.
+ *
+ * Said rather than assumed, and this is the whole point of the message: setStreamVolume has been
+ * seen on these handsets to take a value and move nothing, and under do-not-disturb it throws. A
+ * host that showed what it asked for would show a room in agreement that is not.
+ */
+private const val VOLUME = "volume "
+
+/** What one handset last said its own volume is. [percent] is what a screen shows. */
+data class VolumeSaid(val index: Int, val max: Int, val stream: String) {
+    val percent: Int get() = percentOf(index, max)
+}
+
+fun sayingVolume(index: Int, max: Int, stream: String): String = "$VOLUME$index $max $stream"
+
+private fun volumeFrom(said: String): VolumeSaid? {
+    if (!said.startsWith(VOLUME)) return null
+    val fields = said.removePrefix(VOLUME).split(" ")
+    if (fields.size != 3) return null
+    val index = fields[0].toIntOrNull() ?: return null
+    val max = fields[1].toIntOrNull() ?: return null
+    return VolumeSaid(index, max, fields[2])
+}
 
 /** The one thing a standing handset ever says after its name. Anything else is a later build's. */
 private const val CARRYING = "carrying "
@@ -82,6 +108,14 @@ class RoomCommandServer(private val port: Int) {
 
     /** The last reason each handset gave for not measuring, newest per handset. */
     private val excuses = Collections.synchronizedMap(LinkedHashMap<String, RoomExcuse>())
+
+    /**
+     * What each handset last said its own volume is.
+     *
+     * Kept per handset and replaced, not accumulated: it is a state and not an event, unlike
+     * everything else on this channel. Kept past the socket for the same reason the names are.
+     */
+    private val volumes = Collections.synchronizedMap(LinkedHashMap<String, VolumeSaid>())
 
     /**
      * Told the moment an excuse arrives rather than left to be polled.
@@ -192,6 +226,10 @@ class RoomCommandServer(private val port: Int) {
                         StoredHandsetName.cleaned(said.removePrefix(CALLED))
                             ?.let { names[standing.peerId] = it }
                     }
+                    volumeFrom(said)?.let {
+                        volumes[standing.peerId] = it
+                        runCatching { onVolume?.invoke(standing.peerId, it) }
+                    }
                 }
             }
         }
@@ -218,8 +256,8 @@ class RoomCommandServer(private val port: Int) {
      * exactly the fork a listener was stuck at - four presses, no handset ever arriving, and no
      * way to tell which half of the room was at fault.
      */
-    fun send(command: RoomCommand): Int {
-        val frame = SpatialFrame.encode(RoomCommandCodec.encode(command))
+    fun send(order: RoomOrder): Int {
+        val frame = SpatialFrame.encode(RoomCommandCodec.encode(order))
         val told = synchronized(clients) { ArrayList(clients) }
         Thread({
             for (standing in told) {
@@ -236,6 +274,9 @@ class RoomCommandServer(private val port: Int) {
         }, "SoundMeshCommandSend").start()
         return told.size
     }
+
+    /** The plain form, for the commands that carry no number. */
+    fun send(command: RoomCommand): Int = send(RoomOrder(command))
 
     /**
      * How many handsets are standing by.
@@ -278,6 +319,13 @@ class RoomCommandServer(private val port: Int) {
 
     /** What each handset last said about why it is not measuring. */
     fun excuses(): Map<String, RoomExcuse> = synchronized(excuses) { LinkedHashMap(excuses) }
+
+    /** What each handset last said its own volume is, newest per handset. */
+    fun volumes(): Map<String, VolumeSaid> = synchronized(volumes) { LinkedHashMap(volumes) }
+
+    /** Told the moment a handset says what its volume came to, so a screen can show it landing. */
+    @Volatile
+    var onVolume: ((String, VolumeSaid) -> Unit)? = null
 
     /**
      * Drops them, which is what starting a round does.
@@ -335,7 +383,7 @@ class RoomCommandClient(
      * which is what a host from before this reads anyway.
      */
     private val called: String? = null,
-    private val onCommand: (RoomCommand) -> Unit
+    private val onCommand: (RoomOrder) -> Unit
 ) : AutoCloseable {
     @Volatile private var running = false
     @Volatile private var socket: Socket? = null
@@ -389,6 +437,22 @@ class RoomCommandClient(
         else -> NOTHING_CARRIED
     }
 
+    /**
+     * Says what this handset's volume actually is, up the line the host already holds open.
+     *
+     * Written from whatever thread just changed it, which is safe because this end only ever
+     * writes and the hold loop only ever reads. Swallowed: a handset whose line has gone is a
+     * handset the host has already stopped counting.
+     */
+    fun sayVolume(index: Int, max: Int, stream: String) {
+        runCatching {
+            socket?.getOutputStream()?.apply {
+                write(SpatialFrame.encode(sayingVolume(index, max, stream)))
+                flush()
+            }
+        }
+    }
+
     override fun close() {
         running = false
         connected = false
@@ -427,7 +491,10 @@ object RoomCommands {
     }
 
     @Synchronized
-    fun send(command: RoomCommand): Int = server?.send(command) ?: 0
+    fun send(order: RoomOrder): Int = server?.send(order) ?: 0
+
+    @Synchronized
+    fun send(command: RoomCommand): Int = send(RoomOrder(command))
 
     @Synchronized
     fun standingBy(): Int = server?.standingBy() ?: 0
@@ -446,6 +513,15 @@ object RoomCommands {
 
     @Synchronized
     fun nameOf(peerId: String): String? = server?.nameOf(peerId)
+
+    @Synchronized
+    fun volumes(): Map<String, VolumeSaid> = server?.volumes() ?: emptyMap()
+
+    /** Who to tell when a handset says what its volume came to, or null for nobody. */
+    @Synchronized
+    fun listenForVolumes(listener: ((String, VolumeSaid) -> Unit)?) {
+        server?.onVolume = listener
+    }
 
     @Synchronized
     fun forgetExcuses() {

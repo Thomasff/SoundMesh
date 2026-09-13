@@ -12,7 +12,8 @@ class RoomCommandCodecTest {
     @Test
     fun `every command survives the wire`() {
         for (command in RoomCommand.values()) {
-            assertEquals(command, RoomCommandCodec.decode(RoomCommandCodec.encode(command)))
+            val order = RoomOrder(command)
+            assertEquals(order, RoomCommandCodec.decode(RoomCommandCodec.encode(order)))
         }
     }
 
@@ -25,7 +26,7 @@ class RoomCommandCodecTest {
      */
     @Test
     fun `a command from a build this one does not speak is refused`() {
-        val newer = RoomCommandCodec.encode(RoomCommand.PLAY)
+        val newer = RoomCommandCodec.encode(RoomOrder(RoomCommand.PLAY))
             .replace(" ${RoomCommandCodec.VERSION} ", " ${RoomCommandCodec.VERSION + 1} ")
 
         val thrown = runCatching { RoomCommandCodec.decode(newer) }.exceptionOrNull()
@@ -38,6 +39,36 @@ class RoomCommandCodecTest {
     fun `a command with no name here is refused`() {
         val thrown = runCatching {
             RoomCommandCodec.decode("${RoomCommandCodec.MAGIC} ${RoomCommandCodec.VERSION} DANCE")
+        }.exceptionOrNull()
+
+        assertTrue("$thrown", thrown is IllegalArgumentException)
+    }
+
+    /**
+     * The number some commands carry, which is a percentage and not an index.
+     *
+     * Handsets do not agree on how many steps a stream has - fifteen on one, sixteen on the next -
+     * so an index set across a room is a different loudness on every handset in it.
+     */
+    @Test
+    fun `a command can carry one number`() {
+        val order = RoomOrder(RoomCommand.SET_VOLUME, 60)
+
+        assertEquals(order, RoomCommandCodec.decode(RoomCommandCodec.encode(order)))
+        // And the plain form still has none, which is what every command before this one is.
+        assertEquals(null, RoomCommandCodec.decode(RoomCommandCodec.encode(RoomOrder(RoomCommand.PLAY))).value)
+    }
+
+    /**
+     * A number that is not one is refused rather than dropped.
+     *
+     * Dropping it would leave a handset doing SET_VOLUME with no volume, which is the shape of
+     * fault this codec exists to refuse: acting on the part of a message that parsed.
+     */
+    @Test
+    fun `a command whose number is not a number is refused`() {
+        val thrown = runCatching {
+            RoomCommandCodec.decode("${RoomCommandCodec.MAGIC} ${RoomCommandCodec.VERSION} SET_VOLUME loud")
         }.exceptionOrNull()
 
         assertTrue("$thrown", thrown is IllegalArgumentException)

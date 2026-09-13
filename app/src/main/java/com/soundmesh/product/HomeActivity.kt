@@ -28,12 +28,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.RoomCommand
+import com.soundmesh.core.RoomOrder
 import com.soundmesh.probe.R
 import com.soundmesh.session.CAPTURING_HOST_STREAM
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.COMMAND_PORT
+import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandClient
 import com.soundmesh.probe.sync.RoomCommands
@@ -82,6 +84,16 @@ class HomeActivity : ComponentActivity() {
 
     /** Reads the output a capturing host is heard on. It cannot set it - see AccessibilityVolume. */
     private val hostOutputVolume by lazy { HostOutputVolume(getSystemService(AudioManager::class.java)) }
+
+    /**
+     * This handset's own volume, and the only thing in the app that sets it.
+     *
+     * Every handset holds one, host and sink alike: a room volume is one number applied by each
+     * of them to whichever stream it is actually playing on, not one stream named from the host.
+     */
+    private val handsetVolume by lazy {
+        HandsetVolume(getSystemService(AudioManager::class.java), filesDir)
+    }
     private val handler = Handler(Looper.getMainLooper())
 
     /** One timeline, shared with every other part of the app. See [EventLog]. */
@@ -124,7 +136,16 @@ class HomeActivity : ComponentActivity() {
                     health = DeviceHealth.read(this@HomeActivity),
                     // The volume keys are what move this, so the level changes under the screen
                     // rather than because of it, and has to be re-read to stay true.
-                    hostOutputVolume = if (state.capturing) hostOutputVolume.read() else null
+                    hostOutputVolume = if (state.capturing) hostOutputVolume.read() else null,
+                    // Follows this handset's own volume until somebody drags the slider, which is
+                    // what makes it start where the person expects. After a drag the number is
+                    // the room's, and following would fight whoever is holding it.
+                    roomVolumePercent = when {
+                        state.role != Role.HOST -> null
+                        state.volumeChanged -> state.roomVolumePercent
+                        else -> handsetVolume.read(state.capturing).percent
+                    },
+                    volumeChanged = handsetVolume.changed()
                 )
             }
             handler.postDelayed(this, REFRESH_MILLIS)
@@ -220,6 +241,8 @@ class HomeActivity : ComponentActivity() {
         },
         // The role travels with the intent: the pair calibration is directional, and this screen
         // is where the person already said which direction this phone is being.
+        setRoomVolume = ::setRoomVolume,
+        restoreVolume = ::restoreVolume,
         pairCalibrate = {
             startActivity(
                 Intent(this, PeerCalibrateActivity::class.java)
@@ -555,6 +578,7 @@ class HomeActivity : ComponentActivity() {
                 )
                 }
             },
+            roomVolumes = volumeRows(),
             uncalibrated = RoomCommands.uncalibrated(),
             approximate = RoomCommands.approximate(),
             calledHere = handsetName(this),
@@ -694,10 +718,10 @@ class HomeActivity : ComponentActivity() {
                 else StoredApproximateCalibration(filesDir, host.hostId).read()
                 hostLine = RoomCommandClient(
                     host.address, COMMAND_PORT, self, carrying, approximately, handsetName(this)
-                ) { command ->
+                ) { order ->
                     // On to the main thread: this arrives on the socket thread, and everything it
                     // leads to is either an activity being started or a service being asked for.
-                    handler.post { obey(command) }
+                    handler.post { obey(order) }
                 }.also { it.start() }
             }
             Role.NONE -> RoomCommands.stop()
@@ -716,14 +740,85 @@ class HomeActivity : ComponentActivity() {
      * arrives about something this handset is already doing - is nothing rather than a second
      * session. The host says what the room should be doing, not what should happen next.
      */
-    private fun obey(command: RoomCommand) {
-        events.write("told to $command")
-        when (command) {
+    private fun obey(order: RoomOrder) {
+        events.write("told to ${order.command}" + (order.value?.let { " $it" } ?: ""))
+        when (order.command) {
             RoomCommand.PLAY -> if (!state.running) play()
             RoomCommand.STOP -> if (state.running) actions.stop()
             RoomCommand.MEASURE_ROOM -> goAndMeasure(overhead = false)
             RoomCommand.MEASURE_OVERHEAD -> goAndMeasure(overhead = true)
+            // Not guarded by anything: unlike the others this is a state and not an event, and a
+            // handset told twice to be at sixty per cent is a handset at sixty per cent.
+            RoomCommand.SET_VOLUME -> order.value?.let { applyVolume(it) }
+            RoomCommand.RESTORE_VOLUME -> putVolumeBack()
         }
+    }
+
+    /**
+     * Sets this handset's own volume and says up the line what it actually came to.
+     *
+     * Read back rather than echoed. setStreamVolume has been seen on these handsets to take a
+     * value and move nothing, and under do-not-disturb it throws instead - so a host shown what
+     * it asked for would be shown a room in agreement that is not one.
+     */
+    private fun applyVolume(percent: Int) {
+        val now = handsetVolume.set(percent, state.capturing)
+        events.write("volume set to $percent%: ${now.index}/${now.max} on ${now.stream}")
+        sayVolume(now.index, now.max, now.stream)
+        state = state.copy(volumeChanged = handsetVolume.changed())
+    }
+
+    private fun putVolumeBack() {
+        handsetVolume.restore()
+        val now = handsetVolume.read(state.capturing)
+        events.write("volume put back: ${now.index}/${now.max} on ${now.stream}")
+        sayVolume(now.index, now.max, now.stream)
+        state = state.copy(volumeChanged = handsetVolume.changed(), roomVolumePercent = now.percent)
+    }
+
+    /**
+     * What each handset in the room actually landed on, this one first.
+     *
+     * This handset's own row is read from its streams here and now; everybody else's is what they
+     * said after setting theirs. Neither is what the host asked for, which is the point: a row
+     * that disagrees with the slider is the only way a stream that refused to move can be seen.
+     */
+    private fun volumeRows(): List<VolumeRow> {
+        if (state.role != Role.HOST) return emptyList()
+        val mine = handsetVolume.read(state.capturing)
+        return listOf(
+            VolumeRow(handsetName(this), mine.percent, mine.index, mine.max, mine.stream)
+        ) + RoomCommands.volumes().map { (peerId, said) ->
+            VolumeRow(
+                RoomCommands.nameOf(peerId) ?: peerId.takeLast(4),
+                said.percent,
+                said.index,
+                said.max,
+                said.stream
+            )
+        }
+    }
+
+    /** Up the standing line if this handset is a sink; into its own row if it is the host. */
+    private fun sayVolume(index: Int, max: Int, stream: String) {
+        hostLine?.sayVolume(index, max, stream)
+    }
+
+    /**
+     * Tells the whole room, this handset included, what volume to be.
+     *
+     * The host is in the room rather than driving it from outside: whoever drags this wants the
+     * music quieter, and the phone in their hand is the loudest one there.
+     */
+    private fun setRoomVolume(percent: Int) {
+        state = state.copy(roomVolumePercent = percent)
+        RoomCommands.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
+        applyVolume(percent)
+    }
+
+    private fun restoreVolume() {
+        RoomCommands.send(RoomCommand.RESTORE_VOLUME)
+        putVolumeBack()
     }
 
     /**

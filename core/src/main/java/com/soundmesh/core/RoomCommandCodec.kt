@@ -3,7 +3,7 @@ package com.soundmesh.core
 /**
  * What a host can ask the rest of the room to do without anybody touching those handsets.
  *
- * Deliberately four things and not a remote control. Everything here is something that otherwise
+ * Deliberately a short list and not a remote control. Everything here is something that otherwise
  * has to be done by walking to each phone in turn and pressing the same button on it, in an order
  * that matters and that nobody can see - which is the one part of this project a listener has
  * called unusable rather than imperfect.
@@ -19,8 +19,28 @@ enum class RoomCommand {
     MEASURE_ROOM,
 
     /** The same round, with the listener's own position in it: see the overhead hint on screen. */
-    MEASURE_OVERHEAD
+    MEASURE_OVERHEAD,
+
+    /**
+     * Set the volume of whichever stream this handset is actually playing on, as a percentage.
+     *
+     * A percentage rather than an index because handsets do not agree on how many steps a stream
+     * has - fifteen on one, sixteen on the next - so an index means a different loudness on each
+     * of them and a room set to "9" is a room set to nothing in particular.
+     */
+    SET_VOLUME,
+
+    /** Put back whatever this handset's volume was before anything here first changed it. */
+    RESTORE_VOLUME
 }
+
+/**
+ * One command and the single number some of them carry.
+ *
+ * A number rather than a payload, and one rather than several: the moment this grows a shape it
+ * is a remote control protocol, and what is wanted is the short list above.
+ */
+data class RoomOrder(val command: RoomCommand, val value: Int? = null)
 
 /**
  * Wire format for one command, on its own channel.
@@ -38,17 +58,26 @@ object RoomCommandCodec {
     const val MAGIC = "soundmesh-command"
     const val VERSION = 1
 
-    fun encode(command: RoomCommand): String = "$MAGIC $VERSION ${command.name}"
+    fun encode(order: RoomOrder): String =
+        "$MAGIC $VERSION ${order.command.name}" + (order.value?.let { " $it" } ?: "")
 
-    /** The command in [text], or throws. */
-    fun decode(text: String): RoomCommand {
+    /** The order in [text], or throws. */
+    fun decode(text: String): RoomOrder {
         val parts = text.trim().split(" ")
-        require(parts.size == 3) { "not a command: $text" }
+        // Three or four: the number is a later addition, and a build from before it reads a
+        // four-part line as no command at all - which is the right answer for a handset that
+        // cannot do what is being asked. See the version note above for why this is not a bump:
+        // bumping would make an old handset refuse PLAY as well, and PLAY is the whole product.
+        require(parts.size in 3..4) { "not a command: $text" }
         require(parts[0] == MAGIC) { "not a command: ${parts[0]}" }
         require(parts[1] == VERSION.toString()) {
             "a command in version ${parts[1]}, and this build speaks $VERSION"
         }
-        return RoomCommand.values().firstOrNull { it.name == parts[2] }
+        val command = RoomCommand.values().firstOrNull { it.name == parts[2] }
             ?: throw IllegalArgumentException("no such command: ${parts[2]}")
+        val value = if (parts.size == 4) {
+            parts[3].toIntOrNull() ?: throw IllegalArgumentException("not a number: ${parts[3]}")
+        } else null
+        return RoomOrder(command, value)
     }
 }

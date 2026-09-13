@@ -174,6 +174,19 @@ data class HomeState(
      */
     val hostOutputVolume: OutputVolume? = null,
     /**
+     * Where the room's volume slider sits, or null where there is no room to set one for.
+     *
+     * Follows this handset's own volume until somebody drags it, which is what makes the slider
+     * start where the person expects: at whatever this phone is already playing at. After a drag
+     * it is the room's number and stops following, because the two have parted and only one of
+     * them is what the room was told.
+     */
+    val roomVolumePercent: Int? = null,
+    /** What each handset says its volume actually came to. Said, never assumed. See [VolumeRow]. */
+    val roomVolumes: List<VolumeRow> = emptyList(),
+    /** Whether anything here has been changed and not yet put back. */
+    val volumeChanged: Boolean = false,
+    /**
      * The room's shape, on a host that is running one. Null everywhere else.
      *
      * Only the host draws: it is the handset that holds the timeline and the only one that knows
@@ -184,6 +197,22 @@ data class HomeState(
 )
 
 /** What the screen can ask for. Held as one object so a preview can hand it empty lambdas. */
+/**
+ * One handset's answer to being told what volume to be.
+ *
+ * [percent] is worked out from [index] and [max] rather than echoed from what was asked, and the
+ * three are shown together on purpose: setStreamVolume has been seen on these handsets to take a
+ * value and move nothing, and under do-not-disturb it throws. A row that disagrees with the
+ * slider is the whole reason this list exists.
+ */
+data class VolumeRow(
+    val name: String,
+    val percent: Int,
+    val index: Int,
+    val max: Int,
+    val stream: String
+)
+
 class HomeActions(
     val pickRole: (Role) -> Unit,
     val chooseSong: () -> Unit,
@@ -197,6 +226,8 @@ class HomeActions(
     val stepSong: (Int) -> Unit,
     val setPaused: (Boolean) -> Unit,
     val pairCalibrate: () -> Unit,
+    val setRoomVolume: (Int) -> Unit,
+    val restoreVolume: () -> Unit,
     val room: RoomActions
 )
 
@@ -325,6 +356,80 @@ private fun HostOutputVolumePanel(volume: OutputVolume) {
     }
 }
 
+/**
+ * One number for the whole room, and what each handset actually did with it.
+ *
+ * A percentage travels rather than an index, because handsets do not agree on how many steps a
+ * stream has. Which stream each of them applies it to is its own business: a host capturing
+ * another app is heard on the alarm stream and everybody else is on media, so "the volume" means
+ * "whatever you are actually playing on" and not one stream named from here.
+ */
+@Composable
+private fun RoomVolumePanel(state: HomeState, actions: HomeActions) {
+    val percent = state.roomVolumePercent ?: return
+    // Where the thumb is while a finger is on it, which is not yet where the room is. Told at the
+    // end of the drag rather than through it: one drag is fifty values, and each one told to the
+    // room is a frame to every handset and a thread to send it on. The number under the thumb
+    // still moves, because a slider that does not is a broken slider.
+    var dragging by remember { mutableStateOf<Int?>(null) }
+    Section(R.string.room_volume_title) {
+        Text(
+            stringResource(R.string.room_volume_level, dragging ?: percent),
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Slider(
+            value = (dragging ?: percent).toFloat(),
+            onValueChange = { dragging = it.toInt() },
+            onValueChangeFinished = {
+                dragging?.let { actions.setRoomVolume(it) }
+                dragging = null
+            },
+            valueRange = 0f..100f,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (state.capturing) {
+            Text(
+                stringResource(R.string.room_volume_capturing_hint),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        // What landed, one line per handset. Not a receipt for the message - a reading of the
+        // stream afterwards - which is the only form of this that can say the word "no".
+        if (state.roomVolumes.isEmpty()) {
+            Text(stringResource(R.string.room_volume_none), style = MaterialTheme.typography.bodySmall)
+        } else {
+            for (row in state.roomVolumes) {
+                Text(
+                    stringResource(
+                        R.string.room_volume_row,
+                        row.name,
+                        row.percent,
+                        row.index,
+                        row.max,
+                        stringResource(
+                            if (row.stream == ALARM_STREAM_NAME) R.string.room_volume_alarm
+                            else R.string.room_volume_media
+                        )
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        if (state.volumeChanged) {
+            OutlinedButton(onClick = actions.restoreVolume, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.room_volume_restore))
+            }
+            Text(
+                stringResource(R.string.room_volume_restore_hint),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+/** The name [com.soundmesh.probe.sync.HandsetVolume] puts on the wire for the alarm stream. */
+private const val ALARM_STREAM_NAME = "ALARM"
+
 @Composable
 private fun RolePicker(actions: HomeActions) {
     Section(R.string.role_pick) {
@@ -377,6 +482,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
         }
     }
     state.hostOutputVolume?.let { HostOutputVolumePanel(it) }
+    RoomVolumePanel(state, actions)
     Section(R.string.pair_code) {
         if (state.pairingPayload == null) {
             Text(stringResource(R.string.pair_no_address))
