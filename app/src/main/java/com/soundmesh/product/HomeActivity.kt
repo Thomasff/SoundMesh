@@ -685,7 +685,7 @@ class HomeActivity : ComponentActivity() {
         // arrangement with nothing on screen saying anything had been lost. It is kept here
         // instead, for as long as this phone is being the host at all.
         val host = session as? HostSession
-            ?: return state.room?.takeIf { state.role == Role.HOST }
+            ?: return keptRoom()
         val roster = host.roomPeerIds()
         val previous = state.room ?: RoomState(selfId = roster.firstOrNull())
         // Where each handset was last seen, including ones not in the room just now. A sink
@@ -720,6 +720,23 @@ class HomeActivity : ComponentActivity() {
             silentIds = silent,
             otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
         ).also(::publish)
+    }
+
+    /**
+     * The drawing between sessions, with the handsets that are no longer standing by hollowed out.
+     *
+     * The icons are the ones the last session left behind - that is deliberate, and why this is
+     * kept at all. What was not deliberate is that nothing ever changed them: a handset switched
+     * off while nobody was playing stayed solid for as long as anybody looked at it, on a screen
+     * that said zero standing by two lines further down. Reported on 2026-09-14.
+     */
+    private fun keptRoom(): RoomState? {
+        val kept = state.room?.takeIf { state.role == Role.HOST } ?: return null
+        val silent = whoIsNotStandingBy(
+            kept.icons.map { it.peerId },
+            RoomCommands.standingPeerIds()
+        ).toSet()
+        return if (silent == kept.silentIds) kept else kept.copy(silentIds = silent)
     }
 
     override fun onResume() {

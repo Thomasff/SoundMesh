@@ -362,6 +362,15 @@ class RoomCommandServer(private val port: Int) {
     fun standingBy(): Int = clients.size
 
     /**
+     * Which handsets those are, for the screen that draws them rather than counts them.
+     *
+     * Between sessions this is the only roster there is: no audio is going anywhere and nobody is
+     * asking this host for the time, so the two lists the drawing reads while something is playing
+     * are both empty.
+     */
+    fun standingPeerIds(): List<String> = synchronized(clients) { clients.map { it.peerId } }
+
+    /**
      * Lets go of every handset that has stopped saying it is there.
      *
      * Takes [now] rather than reading the clock, so that the window can be tested without waiting
@@ -421,8 +430,22 @@ class RoomCommandServer(private val port: Int) {
     /** What each handset last said about why it is not measuring. */
     fun excuses(): Map<String, RoomExcuse> = synchronized(excuses) { LinkedHashMap(excuses) }
 
-    /** What each handset last said its own volume is, newest per handset. */
-    fun volumes(): Map<String, VolumeSaid> = synchronized(volumes) { LinkedHashMap(volumes) }
+    /**
+     * What each handset **that is standing by** last said its own volume is, newest per handset.
+     *
+     * Kept past the socket in the map and filtered here, rather than forgotten when a handset
+     * goes: a handset that comes straight back - which is what every reconnection is, and what
+     * a second line replacing a first is - would otherwise lose its control for as long as it
+     * took to say its volume again, and that gap is on the screen somebody is looking at.
+     *
+     * Filtered at all because a slider for a phone that is not in the room is the one thing on
+     * that screen that still looks like it would do something. Reported on 2026-09-14: a dropped
+     * handset was correctly drawn hollow and its slider sat there underneath.
+     */
+    fun volumes(): Map<String, VolumeSaid> = synchronized(clients) {
+        val here = clients.map { it.peerId }.toSet()
+        synchronized(volumes) { LinkedHashMap(volumes.filterKeys { it in here }) }
+    }
 
     /** When that arrived, by the host's own clock, or null for a handset that has never said. */
     fun volumeSaidAt(peerId: String): Long? = volumeAt[peerId]
@@ -694,6 +717,10 @@ object RoomCommands {
 
     @Synchronized
     fun volumes(): Map<String, VolumeSaid> = server?.volumes() ?: emptyMap()
+
+    /** Which handsets are standing by, for the drawing. See [RoomCommandServer.standingPeerIds]. */
+    @Synchronized
+    fun standingPeerIds(): List<String> = server?.standingPeerIds() ?: emptyList()
 
     @Synchronized
     fun volumeSaidAt(peerId: String): Long? = server?.volumeSaidAt(peerId)

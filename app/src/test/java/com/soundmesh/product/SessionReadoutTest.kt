@@ -21,6 +21,39 @@ class SessionReadoutTest {
     private fun valueOf(report: String, label: Int): String =
         SessionReadout.counters(report).first { it.label == label }.value
 
+    private val host = "a1b2c3d4e5f60718"
+    private val near = "0918273645abcdef"
+    private val far = "1122334455667788"
+
+    /**
+     * Between sessions the drawing is still on the screen, and until 2026-09-14 nothing ever
+     * changed it: a handset whose WiFi was switched off while nobody was playing stayed solid
+     * for as long as anybody looked at it. The count beside it said zero standing by at the same
+     * time, which is two things on one screen disagreeing about the same room.
+     *
+     * The roster is the standing channel's, because between sessions it is the only one there
+     * is - no audio is being sent to anybody and nobody is asking for the time.
+     */
+    @Test
+    fun hollowsOutAHandsetThatIsNoLongerStandingBy() {
+        assertEquals(listOf(far), whoIsNotStandingBy(listOf(host, near, far), listOf(near)))
+    }
+
+    /** And the host is never one of them: it is the one doing the asking, not one of the asked. */
+    @Test
+    fun neverCallsTheHostItselfMissingFromItsOwnRoom() {
+        assertEquals(emptyList<String>(), whoIsNotStandingBy(listOf(host), emptyList()))
+    }
+
+    /** Everybody holding their line is a room with nothing to say about it. */
+    @Test
+    fun saysNothingAboutARoomWhereEverybodyIsStillStandingBy() {
+        assertEquals(
+            emptyList<String>(),
+            whoIsNotStandingBy(listOf(host, near, far), listOf(far, near))
+        )
+    }
+
     @Test
     fun noReportIsNoRowsRatherThanRowsOfDashes() {
         assertEquals(emptyList<Counter>(), SessionReadout.counters(null))

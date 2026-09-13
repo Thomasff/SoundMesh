@@ -22,7 +22,25 @@ data class Counter(@StringRes val label: Int, val value: String)
  * one screen, because a listener wants to know which phone, not which socket noticed first.
  */
 internal fun whoStopped(room: List<String>, audio: List<String>, quiet: List<String>): List<String> =
-    room.drop(1).filter { it !in audio || it in quiet }
+    room.drop(1).filter { it !in audio || it in quiet }
+/**
+ * The same question between sessions, where none of the three channels above exists.
+ *
+ * Nobody is being sent audio and nobody is asking for the time, so the only thing that knows who
+ * is in the room is the standing channel - and the drawing on the screen is the one the last
+ * session left behind. Until 2026-09-14 nothing ever touched it: a handset switched off while
+ * nobody was playing stayed solid for as long as anybody looked at it, while the count beside it
+ * correctly read zero standing by. Two things on one screen disagreeing about the same room.
+ *
+ * A separate function from [whoStopped] rather than the same one with a different list, because
+ * it is a different question: that one is "who stopped", this one is "who would not follow if I
+ * pressed play now" - and a handset that is merely on another screen answers them differently.
+ *
+ * [room] is the drawing, this handset first, for the reason [whoStopped] states.
+ */
+internal fun whoIsNotStandingBy(room: List<String>, standing: List<String>): List<String> =
+    room.drop(1).filterNot { it in standing }
+
 
 /**
  * The renderer's own JSON, turned into rows a person can read off a table.

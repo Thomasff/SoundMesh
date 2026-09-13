@@ -95,6 +95,34 @@ class RoomCommandChannelTest {
         }
     }
 
+    /**
+     * And takes its volume control off the screen with it.
+     *
+     * Reported on 2026-09-14 from a room of two: the handset was correctly shown as dropped and
+     * its slider stayed, still draggable, still reading whatever it last said. A control for a
+     * phone that is not there is worse than no control - it is the only thing on that screen that
+     * looks like it would do something.
+     */
+    @Test
+    fun takesAwayTheVolumeOfAHandsetItLetGoOf() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, volumeNow = { VolumeSaid(5, 15, "MEDIA") }, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(until { server.volumes().containsKey(one) })
+
+            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS)
+
+            assertEquals(emptyMap<String, VolumeSaid>(), server.volumes())
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
     /** And says nothing about it while it is still saying it is there. */
     @Test
     fun keepsCountingAHandsetThatIsStillSayingIt() {
