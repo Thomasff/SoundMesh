@@ -4,6 +4,7 @@ import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.RoomExcuse
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -175,6 +176,58 @@ class RoomCommandChannelTest {
             fresh.close()
         } finally {
             stale.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * One handset can be told something the rest of the room is not.
+     *
+     * For the phone standing next to a wall. The room is still the default and this is the
+     * exception: a room told one handset at a time is a room nobody can get level again, which
+     * is why the next drag of the room slider goes to everybody including this one.
+     */
+    @Test
+    fun tellsOneHandsetWithoutTellingTheRoom() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (mine, onMine) = waiting()
+        val (theirs, onTheirs) = waiting()
+        val client = standBy(port, one, onCommand = onMine)
+        val other = standBy(port, two, onCommand = onTheirs)
+        try {
+            assertTrue(connected(client))
+            assertTrue(connected(other))
+            assertTrue(until { server.standingBy() == 2 })
+
+            assertTrue(server.sendTo(two, RoomOrder(RoomCommand.SET_VOLUME, 40)))
+
+            assertEquals(RoomOrder(RoomCommand.SET_VOLUME, 40), theirs.poll(5, TimeUnit.SECONDS))
+            assertNull("the rest of the room was told too", mine.poll(500, TimeUnit.MILLISECONDS))
+
+            // And the other way, in the same test: told to whichever was named, rather than to
+            // whichever happens to be first in a list two threads raced to join.
+            assertTrue(server.sendTo(one, RoomOrder(RoomCommand.SET_VOLUME, 20)))
+
+            assertEquals(RoomOrder(RoomCommand.SET_VOLUME, 20), mine.poll(5, TimeUnit.SECONDS))
+            assertNull("the rest of the room was told too", theirs.poll(500, TimeUnit.MILLISECONDS))
+        } finally {
+            client.close()
+            other.close()
+            server.stop()
+        }
+    }
+
+    /** A handset that is not standing by is not told, and the caller finds that out. */
+    @Test
+    fun saysSoWhenTheHandsetItNamedIsNotThere() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        try {
+            assertFalse(server.sendTo(two, RoomOrder(RoomCommand.SET_VOLUME, 40)))
+        } finally {
             server.stop()
         }
     }

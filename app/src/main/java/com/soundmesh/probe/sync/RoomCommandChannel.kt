@@ -279,6 +279,32 @@ class RoomCommandServer(private val port: Int) {
     fun send(command: RoomCommand): Int = send(RoomOrder(command))
 
     /**
+     * Says it to one handset, and answers whether there was a line to say it down.
+     *
+     * The room is the default and this is the exception, on purpose: what a person wants almost
+     * always is one number for everybody, and what they occasionally want is one phone quieter
+     * because of where it is standing. A room told one at a time would be a room nobody could
+     * get level again.
+     */
+    fun sendTo(peerId: String, order: RoomOrder): Boolean {
+        val frame = SpatialFrame.encode(RoomCommandCodec.encode(order))
+        val standing = synchronized(clients) { clients.firstOrNull { it.peerId == peerId } }
+            ?: return false
+        Thread({
+            runCatching {
+                standing.socket.getOutputStream().apply {
+                    write(frame)
+                    flush()
+                }
+            }.onFailure {
+                clients.remove(standing)
+                runCatching { standing.socket.close() }
+            }
+        }, "SoundMeshCommandSendOne").start()
+        return true
+    }
+
+    /**
      * How many handsets are standing by.
      *
      * On screen rather than only in a log, because it is the answer to the question somebody asks
@@ -495,6 +521,10 @@ object RoomCommands {
 
     @Synchronized
     fun send(command: RoomCommand): Int = send(RoomOrder(command))
+
+    @Synchronized
+    fun sendTo(peerId: String, order: RoomOrder): Boolean =
+        server?.sendTo(peerId, order) ?: false
 
     @Synchronized
     fun standingBy(): Int = server?.standingBy() ?: 0

@@ -55,8 +55,44 @@ class StoredVolumeBefore(private val directory: File) {
         runCatching { file.delete() }
     }
 
+    /** Forgets one stream, for the one that has just been put back on its own. */
+    fun forget(stream: String) {
+        val left = taken() - stream
+        runCatching {
+            if (left.isEmpty()) file.delete()
+            else file.writeText(left.entries.joinToString("") { "${it.key} ${it.value}" + "\n" })
+        }
+    }
+
     companion object {
         const val FILE = "volume-before"
+    }
+}
+
+/**
+ * The three things this needs of a handset's streams, behind a seam.
+ *
+ * Not indirection for its own sake: the rule this class holds - which stream is silenced and when
+ * it is put back - is one a test can get wrong in a way that leaves somebody's phone at zero, and
+ * AudioManager cannot be stood up in a unit test. A fake also spells out the failure worth
+ * rehearsing, which is a set that is accepted and does nothing.
+ */
+interface StreamVolumes {
+    fun level(stream: Int): Int
+    fun max(stream: Int): Int
+    fun set(stream: Int, index: Int)
+}
+
+class AndroidStreamVolumes(private val audio: AudioManager) : StreamVolumes {
+    override fun level(stream: Int): Int = audio.getStreamVolume(stream)
+    override fun max(stream: Int): Int = audio.getStreamMaxVolume(stream)
+
+    /**
+     * Swallowed rather than reported: under do-not-disturb this throws, and the answer to that is
+     * the same as the answer to it silently doing nothing - read the stream back.
+     */
+    override fun set(stream: Int, index: Int) {
+        runCatching { audio.setStreamVolume(stream, index, 0) }
     }
 }
 
@@ -75,7 +111,9 @@ class StoredVolumeBefore(private val directory: File) {
  * app's audio is heard on the alarm stream - see [CAPTURING_HOST_STREAM] - and everybody else is
  * on media. One number across a room therefore means "whatever you are actually playing on".
  */
-class HandsetVolume(private val audio: AudioManager, private val directory: File) {
+class HandsetVolume(private val streams: StreamVolumes, directory: File) {
+    constructor(audio: AudioManager, directory: File) : this(AndroidStreamVolumes(audio), directory)
+
     private val before = StoredVolumeBefore(directory)
 
     fun streamFor(capturing: Boolean): Int =
@@ -91,18 +129,37 @@ class HandsetVolume(private val audio: AudioManager, private val directory: File
      * capturing host with media up hears everything twice. What was there first is kept, and
      * [restore] is the way back.
      */
-    fun set(percent: Int, capturing: Boolean): VolumeReading {
+    fun set(percent: Int, capturing: Boolean): VolumeReading = moveTo(capturing, percent)
+
+    /**
+     * Follows this handset from one stream to the other, which is what changing mode does.
+     *
+     * Both directions, and the second one is the one that is easy to forget: a host leaving the
+     * capturing mode goes back to playing on the stream that was silenced for it, so a mode
+     * change that only ever muted would leave somebody pressing play on a phone at zero.
+     *
+     * [percent] is null when nothing has said what the room should be at, and then this only
+     * moves the silence - it does not decide a loudness nobody asked for.
+     */
+    fun moveTo(capturing: Boolean, percent: Int?): VolumeReading {
         val stream = streamFor(capturing)
-        write(stream, indexFor(percent, audio.getStreamMaxVolume(stream)))
+        // First, because the stream about to be played on may be the one that was silenced, and
+        // because a percentage read off a muted stream is zero and would stick.
+        putMediaBack()
+        if (percent != null) write(stream, indexFor(percent, streams.max(stream)))
         if (capturing) write(AudioManager.STREAM_MUSIC, 0)
         return reading(stream)
     }
 
+    private fun putMediaBack() {
+        val was = before.taken()[MEDIA] ?: return
+        streams.set(AudioManager.STREAM_MUSIC, was)
+        before.forget(MEDIA)
+    }
+
     /** Puts back whatever was there before this app first changed it, and stops remembering. */
     fun restore() {
-        for ((name, index) in before.taken()) {
-            streamOf(name)?.let { runCatching { audio.setStreamVolume(it, index, 0) } }
-        }
+        for ((name, index) in before.taken()) streamOf(name)?.let { streams.set(it, index) }
         before.forget()
     }
 
@@ -110,17 +167,12 @@ class HandsetVolume(private val audio: AudioManager, private val directory: File
     fun changed(): Boolean = before.taken().isNotEmpty()
 
     private fun write(stream: Int, index: Int) {
-        before.remember(nameOf(stream), audio.getStreamVolume(stream))
-        // Swallowed rather than reported: under do-not-disturb this throws, and the answer to
-        // that is the same as the answer to it silently doing nothing - read the stream back.
-        runCatching { audio.setStreamVolume(stream, index, 0) }
+        before.remember(nameOf(stream), streams.level(stream))
+        streams.set(stream, index)
     }
 
-    private fun reading(stream: Int) = VolumeReading(
-        audio.getStreamVolume(stream),
-        audio.getStreamMaxVolume(stream),
-        nameOf(stream)
-    )
+    private fun reading(stream: Int) =
+        VolumeReading(streams.level(stream), streams.max(stream), nameOf(stream))
 
     companion object {
         const val MEDIA = "MEDIA"

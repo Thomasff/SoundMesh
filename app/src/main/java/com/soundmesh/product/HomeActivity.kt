@@ -36,6 +36,7 @@ import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.HandsetVolume
+import com.soundmesh.probe.sync.VolumeReading
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandClient
 import com.soundmesh.probe.sync.RoomCommands
@@ -120,6 +121,9 @@ class HomeActivity : ComponentActivity() {
      */
     private var hostLine: RoomCommandClient? = null
 
+    /** The last volume this handset said it was at, so only a change is worth a frame. */
+    private var saidVolume: VolumeReading? = null
+
     /** Whether the room has already been told about the session that is up, so it is told once. */
     private var toldTheRoom = false
 
@@ -196,6 +200,7 @@ class HomeActivity : ComponentActivity() {
                 state.copy(capturing = false, problem = R.string.capture_declined)
             } else {
                 state.copy(capturing = true, problem = null, hostOutputVolume = hostOutputVolume.read())
+                    .also { handler.post { followTheMode() } }
                     .also { handler.post(::aimVolumeKeys) }
             }
         }
@@ -242,6 +247,7 @@ class HomeActivity : ComponentActivity() {
         // The role travels with the intent: the pair calibration is directional, and this screen
         // is where the person already said which direction this phone is being.
         setRoomVolume = ::setRoomVolume,
+        setHandsetVolume = ::setHandsetVolume,
         restoreVolume = ::restoreVolume,
         pairCalibrate = {
             startActivity(
@@ -458,6 +464,7 @@ class HomeActivity : ComponentActivity() {
     private fun releaseProjection() {
         if (!state.capturing) return
         state = state.copy(capturing = false, hostOutputVolume = null)
+        followTheMode()
         aimVolumeKeys()
         startService(Intent(this, SyncProjectionService::class.java).setAction(SyncProjectionService.ACTION_RELEASE))
     }
@@ -590,6 +597,9 @@ class HomeActivity : ComponentActivity() {
                 else (CaptureSilence.silentNanos() / 1_000_000_000L).toInt()
         )
         announceSession(session != null)
+        // After the state is up to date, because what is said is read off this handset's streams
+        // and which stream that is depends on what it is being.
+        sayVolumeIfMoved()
     }
 
     /**
@@ -777,6 +787,27 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
+     * Moves the volume with the mode, so switching modes is one press rather than two.
+     *
+     * Changing mode changes which stream this handset plays on, and both directions need it. Into
+     * the capturing mode: the app being captured is heard on media live while the room plays the
+     * same thing a second and a half later, so media is silenced - and until this existed that
+     * only happened on the next drag of the slider, which is a listener being told to go and
+     * touch something to finish a switch they already made. Out of it: the stream about to be
+     * played on is the one that was silenced, so leaving without this is a phone at zero.
+     *
+     * Only this handset. The room is where it was; nothing here changed for anybody else.
+     */
+    private fun followTheMode() {
+        val now = handsetVolume.moveTo(state.capturing, state.roomVolumePercent)
+        events.write(
+            "volume follows the mode: ${now.index}/${now.max} on ${now.stream}" +
+                (state.roomVolumePercent?.let { ", room at $it%" } ?: ", no room volume set")
+        )
+        state = state.copy(volumeChanged = handsetVolume.changed())
+    }
+
+    /**
      * What each handset in the room actually landed on, this one first.
      *
      * This handset's own row is read from its streams here and now; everybody else's is what they
@@ -787,9 +818,17 @@ class HomeActivity : ComponentActivity() {
         if (state.role != Role.HOST) return emptyList()
         val mine = handsetVolume.read(state.capturing)
         return listOf(
-            VolumeRow(handsetName(this), mine.percent, mine.index, mine.max, mine.stream)
+            VolumeRow(
+                HostIdentity(filesDir).current(),
+                handsetName(this),
+                mine.percent,
+                mine.index,
+                mine.max,
+                mine.stream
+            )
         ) + RoomCommands.volumes().map { (peerId, said) ->
             VolumeRow(
+                peerId,
                 RoomCommands.nameOf(peerId) ?: peerId.takeLast(4),
                 said.percent,
                 said.index,
@@ -801,6 +840,7 @@ class HomeActivity : ComponentActivity() {
 
     /** Up the standing line if this handset is a sink; into its own row if it is the host. */
     private fun sayVolume(index: Int, max: Int, stream: String) {
+        saidVolume = VolumeReading(index, max, stream)
         hostLine?.sayVolume(index, max, stream)
     }
 
@@ -816,9 +856,40 @@ class HomeActivity : ComponentActivity() {
         applyVolume(percent)
     }
 
+    /**
+     * One handset on its own, for the one standing next to a wall.
+     *
+     * Nothing is remembered about it having been singled out. The next drag of the room slider
+     * levels everybody including this one, which is what was asked for and is also the only
+     * version of this anybody can reason about: a room where some handsets quietly opt out of
+     * the room volume is a room whose slider means nothing in particular.
+     */
+    private fun setHandsetVolume(peerId: String, percent: Int) {
+        if (peerId == HostIdentity(filesDir).current()) return applyVolume(percent)
+        events.write("volume for one handset: $peerId to $percent%")
+        RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent))
+    }
+
     private fun restoreVolume() {
         RoomCommands.send(RoomCommand.RESTORE_VOLUME)
         putVolumeBack()
+    }
+
+    /**
+     * Tells the host when this handset's own volume moved without the host asking.
+     *
+     * The volume keys are the thing that actually moves a stream, and pressing them on one phone
+     * must not move anybody else's - but a host whose list did not notice would be showing a room
+     * that agrees when it does not, which is the one thing that list exists to refuse. Polled
+     * rather than observed: this screen already reads itself several times a second, and a
+     * broadcast for this is undocumented on the versions here.
+     */
+    private fun sayVolumeIfMoved() {
+        val line = hostLine ?: return
+        val now = handsetVolume.read(state.capturing)
+        if (now == saidVolume) return
+        saidVolume = now
+        line.sayVolume(now.index, now.max, now.stream)
     }
 
     /**

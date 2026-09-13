@@ -124,6 +124,7 @@
     <string name="room_volume_row">%1$s %2$d%%（%3$d/%4$d，%5$s）</string>
     <string name="room_volume_media">媒体</string>
     <string name="room_volume_alarm">闹钟</string>
+    <string name="room_volume_row_hint">每台下面那条只调它自己，不动别人。再拖一次上面的全体音量，所有手机又会拉齐。上面那一行是各自读回来的真值，谁没跟上就看得出来。</string>
     <string name="room_volume_none">还没有手机报回自己的音量。</string>
     <string name="room_volume_restore">一键还原音量</string>
     <string name="room_volume_restore_hint">把每台手机放回动它之前的音量。各机的档数不一样，同一个百分比落到的格子也不一样，所以上面那几行是各自读回来的真值，不是照抄滑钮。</string>

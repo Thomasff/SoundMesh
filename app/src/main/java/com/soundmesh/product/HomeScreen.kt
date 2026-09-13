@@ -206,6 +206,8 @@ data class HomeState(
  * slider is the whole reason this list exists.
  */
 data class VolumeRow(
+    /** Which handset this is, which is what a control for it alone has to be addressed to. */
+    val peerId: String,
     val name: String,
     val percent: Int,
     val index: Int,
@@ -227,6 +229,8 @@ class HomeActions(
     val setPaused: (Boolean) -> Unit,
     val pairCalibrate: () -> Unit,
     val setRoomVolume: (Int) -> Unit,
+    /** One handset on its own, for the one standing next to a wall. */
+    val setHandsetVolume: (String, Int) -> Unit,
     val restoreVolume: () -> Unit,
     val room: RoomActions
 )
@@ -398,22 +402,11 @@ private fun RoomVolumePanel(state: HomeState, actions: HomeActions) {
         if (state.roomVolumes.isEmpty()) {
             Text(stringResource(R.string.room_volume_none), style = MaterialTheme.typography.bodySmall)
         } else {
-            for (row in state.roomVolumes) {
-                Text(
-                    stringResource(
-                        R.string.room_volume_row,
-                        row.name,
-                        row.percent,
-                        row.index,
-                        row.max,
-                        stringResource(
-                            if (row.stream == ALARM_STREAM_NAME) R.string.room_volume_alarm
-                            else R.string.room_volume_media
-                        )
-                    ),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
+            for (row in state.roomVolumes) HandsetVolumeRow(row, actions)
+            Text(
+                stringResource(R.string.room_volume_row_hint),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         if (state.volumeChanged) {
             OutlinedButton(onClick = actions.restoreVolume, modifier = Modifier.fillMaxWidth()) {
@@ -425,6 +418,43 @@ private fun RoomVolumePanel(state: HomeState, actions: HomeActions) {
             )
         }
     }
+}
+
+/**
+ * One handset's line, and its own control.
+ *
+ * The line is read back off that handset rather than echoed from what it was asked, which is why
+ * it can disagree with the slider above it - and that disagreement is the only way a stream that
+ * refused to move can be seen at all. The control beneath it is for the phone standing next to a
+ * wall; the next drag of the room slider levels everybody again, including this one.
+ */
+@Composable
+private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
+    var dragging by remember(row.peerId) { mutableStateOf<Int?>(null) }
+    Text(
+        stringResource(
+            R.string.room_volume_row,
+            row.name,
+            dragging ?: row.percent,
+            row.index,
+            row.max,
+            stringResource(
+                if (row.stream == ALARM_STREAM_NAME) R.string.room_volume_alarm
+                else R.string.room_volume_media
+            )
+        ),
+        style = MaterialTheme.typography.bodySmall
+    )
+    Slider(
+        value = (dragging ?: row.percent).toFloat(),
+        onValueChange = { dragging = it.toInt() },
+        onValueChangeFinished = {
+            dragging?.let { actions.setHandsetVolume(row.peerId, it) }
+            dragging = null
+        },
+        valueRange = 0f..100f,
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 /** The name [com.soundmesh.probe.sync.HandsetVolume] puts on the wire for the alarm stream. */

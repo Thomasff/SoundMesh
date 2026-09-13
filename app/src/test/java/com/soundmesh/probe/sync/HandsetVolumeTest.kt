@@ -94,4 +94,102 @@ class HandsetVolumeTest {
         assertEquals(mapOf("MEDIA" to 8), StoredVolumeBefore(directory).taken())
         assertFalse(StoredVolumeBefore(directory).taken().containsKey("ALARM"))
     }
+    private val media = android.media.AudioManager.STREAM_MUSIC
+    private val alarm = com.soundmesh.session.CAPTURING_HOST_STREAM
+
+    /** A handset's streams, and the one failure worth rehearsing: a set that changes nothing. */
+    private class FakeStreams(
+        val levels: MutableMap<Int, Int>,
+        val maxes: Map<Int, Int>,
+        val deaf: Set<Int> = emptySet()
+    ) : StreamVolumes {
+        override fun level(stream: Int): Int = levels[stream] ?: 0
+        override fun max(stream: Int): Int = maxes[stream] ?: 0
+        override fun set(stream: Int, index: Int) {
+            if (stream !in deaf) levels[stream] = index
+        }
+    }
+
+    private fun streams(mediaAt: Int = 8, alarmAt: Int = 11, deaf: Set<Int> = emptySet()) =
+        FakeStreams(
+            mutableMapOf(media to mediaAt, alarm to alarmAt),
+            mapOf(media to 15, alarm to 15),
+            deaf
+        )
+
+    /**
+     * Switching into the capturing mode silences media, and switching out of it puts media back.
+     *
+     * The second half is the one that is easy to forget and expensive to get wrong: the stream a
+     * host goes back to playing on is the one that was silenced for the capture, so a mode change
+     * that only ever muted leaves somebody pressing play on a phone at zero and hearing nothing.
+     *
+     * Reported on 2026-09-13 from the other side: switching into the capturing mode did not
+     * silence anything until the room volume was dragged, so a switch took two gestures.
+     */
+    @Test
+    fun movesTheSilenceWithTheModeInBothDirections() {
+        val fake = streams(mediaAt = 8, alarmAt = 11)
+        val volume = HandsetVolume(fake, temporaryDir())
+
+        volume.moveTo(capturing = true, percent = null)
+
+        assertEquals("media was not silenced for the capture", 0, fake.levels[media])
+        assertEquals("the alarm stream was moved by a mode change", 11, fake.levels[alarm])
+
+        volume.moveTo(capturing = false, percent = null)
+
+        assertEquals("media was left silent after the capture ended", 8, fake.levels[media])
+    }
+
+    /** With a room volume set, the mode change also lands it on whichever stream is now in use. */
+    @Test
+    fun landsTheRoomVolumeOnWhicheverStreamIsNowInUse() {
+        val fake = streams(mediaAt = 8, alarmAt = 11)
+        val volume = HandsetVolume(fake, temporaryDir())
+
+        volume.moveTo(capturing = true, percent = 60)
+
+        assertEquals(9, fake.levels[alarm])
+        assertEquals(0, fake.levels[media])
+
+        volume.moveTo(capturing = false, percent = 60)
+
+        assertEquals(9, fake.levels[media])
+    }
+
+    /**
+     * What is answered is what the stream is, never what it was asked for.
+     *
+     * A stream that accepts a value and does not move is not hypothetical here: it is what
+     * setStreamVolume did on this project's own handsets on the accessibility stream, sixteen
+     * times during one drag. A slider driven by what was asked looks live either way.
+     */
+    @Test
+    fun answersWhatTheStreamIsAndNotWhatItWasAsked() {
+        val fake = streams(mediaAt = 4, deaf = setOf(media))
+        val volume = HandsetVolume(fake, temporaryDir())
+
+        val now = volume.set(percent = 80, capturing = false)
+
+        assertEquals(4, now.index)
+        assertEquals(27, now.percent)
+    }
+
+    /** And afterwards there is a way back, which is the whole of what may be touched for. */
+    @Test
+    fun putsEveryStreamItTouchedBackWhereItFoundIt() {
+        val fake = streams(mediaAt = 8, alarmAt = 11)
+        val directory = temporaryDir()
+        HandsetVolume(fake, directory).moveTo(capturing = true, percent = 60)
+
+        // A fresh instance, because the way back has to survive the app being killed.
+        val later = HandsetVolume(fake, directory)
+        assertTrue(later.changed())
+        later.restore()
+
+        assertEquals(8, fake.levels[media])
+        assertEquals(11, fake.levels[alarm])
+        assertFalse(later.changed())
+    }
 }
