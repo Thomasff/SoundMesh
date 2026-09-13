@@ -1385,6 +1385,16 @@ class PeerCalibrateActivity : ComponentActivity() {
      * no calibration in flight while the ports say otherwise. That is 09-11, exactly: "回到主页,
      * 点击播放,显示放不了,让我停止对时。但是我到对时页面发现并没有正在对时".
      */
+    override fun onResume() {
+        super.onResume()
+        MeasuringNow.onScreen = true
+    }
+
+    override fun onPause() {
+        MeasuringNow.onScreen = false
+        super.onPause()
+    }
+
     override fun onDestroy() {
         if (isFinishing) stopServing()
         super.onDestroy()
@@ -2232,6 +2242,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             RoomExcuse.SLOW_LINK -> R.string.excuse_slow_link
             RoomExcuse.CLOCK_NOT_CONVERGED -> R.string.excuse_clock_not_converged
             RoomExcuse.BUSY -> R.string.excuse_busy
+            RoomExcuse.ASLEEP -> R.string.excuse_asleep
         }
     )
 
@@ -2332,4 +2343,20 @@ class PeerCalibrateActivity : ComponentActivity() {
         /** The sink's correlation pass takes seconds; this bounds a sink that died mid-run. */
         const val RESULT_TIMEOUT_MILLIS = 120_000
     }
+}
+
+/**
+ * Whether a calibration screen is in front of somebody on this handset right now.
+ *
+ * Read by [StandbyService], which holds this handset's standing line whether or not anybody is
+ * looking at it and therefore has to know when this handset is already busy being told what to do
+ * by a round. A volume moved under a chirp, or a session started over one, does not make a round
+ * fail - it makes it produce a number, which is the worse of the two outcomes by a long way.
+ *
+ * File scope rather than on the activity's companion, which is private and full of constants that
+ * have no business being visible.
+ */
+internal object MeasuringNow {
+    @Volatile
+    var onScreen = false
 }

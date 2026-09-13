@@ -28,7 +28,18 @@ enum class RoomExcuse {
     CLOCK_NOT_CONVERGED,
 
     /** Already measuring something. A second ask arrives while the first round is still going. */
-    BUSY
+    BUSY,
+
+    /**
+     * Standing by with its screen away, which is a phone that can hear but cannot be looked at.
+     *
+     * Playing, stopping and changing volume need nothing on screen, so a handset in somebody's
+     * pocket does those. Measuring needs its own screen - it opens one and drives it - and an app
+     * in the background is not allowed to start an activity at all. Said rather than silently
+     * skipped, because from the host the two look the same and the fix is a person picking that
+     * phone up.
+     */
+    ASLEEP
 }
 
 /**

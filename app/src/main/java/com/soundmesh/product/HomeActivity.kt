@@ -34,19 +34,13 @@ import com.soundmesh.session.CAPTURING_HOST_STREAM
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
-import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.HandsetVolume
-import com.soundmesh.probe.sync.VolumeReading
 import com.soundmesh.probe.sync.HostIdentity
-import com.soundmesh.probe.sync.RoomCommandClient
-import com.soundmesh.probe.sync.VolumeSaid
 import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.handsetName
-import com.soundmesh.probe.sync.StoredApproximateCalibration
-import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
 import java.io.File
@@ -111,19 +105,6 @@ class HomeActivity : ComponentActivity() {
      * a room of phones is a handful of strings.
      */
     private val whereTheyWere = HashMap<String, RoomIcon>()
-
-    /**
-     * The line this handset holds open to its host while it is a sink sitting on this screen.
-     *
-     * Only from this screen, and only while it is in front. An app in the background is not
-     * allowed to start an activity, so a command arriving then could not be obeyed anyway - and a
-     * handset that went off and did something because of a message received while nobody was
-     * looking at it is not a thing this should be able to do at all.
-     */
-    private var hostLine: RoomCommandClient? = null
-
-    /** The last volume this handset said it was at, so only a change is worth a frame. */
-    private var saidVolume: VolumeReading? = null
 
     /**
      * Whether somebody has dragged the room slider, which is what stops it following this phone.
@@ -629,7 +610,7 @@ class HomeActivity : ComponentActivity() {
             uncalibrated = RoomCommands.uncalibrated(),
             approximate = RoomCommands.approximate(),
             calledHere = handsetName(this),
-            onStandby = hostLine?.connected == true,
+            onStandby = StandbyService.ACTIVE?.connected == true,
             // Only while a capture is actually running. Silence from a source that is not open
             // is not a reading, and a stale one on screen is worse than none.
             captureSilentSeconds =
@@ -637,9 +618,6 @@ class HomeActivity : ComponentActivity() {
                 else (CaptureSilence.silentNanos() / 1_000_000_000L).toInt()
         )
         announceSession(session != null)
-        // After the state is up to date, because what is said is read off this handset's streams
-        // and which stream that is depends on what it is being.
-        sayVolumeIfMoved()
     }
 
     /**
@@ -725,6 +703,7 @@ class HomeActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        inFront = true
         // Re-read rather than kept: a scan happens in another activity, and this is where its
         // result arrives. The pairing code is re-encoded for the same reason ShowCodeActivity does
         // it - a handset that changed network is otherwise showing an address it no longer has.
@@ -741,13 +720,13 @@ class HomeActivity : ComponentActivity() {
      * neither has an event of its own that the other would see.
      */
     private fun takeUpTheRoom() {
-        stopStandingBy()
         events.write("role ${state.role}")
         when (state.role) {
             // Left open when this screen goes away, unlike the sink end. The host tells the room
             // to go and measure from inside the calibration screen - see RoomCommands - and this
             // screen is paused by then.
             Role.HOST -> {
+                stopStandingBy()
                 RoomCommands.serve()
                 // Said out loud because the count going down has no other trace at all: on
                 // 09-13 a room went from three standing to none and the only evidence was the
@@ -757,65 +736,25 @@ class HomeActivity : ComponentActivity() {
                     log.write("standing-left $peerId: $why")
                 }
             }
+            // Handed to a service of its own, which is what lets it outlive this screen: a
+            // handset lying face down on a table is the ordinary way a room of them is used, and
+            // with the line on this screen those handsets were simply not in the room.
             Role.SINK -> {
                 RoomCommands.stop()
-                val host = state.paired ?: return events.write(
-                    "standby not started: this handset has not scanned a host"
-                )
-                val self = state.selfId ?: HostIdentity(filesDir).current()
-                // The address as well as the fact. A pairing scanned on another network points
-                // at an address nothing answers on, and the screen can only say "not connected".
-                events.write("standby dialling ${host.address}:$COMMAND_PORT")
-                // Said on the way in, because the host cannot look it up: the correction lives
-                // on the handset that applies it. Read here rather than held, so coming back
-                // from a calibration announces what it just measured.
-                val carrying = StoredCalibration(filesDir, host.hostId).read()?.micros
-                // Only when there is no measurement: the two are said apart so the host screen
-                // can tell "nobody has measured this one" from "it is running off a room round",
-                // which ask for different things from whoever is reading it.
-                val approximately = if (carrying != null) null
-                else StoredApproximateCalibration(filesDir, host.hostId).read()
-                hostLine = RoomCommandClient(
-                    host.address, COMMAND_PORT, self, carrying, approximately, handsetName(this),
-                    // Read at the instant of connecting rather than now, because this client
-                    // dials again for as long as it is open and the host keeps these per
-                    // connection: without it, a host that has just started has no line for this
-                    // handset and no way to set it on its own.
-                    { handsetVolume.read(state.capturing).let { VolumeSaid(it.index, it.max, it.stream) } }
-                ) { order ->
-                    // On to the main thread: this arrives on the socket thread, and everything it
-                    // leads to is either an activity being started or a service being asked for.
-                    handler.post { obey(order) }
-                }.also { it.start() }
+                if (state.paired == null) {
+                    return events.write("standby not started: this handset has not scanned a host")
+                }
+                startForegroundService(Intent(this, StandbyService::class.java))
             }
-            Role.NONE -> RoomCommands.stop()
+            Role.NONE -> {
+                RoomCommands.stop()
+                stopStandingBy()
+            }
         }
     }
 
     private fun stopStandingBy() {
-        hostLine?.close()
-        hostLine = null
-    }
-
-    /**
-     * Does what the host asked.
-     *
-     * Each one is guarded by the state it would change, so a command that arrives twice - or that
-     * arrives about something this handset is already doing - is nothing rather than a second
-     * session. The host says what the room should be doing, not what should happen next.
-     */
-    private fun obey(order: RoomOrder) {
-        events.write("told to ${order.command}" + (order.value?.let { " $it" } ?: ""))
-        when (order.command) {
-            RoomCommand.PLAY -> if (!state.running) play()
-            RoomCommand.STOP -> if (state.running) actions.stop()
-            RoomCommand.MEASURE_ROOM -> goAndMeasure(overhead = false)
-            RoomCommand.MEASURE_OVERHEAD -> goAndMeasure(overhead = true)
-            // Not guarded by anything: unlike the others this is a state and not an event, and a
-            // handset told twice to be at sixty per cent is a handset at sixty per cent.
-            RoomCommand.SET_VOLUME -> order.value?.let { applyVolume(it) }
-            RoomCommand.RESTORE_VOLUME -> putVolumeBack()
-        }
+        stopService(Intent(this, StandbyService::class.java))
     }
 
     /**
@@ -828,7 +767,6 @@ class HomeActivity : ComponentActivity() {
     private fun applyVolume(percent: Int) {
         val now = handsetVolume.set(percent, state.capturing)
         events.write("volume set to $percent%: ${now.index}/${now.max} on ${now.stream}")
-        sayVolume(now.index, now.max, now.stream)
         state = state.copy(volumeChanged = handsetVolume.changed())
     }
 
@@ -839,7 +777,6 @@ class HomeActivity : ComponentActivity() {
         handsetVolume.restore()
         val now = handsetVolume.read(state.capturing)
         events.write("volume put back: ${now.index}/${now.max} on ${now.stream}")
-        sayVolume(now.index, now.max, now.stream)
         state = state.copy(volumeChanged = handsetVolume.changed(), roomVolumePercent = now.percent)
     }
 
@@ -896,20 +833,6 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
-     * Up the standing line if this handset is a sink; into its own row if it is the host.
-     *
-     * Written down only when it actually went out. Written down regardless, a single failed write
-     * - a line not open yet, or one that had just gone - would be the last thing this handset ever
-     * said about its volume, because [sayVolumeIfMoved] would then see it agreeing with itself
-     * forever. Cleared instead, so the next tick carries the true value up the moment there is a
-     * line to carry it on.
-     */
-    private fun sayVolume(index: Int, max: Int, stream: String) {
-        val landed = hostLine?.sayVolume(index, max, stream) == true
-        saidVolume = if (landed) VolumeReading(index, max, stream) else null
-    }
-
-    /**
      * Tells the whole room, this handset included, what volume to be.
      *
      * The host is in the room rather than driving it from outside: whoever drags this wants the
@@ -939,44 +862,6 @@ class HomeActivity : ComponentActivity() {
     private fun restoreVolume() {
         RoomCommands.send(RoomCommand.RESTORE_VOLUME)
         putVolumeBack()
-    }
-
-    /**
-     * Tells the host when this handset's own volume moved without the host asking.
-     *
-     * The volume keys are the thing that actually moves a stream, and pressing them on one phone
-     * must not move anybody else's - but a host whose list did not notice would be showing a room
-     * that agrees when it does not, which is the one thing that list exists to refuse. Polled
-     * rather than observed: this screen already reads itself several times a second, and a
-     * broadcast for this is undocumented on the versions here.
-     */
-    private fun sayVolumeIfMoved() {
-        val line = hostLine ?: return
-        val now = handsetVolume.read(state.capturing)
-        if (now == saidVolume) return
-        saidVolume = now
-        line.sayVolume(now.index, now.max, now.stream)
-    }
-
-    /**
-     * Opens the calibration screen on this handset and starts it, with nobody touching it.
-     *
-     * Allowed because this screen is in front: an app in the background cannot start an activity
-     * on Android 10 and later, which is also why [hostLine] is closed the moment it is not.
-     */
-    private fun goAndMeasure(overhead: Boolean) {
-        startActivity(
-            Intent(this, PeerCalibrateActivity::class.java)
-                .putExtra("role", CalibrationRole.SINK.name)
-                .putExtra("room", true)
-                .putExtra("overhead", overhead)
-                .putExtra("auto", true)
-                // Which is what sends it back here when the round ends. A handset that was
-                // opened by somebody pressing something is theirs to close; one that opened
-                // itself has to put itself away, or it sits on a finished result holding the
-                // clock port and standing by for nothing.
-                .putExtra("sent", true)
-        )
     }
 
     /**
@@ -1010,19 +895,35 @@ class HomeActivity : ComponentActivity() {
         )
     }
 
+    /**
+     * The standing line is deliberately left alone here: it belongs to [StandbyService] now, and
+     * outliving this screen is the whole point of having moved it.
+     */
     override fun onPause() {
+        inFront = false
         handler.removeCallbacks(refresh)
-        stopStandingBy()
         super.onPause()
     }
 
-    private companion object {
+    companion object {
+        /**
+         * Whether this screen is in front, which is whether this app may start an activity at all.
+         *
+         * Read by [StandbyService], which can obey everything else from the background and has to
+         * refuse exactly one thing. A flag rather than asking the system, because what is being
+         * asked is "would startActivity work", and the only honest answer to that is the one this
+         * screen already knows about itself.
+         */
+        @Volatile
+        var inFront = false
+            private set
+
         /** Fast enough that a state change reads as immediate, slow enough to cost nothing. */
-        const val REFRESH_MILLIS = 200L
+        private const val REFRESH_MILLIS = 200L
         /** Twenty ticks, so charge and heat refresh about every four seconds. */
-        const val HEALTH_EVERY_TICKS = 20
-        const val LOG_TAG = "SoundMeshHome"
-        const val AUDIO_MIME = "audio/*"
+        private const val HEALTH_EVERY_TICKS = 20
+        private const val LOG_TAG = "SoundMeshHome"
+        private const val AUDIO_MIME = "audio/*"
     }
 }
 

@@ -90,5 +90,9 @@
             android:name="com.soundmesh.session.SessionService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name="com.soundmesh.product.StandbyService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

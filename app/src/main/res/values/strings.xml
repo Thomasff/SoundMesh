@@ -5,6 +5,8 @@
     <string name="capture_notification">Capturing playback audio</string>
     <string name="session_channel_name">SoundMesh session</string>
     <string name="session_notification">Playing in sync</string>
+    <string name="standby_channel_name">SoundMesh standby</string>
+    <string name="standby_notification">待命中：主机一按就跟着播</string>
     <string name="home_title">SoundMesh</string>
 
     <!-- The product's own screen. Chinese, because it is read by the people using it, while every
@@ -84,6 +86,7 @@
     <string name="excuse_slow_link">它到这台的网络往返太慢，测出来的数不能用。</string>
     <string name="excuse_clock_not_converged">它的对时没收敛，多半还是网络。</string>
     <string name="excuse_busy">它正在跑别的测量，还没跑完。等它结束再按。</string>
+    <string name="excuse_asleep">它在待命，但屏幕是灭的。播放和音量不用亮屏，测量要——把那台手机点亮再按一次。</string>
     <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。</string>
     <string name="pair_calibrate_room_sink_approximate">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。这台还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f 毫秒先用着（是估的，误差大概一两毫秒）。有空按一次「开始对时」，测出来的会顶掉它。</string>
     <string name="pair_calibrate_stop">停止</string>
