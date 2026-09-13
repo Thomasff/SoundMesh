@@ -35,9 +35,12 @@ class RoomCommandChannelTest {
         carrying: Long? = null,
         approximately: Long? = null,
         called: String? = null,
+        volumeNow: (() -> VolumeSaid)? = null,
         onCommand: (RoomOrder) -> Unit
     ): RoomCommandClient =
-        RoomCommandClient("127.0.0.1", port, selfId, carrying, approximately, called, onCommand)
+        RoomCommandClient(
+            "127.0.0.1", port, selfId, carrying, approximately, called, volumeNow, onCommand
+        )
             .also { it.start() }
 
     /** The announce is read on a thread of its own, so what it said arrives after it connected. */
@@ -296,6 +299,31 @@ class RoomCommandChannelTest {
 
             assertTrue(until { server.volumes()[one]?.index == 3 })
             assertEquals(1, server.volumes().size)
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset says what its volume is as it arrives, without being asked.
+     *
+     * The host keeps these per connection, so a host that has just started - or a handset that
+     * has just come back from measuring and dialled again - has no line for it at all. The
+     * control for one handset on its own is drawn from that line, so until the first room-wide
+     * change reached everybody there was nothing on screen to set one phone with. Reported on
+     * 2026-09-13 as being unable to set a single handset from the host.
+     */
+    @Test
+    fun saysItsVolumeOnTheWayInRatherThanWaitingToBeTold() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, volumeNow = { VolumeSaid(6, 15, "MEDIA") }, onCommand = onCommand)
+        try {
+            assertTrue(until { server.volumes()[one] != null })
+            assertEquals(VolumeSaid(6, 15, "MEDIA"), server.volumes()[one])
         } finally {
             client.close()
             server.stop()

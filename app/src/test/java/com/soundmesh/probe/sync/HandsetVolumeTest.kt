@@ -103,9 +103,18 @@ class HandsetVolumeTest {
         val maxes: Map<Int, Int>,
         val deaf: Set<Int> = emptySet()
     ) : StreamVolumes {
+        /**
+         * Every write in order, which is the only place a volume people can hear actually lives.
+         *
+         * Where it ends up is not the whole behaviour: two writes a few milliseconds apart are
+         * two loudnesses in a room, and the first of them is what somebody complained about.
+         */
+        val written = ArrayList<Pair<Int, Int>>()
+
         override fun level(stream: Int): Int = levels[stream] ?: 0
         override fun max(stream: Int): Int = maxes[stream] ?: 0
         override fun set(stream: Int, index: Int) {
+            written += stream to index
             if (stream !in deaf) levels[stream] = index
         }
     }
@@ -156,6 +165,36 @@ class HandsetVolumeTest {
         volume.moveTo(capturing = false, percent = 60)
 
         assertEquals(9, fake.levels[media])
+    }
+
+    /**
+     * A room volume goes straight to the new level, never through the old one on the way.
+     *
+     * Reported on 2026-09-13 from a room of four: every change of the room volume was a jump to
+     * full and back, loud enough to be the thing people noticed about the feature. The level it
+     * jumped to was the one from before this app ever touched the handset - media was put back to
+     * it first so that leaving the capturing mode would work - and then written over a few
+     * milliseconds later. Where it ended up was right the whole time, which is why nothing on any
+     * screen and no assertion about a final level could see it.
+     */
+    @Test
+    fun goesStraightToTheNewLevelWithoutPassingThroughTheOldOne() {
+        val fake = streams(mediaAt = 14, alarmAt = 11)
+        val volume = HandsetVolume(fake, temporaryDir())
+        volume.set(percent = 20, capturing = false)
+        fake.written.clear()
+
+        volume.set(percent = 40, capturing = false)
+
+        assertEquals(listOf(media to 6), fake.written)
+
+        // And the same on the way into the capturing mode, where the stream being put back is the
+        // one the app being captured is playing on - so the jump is heard there too.
+        fake.written.clear()
+
+        volume.set(percent = 60, capturing = true)
+
+        assertEquals(listOf(alarm to 9, media to 0), fake.written)
     }
 
     /**

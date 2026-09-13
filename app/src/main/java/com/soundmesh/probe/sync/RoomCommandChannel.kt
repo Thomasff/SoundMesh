@@ -428,6 +428,20 @@ class RoomCommandClient(
      * which is what a host from before this reads anyway.
      */
     private val called: String? = null,
+    /**
+     * What this handset's volume is right now, read at the moment of connecting.
+     *
+     * Said on the way in rather than only after being told to change, because the host's table of
+     * them is per connection at both ends: a host that has just started, or a handset that has
+     * just come back from measuring, has no line for this handset at all - and the control for one
+     * handset on its own is drawn from that line. So until the first room-wide change reached
+     * everybody, the thing a person wanted for the phone standing next to a wall was simply not
+     * on the screen.
+     *
+     * A lambda because a connection can be the fifth one this client has made and the answer will
+     * have moved; null keeps this build silent, which is what an older host reads anyway.
+     */
+    private val volumeNow: (() -> VolumeSaid)? = null,
     private val onCommand: (RoomOrder) -> Unit
 ) : AutoCloseable {
     @Volatile private var running = false
@@ -458,6 +472,10 @@ class RoomCommandClient(
                         // A third frame on the same terms as the second: a reader that does not
                         // know it discards it, and the socket goes on being what it is for.
                         called?.let { write(SpatialFrame.encode(CALLED + it)) }
+                        // A fourth on the same terms, and the last one that is said unasked.
+                        volumeNow?.invoke()?.let {
+                            write(SpatialFrame.encode(sayingVolume(it.index, it.max, it.stream)))
+                        }
                         flush()
                     }
                     connected = true

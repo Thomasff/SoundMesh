@@ -39,6 +39,7 @@ import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.VolumeReading
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandClient
+import com.soundmesh.probe.sync.VolumeSaid
 import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
@@ -237,8 +238,8 @@ class HomeActivity : ComponentActivity() {
 
     private val actions = HomeActions(
         pickRole = { role -> state = state.copy(role = role, problem = null); readPairing(); takeUpTheRoom() },
-        chooseSong = { releaseProjection(); chooseSong.launch(arrayOf(AUDIO_MIME)) },
-        chooseFolder = { releaseProjection(); chooseFolder.launch(null) },
+        chooseSong = { putDownWhatIsPlaying(); chooseSong.launch(arrayOf(AUDIO_MIME)) },
+        chooseFolder = { putDownWhatIsPlaying(); chooseFolder.launch(null) },
         captureAudio = ::captureAudio,
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
@@ -465,6 +466,22 @@ class HomeActivity : ComponentActivity() {
             return
         }
         askProjection.launch(projectionManager().createScreenCaptureIntent())
+    }
+
+    /**
+     * Stops the room and hands the projection back, which is what choosing something else means.
+     *
+     * The same as pressing stop, and pressed for them - on the same terms as [captureAudio], which
+     * got this first and alone. Until this was here, opening the picker put the media stream back
+     * and left the room singing the last song for as long as somebody took over choosing a file:
+     * half the switch happened and half of it did not, which is the shape of it that is hardest to
+     * read from the outside.
+     */
+    private fun putDownWhatIsPlaying() {
+        // Stopped before the projection goes, so a running capture is not read from a source that
+        // has already been handed back.
+        if (state.running) stopSession()
+        releaseProjection()
     }
 
     /** Ends the session, which is also what tells the room to stop - see [announceSession]. */
@@ -759,7 +776,12 @@ class HomeActivity : ComponentActivity() {
                 val approximately = if (carrying != null) null
                 else StoredApproximateCalibration(filesDir, host.hostId).read()
                 hostLine = RoomCommandClient(
-                    host.address, COMMAND_PORT, self, carrying, approximately, handsetName(this)
+                    host.address, COMMAND_PORT, self, carrying, approximately, handsetName(this),
+                    // Read at the instant of connecting rather than now, because this client
+                    // dials again for as long as it is open and the host keeps these per
+                    // connection: without it, a host that has just started has no line for this
+                    // handset and no way to set it on its own.
+                    { handsetVolume.read(state.capturing).let { VolumeSaid(it.index, it.max, it.stream) } }
                 ) { order ->
                     // On to the main thread: this arrives on the socket thread, and everything it
                     // leads to is either an activity being started or a service being asked for.

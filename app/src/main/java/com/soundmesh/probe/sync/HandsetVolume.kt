@@ -143,9 +143,12 @@ class HandsetVolume(private val streams: StreamVolumes, directory: File) {
      */
     fun moveTo(capturing: Boolean, percent: Int?): VolumeReading {
         val stream = streamFor(capturing)
-        // First, because the stream about to be played on may be the one that was silenced, and
-        // because a percentage read off a muted stream is zero and would stick.
-        putMediaBack()
+        // Only when nothing here is going to write over media anyway. Putting it back first and
+        // then setting it is two loudnesses a few milliseconds apart, and the first of them is the
+        // level from before this app ever touched the handset - which is a room jumping to full
+        // and back on every drag of the slider. Where it ends up is the same either way, which is
+        // why it took somebody in the room to notice.
+        if (!capturing && percent == null) putMediaBack()
         if (percent != null) write(stream, indexFor(percent, streams.max(stream)))
         if (capturing) write(AudioManager.STREAM_MUSIC, 0)
         return reading(stream)
