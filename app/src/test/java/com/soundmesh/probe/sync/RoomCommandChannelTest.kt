@@ -30,9 +30,11 @@ class RoomCommandChannelTest {
         port: Int,
         selfId: String = one,
         carrying: Long? = null,
+        approximately: Long? = null,
         onCommand: (RoomCommand) -> Unit
     ): RoomCommandClient =
-        RoomCommandClient("127.0.0.1", port, selfId, carrying, onCommand).also { it.start() }
+        RoomCommandClient("127.0.0.1", port, selfId, carrying, approximately, onCommand)
+            .also { it.start() }
 
     /** The announce is read on a thread of its own, so what it said arrives after it connected. */
     private fun until(condition: () -> Boolean): Boolean {
@@ -350,6 +352,32 @@ class RoomCommandChannelTest {
             assertEquals("an older build was called uncalibrated", 0, server.uncalibrated())
         } finally {
             runCatching { socket.close() }
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset correcting off a room round is neither of the other two.
+     *
+     * Counted apart because the two ask for different things from whoever is reading the host
+     * screen: an unmeasured handset is tens of milliseconds out and has to be fixed before
+     * anybody presses play, and this one is about a millisecond out and can wait.
+     */
+    @Test
+    fun `a handset correcting off a room round says so, and is counted on its own`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, approximately = -35_948L, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+
+            assertTrue("the host never heard what it carries", until { server.approximate() == 1 })
+            assertEquals("a room round was called a measurement", 0, server.unsaid())
+            assertEquals("a room round was called no correction at all", 0, server.uncalibrated())
+        } finally {
+            client.close()
             server.stop()
         }
     }

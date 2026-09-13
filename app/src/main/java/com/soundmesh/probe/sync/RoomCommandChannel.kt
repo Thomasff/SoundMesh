@@ -18,16 +18,29 @@ const val COMMAND_PORT = 45128
  * silence is its own answer: calling it uncalibrated would send somebody off to recalibrate a
  * handset that is already fine.
  */
-private enum class Carried { UNSAID, NOTHING, SOMETHING }
+private enum class Carried { UNSAID, NOTHING, SOMETHING, APPROXIMATE }
 
 /** The one thing a standing handset ever says after its name. Anything else is a later build's. */
 private const val CARRYING = "carrying "
 private const val NOTHING_CARRIED = "none"
 
+/**
+ * Said by a handset correcting off a room round rather than off a measurement of its own pair.
+ *
+ * A word rather than a flag beside the number, so a host from before this reads it as a phrase it
+ * does not know and keeps that handset at UNSAID - which is the honest answer for a build that
+ * cannot tell the two apart, and is the one state that sends nobody off to recalibrate anything.
+ */
+private const val APPROXIMATELY = "about "
+
 private fun carriedFrom(said: String): Carried? {
     if (!said.startsWith(CARRYING)) return null
     val what = said.removePrefix(CARRYING)
     if (what == NOTHING_CARRIED) return Carried.NOTHING
+    if (what.startsWith(APPROXIMATELY)) {
+        return if (what.removePrefix(APPROXIMATELY).toLongOrNull() != null) Carried.APPROXIMATE
+        else null
+    }
     return if (what.toLongOrNull() != null) Carried.SOMETHING else null
 }
 
@@ -192,6 +205,17 @@ class RoomCommandServer(private val port: Int) {
     /** How many standing handsets said they carry no correction for this host. */
     fun uncalibrated(): Int = synchronized(clients) { clients.count { it.carrying == Carried.NOTHING } }
 
+    /**
+     * How many said they are correcting off a room round rather than off their own measurement.
+     *
+     * Counted apart from [uncalibrated] rather than added to it, because the two ask for
+     * different things from the person reading the screen. One of them has to be fixed before
+     * anybody presses play - it is tens of milliseconds and audible across a room. The other is
+     * about a millisecond and can wait until somebody has a quiet minute.
+     */
+    fun approximate(): Int =
+        synchronized(clients) { clients.count { it.carrying == Carried.APPROXIMATE } }
+
     /** How many said neither way, which today means a build older than this message. */
     fun unsaid(): Int = synchronized(clients) { clients.count { it.carrying == Carried.UNSAID } }
 
@@ -229,6 +253,11 @@ class RoomCommandClient(
      * is the only thing that changes it, and coming back from it builds a new client.
      */
     private val carrying: Long?,
+    /**
+     * The same, when what this handset carries came off a room round instead of a measurement of
+     * this pair. Only read when [carrying] is null, which is the only state it can exist in.
+     */
+    private val approximately: Long? = null,
     private val onCommand: (RoomCommand) -> Unit
 ) : AutoCloseable {
     @Volatile private var running = false
@@ -255,7 +284,7 @@ class RoomCommandClient(
                         // validates the first frame as a name and would drop a handset that put
                         // anything else in it, while a frame it does not expect is read and
                         // discarded by the loop that is only there to notice the socket close.
-                        write(SpatialFrame.encode(CARRYING + (carrying?.toString() ?: NOTHING_CARRIED)))
+                        write(SpatialFrame.encode(CARRYING + what()))
                         flush()
                     }
                     connected = true
@@ -271,6 +300,13 @@ class RoomCommandClient(
             connected = false
             if (running) runCatching { Thread.sleep(RETRY_MILLIS) }
         }
+    }
+
+    /** What this handset says it carries: a measurement, a room round's guess, or nothing. */
+    private fun what(): String = when {
+        carrying != null -> carrying.toString()
+        approximately != null -> APPROXIMATELY + approximately
+        else -> NOTHING_CARRIED
     }
 
     override fun close() {
@@ -321,4 +357,7 @@ object RoomCommands {
 
     @Synchronized
     fun unsaid(): Int = server?.unsaid() ?: 0
+
+    @Synchronized
+    fun approximate(): Int = server?.approximate() ?: 0
 }

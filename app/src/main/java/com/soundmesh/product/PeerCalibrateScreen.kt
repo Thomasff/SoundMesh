@@ -37,12 +37,18 @@ import com.soundmesh.probe.R
  *
  * [stored] is the constant this handset already carries for that peer, and it is the difference
  * between offering to measure and offering to check.
+ *
+ * [approximate] is what a room round left behind when nobody had measured this pair. It is shown
+ * in place of [stored] rather than beside it, and named differently on the screen, because the
+ * one question this screen exists to answer is whether this phone is playing off a measurement
+ * or off a guess.
  */
 data class PeerCalibrateState(
     val role: CalibrationRole? = null,
     val running: Boolean = false,
     val message: String? = null,
     val stored: Long? = null,
+    val approximate: Long? = null,
     val observations: Int = 0,
     val outcomes: List<SinkOutcome> = emptyList()
 )
@@ -107,6 +113,8 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 Text(
                     state.stored?.let {
                         stringResource(R.string.pair_calibrate_stored, it / 1000.0, state.observations)
+                    } ?: state.approximate?.let {
+                        stringResource(R.string.pair_calibrate_approximate, it / 1000.0)
                     } ?: stringResource(R.string.pair_calibrate_unmeasured),
                     style = MaterialTheme.typography.bodyLarge
                 )

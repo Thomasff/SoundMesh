@@ -42,24 +42,65 @@ data class RoomResultMessage(
  * pairs and this handset is in three of them, so a 2 here means one of its own neighbours was not
  * heard - which is something the person holding it can act on by moving.
  */
-data class RoomReply(val handsets: Int, val ownPairsReadable: Int)
+data class RoomReply(
+    val handsets: Int,
+    val ownPairsReadable: Int,
+    /**
+     * How far this handset fired from the host, in microseconds, as the room read it - or null
+     * when the room could not read that pair well enough to say.
+     *
+     * An offer rather than an instruction, and the receiver decides. A handset that has been
+     * measured the long way already carries a better number and ignores this one; a handset that
+     * has not is otherwise correcting by zero, which on 2026-09-13 was measured at 32 to 50 ms
+     * on two of three handsets and was audible to a listener across the room.
+     *
+     * Sent to every handset rather than only to the ones believed to need it, because the host
+     * cannot tell which those are: the constant lives on the handset that applies it, and the
+     * standing channel where a handset says what it carries is closed for the whole of a
+     * measurement - the sink is on the calibration screen by then, not on its home screen.
+     *
+     * What it is, exactly: the half sum of the pair the sender and the host are in, which is the
+     * same quantity a pair calibration folds - so a handset already correcting reads it as the
+     * residual it is, and a handset correcting by nothing reads it whole.
+     */
+    val approximateOffsetMicros: Long? = null
+)
 
-/** Wire format for [RoomReply]: one line, sent back down the same socket. */
+/**
+ * Wire format for [RoomReply]: one line, sent back down the same socket.
+ *
+ * Version 2 carries the offer, version 1 did not. Decoding accepts both, which costs one branch
+ * and buys a room whose handsets were not all updated in the same minute. Encoding is always the
+ * current version: a host that dropped the field when it had nothing to offer would be saying
+ * "this build has no offer" and "this pair could not be read" with the same silence.
+ */
 object RoomReplyCodec {
     const val MAGIC = "soundmesh-room-reply"
-    const val VERSION = 1
+    const val VERSION = 2
 
-    fun encode(reply: RoomReply): String = "$MAGIC $VERSION ${reply.handsets} ${reply.ownPairsReadable}"
+    private const val NOTHING_OFFERED = "null"
+
+    fun encode(reply: RoomReply): String =
+        "$MAGIC $VERSION ${reply.handsets} ${reply.ownPairsReadable} " +
+            (reply.approximateOffsetMicros?.toString() ?: NOTHING_OFFERED)
 
     fun decode(text: String): RoomReply {
         val fields = text.trim().split(" ")
-        require(fields.size == 4 && fields[0] == MAGIC) { "not a room reply: $text" }
-        require(fields[1] == VERSION.toString()) { "unsupported room reply version: ${fields[1]}" }
+        require(fields.size in 4..5 && fields[0] == MAGIC) { "not a room reply: $text" }
+        require(fields[1] in ACCEPTED_VERSIONS) { "unsupported room reply version: ${fields[1]}" }
         val handsets = fields[2].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${fields[2]}")
         val readable = fields[3].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${fields[3]}")
         require(handsets >= 0 && readable >= 0) { "a room reply counts things: $text" }
-        return RoomReply(handsets, readable)
+        val offered = fields.getOrNull(4)
+        val approximate = when {
+            offered == null || offered == NOTHING_OFFERED -> null
+            else -> offered.toLongOrNull()
+                ?: throw IllegalArgumentException("unreadable offer: $offered")
+        }
+        return RoomReply(handsets, readable, approximate)
     }
+
+    private val ACCEPTED_VERSIONS = setOf("1", "2")
 }
 
 /**

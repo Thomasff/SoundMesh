@@ -40,6 +40,7 @@ import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
+import com.soundmesh.probe.sync.StoredApproximateCalibration
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
@@ -547,10 +548,14 @@ class HomeActivity : ComponentActivity() {
             standingBy = RoomCommands.standingBy().also { standing ->
                 if (state.role == Role.HOST && standing != wroteStandingBy) {
                     wroteStandingBy = standing
-                    events.write("standing by: $standing, ${RoomCommands.uncalibrated()} uncalibrated")
+                    events.write(
+                    "standing by: $standing, ${RoomCommands.uncalibrated()} uncalibrated, " +
+                        "${RoomCommands.approximate()} on a room round"
+                )
                 }
             },
             uncalibrated = RoomCommands.uncalibrated(),
+            approximate = RoomCommands.approximate(),
             onStandby = hostLine?.connected == true,
             // Only while a capture is actually running. Silence from a source that is not open
             // is not a reading, and a stale one on screen is worse than none.
@@ -680,7 +685,14 @@ class HomeActivity : ComponentActivity() {
                 // on the handset that applies it. Read here rather than held, so coming back
                 // from a calibration announces what it just measured.
                 val carrying = StoredCalibration(filesDir, host.hostId).read()?.micros
-                hostLine = RoomCommandClient(host.address, COMMAND_PORT, self, carrying) { command ->
+                // Only when there is no measurement: the two are said apart so the host screen
+                // can tell "nobody has measured this one" from "it is running off a room round",
+                // which ask for different things from whoever is reading it.
+                val approximately = if (carrying != null) null
+                else StoredApproximateCalibration(filesDir, host.hostId).read()
+                hostLine = RoomCommandClient(
+                    host.address, COMMAND_PORT, self, carrying, approximately
+                ) { command ->
                     // On to the main thread: this arrives on the socket thread, and everything it
                     // leads to is either an activity being started or a service being asked for.
                     handler.post { obey(command) }

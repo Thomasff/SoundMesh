@@ -431,4 +431,100 @@ class PeerCalibrateRoomTest {
         assertEquals(2.0, field.separationMetres[one to three]!!, 0.05)
         assertEquals(2.0, field.separationMetres[one to two]!!, 0.05)
     }
+
+    // -- what may be handed to a handset that was never measured ------------------------------
+
+    /**
+     * The offer is the same reading, signed the way the handset that applies it needs it.
+     *
+     * Which way that is was settled on hardware rather than here: on 2026-09-13 a handset already
+     * correcting by +35.352 ms read -1.229 ms of residual off a room round. Had the room spoken
+     * the opposite convention it would have read about -70. So a room pair keyed (sink, host)
+     * carries the same quantity a stored constant does, and [offeredTo] passes it through.
+     */
+    @Test
+    fun `what a room offers a handset is signed the way that handset stores it`() {
+        val names = listOf(one, two, three)
+        val flight = { a: Int, b: Int -> if (a == b) 0 else twoMetres }
+        val fiveMillis = (5.0 / 1000 * ChirpGenerator.SAMPLE_RATE).toInt()
+        val heard = (0..2).associateWith { own ->
+            listOf(hearing(own, 3, flight, lateBy = { slot -> if (slot == 0) fiveMillis else 0 }))
+        }
+
+        val field = roomField(plan(names), heard, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+
+        // The handset in slot 0 fired 5 ms after everybody else, and the host is the last slot.
+        assertEquals(-5000.0, offeredTo(field, three, one)!!.toDouble(), 200.0)
+        // The pair of handsets that fired together has nothing to correct.
+        assertEquals(0.0, offeredTo(field, three, two)!!.toDouble(), 200.0)
+        // And the host is not a handset this can be offered to: it is the thing being matched.
+        assertNull(offeredTo(field, three, three))
+    }
+
+    /**
+     * A pair whose repeats disagree is diagnosed but not handed out.
+     *
+     * The bound is [com.soundmesh.core.AlignmentVerdict.MAX_SINGLE_MS] - the one the pair flow
+     * already holds a single reading of this same quantity to - rather than a new number. It is
+     * borrowed in the refusing direction only, which is the direction that cannot invent an
+     * offer. What must not happen is the refusal quietly costing the diagnostic: the reading is
+     * still there to be read, it is just not acted on.
+     */
+    @Test
+    fun `a pair whose repeats disagree is read but not offered`() {
+        val names = listOf(one, two, three)
+        val flight = { a: Int, b: Int -> if (a == b) 0 else twoMetres }
+        val fiveMillis = (5.0 / 1000 * ChirpGenerator.SAMPLE_RATE).toInt()
+        val heard = (0..2).associateWith { own ->
+            listOf(
+                hearing(own, 3, flight, lateBy = { slot -> if (slot == 0) fiveMillis else 0 }),
+                hearing(own, 3, flight)
+            )
+        }
+
+        val field = roomField(plan(names), heard, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+
+        assertNotNull("the reading itself was lost", field.edgeFiringOffsetMs[one to three])
+        assertNull("a pair that moved 5 ms between repeats was handed out", offeredTo(field, three, one))
+        // The pair that held still across both repeats is untouched by its neighbour being refused.
+        assertNotNull(offeredTo(field, three, two))
+    }
+
+    /**
+     * Nothing is offered off a pair nobody could read, and the size is bounded by the same thing
+     * that bounds a measured constant: past [com.soundmesh.core.CalibrationUpdate.MAX_OFFSET_MICROS]
+     * the correction moves a chirp out of the window the next run would have to measure it in, so
+     * a handset carrying one could never be measured again.
+     */
+    @Test
+    fun `an unreadable pair offers nothing and an impossible one is refused`() {
+        assertNull(offerableFiringOffsetMicros(emptyList()))
+        assertNull(offerableFiringOffsetMicros(listOf(null, null)))
+        assertNull("a pair with no edge reading was offered", offerableFiringOffsetMicros(listOf(facing(null))))
+        assertEquals(-5_000L, offerableFiringOffsetMicros(listOf(facing(-5.0), facing(-5.0))))
+        assertNull(offerableFiringOffsetMicros(listOf(facing(2_000.0), facing(2_000.0))))
+    }
+
+    /** The sign convention lives in one place, so [offeredTo] reads a reversed key reversed. */
+    @Test
+    fun `a pair keyed the other way round is offered the other way round`() {
+        val field = RoomField(
+            separationMetres = emptyMap(),
+            alignmentErrorMs = emptyMap(),
+            edgeFiringOffsetMs = emptyMap(),
+            offerableOffsetMicros = mapOf((three to one) to -5_000L),
+            repeats = 1
+        )
+
+        assertEquals(5_000L, offeredTo(field, three, one))
+    }
+
+    private fun facing(edgeMs: Double?) = com.soundmesh.core.FacingPair(
+        alignmentErrorMs = 0.0,
+        separationMetres = 0.0,
+        flightTimeMs = 0.0,
+        rawHostMs = 0.0,
+        rawSinkMs = 0.0,
+        firingOffsetMs = edgeMs
+    )
 }

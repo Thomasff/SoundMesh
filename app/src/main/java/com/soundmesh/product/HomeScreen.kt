@@ -112,6 +112,14 @@ data class HomeState(
      * open - and what found it was a listener saying one of them sounded early.
      */
     val uncalibrated: Int = 0,
+    /**
+     * How many standing handsets are correcting off a room round instead of their own pair.
+     *
+     * Shown apart from [uncalibrated] and in a quieter colour, because it is a different size of
+     * problem: about a millisecond against tens of them. It is here at all so that nobody has to
+     * remember which phones were measured properly and which were caught up in a hurry.
+     */
+    val approximate: Int = 0,
     val onStandby: Boolean = false,
     /**
      * How many seconds the capture has been handing over exactly zero, or null when it is not.
@@ -443,6 +451,13 @@ private fun StandbyLine(state: HomeState) {
             stringResource(R.string.standby_uncalibrated, state.uncalibrated),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error
+        )
+    }
+    if (state.role == Role.HOST && state.approximate > 0) {
+        Text(
+            stringResource(R.string.standby_approximate, state.approximate),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

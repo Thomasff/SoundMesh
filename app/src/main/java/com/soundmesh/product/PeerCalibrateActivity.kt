@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.AlignmentPairing
 import com.soundmesh.core.AlignmentReading
+import com.soundmesh.core.AlignmentVerdict
 import com.soundmesh.core.CalibrationPlan
 import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.CalibrationReply
@@ -64,6 +65,7 @@ import com.soundmesh.probe.sync.keepingAwake
 import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.RouterPoke
 import com.soundmesh.probe.sync.routerPokeOf
+import com.soundmesh.probe.sync.StoredApproximateCalibration
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
@@ -73,6 +75,7 @@ import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 /**
  * The furthest one run may move the pair's offset and still be an observation of it.
@@ -399,6 +402,37 @@ internal fun measuredEdgeFiringOffsetMs(pairs: List<FacingPair?>): Double? {
     return if (millis.isEmpty()) null else medianOf(millis)
 }
 
+/**
+ * What this pair may be offered to the handset that is not the host, in microseconds, or null.
+ *
+ * The same reading as [measuredEdgeFiringOffsetMs], with the two refusals that stand between a
+ * diagnostic number and one a handset will apply to every note it plays for the rest of the
+ * evening. Neither threshold is new, and that is deliberate: every constant in this project that
+ * was invented rather than derived or measured has had to be argued for twice.
+ *
+ * The spread across repeats is held to [AlignmentVerdict.MAX_SINGLE_MS] - the bound the pair flow
+ * already applies to one reading of this same quantity, in the same units. It is being used more
+ * strictly here than there, since a spread of two readings can be twice either one is error, and
+ * that direction is the safe one: a borrowed bound that only ever refuses cannot manufacture an
+ * offer, it can only withhold one.
+ *
+ * The size is held to [CalibrationUpdate.MAX_OFFSET_MICROS], which is derived rather than chosen -
+ * beyond it the correction moves a chirp out of the window the next run would have to measure it
+ * in, so a handset carrying one could never be measured again.
+ *
+ * What is deliberately NOT borrowed is anything [measuredSeparationMetres] refuses on. Those two
+ * bounds are about a distance, in metres, and on 2026-09-13 the one pair whose distance was
+ * refused still reported a firing offset - the two halves of one reading fail independently,
+ * because the half difference is taken at the leading edge and the half sum at the loudest lag.
+ */
+internal fun offerableFiringOffsetMicros(pairs: List<FacingPair?>): Long? {
+    val millis = pairs.filterNotNull().mapNotNull { it.firingOffsetMs }
+    if (millis.isEmpty()) return null
+    if (millis.max() - millis.min() > AlignmentVerdict.MAX_SINGLE_MS) return null
+    val micros = (medianOf(millis) * 1000).roundToLong()
+    return if (abs(micros) >= CalibrationUpdate.MAX_OFFSET_MICROS) null else micros
+}
+
 internal fun measuredSeparationMetres(pairs: List<FacingPair?>): Double? {
     // A pair whose answer slides when the threshold slides has not found a direct sound, and it
     // is wrong in a way the agreement test below cannot see: measured 09-11, three runs with a
@@ -679,6 +713,15 @@ internal data class RoomField(
      * still checked against constants measured the long way.
      */
     val edgeFiringOffsetMs: Map<Pair<String, String>, Double?>,
+    /**
+     * The same reading again, in microseconds, for the pairs it may actually be handed out for.
+     *
+     * Kept beside the diagnostic maps rather than derived from them, because the refusals in
+     * [offerableFiringOffsetMicros] read the repeats and the median has already thrown those away.
+     * A null here against a number in [edgeFiringOffsetMs] is the interesting case: the pair was
+     * read and the reading was not steady enough to act on.
+     */
+    val offerableOffsetMicros: Map<Pair<String, String>, Long?>,
     val repeats: Int
 )
 
@@ -714,13 +757,36 @@ internal fun roomField(
     val metres = LinkedHashMap<Pair<String, String>, Double?>()
     val firing = LinkedHashMap<Pair<String, String>, Double?>()
     val edgeFiring = LinkedHashMap<Pair<String, String>, Double?>()
+    val offerable = LinkedHashMap<Pair<String, String>, Long?>()
     for (entry in byPair) {
         val names = plan.slotIds[entry.key.first] to plan.slotIds[entry.key.second]
         metres[names] = measuredSeparationMetres(entry.value)
         firing[names] = measuredFiringOffsetMs(entry.value)
         edgeFiring[names] = measuredEdgeFiringOffsetMs(entry.value)
+        offerable[names] = offerableFiringOffsetMicros(entry.value)
     }
-    return RoomField(metres, firing, edgeFiring, repeats)
+    return RoomField(metres, firing, edgeFiring, offerable, repeats)
+}
+
+/**
+ * What this round can offer [peerId] as an approximate correction against [hostId], or null.
+ *
+ * Signed the way the handset that applies it needs it. A pair answers the quantity
+ * `e(second) - e(first)` - see [AlignmentAnalysis.facingPairs], which hands the later slot to
+ * `combineFacing` as the host - and a stored correction is the same quantity with the host
+ * second. The host takes the last slot in every room this builds, so the key is already that way
+ * round; the other branch is there because a sign that is right by arrangement rather than by
+ * construction is one refactor away from being silently backwards, and backwards here doubles
+ * the error instead of removing it.
+ */
+internal fun offeredTo(field: RoomField, hostId: String, peerId: String): Long? {
+    if (peerId == hostId) return null
+    for (entry in field.offerableOffsetMicros) {
+        val micros = entry.value ?: continue
+        if (entry.key.first == peerId && entry.key.second == hostId) return micros
+        if (entry.key.first == hostId && entry.key.second == peerId) return -micros
+    }
+    return null
 }
 
 /** How many of the room's answered pairs [peerId] is one end of. */
@@ -955,6 +1021,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                         state = state.copy(
                             role = role(),
                             stored = stored?.micros,
+                            approximate = approximateCalibration(),
                             observations = stored?.observations ?: 0
                         ),
                         actions = PeerCalibrateActions(
@@ -1398,7 +1465,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             val heard = LinkedHashMap<Int, List<List<ChirpArrival?>>>()
             heard[ownSlot] = run.arrivalsByRepeat
             val heardFrom = ArrayList<String>()
-            var field = RoomField(emptyMap(), emptyMap(), emptyMap(), 0)
+            var field = RoomField(emptyMap(), emptyMap(), emptyMap(), emptyMap(), 0)
             roomServer.awaitRoom(plan.slotIds.size - 1, ROOM_RESULT_TIMEOUT_MILLIS) { delivered ->
                 for (message in delivered) {
                     val slot = plan.slotIds.indexOf(message.senderId)
@@ -1411,7 +1478,15 @@ class PeerCalibrateActivity : ComponentActivity() {
                 }
                 field = roomField(plan, heard, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
                 delivered.associate {
-                    it.senderId to RoomReply(plan.slotIds.size, pairsReadableFor(field, it.senderId))
+                    it.senderId to RoomReply(
+                        plan.slotIds.size,
+                        pairsReadableFor(field, it.senderId),
+                        // Offered to everybody who delivered, because the host cannot tell who
+                        // needs it: the constant lives on the handset that applies it, and the
+                        // channel where a handset says what it carries is closed for the whole
+                        // of a round. The receiver keeps it only if it has nothing better.
+                        offeredTo(field, hostId, it.senderId)
+                    )
                 }
             }
             fileAttempt(
@@ -1445,6 +1520,16 @@ class PeerCalibrateActivity : ComponentActivity() {
                 events.write(
                     "room-firing-edge ${entry.key.first} ${entry.key.second} " +
                         String.format(Locale.US, "%.3f", millis) + "ms"
+                )
+            }
+            // And what was actually handed out, which is a different list: a pair can be readable
+            // and still be refused here, and a refusal that leaves no trace is a fix that looks
+            // like a feature that was never built.
+            for (entry in field.offerableOffsetMicros) {
+                events.write(
+                    "room-offer ${entry.key.first} ${entry.key.second} " + (entry.value?.let {
+                        String.format(Locale.US, "%.3f", it / 1000.0) + "ms"
+                    } ?: "refused: the repeats of this pair did not agree closely enough")
                 )
             }
             // And the per-peer files, which is where every other arm writes a distance and
@@ -1792,9 +1877,21 @@ class PeerCalibrateActivity : ComponentActivity() {
             if (ownSlot != null) {
                 val room = RoomResultClient(paired.address, ROOM_PORT)
                     .exchange(RoomResultMessage(plan.caseId, sinkId, ownSlot, run.arrivalsByRepeat))
-                return show(getString(
-                    R.string.pair_calibrate_room_sink_done, room.handsets, room.ownPairsReadable
-                ))
+                // The host offers this to everybody who delivered; whether to keep it is decided
+                // here, and only here, because only this handset knows what it already carries.
+                // A measurement outranks the offer and is left alone - the offer is what stands
+                // in for one until somebody has a minute to walk to this phone.
+                val kept = room.approximateOffsetMicros?.takeIf { stored == null }?.also {
+                    runCatching { StoredApproximateCalibration(filesDir, paired.hostId).write(it) }
+                }
+                return show(
+                    if (kept == null) getString(
+                        R.string.pair_calibrate_room_sink_done, room.handsets, room.ownPairsReadable
+                    ) else getString(
+                        R.string.pair_calibrate_room_sink_approximate,
+                        room.handsets, room.ownPairsReadable, kept / 1000.0
+                    )
+                )
             }
             // Delivered even when there is nothing to deliver: the host waits on this message, so
             // an empty run and a dead sink look the same from an end of a socket that never opens.
@@ -1826,6 +1923,9 @@ class PeerCalibrateActivity : ComponentActivity() {
             val folded = CalibrationUpdate.fold(appliedMicros, observations, observed)
                 ?: return show(getString(R.string.pair_calibrate_kept, "OFFSET_OUT_OF_RANGE"))
             StoredCalibration(filesDir, paired.hostId).write(folded, observations + 1)
+            // The measurement is here now, so the guess goes. Read order alone would hide it
+            // rather than remove it, and a guess nothing reads is a guess nothing checks either.
+            runCatching { StoredApproximateCalibration(filesDir, paired.hostId).forget() }
             show(getString(R.string.pair_calibrate_done, folded / 1000.0, observations + 1))
         } finally {
             clockThread.interrupt()
@@ -1840,6 +1940,10 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private fun storedCalibration(): Calibration? =
         PairedHost(filesDir).read()?.let { StoredCalibration(filesDir, it.hostId).read() }
+
+    /** What a room round left for this peer when nobody had measured it, read the same way. */
+    private fun approximateCalibration(): Long? =
+        PairedHost(filesDir).read()?.let { StoredApproximateCalibration(filesDir, it.hostId).read() }
 
     /**
      * Drops this pair's constant, so the next run is adopted whole the way a first run is.
@@ -1864,7 +1968,12 @@ class PeerCalibrateActivity : ComponentActivity() {
 
     private fun forget() {
         if (running) return
-        PairedHost(filesDir).read()?.let { StoredCalibration(filesDir, it.hostId).forget() }
+        PairedHost(filesDir).read()?.let {
+            StoredCalibration(filesDir, it.hostId).forget()
+            // Both, because this button means "as if this pair had never been measured", and a
+            // handset that quietly carried on correcting off a room round would not be that.
+            StoredApproximateCalibration(filesDir, it.hostId).forget()
+        }
         // Also what redraws the screen: the stored value is read from disk during composition,
         // and the message is the state change that sends it back for a fresh look.
         show(getString(R.string.pair_calibrate_forgotten))

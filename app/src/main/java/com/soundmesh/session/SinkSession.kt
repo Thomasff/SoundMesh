@@ -12,6 +12,7 @@ import com.soundmesh.probe.sync.ChunkClient
 import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.SpatialFieldClient
+import com.soundmesh.probe.sync.StoredApproximateCalibration
 import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncRenderer
@@ -150,8 +151,15 @@ class SinkSession(
     @Volatile private var clockStartedNanos = 0L
     @Volatile private var firstEstimateNanos = 0L
 
+    // The measurement first, and a room round's approximation only when there is none. Zero was
+    // the whole of the fallback until 2026-09-13, when two handsets that had never been measured
+    // against this host played a whole afternoon 32 and 50 ms out, with every screen in the room
+    // saying it was fine. Zero is still what is left when neither file exists, and that is right:
+    // an unmeasured pair is not a pair whose offset is known to be nothing.
     private val alignmentOffsetNanos =
-        (StoredCalibration(calibrationDirectory, peerId).read()?.micros ?: 0L) * 1_000L
+        (StoredCalibration(calibrationDirectory, peerId).read()?.micros
+            ?: StoredApproximateCalibration(calibrationDirectory, peerId).read()
+            ?: 0L) * 1_000L
 
     private val scheduler = PlaybackScheduler(
         SyncRenderer.FRAMES_PER_CHUNK,

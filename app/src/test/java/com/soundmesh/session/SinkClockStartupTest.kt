@@ -48,4 +48,23 @@ class SinkClockStartupTest {
         // not read as one that answered instantly.
         assertTrue(source.contains("firstEstimateNanos == 0L || clockStartedNanos == 0L) -1L"))
     }
+
+    /**
+     * A measurement of this pair outranks a room round's guess, and both outrank zero.
+     *
+     * The order is the whole of the rule, and getting it the other way round is silent: a
+     * handset that has been measured properly would quietly start correcting off a guess, and
+     * every screen in the room would go on saying it had been measured. Zero stays the last
+     * resort rather than becoming an error, because a pair nobody has measured is not a pair
+     * whose offset is known to be nothing.
+     */
+    @Test
+    fun aMeasurementOfThisPairBeatsARoomRoundsGuess() {
+        val order = source.substringAfter("private val alignmentOffsetNanos")
+        assertTrue(
+            "the guess is read before the measurement",
+            order.indexOf("StoredCalibration(") < order.indexOf("StoredApproximateCalibration(")
+        )
+        assertTrue(order.substringBefore("* 1_000L").contains("?: 0L"))
+    }
 }

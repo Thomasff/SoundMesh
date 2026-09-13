@@ -55,6 +55,7 @@
     <string name="pair_calibrate_what">这是在测什么</string>
     <string name="pair_calibrate_intro">两台手机的发声时刻差着一个固定的量，跟型号和系统有关。量出来记下，从机播放时就按它补偿，两台才真的齐。这是这一对手机的属性，所以两台都要在场，而且只对「这台放歌、那台跟着」这一个方向有效。</string>
     <string name="pair_calibrate_stored">已经测过：%1$.3f 毫秒（%2$d 次观测的平均）</string>
+    <string name="pair_calibrate_approximate">这个数是估的：%1$.3f 毫秒，从「测量房间」那一轮顺带算出来的，误差大概一两毫秒。比不补强得多，但比正经测过差。有空在这台按一次「开始对时」，测出来的就会顶掉它。</string>
     <string name="pair_calibrate_unmeasured">还没测过。没测过就当作零来补，两台会差几十毫秒。</string>
     <string name="pair_calibrate_role_host">这台现在是主机——在首页选的，随时可以换。按开始，然后去另一台上也按开始。主机就这一个按钮：新测还是验证由另一台决定，这台两种都按「开始对时」。</string>
     <string name="pair_calibrate_role_sink">这台现在是从机——在首页选的，随时可以换。结果会记在这台上。请先在主机上按开始。</string>
@@ -80,6 +81,7 @@
     <string name="pair_calibrate_room_told_nobody">**一台都没通知到，所以没有手机会自己开始。** 其他手机要开着这个应用、停在首页，才收得到这个指令——退到桌面、切到别的应用、或者还停在上一轮的对时结果页，都收不到。先去把它们都退回首页，首页上会写着待命几台，然后再按一次。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
     <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。</string>
+    <string name="pair_calibrate_room_sink_approximate">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。这台还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f 毫秒先用着（是估的，误差大概一两毫秒）。有空按一次「开始对时」，测出来的会顶掉它。</string>
     <string name="pair_calibrate_stop">停止</string>
     <string name="pair_calibrate_stop_hint">正在测的这一台会测完，之后不再等新的手机。</string>
     <string name="pair_calibrate_stopping">这一台测完就结束，不再等下一台了。</string>
@@ -115,6 +117,7 @@
     <string name="pair_scan">扫描主机的码</string>
     <string name="pair_scan_hint">扫到之后按返回键回来</string>
     <string name="standby_host">待命中的手机：%1$d 台。主机这边开始播放、或者开始量距离的时候，它们会自己跟着做，不用一台台去按。</string>
+    <string name="standby_approximate">其中 %1$d 台用的是「测量房间」顺带算出来的估算值，还没正经对过时。差大概一两毫秒，听不出来，但有空该各测一次。</string>
     <string name="standby_uncalibrated">其中 %1$d 台还没和这台手机对过时。没对过就按零来补，它们会差几十毫秒，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>
     <string name="standby_sink">已待命：主机一按，这台自己开始。留在这一页别退出。</string>
     <string name="standby_sink_alone">没和主机连上，这台还得自己按开始。先扫码配对，并确认主机也开着这个应用的首页。</string>

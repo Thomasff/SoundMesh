@@ -160,4 +160,39 @@ class RoomResultCodecTest {
             RoomReplyCodec.decode(RoomReplyCodec.encode(reply).replace(" 3 ", " -1 "))
         }
     }
+
+    /**
+     * The offer a room makes a handset that has never been measured rides on the same line.
+     *
+     * Signed, and that is the field worth a test of its own: a correction with the sign inverted
+     * does not fail to help, it doubles the error it was sent to remove.
+     */
+    @Test
+    fun roundTripsTheOfferARoomMakesIncludingItsSign() {
+        val offered = RoomReply(handsets = 4, ownPairsReadable = 3, approximateOffsetMicros = -35_948L)
+
+        assertEquals(offered, RoomReplyCodec.decode(RoomReplyCodec.encode(offered)))
+        assertEquals(
+            offered.copy(approximateOffsetMicros = 35_948L),
+            RoomReplyCodec.decode(RoomReplyCodec.encode(offered.copy(approximateOffsetMicros = 35_948L)))
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            RoomReplyCodec.decode("soundmesh-room-reply 2 4 3 nearly")
+        }
+    }
+
+    /**
+     * A reply from a host that predates the offer still reads, and reads as no offer.
+     *
+     * Handsets in one room are updated one at a time - by somebody sending an install file to
+     * each phone - so a version this build has to speak to is not hypothetical. No offer is the
+     * right reading of silence here: a build that could not have made one did not make one.
+     */
+    @Test
+    fun aReplyFromBeforeTheOfferStillReadsAsNoOffer() {
+        assertEquals(
+            RoomReply(handsets = 3, ownPairsReadable = 2, approximateOffsetMicros = null),
+            RoomReplyCodec.decode("soundmesh-room-reply 1 3 2")
+        )
+    }
 }
