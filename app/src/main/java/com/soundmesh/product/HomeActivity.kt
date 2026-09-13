@@ -895,10 +895,18 @@ class HomeActivity : ComponentActivity() {
         }
     }
 
-    /** Up the standing line if this handset is a sink; into its own row if it is the host. */
+    /**
+     * Up the standing line if this handset is a sink; into its own row if it is the host.
+     *
+     * Written down only when it actually went out. Written down regardless, a single failed write
+     * - a line not open yet, or one that had just gone - would be the last thing this handset ever
+     * said about its volume, because [sayVolumeIfMoved] would then see it agreeing with itself
+     * forever. Cleared instead, so the next tick carries the true value up the moment there is a
+     * line to carry it on.
+     */
     private fun sayVolume(index: Int, max: Int, stream: String) {
-        saidVolume = VolumeReading(index, max, stream)
-        hostLine?.sayVolume(index, max, stream)
+        val landed = hostLine?.sayVolume(index, max, stream) == true
+        saidVolume = if (landed) VolumeReading(index, max, stream) else null
     }
 
     /**

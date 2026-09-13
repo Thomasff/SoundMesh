@@ -501,20 +501,25 @@ class RoomCommandClient(
     }
 
     /**
-     * Says what this handset's volume actually is, up the line the host already holds open.
+     * Says what this handset's volume actually is, and answers whether it went out.
      *
      * Written from whatever thread just changed it, which is safe because this end only ever
-     * writes and the hold loop only ever reads. Swallowed: a handset whose line has gone is a
-     * handset the host has already stopped counting.
+     * writes and the hold loop only ever reads.
+     *
+     * Answered rather than swallowed, and that is the whole of it: the caller writes down what it
+     * has said so as to stop repeating itself, so a write that never left has to be told apart
+     * from one that did. Written down as said, it would be the last thing this handset ever
+     * mentioned about its volume - and a line that is not open right now is the normal case, not
+     * a fault. It comes back three seconds later.
      */
-    fun sayVolume(index: Int, max: Int, stream: String) {
-        runCatching {
-            socket?.getOutputStream()?.apply {
-                write(SpatialFrame.encode(sayingVolume(index, max, stream)))
-                flush()
-            }
+    fun sayVolume(index: Int, max: Int, stream: String): Boolean = runCatching {
+        val open = socket?.takeIf { connected } ?: return false
+        open.getOutputStream().apply {
+            write(SpatialFrame.encode(sayingVolume(index, max, stream)))
+            flush()
         }
-    }
+        true
+    }.getOrDefault(false)
 
     override fun close() {
         running = false

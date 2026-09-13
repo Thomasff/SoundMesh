@@ -330,6 +330,39 @@ class RoomCommandChannelTest {
         }
     }
 
+    /**
+     * Saying a volume answers whether it actually went out.
+     *
+     * The handset writes down what it has said so that it stops repeating itself, and until this
+     * answered, a write that never left - no line open yet, or one that had just gone - was
+     * written down as said all the same. From then on that handset never mentioned its volume
+     * again: the host row for it froze at whatever last got through while the phone itself went
+     * on changing. Reported on 2026-09-13 as two handsets whose sliders snapped back while their
+     * volume really did move.
+     */
+    @Test
+    fun sayingAVolumeAnswersWhetherItWentOut() {
+        val port = freePort()
+        val (_, onCommand) = waiting()
+        // Started against a port nothing is listening on, which is every handset for the first
+        // moment of its life and any handset whose host has gone away.
+        val client = standBy(port, one, onCommand = onCommand)
+        try {
+            assertFalse(client.sayVolume(6, 15, "MEDIA"))
+
+            val server = RoomCommandServer(port)
+            server.start()
+            try {
+                assertTrue(until { client.sayVolume(9, 15, "MEDIA") })
+                assertTrue(until { server.volumes()[one]?.index == 9 })
+            } finally {
+                server.stop()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
     /** Nobody has said anything about a handset that has never been told to change. */
     @Test
     fun saysNothingAboutAHandsetThatHasNotSaid() {
