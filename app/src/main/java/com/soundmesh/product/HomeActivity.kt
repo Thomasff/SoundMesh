@@ -108,6 +108,25 @@ class HomeActivity : ComponentActivity() {
     private val whereTheyWere = HashMap<String, RoomIcon>()
 
     /**
+     * Which handsets were carrying the sides, kept past their leaving for the drawing's reason.
+     *
+     * Owed one thing the drawing is not: a part can be taken away, so a handset that is in the
+     * room drops out of here and is put back from what it actually carries. Otherwise turning a
+     * part off would be undone a moment later by the memory of it having been on.
+     */
+    private val sidesTheyCarried = HashSet<String>()
+
+    /**
+     * The room this phone was left with last time, read off disk once.
+     *
+     * Used only until a roster turns it into a real [RoomState]; after that the live one is the
+     * one. Not null, because "nothing was ever saved" and "a saved room with nothing in it" want
+     * the same thing from the screen here - the defaults - and [StoredRoomDrawing] has already
+     * told the two apart by the time this is set.
+     */
+    private var restored = RoomState()
+
+    /**
      * Whether somebody has dragged the room slider, which is what stops it following this phone.
      *
      * Its own flag rather than [HomeState.volumeChanged], which was doing both jobs and got them
@@ -228,6 +247,14 @@ class HomeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before anything draws: every other thing this screen shows can be measured again, and
+        // this one cannot - it is a person's opinion about which phone is on which side of the
+        // sofa, and the phones cannot be asked.
+        StoredRoomDrawing(filesDir).read()?.let { saved ->
+            whereTheyWere.putAll(saved.placements.associateBy { it.peerId })
+            sidesTheyCarried.addAll(saved.room.otherHalfIds)
+            restored = saved.room
+        }
         // Meant to be put down on a table and looked at, like every other screen in this app.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
@@ -687,7 +714,7 @@ class HomeActivity : ComponentActivity() {
         val host = session as? HostSession
             ?: return keptRoom()
         val roster = host.roomPeerIds()
-        val previous = state.room ?: RoomState(selfId = roster.firstOrNull())
+        val previous = state.room ?: restored.copy(selfId = roster.firstOrNull())
         // Where each handset was last seen, including ones not in the room just now. A sink
         // reconnects a few seconds after its host, so without this every restart is a roster
         // that grew - and a handset that grew back into the room would be given a default
@@ -718,7 +745,11 @@ class HomeActivity : ComponentActivity() {
             fitted = false,
             colours = host.roomPlaces(),
             silentIds = silent,
-            otherHalfIds = SpatialRoom.reconciledOtherHalf(previous.otherHalfIds, icons.map { it.peerId })
+            otherHalfIds = SpatialRoom.reconciledOtherHalf(
+                previous.otherHalfIds,
+                icons.map { it.peerId },
+                remembered = rememberedSides(previous.otherHalfIds, icons.map { it.peerId })
+            )
         ).also(::publish)
     }
 
@@ -988,7 +1019,39 @@ class HomeActivity : ComponentActivity() {
     override fun onPause() {
         inFront = false
         handler.removeCallbacks(refresh)
+        keepTheDrawing()
         super.onPause()
+    }
+
+    /**
+     * Writes down the room as it stands, because this is the last moment that is certain to run.
+     *
+     * On leaving rather than on every change: a drag publishes on every touch, and a file written
+     * fifty times a second to survive something that happens once is a cost paid continuously for
+     * a benefit that is not. What this does not cover is the process going down without ever
+     * pausing - a crash, or a force-stop - and that is the trade being made.
+     */
+    private fun keepTheDrawing() {
+        val room = state.room ?: return
+        // Everywhere anybody has been put, with the drawing on screen winning: the memory is
+        // brought up to date once per refresh, so a drag in the last fifth of a second is only
+        // here.
+        val placed = LinkedHashMap(whereTheyWere)
+        for (icon in room.icons) placed[icon.peerId] = icon
+        StoredRoomDrawing(filesDir).write(placed.values.toList(), room)
+    }
+
+    /**
+     * What handsets not in the room just now were last carrying.
+     *
+     * Kept up to date here rather than in the drawing's own memory because the two are not the
+     * same shape: a position is replaced and a part is taken away, so what is remembered about a
+     * handset that is present has to come from what it is actually carrying and nowhere else.
+     */
+    private fun rememberedSides(otherHalfIds: Set<String>, peerIds: List<String>): Set<String> {
+        sidesTheyCarried.removeAll(peerIds.toSet())
+        sidesTheyCarried.addAll(otherHalfIds)
+        return sidesTheyCarried
     }
 
     companion object {

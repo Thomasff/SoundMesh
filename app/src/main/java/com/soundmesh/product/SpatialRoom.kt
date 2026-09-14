@@ -138,9 +138,20 @@ object SpatialRoom {
      *
      * A handset that is still here keeps what it was given, for the reason its icon keeps where it
      * was dragged: the roster is re-read constantly and a choice rebuilt each time is not a choice.
+     *
+     * [remembered] is what handsets not in the room just now were last carrying, the same way
+     * [reconciled] takes where they were last drawn - and for the same case, which is a restart:
+     * the drawing is read back before any sink has dialled in, so the first roster is the host on
+     * its own and everybody else's part would be pruned a fifth of a second after being restored.
+     * The caller owns it, and owes it one thing the drawing does not: a part can be **taken away**,
+     * so what is remembered about a handset that is in the room has to be dropped, or turning a
+     * part off would be undone by the memory of it being on.
      */
-    fun reconciledOtherHalf(otherHalfIds: Set<String>, peerIds: List<String>): Set<String> =
-        otherHalfIds.intersect(peerIds.toSet())
+    fun reconciledOtherHalf(
+        otherHalfIds: Set<String>,
+        peerIds: List<String>,
+        remembered: Set<String> = emptySet()
+    ): Set<String> = (otherHalfIds + remembered).intersect(peerIds.toSet())
 
     /**
      * The same icon, no closer to the listener than [MIN_RADIUS].

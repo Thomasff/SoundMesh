@@ -191,6 +191,31 @@ class SpatialRoomTest {
     }
 
     /**
+     * And one that was away gets its part back the moment it is in the room again.
+     *
+     * The case this exists for is a restart: the drawing comes off disk before any sink has
+     * dialled back in, so on the first pass the roster is the host alone and every other handset's
+     * part would be pruned away a fifth of a second after being read - leaving a room that
+     * remembered where the phones stand and forgot which half each of them was playing.
+     */
+    @Test
+    fun aHandsetThatWasAwayGetsItsPartBackWhenItReturns() {
+        assertEquals(
+            setOf(a, b),
+            SpatialRoom.reconciledOtherHalf(setOf(a), listOf(a, b), remembered = setOf(b, c))
+        )
+    }
+
+    /** What is remembered about a handset nobody can see is still not a handset in the room. */
+    @Test
+    fun remembersNothingIntoARoomThatDoesNotHoldIt() {
+        assertEquals(
+            emptySet<String>(),
+            SpatialRoom.reconciledOtherHalf(emptySet(), listOf(a), remembered = setOf(b, c))
+        )
+    }
+
+    /**
      * Handsets that arrive one at a time used to be drawn on top of each other.
      *
      * Two join and the default arrangement spreads them to -60 and +60 degrees. A third joins:
