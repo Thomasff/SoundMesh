@@ -15,13 +15,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import android.os.SystemClock
+import kotlinx.coroutines.delay
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.probe.R
 
@@ -78,8 +82,30 @@ data class PeerCalibrateState(
     val stored: Long? = null,
     val approximate: Long? = null,
     val observations: Int = 0,
-    val outcomes: List<SinkOutcome> = emptyList()
+    val outcomes: List<SinkOutcome> = emptyList(),
+    /**
+     * When the step now running should be over, on [android.os.SystemClock.elapsedRealtime].
+     *
+     * Null wherever the length is not actually known, and that is the whole discipline of it: a
+     * round is the one thing this app asks a person to sit still for, and a number that was made
+     * up is worse than "about a minute" - somebody trusts it, moves when it reaches zero, and the
+     * run fails for a reason nothing writes down.
+     */
+    val until: Long? = null
 )
+
+/**
+ * Whole seconds still to wait, rounded up, and never below zero.
+ *
+ * Up rather than down so the final part-second reads as one: a zero on screen while the round is
+ * still running is the screen saying it is over when it is not, and the person it is saying that
+ * to is the one who then moves.
+ */
+internal fun secondsLeft(now: Long, until: Long): Int {
+    val left = until - now
+    if (left <= 0L) return 0
+    return ((left + 999L) / 1000L).toInt()
+}
 
 /**
  * What one sink's round came to, kept beside the others rather than replacing them.
@@ -102,6 +128,35 @@ class PeerCalibrateActions(
     val measureOverhead: () -> Unit
 )
 
+/**
+ * The countdown, ticking on its own rather than on whatever else redraws this screen.
+ *
+ * Keyed on the instant it counts to, so a new step replaces the count instead of continuing the
+ * last one's. It stops at zero rather than going negative: what comes next is a message, and a
+ * screen counting downwards past zero is one that has lost track of its own run.
+ */
+@Composable
+private fun HoldStill(until: Long) {
+    var left by remember(until) {
+        mutableIntStateOf(secondsLeft(SystemClock.elapsedRealtime(), until))
+    }
+    LaunchedEffect(until) {
+        while (left > 0) {
+            // Twice a second, so the number never sits on a stale value for most of a second.
+            delay(TICK_MILLIS)
+            left = secondsLeft(SystemClock.elapsedRealtime(), until)
+        }
+    }
+    if (left > 0) {
+        Text(
+            stringResource(R.string.pair_calibrate_hold_still, left),
+            style = MaterialTheme.typography.headlineSmall
+        )
+    }
+}
+
+private const val TICK_MILLIS = 500L
+
 @Composable
 fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions) {
     // One tap of friction, because there is no undo and the constant on the other side of it is
@@ -122,6 +177,16 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
             stringResource(R.string.pair_calibrate_title),
             style = MaterialTheme.typography.headlineMedium
         )
+        // Above everything else while a round runs, because it is the only thing on this screen
+        // that is about the next few seconds. It used to be at the bottom with the results, which
+        // on a phone means a person being asked to sit still has to scroll to find out how long
+        // for.
+        if (state.running) {
+            Section(R.string.pair_calibrate_now) {
+                state.message?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+                state.until?.let { HoldStill(it) }
+            }
+        }
         Section(R.string.pair_calibrate_what) {
             Text(
                 stringResource(R.string.pair_calibrate_intro),
@@ -286,9 +351,12 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 }
             )
         }
-        if (state.message != null || state.outcomes.isNotEmpty()) {
+        // Not while a round runs: it is said at the top then, and the same sentence in two places
+        // reads as two things having happened.
+        val said = state.message.takeIf { !state.running }
+        if (said != null || state.outcomes.isNotEmpty()) {
             Section(R.string.pair_calibrate_result) {
-                state.message?.let {
+                said?.let {
                     Text(it, style = MaterialTheme.typography.bodyLarge)
                 }
                 // Only the host ever fills this: the sink measures one host and says so above.

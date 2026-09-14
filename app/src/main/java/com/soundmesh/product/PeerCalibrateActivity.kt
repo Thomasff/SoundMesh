@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -1578,9 +1579,8 @@ class PeerCalibrateActivity : ComponentActivity() {
             // this host any more - obeying meant leaving the standing channel. A button that
             // stayed lit from here would be a button that lies, which is what was reported.
             handler.post { state = state.copy(stopOffer = StopOffer.ROOM_UNDER_WAY) }
-            show(getString(R.string.pair_calibrate_running))
             val ownSlot = plan.slotIds.indexOf(hostId)
-            val run = PeerCalibrationRunner(
+            val runner = PeerCalibrationRunner(
                 runStore = RunStore(filesDir),
                 caseId = plan.caseId,
                 role = CalibrationRole.HOST,
@@ -1589,7 +1589,12 @@ class PeerCalibrateActivity : ComponentActivity() {
                 hostNanosNow = { System.nanoTime() },
                 audioSource = audioSource(),
                 edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
-            ).run()
+            )
+            show(
+                getString(R.string.pair_calibrate_running),
+                whenItReaches(runner.timing().recordUntilHostNanos) { System.nanoTime() }
+            )
+            val run = runner.run()
             // Written before anything is combined, so a room that loses everybody still leaves
             // this handset's own hearing of it on disk.
             File(RunStore(filesDir).prepareRun(plan.caseId), hostArtifact(hostId)).writeText(run.json)
@@ -1776,8 +1781,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             show(getString(R.string.pair_calibrate_failed, "PLAN_UNSIGNED"))
             return RoundResult.FAILED
         }
-        show(getString(R.string.pair_calibrate_running))
-        val run = PeerCalibrationRunner(
+        val runner = PeerCalibrationRunner(
             runStore = RunStore(filesDir),
             caseId = plan.caseId,
             role = CalibrationRole.HOST,
@@ -1785,7 +1789,12 @@ class PeerCalibrateActivity : ComponentActivity() {
             hostNanosNow = { System.nanoTime() },
             audioSource = audioSource(),
             edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
-        ).run()
+        )
+        show(
+            getString(R.string.pair_calibrate_running),
+            whenItReaches(runner.timing().recordUntilHostNanos) { System.nanoTime() }
+        )
+        val run = runner.run()
         // Written before anything is answered, so a refused run still leaves its evidence.
         // Named with the peer, not just the case: a case id names a directory this only ever
         // mkdirs, so a second sink measured on this host landed on the first one's file and
@@ -1887,7 +1896,10 @@ class PeerCalibrateActivity : ComponentActivity() {
         val clockStartedAt = System.nanoTime()
         clockThread.start()
         try {
-            show(getString(R.string.pair_calibrate_clock))
+            show(
+                getString(R.string.pair_calibrate_clock),
+                whenItReaches(clockStartedAt + timing.clockFillNanos) { System.nanoTime() }
+            )
             val deadline = clockStartedAt + CONVERGENCE_TIMEOUT_NANOS
             while (clockClient.currentEstimate() == null && System.nanoTime() < deadline) {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
@@ -1985,24 +1997,32 @@ class PeerCalibrateActivity : ComponentActivity() {
                 }
                 ownSlot = slot
             }
-            show(getString(R.string.pair_calibrate_running))
-            val run = PeerCalibrationRunner(
+            // The correction is subtracted from this handset's view of host time, exactly as
+            // SinkSession applies it, so a verification tests it where the product puts it.
+            val hostNanosNow = {
+                System.nanoTime() +
+                    (clockClient.currentEstimate() ?: converged).offsetNanos -
+                    appliedMicros * 1_000L
+            }
+            val runner = PeerCalibrationRunner(
                 runStore = RunStore(filesDir),
                 caseId = caseId,
                 role = CalibrationRole.SINK,
                 plan = plan,
                 ownSlot = ownSlot,
-                // The correction is subtracted from this handset's view of host time, exactly as
-                // SinkSession applies it, so a verification tests it where the product puts it.
-                hostNanosNow = {
-                    System.nanoTime() +
-                        (clockClient.currentEstimate() ?: converged).offsetNanos -
-                        appliedMicros * 1_000L
-                },
+                hostNanosNow = hostNanosNow,
                 offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos },
                 audioSource = audioSource(),
                 edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
-            ).run()
+            )
+            // Counted to the instant the recording closes rather than to the last chirp: the
+            // sound still has to leave the output buffer and cross the room, and somebody who
+            // stands up at the last chirp has moved during the part being measured.
+            show(
+                getString(R.string.pair_calibrate_running),
+                whenItReaches(runner.timing().recordUntilHostNanos, hostNanosNow)
+            )
+            val run = runner.run()
             // Spliced in rather than passed to the runner: the clock belongs to this screen, and
             // the reason to record it is that the constant is only as good as the offset the
             // chirps were scheduled against. Without it, a run whose estimate was still moving
@@ -2246,9 +2266,24 @@ class PeerCalibrateActivity : ComponentActivity() {
         }
     )
 
-    private fun show(text: String) {
-        handler.post { state = state.copy(message = text) }
+    private fun show(text: String, until: Long? = null) {
+        handler.post { state = state.copy(message = text, until = until) }
     }
+
+    /**
+     * An instant on whatever clock [now] reads, as a moment on this phone's own.
+     *
+     * The countdown is drawn against elapsedRealtime because that is the one clock a screen can
+     * read without asking anybody, while the instants worth counting to are named in host time
+     * for the chirps and in this phone's nanoTime for the clock fill. Both arrive here with the
+     * clock that reads them, so neither has to be converted twice.
+     *
+     * Converted once, at the moment the step starts, rather than tracked: an offset estimate that
+     * moves by a millisecond while somebody sits still is not something a count of whole seconds
+     * can show, and re-reading it would only make the number flicker.
+     */
+    private fun whenItReaches(instantNanos: Long, now: () -> Long): Long =
+        SystemClock.elapsedRealtime() + (instantNanos - now()) / 1_000_000L
 
     private companion object {
         const val LOG_TAG = "SoundMeshPeerCalibrate"

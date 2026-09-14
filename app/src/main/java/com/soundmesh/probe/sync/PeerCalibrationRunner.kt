@@ -85,9 +85,19 @@ class PeerCalibrationRunner(
 
     @Volatile private var rendererReport: String? = null
 
+    /**
+     * Every instant this run will act on, available before it starts.
+     *
+     * Here rather than worked out again by whoever wants it, which is the whole reason it is a
+     * function: a screen counting down to the end of a round and a runner deciding when to stop
+     * recording have to mean the same instant, and two expressions that agree today are two
+     * expressions that can come apart.
+     */
+    fun timing(): CalibrationTiming = ownSlot?.let { CalibrationSchedule.of(plan, it, chirpNanos()) }
+        ?: CalibrationSchedule.of(plan, role, chirpNanos())
+
     fun run(): PeerCalibrationRun {
-        val timing = ownSlot?.let { CalibrationSchedule.of(plan, it, chirpNanos()) }
-            ?: CalibrationSchedule.of(plan, role, chirpNanos())
+        val timing = timing()
         val calibration = CalibrationRunner(runStore, caseId, audioSource, hostNanosNow)
         val recording = Thread({
             runCatching {

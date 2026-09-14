@@ -69,9 +69,11 @@
     <string name="pair_calibrate_verify">验证已经测过的结果</string>
     <string name="pair_calibrate_verify_hint">把已经记下的数装回去再测一遍。数是对的，就应该几乎什么都不剩。和新测一样，要先在主机上按「开始对时」，主机那边不用选验证。</string>
     <string name="pair_calibrate_result">结果</string>
+    <string name="pair_calibrate_now">正在进行</string>
+    <string name="pair_calibrate_hold_still">别动，还有 %1$d 秒。</string>
     <string name="pair_calibrate_waiting">在等另一台连过来。请在另一台上也按开始。</string>
-    <string name="pair_calibrate_clock">正在和另一台对时钟，大约二十秒。这一步不发声。</string>
-    <string name="pair_calibrate_running">正在测。两台都别碰，保持安静，大约一分钟。</string>
+    <string name="pair_calibrate_clock">正在和另一台对时钟。这一步不发声。</string>
+    <string name="pair_calibrate_running">正在测。每一台都别碰，保持安静。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
     <string name="pair_calibrate_room_title">几台一起量距离</string>
     <string name="pair_calibrate_room_intro">量的是**手机之间**的距离，一次量完所有组合。\n\n每台手机都摆到它该在的位置，其他手机开着这个应用停在首页别动，然后**只在这台上按一下**，它们会自己跟着开始。哪台没停在首页，就得走过去在那台上按一次——首页写着有几台在待命。\n\n按完约 10 秒开始响，响的时候谁都别碰。</string>
