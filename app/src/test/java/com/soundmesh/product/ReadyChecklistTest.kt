@@ -13,6 +13,11 @@ import org.junit.Test
 class ReadyChecklistTest {
     private fun marks(state: HomeState) = readyList(state).associate { it.line to it.mark }
 
+    // A row's line resource swaps with its state - "选好歌了" becomes "还没选歌" - so a test that
+    // looks a row up by one id finds nothing the moment the row is in the state the test is about.
+    private fun markOf(state: HomeState, vararg ids: Int) =
+        readyList(state).first { it.line in ids }.mark
+
     private val readyHost = HomeState(
         role = Role.HOST,
         songName = "夜曲.flac",
@@ -28,7 +33,10 @@ class ReadyChecklistTest {
     @Test
     fun `no song blocks, because there is nothing to play`() {
         val items = readyList(readyHost.copy(songName = null))
-        assertEquals(Mark.BLOCK, marks(readyHost.copy(songName = null))[R.string.ready_song])
+        assertEquals(
+            Mark.BLOCK,
+            markOf(readyHost.copy(songName = null), R.string.ready_song, R.string.ready_song_missing)
+        )
         assertFalse(canStart(items))
     }
 
@@ -45,13 +53,18 @@ class ReadyChecklistTest {
     @Test
     fun `an unmeasured output lead warns but does not block`() {
         val state = readyHost.copy(selfCalibrated = null)
-        assertEquals(Mark.WARN, marks(state)[R.string.ready_self_lead])
+        assertEquals(
+            Mark.WARN,
+            markOf(state, R.string.ready_self_lead, R.string.ready_self_lead_missing)
+        )
         assertTrue(canStart(readyList(state)))
     }
 
     @Test
     fun `a measured output lead is shown with its number`() {
-        val item = readyList(readyHost).first { it.line == R.string.ready_self_lead }
+        val item = readyList(readyHost).first {
+            it.line in setOf(R.string.ready_self_lead, R.string.ready_self_lead_missing)
+        }
         assertEquals(Mark.OK, item.mark)
         assertEquals("12.4", item.detail)
     }
@@ -86,8 +99,8 @@ class ReadyChecklistTest {
     @Test
     fun `a sink is asked about pairing rather than about songs`() {
         val lines = readyList(HomeState(role = Role.SINK)).map { it.line }
-        assertTrue(R.string.ready_paired in lines)
-        assertFalse(R.string.ready_song in lines)
+        assertTrue(lines.any { it == R.string.ready_paired || it == R.string.ready_paired_none })
+        assertFalse(lines.any { it == R.string.ready_song || it == R.string.ready_song_missing })
     }
 
     @Test

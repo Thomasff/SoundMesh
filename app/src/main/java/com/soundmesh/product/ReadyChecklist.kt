@@ -20,6 +20,10 @@ enum class ReadyGoto { SONG, SELF_CALIBRATE, PAIR_CALIBRATE, ALLOW_BACKGROUND, S
  *
  * [goto] is null only on an [Mark.OK] line. A line that is wrong and has nowhere to go is a
  * notification wearing a checklist's clothes, and the test holds this.
+ *
+ * [line] is not a stable id for a row - it swaps with [mark] ("选好歌了" becomes "还没选歌"),
+ * because the whole point of the checklist is that each line states the current situation. Do
+ * not cache it against the row it came from; read it fresh every time.
  */
 data class ReadyItem(
     val mark: Mark,
@@ -50,7 +54,7 @@ private fun hostList(state: HomeState): List<ReadyItem> = buildList {
     add(
         ReadyItem(
             mark = if (hasSource) Mark.OK else Mark.BLOCK,
-            line = R.string.ready_song,
+            line = if (hasSource) R.string.ready_song else R.string.ready_song_missing,
             detail = state.songName,
             goto = if (hasSource) null else ReadyGoto.SONG
         )
@@ -82,7 +86,7 @@ private fun sinkList(state: HomeState): List<ReadyItem> = buildList {
     add(
         ReadyItem(
             mark = if (paired) Mark.OK else Mark.BLOCK,
-            line = R.string.ready_paired,
+            line = if (paired) R.string.ready_paired else R.string.ready_paired_none,
             detail = null,
             goto = if (paired) null else ReadyGoto.SCAN
         )
@@ -102,7 +106,7 @@ private fun selfLead(state: HomeState): ReadyItem {
     val lead = state.selfCalibrated
     return ReadyItem(
         mark = if (lead != null) Mark.OK else Mark.WARN,
-        line = R.string.ready_self_lead,
+        line = if (lead != null) R.string.ready_self_lead else R.string.ready_self_lead_missing,
         detail = lead?.let { String.format(null as java.util.Locale?, "%.1f", it) },
         goto = if (lead != null) null else ReadyGoto.SELF_CALIBRATE
     )
