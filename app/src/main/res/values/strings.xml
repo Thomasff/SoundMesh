@@ -341,4 +341,18 @@
     <string name="tab_volume">音量</string>
     <string name="tab_play">播放</string>
     <string name="play_show_code">让别的手机扫我加进来</string>
+    <string name="settings_title">设置</string>
+    <string name="settings_theme">主题</string>
+    <string name="settings_theme_system">跟随系统</string>
+    <string name="settings_theme_light">浅色</string>
+    <string name="settings_theme_dark">深色</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_language_system">跟随系统（目前只有中文）</string>
+    <string name="settings_details">显示诊断细节</string>
+    <string name="settings_details_hint">状态计数、电量温度、构建号。平时用不上，出问题时有用。</string>
+    <string name="about_title">关于</string>
+    <string name="about_version">版本 %1$s · 构建 %2$s</string>
+    <string name="about_author">作者：%1$s</string>
+    <string name="about_repo">源码：%1$s</string>
+    <string name="about_licence">许可：%1$s</string>
 </resources>

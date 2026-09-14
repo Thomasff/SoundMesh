@@ -96,6 +96,28 @@ class HomeActivity : ComponentActivity() {
      */
     private var showingCode by mutableStateOf(false)
 
+    /** Whether the settings screen is up, replacing everything else this screen draws. */
+    private var showingSettings by mutableStateOf(false)
+
+    /**
+     * The theme somebody picked on the settings screen, held as composable state rather than read
+     * from [Preferences] inside `setContent`.
+     *
+     * A read inside the composition only runs again on the next cold start, so picking "dark" in
+     * settings would need the app killed and reopened before anything changed - which is not a
+     * setting, it is a setting that takes effect next time. [onCreate] reads it from disk once;
+     * the settings screen writes both the file and this field in the same tap.
+     */
+    private var themeChoice by mutableStateOf(ThemeChoice.SYSTEM)
+
+    /**
+     * Whether the playing stage's diagnostic block is shown, held as composable state for the
+     * same reason [themeChoice] is: a read from [Preferences] inside a composable does not
+     * repaint when the settings switch is flipped, and used to reread the file on every
+     * recomposition besides.
+     */
+    private var showDetails by mutableStateOf(false)
+
     /**
      * Whether this screen has asked for a session that has not appeared.
      *
@@ -278,17 +300,28 @@ class HomeActivity : ComponentActivity() {
         // this one cannot - it is a person's opinion about which phone is on which side of the
         // sofa, and the phones cannot be asked.
         readTheDrawing()
+        // Read once, here, rather than inside the composition - see themeChoice and showDetails.
+        val prefs = Preferences(filesDir)
+        themeChoice = themeChoiceOf(prefs.read("theme"))
+        showDetails = prefs.read("details") == "on"
         // Meant to be put down on a table and looked at, like every other screen in this app.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
-            SoundMeshTheme(themeChoiceOf(Preferences(filesDir).read("theme"))) {
+            SoundMeshTheme(themeChoice) {
                 Surface {
-                    // Its own branch rather than a block inside HomeScreen: the whole point is
-                    // that nothing else is on screen while this is up.
-                    if (showingCode) {
-                        PairCodeScreen(state.pairingPayload) { showingCode = false }
-                    } else {
-                        HomeScreen(state, actions)
+                    // Its own branch rather than a block inside HomeScreen: the whole point of
+                    // each is that nothing else is on screen while it is up.
+                    when {
+                        showingSettings -> SettingsScreen(
+                            prefs = Preferences(filesDir),
+                            themeChoice = themeChoice,
+                            showDetails = showDetails,
+                            onBack = { showingSettings = false },
+                            onThemeChanged = { choice -> themeChoice = choice },
+                            onDetailsChanged = { on -> showDetails = on }
+                        )
+                        showingCode -> PairCodeScreen(state.pairingPayload) { showingCode = false }
+                        else -> HomeScreen(state, actions, showDetails)
                     }
                 }
             }
@@ -328,9 +361,7 @@ class HomeActivity : ComponentActivity() {
                     .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
             )
         },
-        // No settings screen exists yet - it lands in a later task. Wired ahead of it so the top
-        // bar does not change shape again when it does.
-        openSettings = { },
+        openSettings = { showingSettings = true },
         showPairCode = { showingCode = true },
         goto = { destination, job ->
             when (destination) {

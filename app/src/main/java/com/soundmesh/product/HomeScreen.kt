@@ -38,7 +38,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -370,7 +369,7 @@ private fun Modifier.badgeEdge(colour: Color?): Modifier {
 }
 
 @Composable
-fun HomeScreen(state: HomeState, actions: HomeActions) {
+fun HomeScreen(state: HomeState, actions: HomeActions, showDetails: Boolean) {
     val edge = state.selfPlace?.let { BadgePalette.colourOf(it, MaterialTheme.colorScheme.primary) }
     Column(
         modifier = Modifier
@@ -394,10 +393,10 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
             // of the screen cannot sit inside a column that scrolls as a whole, or the tabs would
             // carry it away with them. It gets the remaining height instead.
             HomeRoute.PLAYING -> when (state.role) {
-                Role.HOST, Role.SINK -> {
-                    val showDetails = Preferences(LocalContext.current.filesDir).read("details") == "on"
-                    PlayingScreen(state, actions, showDetails, modifier = Modifier.weight(1f))
-                }
+                // showDetails is HomeActivity state, not read from Preferences here - a read
+                // in the composable would not repaint the instant the switch on the settings
+                // screen is flipped. See the plan's "另外两条".
+                Role.HOST, Role.SINK -> PlayingScreen(state, actions, showDetails, modifier = Modifier.weight(1f))
                 Role.NONE -> Unit
             }
         }
