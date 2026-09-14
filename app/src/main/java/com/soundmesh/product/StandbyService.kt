@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -27,6 +29,7 @@ import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.VolumeReading
 import com.soundmesh.probe.sync.VolumeSaid
 import com.soundmesh.probe.sync.handsetName
+import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.tellHostWhy
 import com.soundmesh.session.CpuAwake
 import com.soundmesh.session.SessionService
@@ -71,7 +74,10 @@ class StandbyService : Service() {
      */
     private val tellIfMoved = object : Runnable {
         override fun run() {
-            lastGap = gap.since(SystemClock.elapsedRealtime())
+            val now = SystemClock.elapsedRealtime()
+            lastGap = gap.since(now)
+            worst.ran(lastGap)
+            worst.network(onWiFi(), now)
             sayVolumeIfMoved()
             sayHereIfDue()
             showTheLineIfItChanged()
@@ -102,8 +108,29 @@ class StandbyService : Service() {
     /** Whether the handset actually handed that lock over. Beside the symptom, not in a log. */
     private var heldAwake = false
 
+    /**
+     * The WiFi radio, held on the same terms as the CPU and for the half the CPU does not cover.
+     *
+     * Taken on 2026-09-14 after the CPU lock landed and changed nothing measurable: the loop was
+     * running at its full rate, the process was the one that started, the lock was held - and the
+     * host still let go of this handset seconds after its screen went off. What a write does when
+     * the network underneath it has gone is succeed, into a kernel buffer, saying nothing; so the
+     * handset noticed nothing until the network came back and the stale socket was destroyed.
+     *
+     * Acquired inline rather than through a class of its own: [RadioHold] is already reference-
+     * counting-free, so a second acquire is harmless, and the only discipline left is giving it
+     * back - which is one line in [onDestroy] and is why there is nothing here worth a test.
+     */
+    private val radio by lazy { radioHoldOf(this) }
+
+    /** Whether the handset actually handed that one over either. */
+    private var heldRadio = false
+
     /** How long the loop was away between its last two runs. */
     private val gap = StandbyGap()
+
+    /** And the worst of all of it, which is what a person reading this later needs. */
+    private val worst = StandbyWorst()
 
     /** What it last answered, because the notification is written from inside that run. */
     private var lastGap = 0L
@@ -159,6 +186,10 @@ class StandbyService : Service() {
         awake.take { held ->
             heldAwake = held
             events.write(if (held) "standby held awake" else "standby not held awake")
+        }
+        if (!heldRadio) {
+            heldRadio = radio?.let { runCatching { it.acquire() }.isSuccess } == true
+            events.write(if (heldRadio) "standby held the radio" else "standby not holding the radio")
         }
         val wanted = announcement() ?: return stopSelf()
         if (line != null && wanted == dialled) return
@@ -401,14 +432,21 @@ class StandbyService : Service() {
         // the loop was away, and for how long. The standing time says whether this process is
         // the one that started, or one the ROM restarted underneath it. The hold says whether
         // the arm under test ever ran. On 2026-09-14 all four were a single fixed string.
+        val locks = getString(if (heldAwake) R.string.standby_awake_held else R.string.standby_awake_refused) +
+            "、" + getString(if (heldRadio) R.string.standby_radio_held else R.string.standby_radio_refused)
         val text =
-            if (connected) getString(R.string.standby_notification)
+            if (connected) getString(
+                R.string.standby_notification,
+                worst.longestGapMillis / 1000L,
+                worst.longestAwayMillis / 1000L
+            )
             else getString(
                 R.string.standby_notification_down,
                 missed,
-                lastGap / 1000L,
+                worst.longestGapMillis / 1000L,
+                worst.longestAwayMillis / 1000L,
                 (SystemClock.elapsedRealtime() - standingSince) / 1000L,
-                getString(if (heldAwake) R.string.standby_awake_held else R.string.standby_awake_refused)
+                locks
             )
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
@@ -419,6 +457,20 @@ class StandbyService : Service() {
             .setOngoing(true)
             .build()
     }
+
+    /**
+     * Whether this handset is on WiFi at all, asked once a second.
+     *
+     * WiFi rather than any network: everything this app does is on the local link, so a handset
+     * that fell back to mobile data is a handset that cannot reach the room, however connected it
+     * looks. Best effort - a ROM that answers oddly should not take the standing line down.
+     */
+    private fun onWiFi(): Boolean = runCatching {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val network = manager.activeNetwork ?: return false
+        manager.getNetworkCapabilities(network)
+            ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    }.getOrDefault(false)
 
     private fun close() {
         line?.close()
@@ -432,6 +484,10 @@ class StandbyService : Service() {
         dialled = null
         if (ACTIVE === this) ACTIVE = null
         awake.give()
+        if (heldRadio) {
+            heldRadio = false
+            runCatching { radio?.release() }
+        }
         events.write("standby stopped")
         super.onDestroy()
     }
@@ -496,6 +552,46 @@ class StandbyService : Service() {
  * would report hours on a phone that had been up for hours, which is the same lie the fixed
  * notification told - a number that looks like a reading and is not one.
  */
+/**
+ * The worst this handset has been since it started standing by.
+ *
+ * Kept rather than shown live, and that is the whole point of the class. On 2026-09-14 a handset
+ * was woken to be read and its line came back inside a second, so every live number on it said
+ * the room was fine before the shade had finished opening - the act of taking the reading was
+ * destroying the reading. A high-water mark survives the recovery, and can be read at leisure.
+ */
+internal class StandbyWorst {
+    var longestGapMillis = 0L
+        private set
+
+    var longestAwayMillis = 0L
+        private set
+
+    /** Told how long the loop was away between its last two runs. */
+    fun ran(gapMillis: Long) {
+        if (gapMillis > longestGapMillis) longestGapMillis = gapMillis
+    }
+
+    /**
+     * Told whether there is a network, every time the loop runs.
+     *
+     * An outage that is still going counts from where it started, rather than being written down
+     * when it ends: a handset whose network never comes back is exactly the one somebody is
+     * standing in front of, and a number that stays at nought until the fault is over is nought
+     * for precisely as long as it is needed.
+     */
+    fun network(present: Boolean, now: Long) {
+        // Closed out on the way back up as well as counted on the way down: the last sample
+        // taken while away is a second before the network returned, so an outage measured only
+        // from those is short by however long it took anybody to notice.
+        val from = awayFrom ?: if (present) null else now.also { awayFrom = it }
+        if (from != null && now - from > longestAwayMillis) longestAwayMillis = now - from
+        if (present) awayFrom = null
+    }
+
+    private var awayFrom: Long? = null
+}
+
 internal class StandbyGap {
     private var ranAt: Long? = null
 
