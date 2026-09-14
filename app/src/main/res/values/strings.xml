@@ -41,6 +41,12 @@
     <string name="ready_goto_allow">一键放行</string>
     <string name="ready_goto_scan">去扫码</string>
     <string name="ready_goto_code">让另一台扫我</string>
+    <string name="look_following">跟着播</string>
+    <string name="look_asleep">屏幕灭着，播放不受影响</string>
+    <string name="look_gone">它断开了，正在重拨</string>
+    <string name="look_killed">它被那台手机的省电停掉了</string>
+    <string name="vendor_try_exemption">先在那台上放行后台运行</string>
+    <string name="vendor_launch_manager">已经放行了它还是被停掉。去那台手机的系统设置，找「应用启动管理」，把这个应用改成手动管理，三个开关全开。这三个开关没有任何接口能读到或者代为打开，只能人手开。</string>
     <string name="home_title">SoundMesh</string>
 
     <!-- The product's own screen. Chinese, because it is read by the people using it, while every
