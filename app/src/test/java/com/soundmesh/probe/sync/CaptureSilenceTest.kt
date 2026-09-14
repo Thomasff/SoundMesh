@@ -210,4 +210,94 @@ class CaptureSilenceTest {
         assertEquals(1, filed.size)
         assertEquals(2 * CaptureSilence.SPELL_NANOS, filed[0].first)
     }
+
+    /**
+     * The half that 2026-09-14 showed was missing.
+     *
+     * Twice that evening the room went silent with the host on battery, and both times the only
+     * instrument that spoke was this one - after the fact, on the way back, saying how long it had
+     * been. That is the wrong end. What the fault needed recorded was the handset's state **while
+     * it was failing**, and a spell that never recovers would have said nothing at all until the
+     * session was stopped.
+     */
+    @Test
+    fun `a spell says so when it starts, not only when it is over`() {
+        var clock = 0L
+        val said = mutableListOf<String>()
+        CaptureSilence.watch(
+            now = { clock },
+            onSpell = { _, recovered -> said += if (recovered) "back" else "gone" },
+            onBegan = { said += "begins" }
+        )
+
+        CaptureSilence.sawChunk(music())
+        clock += CaptureSilence.SPELL_NANOS + 1
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.sawChunk(music())
+
+        assertEquals(listOf("begins", "back"), said)
+    }
+
+    /** Once per spell, however many chunks of silence go by inside it. */
+    @Test
+    fun `the start is announced once, not on every silent chunk`() {
+        var clock = 0L
+        var begins = 0
+        CaptureSilence.watch(now = { clock }, onBegan = { begins++ })
+
+        CaptureSilence.sawChunk(music())
+        clock += CaptureSilence.SPELL_NANOS + 1
+        repeat(20) { CaptureSilence.sawChunk(silence()) }
+
+        assertEquals(1, begins)
+    }
+
+    /** Not before the spell is long enough, or a gap between two tracks files a fault. */
+    @Test
+    fun `a short gap never announces anything`() {
+        var clock = 0L
+        var begins = 0
+        CaptureSilence.watch(now = { clock }, onBegan = { begins++ })
+
+        CaptureSilence.sawChunk(music())
+        clock += CaptureSilence.SPELL_NANOS - 1
+        CaptureSilence.sawChunk(silence())
+
+        assertEquals(0, begins)
+    }
+
+    /**
+     * The 09-13 case, on this end too: a capture opened to look at the room drawing with no music
+     * ever played is not a fault, and must not file one.
+     */
+    @Test
+    fun `a capture that has never heard anything never says it began`() {
+        var clock = 0L
+        var begins = 0
+        CaptureSilence.watch(now = { clock }, onBegan = { begins++ })
+
+        clock += CaptureSilence.SPELL_NANOS * 10
+        repeat(20) { CaptureSilence.sawChunk(silence()) }
+
+        assertEquals(0, begins)
+    }
+
+    /** The one that matters most: it said so at the time even though it never came back. */
+    @Test
+    fun `a spell that never recovers still announced its start`() {
+        var clock = 0L
+        val said = mutableListOf<String>()
+        CaptureSilence.watch(
+            now = { clock },
+            onSpell = { _, recovered -> said += if (recovered) "back" else "gone" },
+            onBegan = { said += "begins" }
+        )
+
+        CaptureSilence.sawChunk(music())
+        clock += CaptureSilence.SPELL_NANOS + 1
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.forget()
+
+        assertEquals(listOf("begins", "gone"), said)
+    }
 }

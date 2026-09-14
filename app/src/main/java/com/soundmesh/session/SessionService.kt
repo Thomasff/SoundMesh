@@ -23,6 +23,7 @@ import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
+import com.soundmesh.probe.sync.momentOf
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.FolderSongs
@@ -232,15 +233,32 @@ class SessionService : Service() {
         // From here rather than from inside the capture, because this is the only arrangement
         // where silence means anything: a host playing a file is the source of its own audio.
         val events = EventLog(filesDir)
-        CaptureSilence.watch { silentNanos, recovered ->
-            val ended = if (recovered) "the audio came back" else "it never came back"
-            // Off the capture loop. A spell is rare enough that a thread each is nothing, and
-            // the alternative is a flash write between two chunks of audio that just came back.
-            Thread({
-                events.write("capture-silent ${silentNanos / 1_000_000L}ms, $ended")
-            }, "SoundMeshSilenceRecord").start()
-            Log.w(LOG_TAG, "the capture handed over ${silentNanos / 1_000_000L} ms of digital silence")
-        }
+        CaptureSilence.watch(
+            onBegan = {
+                // Read here and written on another thread: the reading has to be of the handset as
+                // it is failing - that is the whole of what this is for - while a flash write in
+                // the capture loop is what the thread below exists to avoid. Nothing audible is
+                // being produced at this instant anyway, which is the fault being recorded.
+                val moment = momentOf(this, CAPTURING_HOST_STREAM)
+                Thread({
+                    events.write("capture-silence begins | ${moment}")
+                }, "SoundMeshSilenceRecord").start()
+                Log.w(LOG_TAG, "the capture has been handing over digital silence: ${moment}")
+            },
+            onSpell = { silentNanos, recovered ->
+                val ended = if (recovered) "the audio came back" else "it never came back"
+                // The second reading, and the reason it is worth the same few milliseconds: what
+                // changed between this line and the one above is the fault. On 09-14 the answer
+                // was a charger being plugged in, and nothing in the app could see it.
+                val moment = momentOf(this, CAPTURING_HOST_STREAM)
+                // Off the capture loop. A spell is rare enough that a thread each is nothing, and
+                // the alternative is a flash write between two chunks of audio that just came back.
+                Thread({
+                    events.write("capture-silent ${silentNanos / 1_000_000L}ms, $ended | ${moment}")
+                }, "SoundMeshSilenceRecord").start()
+                Log.w(LOG_TAG, "the capture handed over ${silentNanos / 1_000_000L} ms of digital silence")
+            }
+        )
         // Null on a handset nobody has measured, and a run then plays as early as O65 did. Logged
         // rather than refused: the session is still worth having, and silence about it is what let
         // nineteen milliseconds hide behind "a little bit faster, but you can hardly tell".

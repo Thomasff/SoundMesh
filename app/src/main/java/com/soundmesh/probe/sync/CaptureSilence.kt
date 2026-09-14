@@ -27,6 +27,13 @@ package com.soundmesh.probe.sync
  * look at the room drawing, no music was ever played, and eighty-six seconds of nothing were
  * filed as a fault. So the reading stays at zero until the first sound arrives.
  *
+ * [onBegan] is the half that outlives the cable, and it was added on 09-14 after two faults that
+ * could not be examined. Both times the only way to look at the host was to plug it in, and
+ * plugging it in brought the sound back within half a second - so every reading was taken after
+ * the act of taking it had repaired the thing being read. [onSpell] fires on the way out, which is
+ * the wrong end and, for a spell that never comes back, no end at all. This one fires while it is
+ * still happening, so the record can carry what the handset was doing at the time.
+ *
  * [onSpell] is the half that outlives the screen. The red line only helps somebody who is looking
  * at this app, and somebody playing music is not: on 09-12 it happened in the middle of a song, to
  * a handset in a pocket, and was over by the time anyone could have looked. So a stretch past
@@ -50,6 +57,7 @@ object CaptureSilence {
     @Volatile private var inSpell = false
     @Volatile private var now: () -> Long = System::nanoTime
     @Volatile private var onSpell: (Long, Boolean) -> Unit = { _, _ -> }
+    @Volatile private var onBegan: () -> Unit = {}
 
     /**
      * Called when a capture opens, so a previous session's silence is not this one's.
@@ -59,9 +67,11 @@ object CaptureSilence {
      */
     fun watch(
         now: () -> Long = System::nanoTime,
+        onBegan: () -> Unit = {},
         onSpell: (silentNanos: Long, recovered: Boolean) -> Unit = { _, _ -> }
     ) {
         this.now = now
+        this.onBegan = onBegan
         this.onSpell = onSpell
         watching = true
         heardAnything = false
@@ -93,7 +103,12 @@ object CaptureSilence {
         }
         if (!heardAnything) return
         since = now() - lastSoundNanos
-        if (since >= SPELL_NANOS) inSpell = true
+        if (since >= SPELL_NANOS && !inSpell) {
+            inSpell = true
+            // Set before the call, so a record that throws cannot leave this announcing the same
+            // spell on every chunk for as long as it lasts.
+            runCatching { onBegan() }
+        }
     }
 
     /** How long every sample has been zero, or zero while nothing is being captured. */
