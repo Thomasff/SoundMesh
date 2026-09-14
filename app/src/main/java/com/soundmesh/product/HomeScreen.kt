@@ -1,8 +1,10 @@
 package com.soundmesh.product
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -377,25 +380,48 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
             // Android 15 draws every app edge to edge, so without this the title sits under the
             // status bar clock. Visible on the Magic6 and not on the X10, which is Android 10.
             .safeDrawingPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        TopBar(state, actions)
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
+            TopBar(state, actions)
+        }
         // Which of the three stages this handset is on is worked out fresh every draw rather than
         // remembered - see routeOf() - so there is one answer rather than two that can disagree.
         when (routeOf(state)) {
-            HomeRoute.WELCOME -> WelcomeScreen(state, actions)
-            HomeRoute.READY -> ReadyScreen(state, actions)
-            // PlayingScreen replaces this branch in a later task, the same way ReadyScreen already
-            // replaced it for HomeRoute.READY.
+            HomeRoute.WELCOME -> ScrollingStage { WelcomeScreen(state, actions) }
+            HomeRoute.READY -> ScrollingStage { ReadyScreen(state, actions) }
+            // PlayingScreen carries its own bottom tab bar, which is why its stage is not wrapped
+            // in the same whole-page scroll the other two stages use: a bar pinned to the bottom
+            // of the screen cannot sit inside a column that scrolls as a whole, or the tabs would
+            // carry it away with them. It gets the remaining height instead.
             HomeRoute.PLAYING -> when (state.role) {
-                Role.HOST -> HostPanel(state, actions)
-                Role.SINK -> SinkPanel(state, actions)
+                Role.HOST, Role.SINK -> {
+                    val showDetails = Preferences(LocalContext.current.filesDir).read("details") == "on"
+                    PlayingScreen(state, actions, showDetails, modifier = Modifier.weight(1f))
+                }
                 Role.NONE -> Unit
             }
         }
     }
+}
+
+/**
+ * The scrolling body every stage but [HomeRoute.PLAYING] draws into.
+ *
+ * Its own column rather than folding into the outer one: [HomeRoute.PLAYING] needs the outer
+ * column to stop scrolling as a whole once its bottom tab bar exists, and the other two stages
+ * keep scrolling exactly as they did before that split.
+ */
+@Composable
+private fun ColumnScope.ScrollingStage(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        content = content
+    )
 }
 
 /**
@@ -444,7 +470,7 @@ private fun TopBar(state: HomeState, actions: HomeActions) {
  * it is the handset own volume keys, which this screen aims at it while a capture is up.
  */
 @Composable
-private fun HostOutputVolumePanel(volume: OutputVolume) {
+internal fun HostOutputVolumePanel(volume: OutputVolume) {
     Section(R.string.volume_title) {
         Text(
             stringResource(R.string.volume_level, volume.level, volume.max),
@@ -465,7 +491,7 @@ private fun HostOutputVolumePanel(volume: OutputVolume) {
  * "whatever you are actually playing on" and not one stream named from here.
  */
 @Composable
-private fun RoomVolumePanel(state: HomeState, actions: HomeActions) {
+internal fun RoomVolumePanel(state: HomeState, actions: HomeActions) {
     val percent = state.roomVolumePercent ?: return
     // Where the thumb is while a finger is on it, which is not yet where the room is. Told at the
     // end of the drag rather than through it: one drag is fifty values, and each one told to the
@@ -523,24 +549,41 @@ private fun RoomVolumePanel(state: HomeState, actions: HomeActions) {
  * it can disagree with the slider above it - and that disagreement is the only way a stream that
  * refused to move can be seen at all. The control beneath it is for the phone standing next to a
  * wall; the next drag of the room slider levels everybody again, including this one.
+ *
+ * Collapsed to the one summary line by default - a room with several handsets used to spend one
+ * whole slider's worth of height on every one of them, which is what pushed the pairing code four
+ * to six screens down. That summary line is what names this row to somebody reading the room, so
+ * nothing about who is who is lost by hiding the slider and the complaint beneath it; a tap on the
+ * line brings both back.
  */
 @Composable
 private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
+    var expanded by remember(row.peerId) { mutableStateOf(false) }
     var dragging by remember(row.peerId) { mutableStateOf<Int?>(null) }
-    Text(
-        stringResource(
-            R.string.room_volume_row,
-            row.name,
-            row.percent,
-            row.index,
-            row.max,
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
             stringResource(
-                if (row.stream == ALARM_STREAM_NAME) R.string.room_volume_alarm
-                else R.string.room_volume_media
-            )
-        ),
-        style = MaterialTheme.typography.bodySmall
-    )
+                R.string.room_volume_row,
+                row.name,
+                row.percent,
+                row.index,
+                row.max,
+                stringResource(
+                    if (row.stream == ALARM_STREAM_NAME) R.string.room_volume_alarm
+                    else R.string.room_volume_media
+                )
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text(if (expanded) "▾" else "▸", style = MaterialTheme.typography.bodySmall)
+    }
+    if (!expanded) return
     if (row.complaint != VolumeComplaint.NONE) {
         Text(
             if (row.complaint == VolumeComplaint.NOT_SAID) {
@@ -695,7 +738,7 @@ internal fun capturesNothingWorthSaying(seconds: Int?): Boolean =
 const val CAPTURE_SILENCE_SECONDS = CaptureSilence.SPELL_SECONDS
 
 @Composable
-private fun CaptureSilenceLine(state: HomeState) {
+internal fun CaptureSilenceLine(state: HomeState) {
     if (!capturesNothingWorthSaying(state.captureSilentSeconds)) return
     Text(
         stringResource(R.string.capture_silent, state.captureSilentSeconds ?: 0),
@@ -713,7 +756,7 @@ private fun CaptureSilenceLine(state: HomeState) {
  * the third phone sit there silently while the other two play.
  */
 @Composable
-private fun StandbyLine(state: HomeState, actions: HomeActions) {
+internal fun StandbyLine(state: HomeState, actions: HomeActions) {
     Text(
         when (state.role) {
             Role.HOST -> stringResource(R.string.standby_host, state.standingBy)
@@ -751,7 +794,7 @@ private fun StandbyLine(state: HomeState, actions: HomeActions) {
 }
 
 @Composable
-private fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolean) {
+internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolean) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -875,7 +918,7 @@ private fun clockOf(micros: Long): String {
 }
 
 @Composable
-private fun StatePanel(state: HomeState) {
+internal fun StatePanel(state: HomeState) {
     Section(R.string.state_title) {
         Text(
             if (!state.running && state.failure != null) {
@@ -895,7 +938,7 @@ private fun StatePanel(state: HomeState) {
 }
 
 @Composable
-private fun HealthPanel(health: Health) {
+internal fun HealthPanel(health: Health) {
     val unknown = stringResource(R.string.health_unknown)
     Section(R.string.health_title) {
         Reading(

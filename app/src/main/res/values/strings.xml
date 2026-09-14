@@ -336,4 +336,8 @@
     <string name="settings_open">设置</string>
     <string name="pair_code_fullscreen">让另一台扫这个码</string>
     <string name="back">返回</string>
+
+    <string name="tab_room">房间</string>
+    <string name="tab_volume">音量</string>
+    <string name="tab_play">播放</string>
 </resources>
