@@ -1,5 +1,7 @@
 package com.soundmesh.product
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -18,6 +20,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -41,6 +46,7 @@ import kotlin.math.roundToInt
 import com.soundmesh.core.SplitAxis
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.probe.R
+import com.soundmesh.probe.sync.RoomCommands
 import kotlin.math.hypot
 
 /**
@@ -55,10 +61,17 @@ import kotlin.math.hypot
  * rule the room plays under is assembled by whoever owns the session.
  */
 @Composable
-fun SpatialPanel(state: RoomState, actions: RoomActions) {
+fun SpatialPanel(
+    state: RoomState,
+    actions: RoomActions,
+    /** Names standing handsets have reported as not exempt from power saving. See [StandbyLook]. */
+    blockedPeerNames: List<String> = emptyList(),
+    /** The just-pressed-play ripple's progress, 0f..1f, or null while nothing is animating. */
+    ripple: Float? = null
+) {
     Section(R.string.room_title) {
         Text(stringResource(R.string.room_hint), style = MaterialTheme.typography.bodySmall)
-        MeasuredRoom(state, actions.onTheMap())
+        MeasuredRoom(state, actions.onTheMap(), blockedPeerNames, ripple)
         ArrivalDelays(state, actions)
         ModePicker(state, actions)
         if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
@@ -82,8 +95,13 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
  * calibration screen knows who took part in the round. Everything else is the same room.
  */
 @Composable
-fun MeasuredRoom(state: RoomState, actions: RoomMapActions) {
-    RoomDrawing(state, actions)
+fun MeasuredRoom(
+    state: RoomState,
+    actions: RoomMapActions,
+    blockedPeerNames: List<String> = emptyList(),
+    ripple: Float? = null
+) {
+    RoomDrawing(state, actions, blockedPeerNames, ripple)
     if (state.icons.size < 2) {
         Text(stringResource(R.string.room_alone), style = MaterialTheme.typography.bodySmall)
     }
@@ -472,7 +490,12 @@ private fun FitOffer(state: RoomState, actions: RoomMapActions) {
 }
 
 @Composable
-private fun RoomDrawing(state: RoomState, actions: RoomMapActions) {
+private fun RoomDrawing(
+    state: RoomState,
+    actions: RoomMapActions,
+    blockedPeerNames: List<String>,
+    ripple: Float?
+) {
     // The gesture below is a coroutine keyed on who is in the room, so it outlives every
     // recomposition that only moved somebody - and it closes over the room as it was when that
     // coroutine started. Read directly, `state` inside the gesture is the room from before the
@@ -491,6 +514,28 @@ private fun RoomDrawing(state: RoomState, actions: RoomMapActions) {
     val handset = MaterialTheme.colorScheme.primary
     val self = MaterialTheme.colorScheme.tertiary
     val label = MaterialTheme.colorScheme.onPrimary
+    val danger = MaterialTheme.colorScheme.error
+    // One of four states per icon rather than one hollow circle - see StandbyLook. Worked out here,
+    // in composable scope rather than inside the Canvas below, because the killed pulse needs
+    // remembered animation state that a DrawScope cannot hold.
+    //
+    // screenOn is always true: nothing on this host's side yet carries a standing handset's own
+    // screen state back to the room drawing (HandsetMoment.screenOn is read on calibration runs,
+    // not sent up this channel), so ASLEEP is unreachable until that wiring exists. True is the
+    // documented fallback for "not known" - see loudnessOf's neighbour in EdgeGlow.kt for the same
+    // convention - which is why this is not a guess so much as the honest default for a signal that
+    // is not there yet.
+    val looks = HashMap<String, StandbyLook>(state.icons.size)
+    val killedPulses = HashMap<String, Float>(state.icons.size)
+    for (icon in state.icons) {
+        val look = standbyLook(
+            connected = icon.peerId !in state.silentIds,
+            screenOn = true,
+            saidNotExempt = RoomCommands.nameOf(icon.peerId)?.let { it in blockedPeerNames } == true
+        )
+        looks[icon.peerId] = look
+        killedPulses[icon.peerId] = key(icon.peerId) { rememberKilledPulse(look) }
+    }
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
@@ -544,14 +589,42 @@ private fun RoomDrawing(state: RoomState, actions: RoomMapActions) {
                 icon,
                 BadgePalette.colourOf(place, handset),
                 BadgePalette.labelColourOf(place, label),
+                danger,
                 PeerBadge.numberOf(icon.peerId),
                 if (icon.peerId == state.selfId) self else null,
-                icon.peerId in state.silentIds,
+                looks[icon.peerId] ?: StandbyLook.GONE,
+                killedPulses[icon.peerId] ?: 0f,
                 measurer
             )
         }
+        // The ring that spreads from this handset's own icon the moment play is pressed - see
+        // PlayingScreen's LaunchedEffect(state.running). Nothing to draw before this handset has
+        // an icon of its own, which is every drawing with no room yet.
+        if (ripple != null) {
+            state.icons.firstOrNull { it.peerId == state.selfId }?.let { own ->
+                drawRipple(own, ripple, BadgePalette.colourOf(state.colours[state.selfId], handset))
+            }
+        }
     }
 }
+
+/** Runs the killed flash the moment [look] becomes [StandbyLook.KILLED], and answers its alpha. */
+@Composable
+private fun rememberKilledPulse(look: StandbyLook): Float {
+    val pulse = remember { Animatable(0f) }
+    LaunchedEffect(look) {
+        if (look != StandbyLook.KILLED) return@LaunchedEffect
+        repeat(KILLED_PULSE_REPEATS) {
+            pulse.animateTo(1f, animationSpec = tween(KILLED_PULSE_MILLIS))
+            pulse.animateTo(0f, animationSpec = tween(KILLED_PULSE_MILLIS))
+        }
+    }
+    return pulse.value
+}
+
+/** How many 150ms red pulses a fresh kill gets, and how long each half of one takes. */
+private const val KILLED_PULSE_REPEATS = 2
+private const val KILLED_PULSE_MILLIS = 150
 
 /**
  * The listener, and which way they are facing.
@@ -574,11 +647,15 @@ private fun DrawScope.drawHandset(
     icon: RoomIcon,
     colour: Color,
     labelColour: Color,
+    /** The colour a kill is flagged in - see [StandbyLook.KILLED]. */
+    dangerColour: Color,
     number: Int,
     /** Drawn as a ring when this icon is the handset in the listener's hand, or null when not. */
     selfRing: Color?,
-    /** True for a handset in the room that is not being sent audio: one that has stopped. */
-    silent: Boolean,
+    /** What this handset's icon is saying right now. See [StandbyLook]. */
+    look: StandbyLook,
+    /** The killed flash's current alpha, 0 outside of one. See [rememberKilledPulse]. */
+    killedPulseAlpha: Float,
     measurer: TextMeasurer
 ) {
     val centre = Offset(icon.x * size.width, icon.y * size.height)
@@ -597,12 +674,27 @@ private fun DrawScope.drawHandset(
         radius = halo,
         center = centre
     )
-    // Hollow rather than a different colour or a missing icon. Its colour is its name, so it has
-    // to stay - and an icon that vanished would say the handset left the room, which is a
-    // different thing from one that is here and silent, and points at a different phone to pick
-    // up. Empty is what the eye reads as nothing coming out of it.
-    if (silent) drawCircle(colour, radius = radius, center = centre, style = Stroke(width = 4f))
-    else drawCircle(colour, radius = radius, center = centre)
+    // Four states rather than one hollow circle - see StandbyLook. Its colour is the handset's
+    // name, so every one of them keeps the halo above and either fills or outlines in it; only
+    // KILLED's ring departs from the handset's own colour, because that ring is not naming the
+    // handset, it is naming the fault.
+    when (look) {
+        StandbyLook.FOLLOWING -> drawCircle(colour, radius = radius, center = centre)
+        // Dimmed rather than hollowed: it is still following, only its screen is dark, and drawing
+        // it exactly like a dropped handset is what cost an hour telling the two apart on
+        // 2026-09-14.
+        StandbyLook.ASLEEP -> drawCircle(colour.copy(alpha = ASLEEP_ALPHA), radius = radius, center = centre)
+        StandbyLook.GONE -> drawCircle(colour, radius = radius, center = centre, style = Stroke(width = 4f))
+        StandbyLook.KILLED -> drawCircle(dangerColour, radius = radius, center = centre, style = Stroke(width = 4f))
+    }
+    if (killedPulseAlpha > 0f) {
+        drawCircle(
+            dangerColour.copy(alpha = killedPulseAlpha),
+            radius = radius + KILLED_PULSE_RING_PX,
+            center = centre,
+            style = Stroke(width = 4f)
+        )
+    }
     // Which one is in your hand was said by the colour until the colour became the name. A ring
     // rather than a second hue, because a colour that meant both would have to give one of the
     // two up the moment a second handset joined - and the one it would give up is the name.
@@ -612,15 +704,43 @@ private fun DrawScope.drawHandset(
     // The handset's number, which is the same number every other screen shows for it and the
     // same one anybody writing this down would use. Four characters of its real name were what
     // this said before, and nobody ever read one out loud.
+    val hollow = look == StandbyLook.GONE || look == StandbyLook.KILLED
     val text = measurer.measure(
         "$number",
-        TextStyle(fontSize = 10.sp, color = if (silent) colour else labelColour)
+        TextStyle(fontSize = 10.sp, color = if (hollow) colour else labelColour)
     )
     drawText(
         text,
         topLeft = Offset(centre.x - text.size.width / 2f, centre.y - text.size.height / 2f)
     )
 }
+
+/** How dim [StandbyLook.ASLEEP] draws: still following, only its screen has gone dark. */
+private const val ASLEEP_ALPHA = 0.45f
+
+/** How far outside the icon's own radius the killed pulse ring sits, in pixels. */
+private const val KILLED_PULSE_RING_PX = 6f
+
+/**
+ * The ring that spreads out from an icon the moment play is pressed.
+ *
+ * [progress] is 0f..1f: the radius grows and the alpha fades together, so the ring both expands
+ * and disappears over the same 600ms rather than leaving a static circle behind once it stops
+ * moving.
+ */
+private fun DrawScope.drawRipple(icon: RoomIcon, progress: Float, colour: Color) {
+    val centre = Offset(icon.x * size.width, icon.y * size.height)
+    val radius = size.minDimension * (0.06f + RIPPLE_SPREAD * progress)
+    drawCircle(
+        colour.copy(alpha = (1f - progress) * RIPPLE_MAX_ALPHA),
+        radius = radius,
+        center = centre,
+        style = Stroke(width = 3f)
+    )
+}
+
+private const val RIPPLE_SPREAD = 0.3f
+private const val RIPPLE_MAX_ALPHA = 0.8f
 
 /**
  * Which icon a finger landing here meant, or null when it landed on nothing.

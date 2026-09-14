@@ -494,6 +494,8 @@ class HostSession(
 
     override fun nowPlaying(): String? = songNames.getOrNull(announcedSong)
 
+    override fun loudness(): Float = renderer.loudness
+
     override fun state(): SessionState = flags.state()
 
     // Null before start(): the renderer exists but has never run, and a report of zeroes reads

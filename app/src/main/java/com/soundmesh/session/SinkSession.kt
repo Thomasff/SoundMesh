@@ -528,6 +528,8 @@ class SinkSession(
 
     override fun badgePlace(): Int? = place
 
+    override fun loudness(): Float = renderer.loudness
+
     /**
      * Keeps [SessionFlags] told what is true, at a cadence fast enough for the state a person sees.
      *

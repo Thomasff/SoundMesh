@@ -1,5 +1,7 @@
 package com.soundmesh.product
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +16,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +51,15 @@ fun PlayingScreen(
     modifier: Modifier = Modifier
 ) {
     var tab by remember { mutableStateOf(PlayTab.PLAY) }
+    // The ring that spreads out from this handset's own icon the moment play is pressed. Keyed on
+    // state.running rather than on a click, so it fires the same way whether this phone started
+    // the room or another one just told it to join.
+    val ripple = remember { Animatable(0f) }
+    LaunchedEffect(state.running) {
+        if (!state.running) return@LaunchedEffect
+        ripple.snapTo(0f)
+        ripple.animateTo(1f, animationSpec = tween(RIPPLE_DURATION_MILLIS))
+    }
     Scaffold(
         modifier = modifier.fillMaxSize(),
         bottomBar = {
@@ -84,7 +96,16 @@ fun PlayingScreen(
             when (tab) {
                 // Not wrapped in another Section: the room drawing already draws its own, and this
                 // tab is that one panel filling the whole tab rather than one entry among others.
-                PlayTab.ROOM -> state.room?.let { SpatialPanel(it, actions.room) }
+                PlayTab.ROOM -> state.room?.let {
+                    SpatialPanel(
+                        it,
+                        actions.room,
+                        blockedPeerNames = state.blockedPeerNames,
+                        // Null rather than the raw value while nothing is playing: the ripple means
+                        // "just started", and there is nothing on screen for it to mean that beside.
+                        ripple = ripple.value.takeIf { state.running }
+                    )
+                }
                 PlayTab.VOLUME -> {
                     state.hostOutputVolume?.let { HostOutputVolumePanel(it) }
                     RoomVolumePanel(state, actions)
@@ -130,3 +151,6 @@ private fun canPlay(state: HomeState): Boolean = when (state.role) {
     Role.SINK -> state.paired != null
     Role.NONE -> false
 }
+
+/** How long the just-pressed-play ripple takes to spread out and fade. */
+private const val RIPPLE_DURATION_MILLIS = 600

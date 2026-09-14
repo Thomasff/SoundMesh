@@ -25,6 +25,7 @@ import com.soundmesh.core.pendingPlaybackFrames
 import com.soundmesh.core.playbackErrorFrames
 import com.soundmesh.core.releaseTrimFrames
 import com.soundmesh.probe.PlaybackUsage
+import com.soundmesh.product.loudnessOf
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -422,6 +423,16 @@ class SyncRenderer(
     @Volatile private var maxSilenceFrames = 0
 
     /**
+     * How loud the PCM most recently written to the track was, from 0 (silence) to 1 (full scale).
+     *
+     * Read by the product layer once a frame, off the audio thread - see [loudnessOf]. A volatile
+     * write here is the only cost this path may spend; nothing else about the write it accompanies
+     * is allowed to change for it.
+     */
+    @Volatile var loudness = 0f
+        private set
+
+    /**
      * [silenceWrites] frozen where the streaming segment ends, or -1 if no chirp ever played.
      *
      * The whole-run count is dominated by the chirp schedule, which fills a whole chunk of
@@ -713,8 +724,13 @@ class SyncRenderer(
                         } else {
                             null
                         }
-                        if (faded != null) track.write(faded, 0, faded.size)
-                        else track.write(payload, offset, payload.size - offset)
+                        if (faded != null) {
+                            loudness = loudnessOf(faded, 0, faded.size)
+                            track.write(faded, 0, faded.size)
+                        } else {
+                            loudness = loudnessOf(payload, offset, payload.size - offset)
+                            track.write(payload, offset, payload.size - offset)
+                        }
                         writtenFrames += (payload.size - offset) / (CHANNELS * 2)
                         // A dropped or duplicated frame deliberately does not move the timeline:
                         // shifting the frame-to-instant mapping by one frame is the correction.
@@ -733,6 +749,7 @@ class SyncRenderer(
                         // scheduler fills only as far as the next chunk's instant, so the write
                         // stream lands on it instead of stepping past it and making it late.
                         val bytes = decision.frames * CHANNELS * 2
+                        loudness = 0f
                         track.write(silence, 0, bytes)
                         writtenFrames += decision.frames.toLong()
                         if (timelineNextHostNanos != UNDEFINED) {

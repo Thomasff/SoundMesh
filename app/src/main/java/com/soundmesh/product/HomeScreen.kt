@@ -343,15 +343,18 @@ internal fun warnsAboutBackground(state: HomeState): Boolean =
  * Nothing is drawn for a handset with no colour yet, which is every handset before its host has a
  * room to hand colours out in. A default colour would be worse than none: two handsets sharing one
  * is exactly the confusion the colours exist to end.
+ *
+ * [glow] is 0..1 and moves the band's width and alpha together - see [edgeGlow] for where it comes
+ * from. The drawing itself is unchanged; only how wide and how bright it is at this instant moves.
  */
-private fun Modifier.badgeEdge(colour: Color?): Modifier {
+private fun Modifier.badgeEdge(colour: Color?, glow: Float): Modifier {
     if (colour == null) return this
     return drawWithContent {
         drawContent()
         // Over the content rather than under it: the screen scrolls, and an edge drawn beneath
         // whatever happens to be at the top of the list is an edge that comes and goes.
-        val band = size.minDimension * 0.045f
-        val inward = listOf(colour.copy(alpha = 0.85f), Color.Transparent)
+        val band = size.minDimension * 0.045f * (0.6f + 0.8f * glow)
+        val inward = listOf(colour.copy(alpha = 0.85f * (0.4f + 0.6f * glow)), Color.Transparent)
         val outward = inward.reversed()
         drawRect(Brush.verticalGradient(inward, 0f, band), size = Size(size.width, band))
         drawRect(
@@ -370,12 +373,16 @@ private fun Modifier.badgeEdge(colour: Color?): Modifier {
 
 @Composable
 fun HomeScreen(state: HomeState, actions: HomeActions, showDetails: Boolean) {
+    val glow = edgeGlow(state)
+    // Dimmed rather than only slowed: a disconnected sink's edge is meant to read as grey from
+    // across the room, not just as a quieter version of its own colour.
     val edge = state.selfPlace?.let { BadgePalette.colourOf(it, MaterialTheme.colorScheme.primary) }
+        ?.let { if (disconnectedSink(state)) it.copy(alpha = 0.3f) else it }
     Column(
         modifier = Modifier
             .fillMaxSize()
             // Ahead of the padding below, so the edge is the screen's edge and not the text's.
-            .badgeEdge(edge)
+            .badgeEdge(edge, glow)
             // Android 15 draws every app edge to edge, so without this the title sits under the
             // status bar clock. Visible on the Magic6 and not on the X10, which is Android 10.
             .safeDrawingPadding()

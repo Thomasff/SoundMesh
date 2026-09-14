@@ -133,6 +133,15 @@ interface SyncSession {
     fun badgePlace(): Int? = null
 
     /**
+     * How loud this handset's own output is right now, from 0 (silence) to 1 (full scale).
+     *
+     * Read by the product layer's edge glow once a frame - see
+     * [com.soundmesh.probe.sync.SyncRenderer.loudness]. Declared on both roles rather than
+     * defaulted, for the reason [onNetworkChanged] gives.
+     */
+    fun loudness(): Float
+
+    /**
      * Told by the service that owns the audio focus, not asked for by the session.
      *
      * A session that lost the focus stays wired up - its clock keeps exchanging, its link keeps
