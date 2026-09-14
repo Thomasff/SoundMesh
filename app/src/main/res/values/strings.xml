@@ -8,7 +8,9 @@
     <string name="standby_channel_name">SoundMesh standby</string>
     <string name="home_build">这台装的版本：%1$s</string>
     <string name="standby_notification">待命中：主机一按就跟着播</string>
-    <string name="standby_notification_down">没连上主机，正在重拨（%1$d 次没送出去）</string>
+    <string name="standby_notification_down">没连上主机，正在重拨（%1$d 次没送出去 · 心跳隔了 %2$d 秒 · 待命了 %3$d 秒 · %4$s）</string>
+    <string name="standby_awake_held">按住了 CPU</string>
+    <string name="standby_awake_refused">没按住 CPU</string>
     <string name="home_title">SoundMesh</string>
 
     <!-- The product's own screen. Chinese, because it is read by the people using it, while every

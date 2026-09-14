@@ -71,6 +71,7 @@ class StandbyService : Service() {
      */
     private val tellIfMoved = object : Runnable {
         override fun run() {
+            lastGap = gap.since(SystemClock.elapsedRealtime())
             sayVolumeIfMoved()
             sayHereIfDue()
             showTheLineIfItChanged()
@@ -97,6 +98,24 @@ class StandbyService : Service() {
      * whoever does not want to pay it stops standing by, which is a button on the home screen.
      */
     private val awake by lazy { CpuAwake(cpuHoldOf(this)) }
+
+    /** Whether the handset actually handed that lock over. Beside the symptom, not in a log. */
+    private var heldAwake = false
+
+    /** How long the loop was away between its last two runs. */
+    private val gap = StandbyGap()
+
+    /** What it last answered, because the notification is written from inside that run. */
+    private var lastGap = 0L
+
+    /**
+     * When this instance started standing by.
+     *
+     * A field on the service object, so it resets when the process does - which is the point.
+     * A handset whose ROM kills this service and lets START_STICKY bring it back looks, from
+     * every other number here, exactly like one that simply stopped running.
+     */
+    private val standingSince = SystemClock.elapsedRealtime()
 
     /** When this handset last told the host it was still there. */
     private var saidHereAt = 0L
@@ -137,7 +156,10 @@ class StandbyService : Service() {
         // suspend is a line that dies with nobody on either end writing down why. Which arm ran
         // goes in the log, on the same terms as the session side - a hold a vendor build refused
         // would otherwise read as evidence that sleep was never the problem.
-        awake.take { held -> events.write(if (held) "standby held awake" else "standby not held awake") }
+        awake.take { held ->
+            heldAwake = held
+            events.write(if (held) "standby held awake" else "standby not held awake")
+        }
         val wanted = announcement() ?: return stopSelf()
         if (line != null && wanted == dialled) return
         close()
@@ -374,15 +396,26 @@ class StandbyService : Service() {
                 NotificationManager.IMPORTANCE_LOW
             )
         )
+        // Four numbers rather than a word, and each one rules something out. The count says
+        // whether this handset is trying and failing or not trying at all. The gap says whether
+        // the loop was away, and for how long. The standing time says whether this process is
+        // the one that started, or one the ROM restarted underneath it. The hold says whether
+        // the arm under test ever ran. On 2026-09-14 all four were a single fixed string.
+        val text =
+            if (connected) getString(R.string.standby_notification)
+            else getString(
+                R.string.standby_notification_down,
+                missed,
+                lastGap / 1000L,
+                (SystemClock.elapsedRealtime() - standingSince) / 1000L,
+                getString(if (heldAwake) R.string.standby_awake_held else R.string.standby_awake_refused)
+            )
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(
-                if (connected) getString(R.string.standby_notification)
-                // The count, not just the word: it is what tells a person whether this handset is
-                // trying and failing or not trying at all, and those are different faults.
-                else getString(R.string.standby_notification_down, missed)
-            )
+            .setContentText(text)
+            // Wrapped, because a line nobody can read to the end is the fixed string again.
+            .setStyle(Notification.BigTextStyle().bigText(text))
             .setOngoing(true)
             .build()
     }
@@ -452,6 +485,27 @@ class StandbyService : Service() {
  * host had let go of a handset, by a person standing in front of the phone that was saying it.
  * A piece of screen that asserts a state has to read that state.
  */
+/**
+ * How long the standing-by loop was away between one run and the next.
+ *
+ * Fed [SystemClock.elapsedRealtime], which counts through suspend - unlike the clock the loop
+ * schedules itself on, which does not, and that difference is the whole measurement: a handset
+ * whose SoC suspended reports the length of the suspend on the first run after it wakes.
+ *
+ * The first run answers nothing rather than the age of the handset. Measured against zero it
+ * would report hours on a phone that had been up for hours, which is the same lie the fixed
+ * notification told - a number that looks like a reading and is not one.
+ */
+internal class StandbyGap {
+    private var ranAt: Long? = null
+
+    fun since(now: Long): Long {
+        val before = ranAt
+        ranAt = now
+        return if (before == null) 0L else now - before
+    }
+}
+
 internal class StandbyNotice(private val refreshMillis: Long = REFRESH_MILLIS) {
     private var shownUp: Boolean? = null
     private var shownAt = 0L
