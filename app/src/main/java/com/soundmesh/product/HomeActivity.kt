@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -39,6 +40,7 @@ import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
+import com.soundmesh.probe.sync.ShowCodeActivity
 import com.soundmesh.probe.sync.handsetName
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
@@ -291,6 +293,26 @@ class HomeActivity : ComponentActivity() {
                     .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
             )
         },
+        // No settings screen exists yet - it lands in a later task. Wired ahead of it so the top
+        // bar does not change shape again when it does.
+        openSettings = { },
+        showPairCode = ::openShowCode,
+        // PEER_JOB_EXTRA does not exist yet - see PeerJob.kt - so the job is not forwarded to
+        // PeerCalibrateActivity yet. The destination itself is fully wired: every ReadyGoto value
+        // already leads somewhere, whether or not anything calls this today.
+        goto = { destination, _ ->
+            when (destination) {
+                ReadyGoto.SONG -> { putDownWhatIsPlaying(); chooseSong.launch(arrayOf(AUDIO_MIME)) }
+                ReadyGoto.SELF_CALIBRATE -> startActivity(Intent(this, CalibrateActivity::class.java))
+                ReadyGoto.PAIR_CALIBRATE -> startActivity(
+                    Intent(this, PeerCalibrateActivity::class.java)
+                        .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
+                )
+                ReadyGoto.ALLOW_BACKGROUND -> askToRunInBackground()
+                ReadyGoto.SCAN -> startActivity(Intent(this, ScanActivity::class.java))
+                ReadyGoto.SHOW_CODE -> openShowCode()
+            }
+        },
         room = RoomActions(
             moveIcon = { moved -> updateRoom { withIconMoved(it, moved) } },
             // The round itself is on the calibration screen with every other round; this is a
@@ -513,6 +535,14 @@ class HomeActivity : ComponentActivity() {
     private fun stopSession() {
         awaitingSession = false
         startService(request(SessionService.ACTION_STOP))
+    }
+
+    /**
+     * The full-screen code a peer scans to pair, held up rather than in a run - see
+     * [ShowCodeActivity].
+     */
+    private fun openShowCode() {
+        startActivity(Intent(this, ShowCodeActivity::class.java))
     }
 
     private fun projectionManager(): MediaProjectionManager =
@@ -808,8 +838,23 @@ class HomeActivity : ComponentActivity() {
         readPairing()
         rereadDistances()
         readTheDrawing()
+        readWifiName()
         takeUpTheRoom()
         handler.post(refresh)
+    }
+
+    /**
+     * This handset's current WiFi SSID, or null where it cannot be read.
+     *
+     * Re-read on every resume rather than kept, for the same reason the pairing address is: this
+     * screen can come back from a system WiFi picker with a different network than it left with.
+     * runCatching because a handset with the radio off, or with the location permission the SSID
+     * read depends on, must not crash a screen that has nothing else to do with either.
+     */
+    private fun readWifiName() {
+        state = state.copy(
+            wifiName = runCatching { getSystemService(WifiManager::class.java).connectionInfo.ssid }.getOrNull()
+        )
     }
 
     /**

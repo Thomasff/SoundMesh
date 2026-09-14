@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -36,11 +37,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.SessionState
-import com.soundmesh.probe.BuildConfig
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.indexFor
@@ -219,7 +221,15 @@ data class HomeState(
      * who else is in the room. A sink is told the rule and has nothing to say about it, which is
      * the same asymmetry the timeline itself has.
      */
-    val room: RoomState? = null
+    val room: RoomState? = null,
+    /**
+     * The SSID of the WiFi this handset is on right now, or null where it could not be read.
+     *
+     * Shown on the welcome screen because a phone on the wrong WiFi looks identical to a phone
+     * that has not been told anything is wrong - the fix is switching networks and coming back,
+     * so a stale name here would go on saying "connected" after somebody already left.
+     */
+    val wifiName: String? = null
 )
 
 /** What the screen can ask for. Held as one object so a preview can hand it empty lambdas. */
@@ -283,6 +293,19 @@ class HomeActions(
     val restoreVolume: () -> Unit,
     /** Opens the one system dialog that can grant it. The vendor switches it cannot. */
     val allowBackground: () -> Unit,
+    /** The gear in the top bar. */
+    val openSettings: () -> Unit,
+    /** The full-screen pairing code, which is the whole screen because it is read from a metre away. */
+    val showPairCode: () -> Unit,
+    /**
+     * Where a checklist line's button goes. See [ReadyGoto].
+     *
+     * Takes a [PeerJob] alongside the destination because [ReadyGoto.PAIR_CALIBRATE] covers three
+     * different measurements on the same screen - see [PeerJob] - and the checklist line that
+     * offers it knows which one it is offering. Every other destination ignores it and callers
+     * that are not asking for one of those three pass null.
+     */
+    val goto: (ReadyGoto, PeerJob?) -> Unit,
     val room: RoomActions
 )
 
@@ -358,55 +381,64 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(stringResource(R.string.home_title), style = MaterialTheme.typography.headlineMedium)
-        // Above the role and before anything is running. Which phone this is does not depend on
-        // either, and the moment somebody needs it is the moment they are holding two phones and
-        // an instruction that names one of them.
-        state.selfId?.let { self ->
+        TopBar(state, actions)
+        // Which of the three stages this handset is on is worked out fresh every draw rather than
+        // remembered - see routeOf() - so there is one answer rather than two that can disagree.
+        when (routeOf(state)) {
+            HomeRoute.WELCOME -> WelcomeScreen(state, actions)
+            // ReadyScreen replaces this branch in a later task. Until then this keeps the screen
+            // compiling and installable with the panels that were already here.
+            HomeRoute.READY -> when (state.role) {
+                Role.HOST -> HostPanel(state, actions)
+                Role.SINK -> SinkPanel(state, actions)
+                Role.NONE -> Unit // unreachable: routeOf sends a missing role to WELCOME
+            }
+            // PlayingScreen replaces this branch in a later task, the same way ReadyScreen does.
+            HomeRoute.PLAYING -> when (state.role) {
+                Role.HOST -> HostPanel(state, actions)
+                Role.SINK -> SinkPanel(state, actions)
+                Role.NONE -> Unit
+            }
+        }
+    }
+}
+
+/**
+ * The row that is on screen no matter which of the three stages this handset is on.
+ *
+ * Left is this handset's own identity - the same badge and name that used to sit in the page body
+ * - because it answers "which phone is this" before anything else does, on every stage including
+ * the welcome screen where there may be no role yet. Right is the way into settings, which is why
+ * it does not move even though the page beneath it does.
+ */
+@Composable
+private fun TopBar(state: HomeState, actions: HomeActions) {
+    val settingsDescription = stringResource(R.string.settings_open)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (state.selfId != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                BadgeChip(self, state.selfPlace, diameter = 28.dp)
+                BadgeChip(state.selfId, state.selfPlace, diameter = 28.dp)
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    stringResource(R.string.badge_this_phone, badgeWords(self, state.selfPlace)),
+                    stringResource(R.string.badge_this_phone, badgeWords(state.selfId, state.selfPlace)),
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
+        } else {
+            // An empty first child rather than none, so SpaceBetween still has two children to
+            // space and the gear stays on the right instead of sliding to meet nothing.
+            Spacer(Modifier)
         }
-        when (state.role) {
-            Role.NONE -> RolePicker(actions)
-            Role.HOST -> HostPanel(state, actions)
-            Role.SINK -> SinkPanel(state, actions)
+        IconButton(
+            onClick = actions.openSettings,
+            modifier = Modifier.semantics { contentDescription = settingsDescription }
+        ) {
+            Text("⚙", style = MaterialTheme.typography.titleLarge)
         }
-        if (state.role != Role.NONE) {
-            StatePanel(state)
-            // After the state and before the health numbers: it is a thing to play with while the
-            // room is playing, not a thing to set up before starting.
-            state.room?.let { SpatialPanel(it, actions.room) }
-            HealthPanel(state.health)
-            TextButton(onClick = { actions.pickRole(Role.NONE) }) {
-                Text(stringResource(R.string.role_change))
-            }
-        }
-        // Offered whatever this phone is being. The constant it measures belongs to the handset
-        // rather than to a role, and it is wanted before the first session rather than during one.
-        TextButton(onClick = actions.calibrate) {
-            Text(stringResource(R.string.home_calibrate))
-        }
-        // The other calibration: that one is this handset against itself, this one is this pair
-        // against each other. Both are wanted before the first session rather than during one.
-        if (offersPairCalibration(state)) {
-            TextButton(onClick = actions.pairCalibrate) {
-                Text(stringResource(R.string.home_pair_calibrate))
-            }
-        }
-        // Last line on the screen, because nobody wants it until the moment a room is behaving as
-        // if the handsets were running different code - and then it is the first thing to check.
-        // Every debug build carries the same version name, so this is the only thing that tells
-        // two of them apart without a cable.
-        Text(
-            stringResource(R.string.home_build, BuildConfig.BUILD_MARK),
-            style = MaterialTheme.typography.bodySmall
-        )
     }
 }
 
@@ -543,17 +575,22 @@ private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
 private const val ALARM_STREAM_NAME = "ALARM"
 
 @Composable
-private fun RolePicker(actions: HomeActions) {
-    Section(R.string.role_pick) {
+internal fun RolePicker(actions: HomeActions) {
+    // Titled for the welcome screen, its only caller since the routing split - the flat home page
+    // that used to show this under role_pick no longer exists. role_pick itself stays defined
+    // (deleting a shipped string is off the table) even though nothing reads it here any more.
+    Section(R.string.welcome_role) {
         Button(onClick = { actions.pickRole(Role.HOST) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.role_host))
         }
         Text(stringResource(R.string.role_host_hint), style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.role_host_other), style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
         Button(onClick = { actions.pickRole(Role.SINK) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.role_sink))
         }
         Text(stringResource(R.string.role_sink_hint), style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.role_sink_other), style = MaterialTheme.typography.bodySmall)
     }
 }
 

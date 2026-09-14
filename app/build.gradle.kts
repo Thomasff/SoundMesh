@@ -26,6 +26,16 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "BUILD_MARK", "\"$buildMark\"")
+
+        // Four facts that are not decided yet (author, repo, licence, release page). Each is
+        // empty until a gradle property says otherwise, and every screen treats empty as "do not
+        // render this at all" - a QR code that scans to nothing is worse than no QR code.
+        for (name in listOf("AUTHOR", "REPO_URL", "LICENCE", "RELEASE_URL")) {
+            val property = "soundmesh." + name.lowercase().split("_")
+                .mapIndexed { i, part -> if (i == 0) part else part.replaceFirstChar { it.uppercase() } }
+                .joinToString("")
+            buildConfigField("String", name, "\"${project.findProperty(property) ?: ""}\"")
+        }
     }
 
     buildFeatures {

@@ -315,4 +315,18 @@
     <string name="room_disagrees">测距说 %1$s 比 %2$s 远，你画的正相反——这两个图标是不是拖反了？</string>
     <string name="failure_port_in_use">起不来：对时和播放用的是同一个端口，多半是对时那边还开着。到「对时」那页按停止，等几秒再试一次。</string>
     <string name="now_playing">正在放：%1$s</string>
+    <string name="welcome_what">让几台手机同时放同一首歌，听起来像一套音响。</string>
+    <string name="welcome_need">要准备什么</string>
+    <string name="welcome_need_phones">至少两台安卓手机</string>
+    <string name="welcome_need_app">每台都装这个应用</string>
+    <string name="welcome_need_app_share">让旁边那台也装上</string>
+    <string name="welcome_need_wifi">都连同一个 WiFi</string>
+    <string name="welcome_wifi_name">现在连着：%1$s</string>
+    <string name="welcome_wifi_none">现在没连 WiFi。两台手机得在同一个 WiFi 里才能互相说话。</string>
+    <string name="welcome_role">这台当什么</string>
+    <string name="role_host_other">另一台要选「当从机」</string>
+    <string name="role_sink_other">另一台要选「当主机」</string>
+    <string name="settings_open">设置</string>
+    <string name="pair_code_fullscreen">让另一台扫这个码</string>
+    <string name="back">返回</string>
 </resources>
