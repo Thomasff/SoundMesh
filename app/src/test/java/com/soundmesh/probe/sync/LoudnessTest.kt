@@ -1,4 +1,4 @@
-package com.soundmesh.product
+package com.soundmesh.probe.sync
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
