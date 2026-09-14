@@ -1,0 +1,9 @@
+<resources>
+    <!-- The window behind Compose. DayNight rather than Light because the old one flashed a
+         white screen on every cold start in dark mode: the window is painted before the first
+         frame, so a light window is visible no matter what the Compose theme says. -->
+    <style name="Theme.SoundMesh" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+    </style>
+</resources>
