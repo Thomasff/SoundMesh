@@ -17,6 +17,8 @@
     <string name="standby_not_exempt">省电没放行</string>
     <string name="standby_trouble">上次断：%1$s</string>
     <string name="standby_no_trouble">没断过</string>
+    <string name="background_blocked">这台手机会在你切走之后把它停掉，那时它就跟不上播放</string>
+    <string name="background_allow">让它一直在后台运行</string>
     <string name="home_title">SoundMesh</string>
 
     <!-- The product's own screen. Chinese, because it is read by the people using it, while every

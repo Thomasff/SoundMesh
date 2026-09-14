@@ -15,6 +15,8 @@
          silently - which would make a run read as evidence that power save does not matter when
          the arm under test never ran. Normal permission; nothing is prompted for. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- So the screen can offer the dialog rather than only naming a settings page. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Reconnection. Section 11.2 asks for a network change to be detected rather than waited
          out; without this the only thing that notices a WiFi switch is a socket timeout. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

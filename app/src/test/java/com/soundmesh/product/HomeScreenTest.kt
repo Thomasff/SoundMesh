@@ -32,6 +32,34 @@ class HomeScreenTest {
     }
 
     /**
+     * Whether to say out loud that this handset will be killed the moment it stops being looked at.
+     *
+     * Worth a rule of its own rather than an `if` on a screen, because the evening of 2026-09-14
+     * went on it: a P30 dropped out of every room within seconds of going to the home screen, and
+     * the screen said nothing at all - the icon on the host simply went hollow, which by then meant
+     * three different things. Two wake locks and three rounds of instruments later, the answer was
+     * a setting on the phone.
+     */
+    @Test
+    fun `a handset whose background is not allowed is warned, once it has a job to do`() {
+        assertTrue(warnsAboutBackground(HomeState(role = Role.SINK, backgroundAllowed = false)))
+        assertTrue(warnsAboutBackground(HomeState(role = Role.HOST, backgroundAllowed = false)))
+    }
+
+    @Test
+    fun `a handset that has been allowed is not nagged`() {
+        assertFalse(warnsAboutBackground(HomeState(role = Role.SINK, backgroundAllowed = true)))
+    }
+
+    @Test
+    fun `and neither is one that has not been given a part to play yet`() {
+        // With no role picked, nothing on this phone outlives the screen, so there is nothing the
+        // setting would protect - and a warning nobody can act on usefully is one people learn to
+        // scroll past.
+        assertFalse(warnsAboutBackground(HomeState(role = Role.NONE, backgroundAllowed = false)))
+    }
+
+    /**
      * The role is what this handset is being right now, chosen on this screen. It is not who
      * scanned whom: two handsets that have each scanned the other both hold a scanned pairing, and
      * reading the role off that file made both of them the sink so that no run could start at all.

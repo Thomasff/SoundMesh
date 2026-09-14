@@ -11,8 +11,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -286,6 +288,7 @@ class HomeActivity : ComponentActivity() {
         setRoomVolume = ::setRoomVolume,
         setHandsetVolume = ::setHandsetVolume,
         restoreVolume = ::restoreVolume,
+        allowBackground = ::askToRunInBackground,
         pairCalibrate = {
             startActivity(
                 Intent(this, PeerCalibrateActivity::class.java)
@@ -618,6 +621,9 @@ class HomeActivity : ComponentActivity() {
         state = state.copy(
             paired = PairedHost(filesDir).read(),
             selfId = HostIdentity(filesDir).current(),
+            // Re-read on every resume, because the way it changes is somebody leaving this
+            // screen for the system one and coming back.
+            backgroundAllowed = backgroundAllowed(),
             pairingPayload = HostPairingCode.of(HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT),
             songName = chosen?.name,
             songUri = chosen?.uri,
@@ -855,6 +861,36 @@ class HomeActivity : ComponentActivity() {
                 stopStandingBy()
             }
         }
+    }
+
+    /**
+     * Whether this handset lets this app go on running with nobody looking at it.
+     *
+     * The standard bit, and on 2026-09-14 it was the one that mattered: a handset with this
+     * off had its standing service killed within seconds of the home button, which reached the
+     * host as a handset that had left the room and reached the listener as one phone silent.
+     */
+    private fun backgroundAllowed(): Boolean = runCatching {
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+    }.getOrDefault(true)
+
+    /**
+     * Asks for it, in the one place the platform lets an app ask.
+     *
+     * This covers the standard rule only. The vendor lists beside it - the three switches
+     * under an EMUI app launch manager, and every equivalent - have no API at all: nothing can
+     * read them, ask for them, or link to them, so a handset that still stops after this has to
+     * be dealt with by hand. Falling back to the list rather than failing silently, because
+     * some builds refuse the direct request, and a button that answers nothing is one people
+     * learn not to press.
+     */
+    private fun askToRunInBackground() {
+        val direct = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:$packageName")
+        )
+        if (runCatching { startActivity(direct) }.isSuccess) return
+        runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
     }
 
     private fun stopStandingBy() {

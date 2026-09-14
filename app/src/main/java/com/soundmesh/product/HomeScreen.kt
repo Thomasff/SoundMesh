@@ -133,6 +133,14 @@ data class HomeState(
     val calledHere: String = "",
     val onStandby: Boolean = false,
     /**
+     * Whether this handset lets this app keep running once nobody is looking at it.
+     *
+     * Read off the system rather than assumed, because the assumption cost an evening. Two
+     * handsets in the same room on the same build behaved differently, and the difference was
+     * this bit: one of them killed the standing service within seconds of the home button.
+     */
+    val backgroundAllowed: Boolean = true,
+    /**
      * How many seconds the capture has been handing over exactly zero, or null when it is not.
      *
      * On screen because the failure it names is invisible from every other direction: the session
@@ -257,6 +265,8 @@ class HomeActions(
     /** One handset on its own, for the one standing next to a wall. */
     val setHandsetVolume: (String, Int) -> Unit,
     val restoreVolume: () -> Unit,
+    /** Opens the one system dialog that can grant it. The vendor switches it cannot. */
+    val allowBackground: () -> Unit,
     val room: RoomActions
 )
 
@@ -269,6 +279,16 @@ class HomeActions(
  * and pick one".
  */
 internal fun offersPairCalibration(state: HomeState): Boolean = state.role != Role.NONE
+
+/**
+ * Whether to say that this handset will be stopped the moment nobody is looking at it.
+ *
+ * Only once it has a part to play: with no role picked nothing here outlives the screen, so
+ * there is nothing the setting would protect, and a warning that cannot be acted on usefully is
+ * one people learn to scroll past.
+ */
+internal fun warnsAboutBackground(state: HomeState): Boolean =
+    !state.backgroundAllowed && state.role != Role.NONE
 
 /**
  * The four edges of the screen, lit in this handset's own colour.
@@ -574,7 +594,7 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
         }
     }
     CaptureSilenceLine(state)
-    StandbyLine(state)
+    StandbyLine(state, actions)
     PlayControls(state, actions, canPlay = state.capturing || state.songName != null)
 }
 
@@ -590,7 +610,7 @@ private fun SinkPanel(state: HomeState, actions: HomeActions) {
         OutlinedButton(onClick = actions.scan) { Text(stringResource(R.string.pair_scan)) }
         Text(stringResource(R.string.pair_scan_hint), style = MaterialTheme.typography.bodySmall)
     }
-    StandbyLine(state)
+    StandbyLine(state, actions)
     PlayControls(state, actions, canPlay = state.paired != null)
 }
 
@@ -626,7 +646,7 @@ private fun CaptureSilenceLine(state: HomeState) {
  * the third phone sit there silently while the other two play.
  */
 @Composable
-private fun StandbyLine(state: HomeState) {
+private fun StandbyLine(state: HomeState, actions: HomeActions) {
     Text(
         when (state.role) {
             Role.HOST -> stringResource(R.string.standby_host, state.standingBy)
@@ -637,6 +657,16 @@ private fun StandbyLine(state: HomeState) {
         },
         style = MaterialTheme.typography.bodySmall
     )
+    if (warnsAboutBackground(state)) {
+        Text(
+            stringResource(R.string.background_blocked),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+        TextButton(onClick = actions.allowBackground) {
+            Text(stringResource(R.string.background_allow))
+        }
+    }
     if (state.role == Role.HOST && state.uncalibrated > 0) {
         Text(
             stringResource(R.string.standby_uncalibrated, state.uncalibrated),
