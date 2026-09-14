@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.session.PlaybackState
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.LinkProperties
@@ -615,6 +616,18 @@ class SessionService : Service() {
         // alphanumeric, so the name cannot itself walk out of the directory.
         private val SAFE_SOURCE_FILE = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     }
+}
+
+/**
+ * What the lock screen should say this room is doing.
+ *
+ * [running] wins over [paused] because the pause flag outlives the session that set it, and a
+ * lock screen offering to resume a room that has already stopped is a control that does nothing.
+ */
+internal fun lockScreenState(paused: Boolean, running: Boolean): Int = when {
+    !running -> PlaybackState.STATE_STOPPED
+    paused -> PlaybackState.STATE_PAUSED
+    else -> PlaybackState.STATE_PLAYING
 }
 
 /**
