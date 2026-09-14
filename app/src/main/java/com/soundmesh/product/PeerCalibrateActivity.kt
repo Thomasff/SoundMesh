@@ -1084,6 +1084,9 @@ class PeerCalibrateActivity : ComponentActivity() {
                             approximate = approximateCalibration(),
                             observations = stored?.observations ?: 0
                         ),
+                        // Unrecognised or absent means PAIR - see peerJobOf - which is what every
+                        // ADB-driven `am start` of this activity has always meant with no extra.
+                        job = peerJobOf(intent.getStringExtra(PEER_JOB_EXTRA)),
                         actions = PeerCalibrateActions(
                             calibrate = { begin(verifying = false, serveMany = true, allowSlowLink = false) },
                             verify = { begin(verifying = true, serveMany = true, allowSlowLink = false) },

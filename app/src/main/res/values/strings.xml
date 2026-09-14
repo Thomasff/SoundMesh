@@ -41,6 +41,12 @@
     <string name="ready_goto_allow">一键放行</string>
     <string name="ready_goto_scan">去扫码</string>
     <string name="ready_goto_code">让另一台扫我</string>
+    <string name="goto_pair_one">和某一台对时</string>
+    <string name="goto_room">量一下房间里几台的位置</string>
+    <string name="goto_overhead">量我坐在哪</string>
+    <string name="ready_measure">量一量（做过一次就不用再做了）</string>
+    <string name="details_show">细节</string>
+    <string name="explain_show">这是为什么</string>
     <string name="look_following">跟着播</string>
     <string name="look_asleep">屏幕灭着，播放不受影响</string>
     <string name="look_gone">它断开了，正在重拨</string>

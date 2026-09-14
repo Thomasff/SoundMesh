@@ -171,7 +171,7 @@ private fun HoldStill(until: Long) {
 private const val TICK_MILLIS = 500L
 
 @Composable
-fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions) {
+fun PeerCalibrateScreen(state: PeerCalibrateState, job: PeerJob, actions: PeerCalibrateActions) {
     // One tap of friction, because there is no undo and the constant on the other side of it is
     // the average of every run so far. Local to the screen: nothing outside it needs to know that
     // somebody is halfway through deciding.
@@ -226,7 +226,10 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 )
             }
         }
-        if (state.role != null) {
+        // Which of the three jobs this screen was opened for - see PeerJob.kt. The one button
+        // that used to reach all three, named after only the first of them, is why the other two
+        // were effectively undiscoverable.
+        if (state.role != null && job == PeerJob.PAIR) {
             Section(R.string.pair_calibrate_run) {
                 Text(
                     stringResource(R.string.pair_calibrate_quiet),
@@ -305,7 +308,7 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 }
             }
         }
-        if (state.role != null) {
+        if (state.role != null && job == PeerJob.ROOM) {
             Section(R.string.pair_calibrate_room_title) {
                 Text(
                     stringResource(R.string.pair_calibrate_room_intro),
@@ -318,10 +321,14 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                 ) {
                     Text(stringResource(R.string.pair_calibrate_room_start))
                 }
-                // Only the host, because only the host is held: it is the handset that gathers
-                // the room and the only one that files anything, so a sink pressing this would
-                // be holding a phone over their head for a number nothing writes down.
-                if (state.role == CalibrationRole.HOST) {
+            }
+        }
+        if (state.role != null && job == PeerJob.OVERHEAD) {
+            // Only the host, because only the host is held: it is the handset that gathers
+            // the room and the only one that files anything, so a sink pressing this would
+            // be holding a phone over their head for a number nothing writes down.
+            if (state.role == CalibrationRole.HOST) {
+                Section(R.string.pair_calibrate_room_title) {
                     Text(
                         stringResource(R.string.pair_calibrate_overhead_hint),
                         style = MaterialTheme.typography.bodyMedium

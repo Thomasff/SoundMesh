@@ -386,14 +386,9 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
         // remembered - see routeOf() - so there is one answer rather than two that can disagree.
         when (routeOf(state)) {
             HomeRoute.WELCOME -> WelcomeScreen(state, actions)
-            // ReadyScreen replaces this branch in a later task. Until then this keeps the screen
-            // compiling and installable with the panels that were already here.
-            HomeRoute.READY -> when (state.role) {
-                Role.HOST -> HostPanel(state, actions)
-                Role.SINK -> SinkPanel(state, actions)
-                Role.NONE -> Unit // unreachable: routeOf sends a missing role to WELCOME
-            }
-            // PlayingScreen replaces this branch in a later task, the same way ReadyScreen does.
+            HomeRoute.READY -> ReadyScreen(state, actions)
+            // PlayingScreen replaces this branch in a later task, the same way ReadyScreen already
+            // replaced it for HomeRoute.READY.
             HomeRoute.PLAYING -> when (state.role) {
                 Role.HOST -> HostPanel(state, actions)
                 Role.SINK -> SinkPanel(state, actions)
@@ -594,8 +589,14 @@ internal fun RolePicker(actions: HomeActions) {
     }
 }
 
+/**
+ * The host's choice of what to play, shared between the ready checklist and the playing screen.
+ *
+ * Pulled out of [HostPanel] rather than left inline, so the checklist stage does not carry a
+ * second copy of the same three buttons - it draws exactly what the playing stage already has.
+ */
 @Composable
-private fun HostPanel(state: HomeState, actions: HomeActions) {
+internal fun SongSection(state: HomeState, actions: HomeActions) {
     Section(R.string.song_title) {
         Text(
             when {
@@ -627,9 +628,22 @@ private fun HostPanel(state: HomeState, actions: HomeActions) {
             Text(stringResource(R.string.song_capture))
         }
         if (state.capturing) {
-            Text(stringResource(R.string.song_capture_hint), style = MaterialTheme.typography.bodySmall)
+            // Collapsed by default: three sentences long, and a checklist read top to bottom
+            // before a room is even playing should not have to read all of them every time.
+            var showingHint by remember { mutableStateOf(false) }
+            TextButton(onClick = { showingHint = !showingHint }) {
+                Text(stringResource(R.string.explain_show))
+            }
+            if (showingHint) {
+                Text(stringResource(R.string.song_capture_hint), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
+}
+
+@Composable
+private fun HostPanel(state: HomeState, actions: HomeActions) {
+    SongSection(state, actions)
     state.hostOutputVolume?.let { HostOutputVolumePanel(it) }
     RoomVolumePanel(state, actions)
     Section(R.string.pair_code) {

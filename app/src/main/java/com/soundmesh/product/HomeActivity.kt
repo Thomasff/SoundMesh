@@ -21,10 +21,27 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomOrder
@@ -35,12 +52,12 @@ import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.HostIdentity
+import com.soundmesh.probe.sync.PairingCodeImage
 import com.soundmesh.probe.sync.percentOf
 import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
-import com.soundmesh.probe.sync.ShowCodeActivity
 import com.soundmesh.probe.sync.handsetName
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
@@ -68,6 +85,16 @@ import com.soundmesh.session.SyncSession
  */
 class HomeActivity : ComponentActivity() {
     private var state by mutableStateOf(HomeState())
+
+    /**
+     * Whether the full-screen pairing code is up, replacing everything else this screen draws.
+     *
+     * Held here rather than as a row in the checklist: the person reading it is standing a metre
+     * away pointing another phone's camera at this one, and a screen with anything else on it -
+     * even a title bar - is smaller than it needs to be from there. See [routeOf]'s own comment
+     * for why this lives beside the state instead of inside it.
+     */
+    private var showingCode by mutableStateOf(false)
 
     /**
      * Whether this screen has asked for a session that has not appeared.
@@ -255,7 +282,15 @@ class HomeActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             SoundMeshTheme(themeChoiceOf(Preferences(filesDir).read("theme"))) {
-                Surface { HomeScreen(state, actions) }
+                Surface {
+                    // Its own branch rather than a block inside HomeScreen: the whole point is
+                    // that nothing else is on screen while this is up.
+                    if (showingCode) {
+                        PairCodeScreen(state.pairingPayload) { showingCode = false }
+                    } else {
+                        HomeScreen(state, actions)
+                    }
+                }
             }
         }
     }
@@ -296,21 +331,21 @@ class HomeActivity : ComponentActivity() {
         // No settings screen exists yet - it lands in a later task. Wired ahead of it so the top
         // bar does not change shape again when it does.
         openSettings = { },
-        showPairCode = ::openShowCode,
-        // PEER_JOB_EXTRA does not exist yet - see PeerJob.kt - so the job is not forwarded to
-        // PeerCalibrateActivity yet. The destination itself is fully wired: every ReadyGoto value
-        // already leads somewhere, whether or not anything calls this today.
-        goto = { destination, _ ->
+        showPairCode = { showingCode = true },
+        goto = { destination, job ->
             when (destination) {
                 ReadyGoto.SONG -> { putDownWhatIsPlaying(); chooseSong.launch(arrayOf(AUDIO_MIME)) }
                 ReadyGoto.SELF_CALIBRATE -> startActivity(Intent(this, CalibrateActivity::class.java))
+                // job picks which of PeerCalibrateScreen's three blocks renders - see PeerJob.kt.
+                // Missing or unrecognised means PAIR, which is also what job being null here means.
                 ReadyGoto.PAIR_CALIBRATE -> startActivity(
                     Intent(this, PeerCalibrateActivity::class.java)
                         .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
+                        .putExtra(PEER_JOB_EXTRA, job?.name)
                 )
                 ReadyGoto.ALLOW_BACKGROUND -> askToRunInBackground()
                 ReadyGoto.SCAN -> startActivity(Intent(this, ScanActivity::class.java))
-                ReadyGoto.SHOW_CODE -> openShowCode()
+                ReadyGoto.SHOW_CODE -> { showingCode = true }
             }
         },
         room = RoomActions(
@@ -535,14 +570,6 @@ class HomeActivity : ComponentActivity() {
     private fun stopSession() {
         awaitingSession = false
         startService(request(SessionService.ACTION_STOP))
-    }
-
-    /**
-     * The full-screen code a peer scans to pair, held up rather than in a run - see
-     * [ShowCodeActivity].
-     */
-    private fun openShowCode() {
-        startActivity(Intent(this, ShowCodeActivity::class.java))
     }
 
     private fun projectionManager(): MediaProjectionManager =
@@ -1197,6 +1224,40 @@ class HomeActivity : ComponentActivity() {
         /** As many of an id as every screen in this app has always printed. */
         private const val SHORT_NAME_CHARACTERS = 4
         private const val AUDIO_MIME = "audio/*"
+    }
+}
+
+/**
+ * The pairing code, held up to a camera from a metre away, and nothing else.
+ *
+ * Its own screen rather than a block on the checklist: the checklist is meant to be read close up
+ * and scrolled, and the one thing worth doing to a code that is about to be scanned is making it
+ * as large as the screen allows and removing everything a scroll could hide it behind.
+ *
+ * [payload] is null exactly when [HomeState.pairingPayload] is - no address this handset could be
+ * reached on - and then there is nothing to draw but the way back.
+ */
+@Composable
+private fun PairCodeScreen(payload: String?, onBack: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(stringResource(R.string.pair_code_fullscreen), style = MaterialTheme.typography.headlineSmall)
+        payload?.let {
+            // Remembered against the payload rather than the recomposition, for the same reason
+            // the checklist's own song section does it: encoding one is the most expensive thing
+            // this screen does, for a picture that only changes when the address does.
+            val code = remember(it) {
+                PairingCodeImage.bitmap(it, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
+            }
+            Image(code, contentDescription = null, modifier = Modifier.fillMaxWidth())
+        }
+        TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
     }
 }
 
