@@ -568,6 +568,7 @@ class SinkSession(
         }
         if (flags.isStopped()) return
         renderer.endAt(Long.MAX_VALUE)
+        atAudioPriority()
         renderer.run()
     }
 

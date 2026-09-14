@@ -53,6 +53,9 @@ class SessionService : Service() {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var advertisement: AutoCloseable? = null
+    // Built once and kept: a session that is restarted takes the same lock again, and a hold
+    // rebuilt per start would leave the old one with nobody to give it back.
+    private val awake by lazy { CpuAwake(cpuHoldOf(this)) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -83,6 +86,11 @@ class SessionService : Service() {
     private fun startSession(intent: Intent, host: Boolean) {
         if (ACTIVE != null) return
         startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        // Before anything else a session does, because everything a session does afterwards
+        // assumes the handset is still running. See CpuAwake for the night this was taken for.
+        awake.take { held ->
+            runCatching { EventLog(filesDir).write(if (held) "held awake" else "not held awake") }
+        }
         // Opening a source decodes, and connecting waits on another handset. Neither belongs on the
         // thread the system delivered this intent on.
         Thread({ open(intent, host) }, "SoundMeshSessionStart").start()
@@ -448,6 +456,10 @@ class SessionService : Service() {
                 .onFailure { Log.e(LOG_TAG, "could not write the session report", it) }
             runCatching { session?.stop() }
             releaseAudioFocus()
+            // After the session has actually stopped, not beside the intent that asked it to:
+            // the stopping itself is work, and it is work on a handset that was allowed to
+            // sleep the moment this is given back.
+            awake.give()
             stopWatchingNetwork()
             withdrawAdvertisement()
             stopForeground(STOP_FOREGROUND_REMOVE)

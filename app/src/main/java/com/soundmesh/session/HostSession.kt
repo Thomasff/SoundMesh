@@ -537,7 +537,7 @@ class HostSession(
         // back to now. endAt is @Volatile precisely so it can be moved from another thread.
         renderer.endAt(Long.MAX_VALUE)
         flags.markStarted()
-        rendererThread = Thread({ renderer.run() }, "SoundMeshHostRender").also { it.start() }
+        rendererThread = Thread({ atAudioPriority(); renderer.run() }, "SoundMeshHostRender").also { it.start() }
         producerThread = Thread(::produce, "SoundMeshHostSource").also { it.start() }
     }
 
