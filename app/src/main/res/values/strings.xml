@@ -257,10 +257,6 @@
     <string name="room_crossover_at">分界点 %1$d Hz 以下算低音</string>
     <string name="room_split_low_high_limits">按频率分，不是按乐器分——人声和吉他在分界点两边都有，两台手机都会有它们。分界点往下拖的时候，高音那台会自动轻一点，好让低音那台显出来（不是把低音调响——那样会破音）。所以拖到最低时整体会变轻，用音量键补回来就行。手机喇叭本来就放不出很低的声音，低音那台还是会轻，那是喇叭的限度，不是没生效。</string>
     <string name="room_part_middle">中间</string>
-    <string name="room_axis_held_struck">按敲击分</string>
-    <string name="room_part_struck">敲击声</string>
-    <string name="room_part_held">持续音</string>
-    <string name="room_split_held_struck_limits">这一档是真按乐器分的——鼓、拍手、弹拨的那一下会去一边，唱的、拉的、吹的会去另一边。两件要知道的事：弹拨和敲琴键这种「先敲一下、再响一段」的声音，两台都会有它，先在敲击那台、后在持续那台，这本来就是它的样子；人声的齿音和气声也是一瞬间的宽频声，会跟着鼓点走。刚切过来那一下会静一小会儿，它得先听一段才知道什么是在持续。</string>
     <string name="room_part_sides">两边</string>
     <string name="room_alone">还没有别的手机连上来。一台手机也能摆，但听不出方向。</string>
     <string name="room_fit">按测量摆正图标</string>

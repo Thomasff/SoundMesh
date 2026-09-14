@@ -737,7 +737,6 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
                 when (state.splitAxis) {
                     SplitAxis.MIDDLE_SIDES -> R.string.room_split_content_limits
                     SplitAxis.LOW_HIGH -> R.string.room_split_low_high_limits
-                    SplitAxis.HELD_STRUCK -> R.string.room_split_held_struck_limits
                 }
             ),
             style = MaterialTheme.typography.bodySmall
@@ -749,7 +748,6 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
 private fun partLabelOf(axis: SplitAxis, farHalf: Boolean): Int = when (axis) {
     SplitAxis.MIDDLE_SIDES -> if (farHalf) R.string.room_part_sides else R.string.room_part_middle
     SplitAxis.LOW_HIGH -> if (farHalf) R.string.room_part_high else R.string.room_part_low
-    SplitAxis.HELD_STRUCK -> if (farHalf) R.string.room_part_struck else R.string.room_part_held
 }
 
 /**
@@ -769,7 +767,6 @@ private fun AxisPicker(state: RoomState, actions: RoomActions) {
                 when (axis) {
                     SplitAxis.MIDDLE_SIDES -> R.string.room_axis_middle_sides
                     SplitAxis.LOW_HIGH -> R.string.room_axis_low_high
-                    SplitAxis.HELD_STRUCK -> R.string.room_axis_held_struck
                 }
             )
             if (axis == state.splitAxis) {

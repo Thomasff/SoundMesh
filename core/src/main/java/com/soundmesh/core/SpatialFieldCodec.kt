@@ -49,19 +49,15 @@ object SpatialFieldCodec {
     private const val SIDES = "SIDES"
     private const val LOW = "LOW"
     private const val HIGH = "HIGH"
-    private const val HELD = "HELD"
-    private const val STRUCK = "STRUCK"
 
     private fun nearHalfOf(axis: SplitAxis) = when (axis) {
         SplitAxis.MIDDLE_SIDES -> MIDDLE
         SplitAxis.LOW_HIGH -> LOW
-        SplitAxis.HELD_STRUCK -> HELD
     }
 
     private fun farHalfOf(axis: SplitAxis) = when (axis) {
         SplitAxis.MIDDLE_SIDES -> SIDES
         SplitAxis.LOW_HIGH -> HIGH
-        SplitAxis.HELD_STRUCK -> STRUCK
     }
 
     fun encode(field: SpatialField): String {
