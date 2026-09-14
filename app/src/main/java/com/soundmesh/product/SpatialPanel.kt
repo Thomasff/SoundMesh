@@ -1,7 +1,10 @@
 package com.soundmesh.product
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,11 +18,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -473,9 +473,6 @@ private fun FitOffer(state: RoomState, actions: RoomMapActions) {
 
 @Composable
 private fun RoomDrawing(state: RoomState, actions: RoomMapActions) {
-    // Which icon the finger picked up, held for the whole gesture. Re-choosing the nearest icon on
-    // every drag event would let a fast drag hand itself to whichever one it passed over.
-    var dragging by remember { mutableStateOf<String?>(null) }
     // The gesture below is a coroutine keyed on who is in the room, so it outlives every
     // recomposition that only moved somebody - and it closes over the room as it was when that
     // coroutine started. Read directly, `state` inside the gesture is the room from before the
@@ -499,24 +496,43 @@ private fun RoomDrawing(state: RoomState, actions: RoomMapActions) {
             .fillMaxWidth()
             .aspectRatio(1f)
             .pointerInput(state.icons.map { it.peerId }) {
-                detectDragGestures(
-                    onDragStart = { at ->
-                        dragging = nearestPeerId(room.icons, at.x / size.width, at.y / size.height)
-                    },
-                    onDragEnd = { dragging = null },
-                    onDragCancel = { dragging = null }
-                ) { change, _ ->
-                    change.consume()
-                    val held = dragging ?: return@detectDragGestures
-                    onRoom.moveIcon(
-                        SpatialRoom.clamped(
-                            RoomIcon(
-                                held,
-                                (change.position.x / size.width).coerceIn(0.02f, 0.98f),
-                                (change.position.y / size.height).coerceIn(0.02f, 0.98f)
-                            )
+                fun put(held: String, at: Offset) = onRoom.moveIcon(
+                    SpatialRoom.clamped(
+                        RoomIcon(
+                            held,
+                            (at.x / size.width).coerceIn(0.02f, 0.98f),
+                            (at.y / size.height).coerceIn(0.02f, 0.98f)
                         )
                     )
+                )
+                awaitEachGesture {
+                    // Nothing here is consumed until an icon has actually been picked up, which
+                    // is the whole point of writing the gesture out rather than using
+                    // detectDragGestures. That helper consumes on its way to deciding, so a
+                    // finger landing on empty canvas took the gesture and then did nothing with
+                    // it - and this map is a full-width square, so the page could not be
+                    // scrolled anywhere near it. A dead patch in the middle of the screen, with
+                    // nothing on it to explain why. Reported 2026-09-14.
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // Chosen once and held for the whole gesture. Re-choosing the nearest icon
+                    // on every event would let a fast drag hand itself to whichever one it
+                    // passed over.
+                    val held = nearestPeerId(
+                        room.icons,
+                        down.position.x / size.width,
+                        down.position.y / size.height
+                    ) ?: return@awaitEachGesture
+                    // Touch slop, so that a tap on an icon is still a tap: without it every
+                    // stray pixel of a press moves a handset, and the room drifts under anybody
+                    // who rests a finger on it.
+                    val began = awaitTouchSlopOrCancellation(down.id) { change, _ ->
+                        change.consume()
+                    } ?: return@awaitEachGesture
+                    put(held, began.position)
+                    drag(down.id) { change ->
+                        change.consume()
+                        put(held, change.position)
+                    }
                 }
             }
     ) {
