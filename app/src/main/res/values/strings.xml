@@ -6,6 +6,7 @@
     <string name="session_channel_name">SoundMesh session</string>
     <string name="session_notification">Playing in sync</string>
     <string name="standby_channel_name">SoundMesh standby</string>
+    <string name="home_build">这台装的版本：%1$s</string>
     <string name="standby_notification">待命中：主机一按就跟着播</string>
     <string name="standby_notification_down">没连上主机，正在重拨（%1$d 次没送出去）</string>
     <string name="home_title">SoundMesh</string>

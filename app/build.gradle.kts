@@ -3,6 +3,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Which commit this build came from, read straight out of .git rather than by running git, so a
+// machine without it on PATH still builds. It exists because "which build is on that handset" has
+// cost this project three rounds of guessing - twice in one evening on 2026-09-14, once by trusting
+// a recollection that turned out to name the wrong phone. A debug build has no version to tell
+// them apart by, so it needs one.
+val buildMark: String = runCatching {
+    val gitDir = rootProject.file(".git")
+    val head = File(gitDir, "HEAD").readText().trim()
+    if (head.startsWith("ref:")) File(gitDir, head.removePrefix("ref:").trim()).readText().trim().take(7)
+    else head.take(7)
+}.getOrDefault("unknown")
+
 android {
     namespace = "com.soundmesh.probe"
     compileSdk = 35
@@ -13,10 +25,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "BUILD_MARK", "\"$buildMark\"")
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {

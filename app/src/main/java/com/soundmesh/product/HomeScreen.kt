@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.SessionState
+import com.soundmesh.probe.BuildConfig
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.indexFor
@@ -362,6 +363,14 @@ fun HomeScreen(state: HomeState, actions: HomeActions) {
                 Text(stringResource(R.string.home_pair_calibrate))
             }
         }
+        // Last line on the screen, because nobody wants it until the moment a room is behaving as
+        // if the handsets were running different code - and then it is the first thing to check.
+        // Every debug build carries the same version name, so this is the only thing that tells
+        // two of them apart without a cable.
+        Text(
+            stringResource(R.string.home_build, BuildConfig.BUILD_MARK),
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
