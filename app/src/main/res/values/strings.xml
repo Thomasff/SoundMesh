@@ -19,6 +19,28 @@
     <string name="standby_no_trouble">没断过</string>
     <string name="background_blocked">这台手机会在你切走之后把它停掉，那时它就跟不上播放</string>
     <string name="background_allow">让它一直在后台运行</string>
+    <string name="ready_title">准备好了吗</string>
+    <string name="ready_song">选好歌了</string>
+    <string name="ready_song_missing">还没选歌</string>
+    <string name="ready_self_lead">这台校准过输出延迟</string>
+    <string name="ready_self_lead_missing">这台还没量过自己慢多少，会比别人早响</string>
+    <string name="ready_self_lead_value">早 %1$s 毫秒</string>
+    <string name="ready_standing">%1$d 台在待命</string>
+    <string name="ready_standing_none">还没有手机跟上来，另一台要选「当从机」并扫这台的码</string>
+    <string name="ready_uncalibrated">%1$d 台没和这台对过时</string>
+    <string name="ready_uncalibrated_why">会差几十毫秒，能听出来</string>
+    <string name="ready_blocked">%1$s 会被省电杀掉</string>
+    <string name="ready_blocked_why">一切走它就跟不上了，放行之后再开始</string>
+    <string name="ready_paired">跟上主机了</string>
+    <string name="ready_paired_none">还没扫过主机的码</string>
+    <string name="ready_background">这台已经放行后台运行</string>
+    <string name="ready_go">开始播放</string>
+    <string name="ready_goto_song">换一首</string>
+    <string name="ready_goto_self">去测</string>
+    <string name="ready_goto_pair">去对时</string>
+    <string name="ready_goto_allow">一键放行</string>
+    <string name="ready_goto_scan">去扫码</string>
+    <string name="ready_goto_code">让另一台扫我</string>
     <string name="home_title">SoundMesh</string>
 
     <!-- The product's own screen. Chinese, because it is read by the people using it, while every

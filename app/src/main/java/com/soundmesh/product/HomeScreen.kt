@@ -141,6 +141,22 @@ data class HomeState(
      */
     val backgroundAllowed: Boolean = true,
     /**
+     * This handset's own output lead, in milliseconds, or null if it has never been measured.
+     *
+     * On the home screen rather than only on the calibration screen, because on 2026-09-13 two
+     * handsets played a whole afternoon carrying nothing: the app already said so, on a page in
+     * each of them that nobody had a reason to open.
+     */
+    val selfCalibrated: Double? = null,
+    /**
+     * The names of standing handsets that have told this host they are not exempt from power
+     * saving - which is to say, the ones that will be killed the moment their screen is left.
+     *
+     * Names rather than a count, because the thing to do about it is walk over to one of them,
+     * and a count cannot say which.
+     */
+    val blockedPeerNames: List<String> = emptyList(),
+    /**
      * How many seconds the capture has been handing over exactly zero, or null when it is not.
      *
      * On screen because the failure it names is invisible from every other direction: the session
