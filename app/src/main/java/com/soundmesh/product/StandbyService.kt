@@ -28,7 +28,9 @@ import com.soundmesh.probe.sync.VolumeReading
 import com.soundmesh.probe.sync.VolumeSaid
 import com.soundmesh.probe.sync.handsetName
 import com.soundmesh.probe.sync.tellHostWhy
+import com.soundmesh.session.CpuAwake
 import com.soundmesh.session.SessionService
+import com.soundmesh.session.cpuHoldOf
 
 /**
  * Holds this handset's standing line to its host, whether or not anybody is looking at the screen.
@@ -79,6 +81,23 @@ class StandbyService : Service() {
     /** Whether what the notification says is still true. */
     private val notice = StandbyNotice()
 
+    /**
+     * Kept from suspending for as long as this handset is standing by.
+     *
+     * The night this was taken: a P30 with its screen off was dropped by the host, and its own
+     * notification said nought attempts had failed to go out over the minute that followed - so
+     * [tellIfMoved] had not run once. A foreground service keeps this process from being killed;
+     * it does not keep the SoC from suspending, which an Android handset does about a minute
+     * after the screen goes off. [CpuAwake] is the same fault caught session-side, and the note
+     * there is worth reading: this is one of two halves, and the other is thread priority.
+     *
+     * **The cost, said rather than hidden.** A handset standing by is a handset not deep
+     * sleeping, and that is battery for as long as it stands there. It is the price of the thing
+     * being built - a phone left in a corner that plays when somebody else presses play - and
+     * whoever does not want to pay it stops standing by, which is a button on the home screen.
+     */
+    private val awake by lazy { CpuAwake(cpuHoldOf(this)) }
+
     /** When this handset last told the host it was still there. */
     private var saidHereAt = 0L
 
@@ -114,6 +133,11 @@ class StandbyService : Service() {
             notification(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         )
+        // Before the line rather than after: a line dialled by a handset that is about to
+        // suspend is a line that dies with nobody on either end writing down why. Which arm ran
+        // goes in the log, on the same terms as the session side - a hold a vendor build refused
+        // would otherwise read as evidence that sleep was never the problem.
+        awake.take { held -> events.write(if (held) "standby held awake" else "standby not held awake") }
         val wanted = announcement() ?: return stopSelf()
         if (line != null && wanted == dialled) return
         close()
@@ -374,6 +398,7 @@ class StandbyService : Service() {
         close()
         dialled = null
         if (ACTIVE === this) ACTIVE = null
+        awake.give()
         events.write("standby stopped")
         super.onDestroy()
     }
