@@ -1090,7 +1090,19 @@ class PeerCalibrateActivity : ComponentActivity() {
                             forget = { forget() },
                             stop = { stopServing() },
                             measureRoom = { restartAsRoom(overhead = false) },
-                            measureOverhead = { restartAsRoom(overhead = true) }
+                            measureOverhead = { restartAsRoom(overhead = true) },
+                            moveIcon = { moved -> changeRoom { withIconMoved(it, moved) } },
+                            fitRoom = {
+                                changeRoom { room ->
+                                    fitOffer(room)?.let {
+                                        room.copy(
+                                            icons = it.icons,
+                                            metresPerUnit = it.metresPerUnit,
+                                            fitted = true
+                                        )
+                                    } ?: room
+                                }
+                            }
                         )
                     )
                 }
@@ -1694,6 +1706,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 field.separationMetres.count { it.value != null },
                 field.separationMetres.size
             ))
+            showRoom(plan.slotIds)
         } finally {
             hostPlanServer = null
             // Nobody is standing at this screen once it is gone, and a listener held past that
@@ -2268,6 +2281,73 @@ class PeerCalibrateActivity : ComponentActivity() {
 
     private fun show(text: String, until: Long? = null) {
         handler.post { state = state.copy(message = text, until = until) }
+    }
+
+    /**
+     * Draws the room a round has just measured, off the same file the home screen draws from.
+     *
+     * Shown here because this is where somebody is standing when the lengths land, and until now
+     * the only sign that anything had been measured was a sentence counting pairs. A person can
+     * check a drawing against the room they are in; they cannot check "3 pairs of 3".
+     *
+     * Only on the handset that gathered the room. The others leave this screen three seconds
+     * after a round ends - that is what stops them sitting on a result page holding the clock
+     * port - so a drawing on those is one nobody gets to look at, and the field it would need is
+     * the host's anyway.
+     *
+     * [peerIds] is who took part, which is the one thing this screen knows and the home screen
+     * does not: over there the room is whoever is connected right now.
+     */
+    private fun showRoom(peerIds: List<String>) {
+        val self = HostIdentity(filesDir).current()
+        val ids = peerIds.distinct()
+        val saved = StoredRoomDrawing(filesDir).read()
+        val room = (saved?.room ?: RoomState()).copy(
+            // Where each of them was last put, so a room measured twice does not jump about.
+            // Anybody nobody has ever placed lands in the default arrangement, exactly as they
+            // would on the home screen.
+            icons = SpatialRoom.reconciled(
+                emptyList(),
+                ids,
+                saved?.placements?.associateBy { it.peerId } ?: emptyMap()
+            ),
+            selfId = self,
+            measuredMetres = measuredDistances(filesDir, self, ids),
+            listenerMetres = StoredListenerDistance.all(filesDir),
+            // A fresh measurement is a fresh reason to offer to move the drawing onto it, whatever
+            // was done with the last one.
+            fitted = false
+        )
+        handler.post {
+            state = state.copy(room = room)
+            keepTheDrawing()
+        }
+    }
+
+    /** One change a finger made to the drawing, kept the moment it is made. */
+    private fun changeRoom(change: (RoomState) -> RoomState) {
+        val room = state.room ?: return
+        state = state.copy(room = change(room))
+        keepTheDrawing()
+    }
+
+    /**
+     * Writes the drawing down, which is how the home screen ever hears about it.
+     *
+     * On every change rather than on leaving, unlike the home screen: what happens here is a
+     * handful of drags and one press, not fifty publishes a second, and the screen this one hands
+     * off to is started by somebody pressing back - there is no moment afterwards to write in.
+     *
+     * Merged with what is already on disk rather than replacing it: a round measures the handsets
+     * that took part, and a handset that was switched off for it has a place somebody chose that
+     * this round knows nothing about.
+     */
+    private fun keepTheDrawing() {
+        val room = state.room ?: return
+        val store = StoredRoomDrawing(filesDir)
+        val placed = LinkedHashMap(store.read()?.placements?.associateBy { it.peerId } ?: emptyMap())
+        for (icon in room.icons) placed[icon.peerId] = icon
+        runCatching { store.write(placed.values.toList(), room) }
     }
 
     /**

@@ -58,36 +58,73 @@ import kotlin.math.hypot
 fun SpatialPanel(state: RoomState, actions: RoomActions) {
     Section(R.string.room_title) {
         Text(stringResource(R.string.room_hint), style = MaterialTheme.typography.bodySmall)
-        RoomDrawing(state, actions)
-        if (state.icons.size < 2) {
-            Text(stringResource(R.string.room_alone), style = MaterialTheme.typography.bodySmall)
-        }
-        // Said quietly and never acted on, unlike the lengths below it. A measurement can correct
-        // how far apart two icons are; it cannot know which of them is which, so all it can do
-        // here is point at two and ask whether they are the right way round. Acting on it would
-        // be the app overruling the one thing only a person knows - and it also has to be
-        // settled before the lengths are touched, which is what fitOffer refuses on.
-        RoomCheck.contradiction(state.icons, state.measuredMetres)?.let { (farther, nearer) ->
-            Text(
-                stringResource(
-                    R.string.room_disagrees,
-                    badgeWords(farther, state.colours[farther]),
-                    badgeWords(nearer, state.colours[nearer])
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-        }
-        ListenerDistances(state, actions)
+        MeasuredRoom(state, actions.onTheMap())
         ArrivalDelays(state, actions)
-        MeasuredDistances(state)
-        FitOffer(state, actions)
         ModePicker(state, actions)
         if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
         if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
         SeparationControl(state, actions)
     }
 }
+
+/**
+ * The room as it has been measured: the drawing, what disagrees with it, the lengths measured
+ * between the phones and to the listener, and the offer to move the drawing onto them.
+ *
+ * One definition for the two screens that show it, and that is a requirement rather than tidiness.
+ * The calibration screen is where the measuring happens and the home screen is where the room is
+ * played, and a person who arranges the phones on one and finds a different arrangement on the
+ * other has no way to tell which of the two the music is using. So both draw this, both drag it
+ * the same way, and both read and write the one file underneath it - see [StoredRoomDrawing].
+ *
+ * What the two cannot share is who is in the room: the home screen knows who is connected and the
+ * calibration screen knows who took part in the round. Everything else is the same room.
+ */
+@Composable
+fun MeasuredRoom(state: RoomState, actions: RoomMapActions) {
+    RoomDrawing(state, actions)
+    if (state.icons.size < 2) {
+        Text(stringResource(R.string.room_alone), style = MaterialTheme.typography.bodySmall)
+    }
+    // Said quietly and never acted on, unlike the lengths below it. A measurement can correct
+    // how far apart two icons are; it cannot know which of them is which, so all it can do
+    // here is point at two and ask whether they are the right way round. Acting on it would
+    // be the app overruling the one thing only a person knows - and it also has to be
+    // settled before the lengths are touched, which is what fitOffer refuses on.
+    RoomCheck.contradiction(state.icons, state.measuredMetres)?.let { (farther, nearer) ->
+        Text(
+            stringResource(
+                R.string.room_disagrees,
+                badgeWords(farther, state.colours[farther]),
+                badgeWords(nearer, state.colours[nearer])
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
+    ListenerDistances(state, actions)
+    MeasuredDistances(state)
+    FitOffer(state, actions)
+}
+
+/**
+ * The two things a finger can do to the drawing, and the one way off it.
+ *
+ * Apart from [RoomActions] because the drawing is shown on a screen that has none of the rest:
+ * the calibration screen has no mode to pick and no sliders to pull, and handing it a bag of
+ * lambdas that do nothing is how a button that does nothing gets drawn.
+ */
+class RoomMapActions(
+    val moveIcon: (RoomIcon) -> Unit,
+    val fitToMeasured: () -> Unit,
+    /**
+     * Opens the round that places the listener, or null where this screen is that round.
+     *
+     * Null rather than a lambda that does nothing: offering to go and measure, on the screen the
+     * measuring happens on, is a button whose own words are false.
+     */
+    val measureListener: (() -> Unit)?
+)
 
 /** What the screen draws about the room, and nothing it decides. */
 data class RoomState(
@@ -204,7 +241,9 @@ class RoomActions(
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
-)
+) {
+    fun onTheMap() = RoomMapActions(moveIcon, fitToMeasured, measureListener)
+}
 
 /**
  * The drawing with one icon where the finger left it, and the offer open again.
@@ -353,7 +392,7 @@ private fun ArrivalDelays(state: RoomState, actions: RoomActions) {
 }
 
 @Composable
-private fun ListenerDistances(state: RoomState, actions: RoomActions) {
+private fun ListenerDistances(state: RoomState, actions: RoomMapActions) {
     val shown = listenerLines(state.icons, state.listenerMetres)
     if (shown.isEmpty()) {
         // Said once and only while it is true, because it is the one thing on this screen a
@@ -367,8 +406,8 @@ private fun ListenerDistances(state: RoomState, actions: RoomActions) {
             ),
             style = MaterialTheme.typography.bodySmall
         )
-        if (overheadRoundCanPlaceTheListener(state.icons)) {
-            OutlinedButton(onClick = actions.measureListener) {
+        actions.measureListener?.takeIf { overheadRoundCanPlaceTheListener(state.icons) }?.let { go ->
+            OutlinedButton(onClick = go) {
                 Text(stringResource(R.string.room_measure_listener))
             }
         }
@@ -410,7 +449,7 @@ private fun MeasuredDistances(state: RoomState) {
  * those lengths are what it acts on.
  */
 @Composable
-private fun FitOffer(state: RoomState, actions: RoomActions) {
+private fun FitOffer(state: RoomState, actions: RoomMapActions) {
     if (state.fitted) {
         Text(stringResource(R.string.room_fit_done), style = MaterialTheme.typography.bodySmall)
         return
@@ -422,7 +461,7 @@ private fun FitOffer(state: RoomState, actions: RoomActions) {
 }
 
 @Composable
-private fun RoomDrawing(state: RoomState, actions: RoomActions) {
+private fun RoomDrawing(state: RoomState, actions: RoomMapActions) {
     // Which icon the finger picked up, held for the whole gesture. Re-choosing the nearest icon on
     // every drag event would let a fast drag hand itself to whichever one it passed over.
     var dragging by remember { mutableStateOf<String?>(null) }

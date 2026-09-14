@@ -94,7 +94,6 @@ class StoredRoomDrawingTest {
             RoomState(
                 icons = listOf(RoomIcon(one, 0.2f, 0.3f)),
                 selfId = one,
-                colours = mapOf(one to 3),
                 silentIds = setOf(one),
                 measuredMetres = mapOf((one to two) to 2.0),
                 listenerMetres = mapOf(one to 1.5)
@@ -105,10 +104,26 @@ class StoredRoomDrawingTest {
 
         assertTrue(room.icons.isEmpty())
         assertNull(room.selfId)
-        assertTrue(room.colours.isEmpty())
         assertTrue(room.silentIds.isEmpty())
         assertTrue(room.measuredMetres.isEmpty())
         assertTrue(room.listenerMetres.isEmpty())
+    }
+
+    /**
+     * The colours are the exception, and they are kept for the same reason the screen keeps them
+     * between sessions: a colour is half of what a handset is called, and two screens showing the
+     * same room have to call it the same thing. Nothing assigns one while no session runs - the
+     * spatial channel does that, and it is not up - so without this the calibration screen would
+     * draw a room of grey phones next to a home screen drawing the same room in colour.
+     */
+    @Test
+    fun bringsBackWhatEachHandsetWasCalled() {
+        store().write(
+            listOf(RoomIcon(one, 0.2f, 0.3f), RoomIcon(two, 0.6f, 0.4f)),
+            RoomState(colours = mapOf(one to 3, two to 7))
+        )
+
+        assertEquals(mapOf(one to 3, two to 7), store().read()!!.room.colours)
     }
 
     /**
@@ -147,6 +162,61 @@ class StoredRoomDrawingTest {
         file().appendText("\nat ${two} 1.8 0.5\nat ${three} 0.5 NaN")
 
         assertEquals(listOf(one), store().read()!!.placements.map { it.peerId })
+    }
+
+    /**
+     * The saved room put back into the live one, which is how the two screens stay the same room.
+     *
+     * The calibration screen writes the drawing and the home screen reads it back on resuming, so
+     * what a person arranged where the measuring happens is what the music then plays. Who is in
+     * the room is the live half and is never taken from disk.
+     */
+    @Test
+    fun putsWhatWasSavedBackIntoTheRoomOnScreen() {
+        val live = RoomState(
+            icons = listOf(RoomIcon(one, 0.5f, 0.5f), RoomIcon(two, 0.5f, 0.5f)),
+            selfId = one,
+            colours = mapOf(one to 1, two to 2),
+            silentIds = setOf(two),
+            measuredMetres = mapOf((one to two) to 2.0),
+            listenerMetres = mapOf(one to 1.5)
+        )
+        val saved = SavedDrawing(
+            listOf(RoomIcon(one, 0.2f, 0.3f), RoomIcon(three, 0.9f, 0.9f)),
+            RoomState(separation = 0.7f, otherHalfIds = setOf(two, three))
+        )
+
+        val back = live.readBack(saved)
+
+        // Moved where it was saved; the one nothing was saved about keeps where it was drawn.
+        assertEquals(listOf(RoomIcon(one, 0.2f, 0.3f), RoomIcon(two, 0.5f, 0.5f)), back.icons)
+        assertEquals(0.7f, back.separation, 1e-6f)
+        // The handset that is not in the room does not come back with the part it was carrying.
+        assertEquals(setOf(two), back.otherHalfIds)
+        assertEquals(one, back.selfId)
+        assertEquals(mapOf(one to 1, two to 2), back.colours)
+        assertEquals(setOf(two), back.silentIds)
+        assertEquals(mapOf((one to two) to 2.0), back.measuredMetres)
+        assertEquals(mapOf(one to 1.5), back.listenerMetres)
+    }
+
+    /**
+     * The colours are the one thing taken from disk only when nothing live has any.
+     *
+     * The spatial channel hands them out and only runs while something is playing, so between
+     * sessions the saved ones are all there is - and the moment a session starts the live ones
+     * are the answer, because that is who actually holds which colour.
+     */
+    @Test
+    fun takesTheSavedColoursOnlyWhileNothingIsHandingThemOut() {
+        val saved = SavedDrawing(emptyList(), RoomState(colours = mapOf(one to 5)))
+        val live = RoomState(icons = listOf(RoomIcon(one, 0.5f, 0.5f)))
+
+        assertEquals(mapOf(one to 5), live.readBack(saved).colours)
+        assertEquals(
+            mapOf(one to 9),
+            live.copy(colours = mapOf(one to 9)).readBack(saved).colours
+        )
     }
 
     /** Written whole and replaced whole: the room as it is now, not merged with the last one. */

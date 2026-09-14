@@ -91,7 +91,16 @@ data class PeerCalibrateState(
      * up is worse than "about a minute" - somebody trusts it, moves when it reaches zero, and the
      * run fails for a reason nothing writes down.
      */
-    val until: Long? = null
+    val until: Long? = null,
+    /**
+     * The room a round just measured, or null until one has.
+     *
+     * The same room the home screen plays, off the same file - see [StoredRoomDrawing]. It is
+     * here because this is the screen a person is standing at when the lengths land, and until
+     * now the only sign that anything had been measured was a sentence counting pairs. A drawing
+     * is the one form of that answer somebody can check against the room they are standing in.
+     */
+    val room: RoomState? = null
 )
 
 /**
@@ -125,7 +134,11 @@ class PeerCalibrateActions(
     /** Every pair in the room out of one window, instead of one pair at a time. */
     val measureRoom: () -> Unit,
     /** The same round with this handset held above somebody's head, which measures them. */
-    val measureOverhead: () -> Unit
+    val measureOverhead: () -> Unit,
+    /** A finger moving one handset on the drawing, which is a person saying where it is. */
+    val moveIcon: (RoomIcon) -> Unit,
+    /** The drawing moved onto the lengths just measured, offered rather than done. */
+    val fitRoom: () -> Unit
 )
 
 /**
@@ -350,6 +363,19 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, actions: PeerCalibrateActions
                     }
                 }
             )
+        }
+        // Under the buttons rather than above them, because it only exists once a round has
+        // finished - and while one is running the thing worth reading is the countdown.
+        state.room?.let { room ->
+            Section(R.string.pair_calibrate_room_drawing) {
+                Text(
+                    stringResource(R.string.pair_calibrate_room_drawing_hint),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                // No offer to go and measure the listener: this screen is where that round is
+                // run, and the button for it is a few lines above.
+                MeasuredRoom(room, RoomMapActions(actions.moveIcon, actions.fitRoom, null))
+            }
         }
         // Not while a round runs: it is said at the top then, and the same sentence in two places
         // reads as two things having happened.

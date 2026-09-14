@@ -250,11 +250,7 @@ class HomeActivity : ComponentActivity() {
         // Before anything draws: every other thing this screen shows can be measured again, and
         // this one cannot - it is a person's opinion about which phone is on which side of the
         // sofa, and the phones cannot be asked.
-        StoredRoomDrawing(filesDir).read()?.let { saved ->
-            whereTheyWere.putAll(saved.placements.associateBy { it.peerId })
-            sidesTheyCarried.addAll(saved.room.otherHalfIds)
-            restored = saved.room
-        }
+        readTheDrawing()
         // Meant to be put down on a table and looked at, like every other screen in this app.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
@@ -778,6 +774,7 @@ class HomeActivity : ComponentActivity() {
         // it - a handset that changed network is otherwise showing an address it no longer has.
         readPairing()
         rereadDistances()
+        readTheDrawing()
         takeUpTheRoom()
         handler.post(refresh)
     }
@@ -1031,6 +1028,23 @@ class HomeActivity : ComponentActivity() {
      * a benefit that is not. What this does not cover is the process going down without ever
      * pausing - a crash, or a force-stop - and that is the trade being made.
      */
+    /**
+     * Reads the drawing back off disk, which is where the calibration screen leaves it.
+     *
+     * On every resume and not only on starting, because the screen this one hands off to draws
+     * the same room and lets somebody arrange it there - see [MeasuredRoom]. Without this, a
+     * person would place the phones where the measuring happens, walk back to where the music
+     * plays, and find the old arrangement, with nothing on either screen saying which of the two
+     * was being played.
+     */
+    private fun readTheDrawing() {
+        val saved = StoredRoomDrawing(filesDir).read() ?: return
+        whereTheyWere.putAll(saved.placements.associateBy { it.peerId })
+        sidesTheyCarried.addAll(saved.room.otherHalfIds)
+        restored = saved.room
+        state.room?.let { state = state.copy(room = it.readBack(saved)) }
+    }
+
     private fun keepTheDrawing() {
         val room = state.room ?: return
         // Everywhere anybody has been put, with the drawing on screen winning: the memory is

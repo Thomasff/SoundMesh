@@ -70,6 +70,8 @@
     <string name="pair_calibrate_verify_hint">把已经记下的数装回去再测一遍。数是对的，就应该几乎什么都不剩。和新测一样，要先在主机上按「开始对时」，主机那边不用选验证。</string>
     <string name="pair_calibrate_result">结果</string>
     <string name="pair_calibrate_now">正在进行</string>
+    <string name="pair_calibrate_room_drawing">量到的摆位</string>
+    <string name="pair_calibrate_room_drawing_hint">和播放界面是同一张图：拖动就是你在说这台手机站在哪儿，按「按测量摆正」把图挪到量出来的形状上。两边永远一致。</string>
     <string name="pair_calibrate_hold_still">别动，还有 %1$d 秒。</string>
     <string name="pair_calibrate_waiting">在等另一台连过来。请在另一台上也按开始。</string>
     <string name="pair_calibrate_clock">正在和另一台对时钟。这一步不发声。</string>

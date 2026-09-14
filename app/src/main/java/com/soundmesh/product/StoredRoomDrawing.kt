@@ -9,6 +9,37 @@ import java.io.File
 data class SavedDrawing(val placements: List<RoomIcon>, val room: RoomState)
 
 /**
+ * This room with everything a person set taken from the saved one.
+ *
+ * How the two screens stay the same room: the calibration screen writes the drawing when somebody
+ * arranges it there, and the home screen reads it back on resuming. Without this a person would
+ * arrange the phones where the measuring happens, walk back to where the music plays, and find the
+ * old arrangement - with nothing on either screen saying which of the two was being played.
+ *
+ * Who is in the room is never taken from disk. The roster, which of them has gone quiet and every
+ * measured length are live facts, and a handset is drawn where it was saved only if it is here.
+ *
+ * The colours are the one thing taken from disk and only while nothing live has any: the spatial
+ * channel hands them out and only runs while something is playing, so between sessions the saved
+ * ones are all there is, and during one the live ones are who actually holds which colour.
+ */
+internal fun RoomState.readBack(saved: SavedDrawing): RoomState {
+    val placed = saved.placements.associateBy { it.peerId }
+    return saved.room.copy(
+        icons = icons.map { placed[it.peerId] ?: it },
+        selfId = selfId,
+        colours = colours.ifEmpty { saved.room.colours },
+        silentIds = silentIds,
+        measuredMetres = measuredMetres,
+        listenerMetres = listenerMetres,
+        otherHalfIds = SpatialRoom.reconciledOtherHalf(
+            saved.room.otherHalfIds,
+            icons.map { it.peerId }
+        )
+    )
+}
+
+/**
  * The drawing, kept past the process.
  *
  * Everything else the home screen knows survives being killed already, because everything else was
@@ -45,6 +76,7 @@ class StoredRoomDrawing(private val directory: File) {
                 AT -> iconFrom(said)?.let(placements::add)
                 SIDES -> said.firstOrNull()?.takeIf { HostId.isValid(it) }
                     ?.let { room = room.copy(otherHalfIds = room.otherHalfIds + it) }
+                CALLED -> colourFrom(said)?.let { room = room.copy(colours = room.colours + it) }
                 else -> room = withSaid(room, fields.firstOrNull(), said.firstOrNull())
             }
         }
@@ -58,10 +90,16 @@ class StoredRoomDrawing(private val directory: File) {
      * a handset that is switched off is the one whose place is most worth remembering, and the
      * screen keeps them for exactly that reason.
      *
-     * Nothing about who was present is written. Who is in the room, what colour each of them got,
-     * which of them went quiet and every measured distance are re-read from something live within
-     * a fifth of a second of this screen opening, and writing them down would mean a room that
-     * draws, names and colours phones that are not there.
+     * Nothing about who was present is written. Who is in the room, which of them went quiet and
+     * every measured distance are re-read from something live within a fifth of a second of this
+     * screen opening, and writing them down would mean a room that draws and names phones that
+     * are not there.
+     *
+     * The colours are the exception. A colour is half of what a handset is called, and the thing
+     * that hands them out is the spatial channel, which is only up while a session is playing -
+     * so between sessions nothing would assign one, and two screens drawing the same room would
+     * disagree about what to call every phone in it. What is remembered is what was last handed
+     * out, and the moment a session starts the channel replaces the lot.
      */
     fun write(placements: List<RoomIcon>, room: RoomState) {
         val lines = ArrayList<String>()
@@ -76,11 +114,21 @@ class StoredRoomDrawing(private val directory: File) {
         lines += "$SCALE ${room.metresPerUnit}"
         lines += "$FITTED ${room.fitted}"
         for (peerId in room.otherHalfIds) if (HostId.isValid(peerId)) lines += "$SIDES $peerId"
+        for ((peerId, place) in room.colours) {
+            if (HostId.isValid(peerId)) lines += "$CALLED $peerId $place"
+        }
         for (icon in placements) {
             if (!HostId.isValid(icon.peerId) || !onTheDrawing(icon.x, icon.y)) continue
             lines += "$AT ${icon.peerId} ${icon.x} ${icon.y}"
         }
         runCatching { file().writeText(lines.joinToString("\n")) }
+    }
+
+    private fun colourFrom(said: List<String>): Pair<String, Int>? {
+        if (said.size != 2) return null
+        val peerId = said[0].takeIf { HostId.isValid(it) } ?: return null
+        val place = said[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        return peerId to place
     }
 
     private fun iconFrom(said: List<String>): RoomIcon? {
@@ -133,6 +181,7 @@ class StoredRoomDrawing(private val directory: File) {
 
         private const val AT = "at"
         private const val SIDES = "sides"
+        private const val CALLED = "called"
         private const val MODE = "mode"
         private const val PAN = "pan"
         private const val SEPARATION = "separation"
