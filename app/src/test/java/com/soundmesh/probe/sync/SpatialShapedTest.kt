@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.core.Crossover
+import com.soundmesh.core.Decorrelator
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialMode
@@ -9,6 +10,7 @@ import com.soundmesh.core.SplitAxis
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,6 +42,26 @@ class SpatialShapedTest {
      * verdict - while sounding exactly like a working room. Same rule as the trim deadband and the
      * splice fade, both of which already step around the chirp band for the same reason.
      */
+    /**
+     * That the renderer's own filter reaches the shaper, which is the one step of this that nothing
+     * else would catch: a rule asking for diffusion and a handset quietly not doing it sound the
+     * same from every screen in the room.
+     */
+    @Test
+    fun aRuleThatPullsTheHandsetsApartReachesTheFilter() {
+        val pcm = steady()
+        val apart = hardRight.copy(diffusion = 1.0)
+
+        val plain = spatialShaped(0, 0L, pcm, hardRight, "right", crossover = Crossover())
+        val diffused = spatialShaped(
+            0, 0L, pcm, apart, "right",
+            crossover = Crossover(),
+            diffuse = Decorrelator("right", SyncRenderer.SAMPLE_RATE)
+        )
+
+        assertNotEquals(plain.toList(), diffused.toList())
+    }
+
     @Test
     fun aChirpChunkIsNeverTouched() {
         val pcm = steady()

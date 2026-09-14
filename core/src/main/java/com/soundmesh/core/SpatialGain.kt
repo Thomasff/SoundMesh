@@ -156,7 +156,24 @@ data class SpatialField(
      * Only [ROTATE][SpatialMode.ROTATE] and [PAN][SpatialMode.PAN] read it. The split has no
      * source to be facing away from.
      */
-    val envelopment: Double = 0.0
+    val envelopment: Double = 0.0,
+    /**
+     * How hard every handset is pushed into playing a different waveform from all the others: 0 to 1.
+     *
+     * Every other knob here decides **which part** of the mix a handset carries and **how loudly**.
+     * This one decides nothing about either. It exists because with all of them playing one mix the
+     * ear does not hear a room full of sound - it hears one source, at whichever handset reached it
+     * first, and no arrangement of levels argues with that. What argues with it is the copies no
+     * longer being copies, which is a phase transform and not a level. See [Decorrelator].
+     *
+     * Read in every mode, unlike [envelopment]. A room with the separation knob at zero is every
+     * handset playing the identical mix, which is both the ordinary setting and the one where the
+     * sound collapses onto the nearest handset hardest.
+     *
+     * A fraction rather than a count of filter sections, so the ladder underneath can be re-cut
+     * without a wire version. Zero means the filter does not run at all.
+     */
+    val diffusion: Double = 0.0
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
@@ -169,6 +186,7 @@ data class SpatialField(
             "how much a handset keeps runs from 0 to $MAX_ENVELOPMENT: $envelopment"
         }
         require(pan in -1.0..1.0) { "pan runs from -1 to +1: $pan" }
+        require(diffusion in 0.0..1.0) { "how far apart the waveforms are pushed runs from 0 to 1: $diffusion" }
         require(separation in 0.0..1.0) { "separation runs from 0 to 1: $separation" }
         require(crossoverHz in LOWEST_CROSSOVER_HZ..HIGHEST_CROSSOVER_HZ) {
             "a crossover has to be somewhere a person can hear: $crossoverHz"

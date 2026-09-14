@@ -64,6 +64,7 @@ fun SpatialPanel(state: RoomState, actions: RoomActions) {
         if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
         if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
         SeparationControl(state, actions)
+        DiffusionSlider(state, actions)
     }
 }
 
@@ -207,6 +208,15 @@ data class RoomState(
      * is one phone playing and then another rather than a source going round a room.
      */
     val envelopment: Float = DEFAULT_ENVELOPMENT,
+    /**
+     * How hard the handsets are pushed into playing different waveforms, in the rule's own 0..1.
+     *
+     * Off by default, unlike [envelopment]. Every other knob here rearranges a mix somebody already
+     * likes; this one changes the sound of it, and a room that never asked should get the room it
+     * had. What it is worth is a question only an ear answers, so it starts where it can be
+     * compared against.
+     */
+    val diffusion: Float = 0f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -238,6 +248,7 @@ class RoomActions(
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
     val setEnvelopment: (Float) -> Unit,
+    val setDiffusion: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -635,6 +646,41 @@ private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
         )
     }
 }
+
+/**
+ * How hard every handset is pushed into playing a different waveform from the others.
+ *
+ * On screen in every mode, which is the difference between this and the envelopment slider above.
+ * The mix being pulled apart is not what makes the room collapse onto the nearest handset - playing
+ * the identical waveform is, and the ordinary setting with the separation knob at zero is exactly
+ * that.
+ *
+ * Stops rather than a continuous drag, and the reason is arithmetic rather than taste: this is a
+ * chain of allpass sections, and fading one in against the dry signal is a comb filter. Whole
+ * sections colour nothing; half of one colours everything. See Decorrelator.
+ */
+@Composable
+private fun DiffusionSlider(state: RoomState, actions: RoomActions) {
+    Column {
+        Text(stringResource(R.string.room_diffusion), style = MaterialTheme.typography.bodySmall)
+        Slider(
+            value = state.diffusion,
+            onValueChange = actions.setDiffusion,
+            valueRange = 0f..1f,
+            steps = DIFFUSION_STOPS
+        )
+        Text(
+            stringResource(
+                if (state.diffusion <= 0f) R.string.room_diffusion_off
+                else R.string.room_diffusion_hint
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+/** The stops between off and all of it, which is one fewer than the filter has sections. */
+private const val DIFFUSION_STOPS = 3
 
 /** What a room ships at, which is where a listener put the slider rather than where zero is. */
 const val DEFAULT_ENVELOPMENT = 0.25f

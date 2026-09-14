@@ -35,6 +35,19 @@ class SpatialFieldCodecTest {
         }
     }
 
+    /**
+     * The knob that decides what a handset plays rather than which part of it, so a receiver that
+     * dropped it would sound right and do nothing - which is the failure this whole version number
+     * exists to prevent.
+     */
+    @Test
+    fun howFarApartTheWaveformsArePushedSurvivesTheRoundTrip() {
+        val apart = field.copy(diffusion = 0.75)
+
+        assertEquals(0.75, SpatialFieldCodec.decode(SpatialFieldCodec.encode(apart)).diffusion, 0.0)
+        assertEquals(0.0, SpatialFieldCodec.decode(SpatialFieldCodec.encode(field)).diffusion, 0.0)
+    }
+
     /** Windows line endings reach this from a file as readily as from a socket. */
     @Test
     fun carriageReturnsDoNotChangeWhatWasSent() {

@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioTimestamp
 import android.media.AudioTrack
 import com.soundmesh.core.Crossover
+import com.soundmesh.core.Decorrelator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
@@ -104,7 +105,8 @@ internal fun spatialShaped(
     field: SpatialField?,
     peerId: String?,
     wasUnder: SpatialField? = null,
-    crossover: Crossover
+    crossover: Crossover,
+    diffuse: Decorrelator? = null
 ): ByteArray {
     if (field == null || peerId == null) return payload
     if (sequence >= SyncRenderer.CHIRP_SEQUENCE_BASE) return payload
@@ -118,7 +120,8 @@ internal fun spatialShaped(
         from = cameFrom(wasUnder, field, peerId, playAtHostNanos),
         fromFold = foldCameFrom(wasUnder, field, peerId),
         fromSpectrum = spectrumCameFrom(wasUnder, field, peerId),
-        crossover = crossover
+        crossover = crossover,
+        diffuse = diffuse
     )
 }
 
@@ -293,6 +296,11 @@ class SyncRenderer(
     // Held here rather than inside the shaper because the shaper is a function of the instant and
     // this is the one thing in the path that is a function of the past.
     private val crossover = Crossover()
+
+    // This handset's own, and the one thing in the path that is meant to disagree with every other
+    // handset's - see Decorrelator. Built on first use rather than eagerly: a room with the knob at
+    // zero should not be carrying thirty milliseconds of delay lines it never reads.
+    private val diffuser by lazy { spatialPeerId?.let { Decorrelator(it, SAMPLE_RATE) } }
 
     @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
@@ -657,7 +665,8 @@ class SyncRenderer(
                             rule,
                             spatialPeerId,
                             wasUnder = shapedUnder,
-                            crossover = crossover
+                            crossover = crossover,
+                            diffuse = diffuser
                         )
                         shapedUnder = if (payload !== adjusted) rule else null
                         // Against the adjusted array, not against the chunk: applyPendingAdjust returns a

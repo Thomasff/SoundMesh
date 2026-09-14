@@ -65,15 +65,23 @@ class Decorrelator(val peerId: String, sampleRate: Int) {
         rightAt = IntArray(lengths.size)
     }
 
-    /** The left channel of [sample], given everything this channel has already been handed. */
-    fun left(sample: Double): Double = advance(leftLines, leftAt, sample)
+    /**
+     * The left channel of [sample], run through the first [stages] sections.
+     *
+     * [stages] rather than a wet/dry amount, because a wet/dry amount is the one shape this
+     * effect cannot take: mixing a phase-shifted copy back with the original is a comb filter,
+     * and colouring the sound is the single thing a decorrelator must not do. Every whole number
+     * of sections is exactly allpass, so the knob moves between settings that are all colourless
+     * rather than between two that are and a middle that is not.
+     */
+    fun left(sample: Double, stages: Int): Double = advance(leftLines, leftAt, sample, stages)
 
     /** The right channel. Separate state, because the two channels are two sounds. */
-    fun right(sample: Double): Double = advance(rightLines, rightAt, sample)
+    fun right(sample: Double, stages: Int): Double = advance(rightLines, rightAt, sample, stages)
 
-    private fun advance(lines: Array<DoubleArray>, at: IntArray, sample: Double): Double {
+    private fun advance(lines: Array<DoubleArray>, at: IntArray, sample: Double, stages: Int): Double {
         var carried = sample
-        for (stage in lines.indices) {
+        for (stage in 0 until stages.coerceIn(0, lines.size)) {
             val line = lines[stage]
             val index = at[stage]
             val delayed = line[index]
@@ -97,6 +105,36 @@ class Decorrelator(val peerId: String, sampleRate: Int) {
          * two thirds would need four, and four times the longest delay is a slapback.
          */
         const val GAIN = 0.55
+
+        /**
+         * How many sections a knob reading [diffusion] asks for, from none to all of them.
+         *
+         * The wire carries a fraction rather than a count so the ladder can be changed without a
+         * protocol version, and zero maps to zero sections exactly - a setting of off has to be
+         * off, not a transform that happens to be nearly an identity. See the 09-14 window that
+         * was paid for one.
+         */
+        fun stagesFor(diffusion: Double): Int =
+            Math.round(diffusion.coerceIn(0.0, 1.0) * STAGES).toInt()
+
+        /**
+         * What a stream has to be turned down by before it is handed to this, as a factor.
+         *
+         * An allpass preserves energy, not peak: rearranging the phases piles some of them up.
+         * Measured 2026-09-14 against the longest filter here - pink noise, which is the closest
+         * of the three to a loud master, peaks 0.3 to 1.1 dB higher; white noise 3.6 to 5.6; a
+         * square wave 6.6. Two decibels covers real material with margin and costs a listener a
+         * nudge of the volume key, where relying on the clamp instead would cost them clipping on
+         * every loud passage. Taken away rather than added, because there is no headroom to add
+         * into: a handset already carrying a whole side of the mix is above unity before this.
+         *
+         * Exactly one when no section is running, so a room with this knob at zero is bit for bit
+         * the room it was before this existed.
+         */
+        fun headroomFor(stages: Int): Double = if (stages <= 0) 1.0 else HEADROOM
+
+        /** Two decibels. */
+        private const val HEADROOM = 0.794
 
         /**
          * The pools each stage draws its delay from, in milliseconds, shortest stage first.
@@ -124,6 +162,14 @@ class Decorrelator(val peerId: String, sampleRate: Int) {
             doubleArrayOf(4.1, 4.4, 4.7, 5.0, 5.2, 5.5, 5.8, 6.1),
             doubleArrayOf(6.2, 6.5, 6.8, 7.1, 7.4, 7.7, 7.9, 8.1)
         )
+
+        /**
+         * How many sections there are, which is also the top of the knob.
+         *
+         * Declared under [DELAYS_MS] and not beside the knob it belongs to, because a companion
+         * initialises in the order it is written and this one reads the array above it.
+         */
+        val STAGES = DELAYS_MS.size
 
         /**
          * FNV-1a over the name's bytes, then a bit mixer.

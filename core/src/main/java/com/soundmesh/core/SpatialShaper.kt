@@ -65,6 +65,18 @@ object SpatialShaper {
      * than to this call: one per playing handset, handed in every chunk. Required whenever the rule
      * asks for any of the low half and refused when it is missing, because a filter that is not
      * there and a knob at zero sound exactly alike.
+     *
+     * [diffuse] is the second of those and is refused on the same terms. Unlike the crossover it is
+     * this handset's own, drawn from its name, and it is the one thing here that must not agree
+     * across the room - see [Decorrelator]. It is applied after the mix has been divided up and
+     * before the gain, so that a source travelling round the room keeps its envelope crisp while
+     * what travels is already diffuse.
+     *
+     * Neither the sections nor the headroom ramp across the chunk, and neither needs an argument
+     * saying where it came from. A whole number of allpass sections is not a value being
+     * interpolated towards; what a chunk edge carries when this moves is a phase pattern changing,
+     * which a ramp between two of them would not smooth but smear. It moves when a finger moves a
+     * slider, once.
      */
     fun shape(
         pcm: ByteArray,
@@ -75,7 +87,8 @@ object SpatialShaper {
         from: StereoGain? = null,
         fromFold: Double? = null,
         fromSpectrum: SpectrumMix? = null,
-        crossover: Crossover? = null
+        crossover: Crossover? = null,
+        diffuse: Decorrelator? = null
     ): ByteArray {
         require(sampleRate > 0) { "frames need a rate to become instants: $sampleRate" }
         require(pcm.size % BYTES_PER_FRAME == 0) {
@@ -101,6 +114,14 @@ object SpatialShaper {
         // rule cannot change inside a chunk. It is not ramped, because moving where a filter divides
         // leaves the signal already inside it alone - the output stays continuous through a drag.
         val coefficient = crossover?.let { Crossover.coefficientFor(field.crossoverHz, sampleRate) } ?: 0.0
+        val stages = Decorrelator.stagesFor(field.diffusion)
+        // Null at zero rather than a filter asked for no sections: the arithmetic below then has no
+        // per-frame call at all, instead of a call that gives the sample straight back. A knob at
+        // off has to cost nothing, which is what 3e2c018 was written to fix elsewhere.
+        val diffuser = if (stages > 0) {
+            requireNotNull(diffuse) { "a rule that pulls the handsets apart needs this one's own filter" }
+        } else null
+        val headroom = Decorrelator.headroomFor(stages)
 
         val out = ByteArray(pcm.size)
         for (frame in 0 until frames) {
@@ -125,11 +146,15 @@ object SpatialShaper {
             // Both channels of the fold read both channels of the source, so the source samples are
             // read out before either is written. Writing into `out` rather than `pcm` already keeps
             // them apart, and this keeps it that way if that ever changes.
-            writeSample(out, at, (whole * (own * sentLeft + fold * sentRight) + lowShare * lowLeft) * left)
-            writeSample(
-                out, at + BYTES_PER_SAMPLE,
-                (whole * (fold * sentLeft + own * sentRight) + lowShare * lowRight) * right
-            )
+            val mixLeft = whole * (own * sentLeft + fold * sentRight) + lowShare * lowLeft
+            val mixRight = whole * (fold * sentLeft + own * sentRight) + lowShare * lowRight
+            // Turned down before it is placed, not after: an allpass keeps the energy and moves the
+            // peak, so the headroom belongs with the filter that needs it rather than with the gain
+            // law, which already reaches past unity on its own.
+            val heardLeft = if (diffuser == null) mixLeft else diffuser.left(mixLeft, stages) * headroom
+            val heardRight = if (diffuser == null) mixRight else diffuser.right(mixRight, stages) * headroom
+            writeSample(out, at, heardLeft * left)
+            writeSample(out, at + BYTES_PER_SAMPLE, heardRight * right)
         }
         return out
     }

@@ -244,6 +244,9 @@
     <string name="room_mode_split_hint">按摆位分左右声道：偏左的手机多出左声道，偏右的多出右声道。想让左右两台手机分别放游戏或电影的左右声道，就用这个。另外两种模式是把声音当成一个会动的点，左右信息不保留。</string>
     <string name="room_envelopment">包裹感：声音转开之后，每台还留多少</string>
     <string name="room_envelopment_off">拉到最左：转开的那台完全没声音。一圈里每台都会哑一次，听起来像一部手机在转，而不是声音在房间里转。</string>
+    <string name="room_diffusion">铺开：让每台手机不放一模一样的波形</string>
+    <string name="room_diffusion_off">关着。每台放的波形一模一样，耳朵会把它们听成一个声音，位置在离你最近的那台。</string>
+    <string name="room_diffusion_hint">每台手机打散相位的方式都不一样，响度一点不改。往右拉包围感更强，但鼓点会稍微软一点。开着的时候整体轻约 2 dB，那是给相位叠加留的余量，用音量键补回来就行。</string>
     <string name="room_envelopment_hint">每台都一直有声音，正对着的那台最响，正背着的那台最轻。往右拉包裹感更强、方向感更弱。</string>
     <string name="room_pan_left">左</string>
     <string name="room_pan_right">右</string>

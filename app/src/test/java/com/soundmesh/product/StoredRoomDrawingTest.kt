@@ -60,6 +60,7 @@ class StoredRoomDrawingTest {
                 splitAxis = SplitAxis.LOW_HIGH,
                 crossoverHz = 1600f,
                 envelopment = 0.4f,
+                diffusion = 0.75f,
                 periodSeconds = 9,
                 delayCompensation = false,
                 otherHalfIds = setOf(one),
@@ -76,6 +77,7 @@ class StoredRoomDrawingTest {
         assertEquals(SplitAxis.LOW_HIGH, room.splitAxis)
         assertEquals(1600f, room.crossoverHz, 1e-3f)
         assertEquals(0.4f, room.envelopment, 1e-6f)
+        assertEquals(0.75f, room.diffusion, 1e-6f)
         assertEquals(9, room.periodSeconds)
         assertEquals(false, room.delayCompensation)
         assertEquals(setOf(one), room.otherHalfIds)

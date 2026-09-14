@@ -317,6 +317,7 @@ class HomeActivity : ComponentActivity() {
             setPan = { pan -> updateRoom { it.copy(pan = pan) } },
             setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
             setEnvelopment = { keep -> updateRoom { it.copy(envelopment = keep) } },
+            setDiffusion = { apart -> updateRoom { it.copy(diffusion = apart) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
@@ -380,6 +381,7 @@ class HomeActivity : ComponentActivity() {
             otherHalfIds = room.otherHalfIds,
             envelopment = room.envelopment.toDouble()
                 .coerceIn(0.0, SpatialField.MAX_ENVELOPMENT),
+            diffusion = room.diffusion.toDouble().coerceIn(0.0, 1.0),
             // Zeroed rather than carried with a flag beside it: no scale is exactly what a room
             // that never measured its listener sends, so the switch off and the feature absent
             // are the same message on the wire and the same code on every handset.

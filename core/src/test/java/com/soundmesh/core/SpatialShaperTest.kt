@@ -33,6 +33,73 @@ class SpatialShaperTest {
     private fun rightChannel(pcm: ByteArray): IntArray =
         IntArray(pcm.size / 4) { sampleAt(pcm, it * 4 + 2) }
 
+    /** Noise rather than a steady level: an allpass passes a constant through untouched. */
+    private fun noise(frames: Int = framesPerChunk): ByteArray {
+        val random = java.util.Random(20260914L)
+        val pcm = ByteArray(frames * 4)
+        for (index in 0 until frames * 2) {
+            val level = (random.nextGaussian() * 4000).toInt().coerceIn(-20_000, 20_000)
+            pcm[index * 2] = (level and 0xFF).toByte()
+            pcm[index * 2 + 1] = (level shr 8).toByte()
+        }
+        return pcm
+    }
+
+    /**
+     * A knob at off has to be off - not nearly off. Every room drawn before this field existed
+     * decodes with it at zero, and every one of those has to play the bytes it played yesterday.
+     */
+    @Test
+    fun theDiffusionKnobAtZeroLeavesTheChunkByteForByteWhereItWas() {
+        val field = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0, diffusion = 0.0)
+
+        val withFilter = SpatialShaper.shape(
+            noise(), field, "left", 0L, sampleRate, diffuse = Decorrelator("left", sampleRate)
+        )
+        val without = SpatialShaper.shape(noise(), field, "left", 0L, sampleRate)
+
+        assertArrayEquals(without, withFilter)
+    }
+
+    /**
+     * Refused rather than ignored, on the same terms as the crossover: a rule asking for the
+     * handsets to be pulled apart and a handset quietly not doing it sound exactly alike from here,
+     * and the one that is wrong is the one nobody would look for.
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun aRuleThatPullsTheHandsetsApartIsRefusedWithoutAFilterToDoItWith() {
+        val field = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0, diffusion = 1.0)
+
+        SpatialShaper.shape(noise(), field, "left", 0L, sampleRate)
+    }
+
+    /**
+     * What it is for, and what it costs, in one measurement: the waveform is a different waveform,
+     * and the level it comes out at is the headroom an allpass needs and nothing else.
+     */
+    @Test
+    fun diffusionChangesTheWaveformAndTakesOnlyItsHeadroom() {
+        val loud = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0)
+        val apart = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0, diffusion = 1.0)
+
+        // A second, not one chunk: the chain's delay lines add up to about twenty milliseconds,
+        // which is a whole chunk, so a chunk-long measurement reads a filter that is still filling
+        // and reports energy the filter has not let go of yet as energy it lost.
+        val plain = leftChannel(SpatialShaper.shape(noise(sampleRate), loud, "left", 0L, sampleRate))
+        val diffused = leftChannel(
+            SpatialShaper.shape(noise(sampleRate), apart, "left", 0L, sampleRate, diffuse = Decorrelator("left", sampleRate))
+        )
+
+        assertTrue("the waveform came back unchanged", plain.toList() != diffused.toList())
+        // Compared over the second half, so the filter's delay lines are full and the level
+        // being read is the steady one rather than the fade-in.
+        val from = plain.size / 2
+        val was = Math.sqrt((from until plain.size).sumOf { plain[it].toDouble() * plain[it] } / (plain.size - from))
+        val now = Math.sqrt((from until plain.size).sumOf { diffused[it].toDouble() * diffused[it] } / (plain.size - from))
+        assertTrue("no headroom was taken, so a loud master will clip: ${now / was}", now / was < 0.9)
+        assertTrue("far more than headroom was taken: ${now / was}", now / was > 0.7)
+    }
+
     @Test
     fun aHandsetTheSourceHasLeftBehindGoesQuiet() {
         val field = SpatialField(SpatialMode.PAN, facingPair(), pan = 1.0)

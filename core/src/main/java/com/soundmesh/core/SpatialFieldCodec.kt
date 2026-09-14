@@ -20,7 +20,10 @@ object SpatialFieldCodec {
     const val MAGIC = "soundmesh-spatial"
 
     /**
-     * Six since a rule carries how much of itself a handset keeps when the source faces away.
+     * Seven since a rule carries how hard the handsets are pushed into playing different
+     * waveforms - which is the one knob here that changes what a handset plays rather than
+     * which part of it or how loudly, and so the one a receiver silently dropping it would
+     * leave sounding right and doing nothing.
      *
      * Both ends refuse anything else rather than reading what they recognise, which is the whole
      * point of the number: a build that defaulted a missing part to the middle would render a room
@@ -33,9 +36,9 @@ object SpatialFieldCodec {
      * existed - which is the one failure this whole feature is about, arriving silently, on the
      * one handset of the room whose owner did not update.
      */
-    const val VERSION = 6
+    const val VERSION = 7
 
-    private const val HEADER_FIELDS = 13
+    private const val HEADER_FIELDS = 14
     private const val POSITION_FIELDS = 4
 
     // Written out rather than taken from an enum because there is no enum: which part a handset
@@ -66,7 +69,7 @@ object SpatialFieldCodec {
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
                 "${field.epochHostNanos} ${field.separation} ${field.splitAxis.name} " +
                 "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.metresPerUnit} " +
-                "${field.envelopment} ${field.layout.positions.size}"
+                "${field.envelopment} ${field.diffusion} ${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
             require(position.peerId.isNotEmpty() && position.peerId.none { it.isWhitespace() }) {
@@ -110,7 +113,9 @@ object SpatialFieldCodec {
             ?: throw IllegalArgumentException("unreadable scale: ${header[10]}")
         val envelopment = header[11].toDoubleOrNull()
             ?: throw IllegalArgumentException("unreadable envelopment: ${header[11]}")
-        val count = header[12].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[12]}")
+        val diffusion = header[12].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable diffusion: ${header[12]}")
+        val count = header[13].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[13]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -151,7 +156,8 @@ object SpatialFieldCodec {
             otherHalfIds = otherHalfIds,
             effectiveAtHostNanos = effectiveAtHostNanos,
             metresPerUnit = metresPerUnit,
-            envelopment = envelopment
+            envelopment = envelopment,
+            diffusion = diffusion
         )
     }
 }

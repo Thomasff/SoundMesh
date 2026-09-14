@@ -17,7 +17,7 @@ import kotlin.math.sqrt
  * That distinction is the lesson of the separation axis that was built and removed on 2026-09-14.
  * Its offline figures were beautiful and meant nothing, because they asked the algorithm whether it
  * recognised its own definition. These do not: flatness, energy and tail length are properties of
- * the filter that hold for every input, and [theTailIsShortEnoughNotToSmearADrum] is one the
+ * the filter that hold for every input, and [noFilterThisCanDrawSmearsAnAttackPastFortyMilliseconds] is one the
  * design can actually fail - it is what stops this being tuned into a reverb.
  *
  * None of them says it sounds enveloping. Nothing offline can. That is decided with the knob at
@@ -28,7 +28,7 @@ class DecorrelatorTest {
 
     private fun impulseResponse(peerId: String, length: Int): DoubleArray {
         val filter = Decorrelator(peerId, rate)
-        return DoubleArray(length) { filter.left(if (it == 0) 1.0 else 0.0) }
+        return DoubleArray(length) { filter.left(if (it == 0) 1.0 else 0.0, Decorrelator.STAGES) }
     }
 
     /**
@@ -72,13 +72,25 @@ class DecorrelatorTest {
     fun noFilterThisCanDrawSmearsAnAttackPastFortyMilliseconds() {
         var worst = 0.0
         var worstName = ""
-        for (at in 0 until 4000) {
-            val name = "peer-$at"
+        for (name in oneNamePerFilter.values) {
             val millis = tailMillisOf(name)
             if (millis > worst) { worst = millis; worstName = name }
         }
 
         assertTrue("$worstName takes $worst ms to let 95% of an attack out, which is an echo", worst <= 40.0)
+    }
+
+    /**
+     * That the sweep behind the two tests either side of it actually saw every filter, rather than
+     * most of them.
+     *
+     * Without this they read "no name I happened to try was bad", which is the shape of the first
+     * version of the tail test: it asked one name, was told 40.7 ms, and did not mention that the
+     * longest filter in the same design took 50.8.
+     */
+    @Test
+    fun theSweepDrawsEveryFilterThisCanBuild() {
+        assertEquals(possibleFilters, oneNamePerFilter.size)
     }
 
     /**
@@ -92,10 +104,7 @@ class DecorrelatorTest {
      */
     @Test
     fun everyTwoDifferentFiltersDifferInAtLeastTwoStages() {
-        val drawn = LinkedHashSet<List<Int>>()
-        for (at in 0 until 4000) drawn += Decorrelator("peer-$at", rate).delaySamples
-
-        val all = drawn.toList()
+        val all = oneNamePerFilter.keys.toList()
         for (a in all.indices) for (b in a + 1 until all.size) {
             val apart = all[a].indices.count { all[a][it] != all[b][it] }
             assertTrue(
@@ -172,17 +181,80 @@ class DecorrelatorTest {
 
         var loudestRight = 0.0
         for (at in 0 until 4096) {
-            filter.left(if (at == 0) 1.0 else 0.0)
-            loudestRight = maxOf(loudestRight, abs(filter.right(0.0)))
+            filter.left(if (at == 0) 1.0 else 0.0, Decorrelator.STAGES)
+            loudestRight = maxOf(loudestRight, abs(filter.right(0.0, Decorrelator.STAGES)))
         }
 
         assertEquals(0.0, loudestRight, 0.0)
     }
 
+    /**
+     * Off has to be off. A knob at zero that still ran the transform would be paying a window for
+     * an identity, which is what commit 3e2c018 was written to undo - and here it would also be
+     * paying two decibels of headroom for nothing.
+     */
+    @Test
+    fun aKnobAtZeroAsksForNoSectionsAndNoHeadroom() {
+        assertEquals(0, Decorrelator.stagesFor(0.0))
+        assertEquals(1.0, Decorrelator.headroomFor(0), 0.0)
+        assertEquals(Decorrelator.STAGES, Decorrelator.stagesFor(1.0))
+        assertTrue(Decorrelator.headroomFor(1) < 1.0)
+    }
+
+    /** A section that is not asked for is not run, so its state stays where it was. */
+    @Test
+    fun askingForNoSectionsHandsTheSampleStraightBack() {
+        val filter = Decorrelator("da3fe1c00de55dc6", rate)
+
+        val out = DoubleArray(64) { filter.left(if (it == 0) 1.0 else 0.0, 0) }
+
+        assertEquals(1.0, out[0], 0.0)
+        assertEquals(0.0, out.drop(1).maxOf { abs(it) }, 0.0)
+    }
+
+    /** Fewer sections is a shorter tail, which is the trade the knob exists to offer. */
+    @Test
+    fun eachFurtherSectionSpreadsTheAttackFurther() {
+        val spreads = (1..Decorrelator.STAGES).map { stages ->
+            val filter = Decorrelator("da3fe1c00de55dc6", rate)
+            val response = DoubleArray(rate / 10) { filter.left(if (it == 0) 1.0 else 0.0, stages) }
+            var carried = 0.0
+            response.indices.first { carried += response[it] * response[it]; carried >= 0.95 }
+        }
+
+        assertEquals(spreads.sorted(), spreads)
+        assertTrue("four sections spread no further than one", spreads.last() > spreads.first())
+    }
+
+    private companion object {
+        /** Eight choices over every stage but the check digit. */
+        val possibleFilters = Decorrelator.DELAYS_MS.dropLast(1).fold(1) { count, pool -> count * pool.size }
+
+        /**
+         * One handset name per filter this can draw, swept once and shared.
+         *
+         * Held here rather than rebuilt per test because JUnit makes a fresh instance for each one,
+         * and drawing a few thousand filters three times over is enough load on this machine to
+         * make an unrelated timing test in another module miss its deadline.
+         */
+        val oneNamePerFilter: Map<List<Int>, String> by lazy {
+            val found = LinkedHashMap<List<Int>, String>()
+            var at = 0
+            // Capped so a design that cannot reach every filter fails the coverage test rather
+            // than running until somebody kills it.
+            while (at < 100_000 && found.size < possibleFilters) {
+                val name = "peer-${at}"
+                found.putIfAbsent(Decorrelator(name, 48_000).delaySamples, name)
+                at++
+            }
+            found
+        }
+    }
+
     private fun through(peerId: String): DoubleArray {
         val filter = Decorrelator(peerId, rate)
         val noise = Random(20260914L)
-        return DoubleArray(16_384) { filter.left(noise.nextGaussian()) }
+        return DoubleArray(16_384) { filter.left(noise.nextGaussian(), Decorrelator.STAGES) }
     }
 
     /** The largest normalised correlation between the two at any lag up to 60 ms. */
