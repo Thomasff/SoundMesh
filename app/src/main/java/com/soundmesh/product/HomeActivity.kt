@@ -752,20 +752,49 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
-     * The drawing between sessions, with the handsets that are no longer standing by hollowed out.
+     * The drawing between sessions: everybody standing by, with the ones that are not hollowed out.
      *
      * The icons are the ones the last session left behind - that is deliberate, and why this is
      * kept at all. What was not deliberate is that nothing ever changed them: a handset switched
      * off while nobody was playing stayed solid for as long as anybody looked at it, on a screen
      * that said zero standing by two lines further down. Reported on 2026-09-14.
+     *
+     * The other half of the same fault, reported the same evening: it could hollow handsets out
+     * but never add one. A phone that opened its app while nobody was playing showed up in the
+     * volume list immediately - that is built from the standing channel - and was absent from the
+     * drawing until somebody pressed play, because the drawing had no roster outside a session.
+     * Two components on one screen, two ideas of who was in the room.
      */
     private fun keptRoom(): RoomState? {
-        val kept = state.room?.takeIf { state.role == Role.HOST } ?: return null
-        val silent = whoIsNotStandingBy(
-            kept.icons.map { it.peerId },
-            RoomCommands.standingPeerIds()
-        ).toSet()
-        return if (silent == kept.silentIds) kept else kept.copy(silentIds = silent)
+        if (state.role != Role.HOST) return null
+        // Built off the saved drawing when this host has not played yet, rather than off nothing.
+        // A null room here used to mean an empty map until somebody pressed play, even with a
+        // drawing sitting on disk and handsets standing by.
+        val kept = state.room ?: restored.copy(selfId = state.selfId)
+        val standing = RoomCommands.standingPeerIds()
+        val roster = betweenSessionsRoster(kept.selfId ?: state.selfId, kept.icons.map { it.peerId }, standing)
+        val icons = SpatialRoom.reconciled(kept.icons, roster, whereTheyWere)
+        val silent = whoIsNotStandingBy(roster, standing).toSet()
+        if (icons.map { it.peerId } == kept.icons.map { it.peerId }) {
+            return if (silent == kept.silentIds) kept else kept.copy(silentIds = silent)
+        }
+        // Off disk, and only when the roster actually changed - this runs five times a second.
+        // The same three reads the session path does for the same reason, so that a handset which
+        // arrived between songs is drawn against the same distances as one that arrived during a
+        // song, rather than against whatever the last session happened to leave.
+        return kept.copy(
+            selfId = kept.selfId ?: state.selfId,
+            icons = icons,
+            measuredMetres = measuredDistances(filesDir, roster.firstOrNull(), icons.map { it.peerId }),
+            listenerMetres = StoredListenerDistance.all(filesDir),
+            fitted = false,
+            silentIds = silent,
+            otherHalfIds = SpatialRoom.reconciledOtherHalf(
+                kept.otherHalfIds,
+                icons.map { it.peerId },
+                remembered = rememberedSides(kept.otherHalfIds, icons.map { it.peerId })
+            )
+        )
     }
 
     override fun onResume() {

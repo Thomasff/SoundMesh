@@ -41,6 +41,28 @@ internal fun whoStopped(room: List<String>, audio: List<String>, quiet: List<Str
 internal fun whoIsNotStandingBy(room: List<String>, standing: List<String>): List<String> =
     room.drop(1).filterNot { it in standing }
 
+/**
+ * Who the drawing should show when nobody is playing.
+ *
+ * Three lists into one, and the order is the whole of it: this handset, then whoever the last
+ * session left on the drawing, then whoever is standing by now. [whoIsNotStandingBy] and
+ * [whoStopped] both drop the head to find the sinks, so a roster whose head is not this handset
+ * hollows the host out and quietly exempts one sink from ever being hollowed.
+ *
+ * The third list is what was missing until 2026-09-14. Inside a session the roster comes from the
+ * session; outside one there was no roster at all, only the icons left over - so a handset that
+ * opened its app appeared in the volume list on the host and nowhere on the drawing until
+ * somebody pressed play. The drawing is what says who will follow that press.
+ *
+ * Handsets that left are kept rather than dropped: the drawing is also where their positions
+ * live, and a room that forgets a phone the moment it is switched off is a drag lost.
+ */
+internal fun betweenSessionsRoster(
+    selfId: String?,
+    drawn: List<String>,
+    standing: List<String>
+): List<String> = (listOfNotNull(selfId) + drawn + standing).distinct()
+
 
 /**
  * The renderer's own JSON, turned into rows a person can read off a table.
