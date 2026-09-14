@@ -340,4 +340,5 @@
     <string name="tab_room">房间</string>
     <string name="tab_volume">音量</string>
     <string name="tab_play">播放</string>
+    <string name="play_show_code">让别的手机扫我加进来</string>
 </resources>

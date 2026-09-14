@@ -3,12 +3,14 @@ package com.soundmesh.product
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -91,6 +93,15 @@ fun PlayingScreen(
                     PlayControls(state, actions, canPlay = canPlay(state))
                     CaptureSilenceLine(state)
                     StandbyLine(state, actions)
+                    // The checklist row that used to offer this (ReadyGoto.SHOW_CODE) disappears
+                    // the moment the first handset joins - it only shows while standingBy == 0 -
+                    // but a room gains its third phone after it has started playing, not before.
+                    // Without a standing entry here the pairing code had no way to be shown again.
+                    if (state.role == Role.HOST) {
+                        OutlinedButton(onClick = actions.showPairCode, modifier = Modifier.fillMaxWidth()) {
+                            Text(stringResource(R.string.play_show_code))
+                        }
+                    }
                 }
             }
             // Gated on a setting rather than an on-screen expander: this is the one block on the

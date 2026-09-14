@@ -567,20 +567,29 @@ private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            stringResource(
-                R.string.room_volume_row,
-                row.name,
-                row.percent,
-                row.index,
-                row.max,
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // The colour, not just the name: it is how somebody standing across the room tells
+            // this row apart from the room's own colours, and collapsing the row must not
+            // collapse the half of the identity that reads from a distance. Place is unknown here
+            // - VolumeRow carries only the peerId - so BadgeChip falls back to one colour for all,
+            // the same fallback the top bar's own badge uses before a room has handed one out.
+            BadgeChip(row.peerId, null, diameter = 18.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
                 stringResource(
-                    if (row.stream == ALARM_STREAM_NAME) R.string.room_volume_alarm
-                    else R.string.room_volume_media
-                )
-            ),
-            style = MaterialTheme.typography.bodySmall
-        )
+                    R.string.room_volume_row,
+                    row.name,
+                    row.percent,
+                    row.index,
+                    row.max,
+                    stringResource(
+                        if (row.stream == ALARM_STREAM_NAME) R.string.room_volume_alarm
+                        else R.string.room_volume_media
+                    )
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
         Text(if (expanded) "▾" else "▸", style = MaterialTheme.typography.bodySmall)
     }
     if (!expanded) return
