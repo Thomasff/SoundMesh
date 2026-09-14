@@ -196,13 +196,9 @@ class RoomCommandServer(
                 }
             }
         }.start()
-        // A tick of its own, because the thing it is looking for is the absence of events.
-        Thread({
-            while (running) {
-                runCatching { Thread.sleep(SWEEP_MILLIS) }
-                letGoOfTheQuiet(System.currentTimeMillis())
-            }
-        }, "SoundMeshCommandSweep").start()
+        // No sweep. There used to be one here, closing the socket of any handset that had not
+        // said it was there for eight seconds - see [quietPeerIds] for why that was the bug and
+        // not the fix. Quiet is now something this end reports, not something it acts on.
     }
 
     /**
@@ -375,30 +371,42 @@ class RoomCommandServer(
     fun standingPeerIds(): List<String> = synchronized(clients) { clients.map { it.peerId } }
 
     /**
-     * Lets go of every handset that has stopped saying it is there.
+     * Which handsets have stopped saying they are there, **without** letting go of any of them.
      *
-     * Takes [now] rather than reading the clock, so that the window can be tested without waiting
-     * out its length. Called on a tick of its own - nothing else on this channel happens often
-     * enough to hang it off, and the whole defect being fixed is that a quiet socket produces no
-     * events at all.
+     * Until 2026-09-14 this closed their sockets, and that turned out to be the fault rather than
+     * the cure. Quiet has two causes that look identical from this end:
      *
-     * The socket is closed rather than left, for the reason the rest of this class closes them:
-     * the thread parked on that read only ends when the socket does. If the handset was merely
-     * slow it dials again three seconds later and is counted again - the same handful of seconds
-     * it already costs after any other kind of drop.
+     * - the handset walked out of the network, or
+     * - its screen went off and the whole SoC suspended.
+     *
+     * The second is the ordinary behaviour of an Android handset about a minute after the screen
+     * goes off. A foreground service does not prevent it: it keeps a process from being killed,
+     * it does not keep a CPU awake, and the handset's one-second loop simply stops running.
+     * Measured that evening on an unplugged P30, off the handset's own notification: nought
+     * attempts had failed to go out after a minute of the host showing it as dropped, so the loop
+     * behind the heartbeat had not run once.
+     *
+     * **A sleeping handset is not a gone handset.** It is still reachable - a packet arriving on
+     * an established socket wakes the device, which is what every persistent-connection app on
+     * the platform relies on. So closing that socket was the single action that turned a handset
+     * which would have followed the next command into one that could not, and it did it eight
+     * seconds after the screen went off.
+     *
+     * **What this gives up, said plainly.** A handset that really did walk out of the network now
+     * stays in [standingPeerIds] until a write to it fails, which for a vanished peer can take
+     * minutes. That is the thing the heartbeat was added for, and it is deliberately handed back:
+     * between sessions the honest report is "connected, and not saying anything", and the moment
+     * that actually matters - can it be told to play - is answered by telling it.
+     *
+     * Takes [now] rather than reading the clock so that the window can be tested without waiting
+     * out its length.
      */
-    fun letGoOfTheQuiet(now: Long) {
-        val quiet = synchronized(clients) {
-            val gone = clients.filter { standing ->
-                standing.heardAt?.let { now - it >= quietAfterMillis } == true
-            }
-            clients.removeAll(gone)
-            gone
-        }
-        for (standing in quiet) {
-            runCatching { standing.socket.close() }
-            left(standing.peerId, "it stopped saying it was there")
-        }
+    fun quietPeerIds(now: Long = System.currentTimeMillis()): List<String> = synchronized(clients) {
+        clients.filter { standing ->
+            // Null is not "a long time ago": it is a build that does not say it at all, and those
+            // builds are in the room. See [Standing.heardAt].
+            standing.heardAt?.let { now - it >= quietAfterMillis } == true
+        }.map { it.peerId }
     }
 
     /** How many standing handsets said they carry no correction for this host. */
@@ -498,16 +506,16 @@ class RoomCommandServer(
         const val SHORT_NAME_CHARACTERS = 4
 
         /**
-         * How long a handset can go without saying it is there before it stops being counted.
+         * How long a handset can go without saying it is there before it is called quiet.
          *
-         * Four missed beats at the sink's cadence. Short enough that somebody who walked out of
-         * the room with one phone sees the number drop while they are still standing there;
-         * long enough that a WiFi that dropped a few frames is not a handset that left.
+         * Four missed beats at the sink's cadence. It used to be how long before it was let go
+         * of, and the name still carries that - kept rather than renamed, because every handset
+         * in the room reads the cadence off it and the two ends have to agree about the number,
+         * not about what it is called.
+         *
+         * **Quiet is no longer gone.** See [RoomCommandServer.quietPeerIds].
          */
         const val GONE_QUIET_MILLIS = 8_000L
-
-        /** How often the absence is looked for. Nothing here is expensive; it is a list walk. */
-        const val SWEEP_MILLIS = 1_000L
     }
 }
 

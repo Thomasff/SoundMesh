@@ -44,8 +44,8 @@ class RoomCommandChannelTest {
             .also { it.start() }
 
     /** The announce is read on a thread of its own, so what it said arrives after it connected. */
-    private fun until(condition: () -> Boolean): Boolean {
-        val deadline = System.nanoTime() + 5_000_000_000L
+    private fun until(millis: Long = 5_000L, condition: () -> Boolean): Boolean {
+        val deadline = System.nanoTime() + millis * 1_000_000L
         while (System.nanoTime() < deadline) {
             if (condition()) return true
             Thread.sleep(20)
@@ -63,15 +63,24 @@ class RoomCommandChannelTest {
     }
 
     /**
-     * "How many are standing by" used to mean "how many sockets nothing has failed to write to".
+     * A handset that has gone quiet is **named** quiet, not let go of.
      *
-     * That is not the same number. A handset that walks out of the network leaves every socket to
-     * it ESTABLISHED for as long as the kernel keeps retransmitting - minutes - and nothing on
-     * this channel is ever written in between, so the host goes on saying three phones are waiting
-     * in a room with one. What separates them is that a handset that is there keeps saying so.
+     * Until 2026-09-14 the socket was closed, and that was the bug rather than the fix. Quiet has
+     * two causes and this end cannot see which: the handset walked out of the network, or its
+     * screen went off and the whole SoC suspended - which is what an Android handset does within
+     * about a minute of the screen going off, foreground service or not, because a foreground
+     * service keeps a process alive and does not keep a CPU awake. Measured that evening on an
+     * unplugged P30, off its own notification: nought attempts had failed to go out after a
+     * minute of being shown as dropped, so the one-second loop behind the heartbeat had not run
+     * once.
+     *
+     * A sleeping handset is not gone. It is reachable - an incoming packet on an established
+     * socket wakes the device, which is what every persistent-connection app on the platform is
+     * built on. Closing that socket is the one action that turns a handset that would have
+     * followed the next command into one that cannot.
      */
     @Test
-    fun stopsCountingAHandsetThatStoppedSayingItIsThere() {
+    fun namesAQuietHandsetRatherThanLettingGoOfIt() {
         val port = freePort()
         val server = RoomCommandServer(port)
         val gone = ArrayBlockingQueue<String>(4)
@@ -85,10 +94,44 @@ class RoomCommandChannelTest {
             assertTrue(until { server.standingBy() == 1 })
 
             // Long enough after the last word from it that three beats have been missed.
-            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS)
+            val later = System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS
 
-            assertEquals(0, server.standingBy())
-            assertEquals(one, gone.poll(5, TimeUnit.SECONDS))
+            assertEquals(listOf(one), server.quietPeerIds(later))
+            assertEquals("it was let go of", 1, server.standingBy())
+            assertEquals(listOf(one), server.standingPeerIds())
+            assertTrue("the line was closed under it", client.connected)
+            assertNull("it was announced as having left", gone.poll(1, TimeUnit.SECONDS))
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * And it can still be told things, which is the whole reason the socket is kept.
+     *
+     * The judgement above is about a list on a screen. This one is about whether the room still
+     * works: a handset that is quiet because it is asleep has to receive the next command.
+     */
+    @Test
+    fun aQuietHandsetCanStillBeToldThings() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (heard, onCommand) = waiting()
+        val client = standBy(port, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(client.sayHere())
+            assertTrue(until { server.standingBy() == 1 })
+            assertEquals(
+                listOf(one),
+                server.quietPeerIds(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS)
+            )
+
+            server.send(RoomCommand.PLAY)
+
+            assertEquals(RoomOrder(RoomCommand.PLAY), heard.poll(5, TimeUnit.SECONDS))
         } finally {
             client.close()
             server.stop()
@@ -114,9 +157,11 @@ class RoomCommandChannelTest {
             assertTrue(connected(client))
             assertTrue(until { server.volumes().containsKey(one) })
 
-            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS)
+            // Its line actually closing, which is what "not there" now means. Going quiet is not:
+            // a sleeping handset still answers the next command, so its slider still does something.
+            client.close()
 
-            assertEquals(emptyMap<String, VolumeSaid>(), server.volumes())
+            assertTrue(until { server.volumes().isEmpty() })
         } finally {
             client.close()
             server.stop()
@@ -146,7 +191,7 @@ class RoomCommandChannelTest {
             repeat(20) {
                 assertTrue(client.sayHere())
                 Thread.sleep(100)
-                server.letGoOfTheQuiet(System.currentTimeMillis())
+                assertEquals(emptyList<String>(), server.quietPeerIds(System.currentTimeMillis()))
             }
 
             assertEquals(1, server.standingBy())
@@ -157,14 +202,15 @@ class RoomCommandChannelTest {
     }
 
     /**
-     * A handset that was let go and dialled again can still say things.
+     * A handset whose line really did die dials again and can still say things.
      *
-     * The shape reported from a room of two on 2026-09-14: the host let go of a handset every
-     * eight seconds, it came back three seconds later, and in between it wrote a line a second
-     * into its own log saying nothing had gone out. This is that cycle, on this side of it.
+     * This used to be written against the eight-second let-go, which no longer happens - see
+     * [namesAQuietHandsetRatherThanLettingGoOfIt]. The property it was guarding outlives that:
+     * lines still die, for the ordinary reasons, and a handset that does not come back from one
+     * is a handset the host stops being able to start.
      */
     @Test
-    fun canStillSayThingsAfterBeingLetGoOfAndDiallingAgain() {
+    fun dialsAgainAfterItsLineDiesAndCanStillSayThings() {
         val port = freePort()
         val server = RoomCommandServer(port)
         server.start()
@@ -174,11 +220,18 @@ class RoomCommandChannelTest {
             assertTrue(connected(client))
             assertTrue(client.sayHere())
 
-            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS)
-            assertTrue("it never dialled again", until { server.standingBy() == 1 })
-            assertTrue(connected(client))
+            // The line dying under it, rather than this end choosing to drop it.
+            server.stop()
+            assertTrue("it never noticed", until { !client.connected })
 
-            assertTrue("it said: ${client.lastRefusal}", client.sayHere())
+            val again = RoomCommandServer(port)
+            again.start()
+            try {
+                assertTrue("it never dialled again", until(15_000L) { again.standingBy() == 1 })
+                assertTrue("it said: ${client.lastRefusal}", client.sayHere())
+            } finally {
+                again.stop()
+            }
         } finally {
             client.close()
             server.stop()
@@ -230,9 +283,9 @@ class RoomCommandChannelTest {
             assertTrue(client.sayHere())
             assertTrue(until { server.standingBy() == 1 })
 
-            server.letGoOfTheQuiet(System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS - 1_000L)
+            val sooner = System.currentTimeMillis() + RoomCommandServer.GONE_QUIET_MILLIS - 1_000L
 
-            assertEquals(1, server.standingBy())
+            assertEquals(emptyList<String>(), server.quietPeerIds(sooner))
         } finally {
             client.close()
             server.stop()
@@ -259,8 +312,9 @@ class RoomCommandChannelTest {
             socket.getOutputStream().apply { write(SpatialFrame.encode(two)); flush() }
             assertTrue(until { server.standingBy() == 1 })
 
-            server.letGoOfTheQuiet(System.currentTimeMillis() + 10 * RoomCommandServer.GONE_QUIET_MILLIS)
+            val muchLater = System.currentTimeMillis() + 10 * RoomCommandServer.GONE_QUIET_MILLIS
 
+            assertEquals(emptyList<String>(), server.quietPeerIds(muchLater))
             assertEquals(1, server.standingBy())
             socket.close()
         } finally {
