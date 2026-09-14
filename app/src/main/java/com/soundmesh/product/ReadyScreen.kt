@@ -64,6 +64,13 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
         Role.NONE -> Unit
     }
     Section(R.string.ready_measure) {
+        // Unconditional, unlike the checklist row above for the same measurement: that row is
+        // gone the moment a lead exists, and a measurement that can only ever be taken once is
+        // not a measurement - moving to a different room or a different pair of speakers is
+        // exactly when this has to be run again.
+        TextButton(onClick = { actions.goto(ReadyGoto.SELF_CALIBRATE, null) }) {
+            Text(stringResource(R.string.goto_self))
+        }
         TextButton(onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.PAIR) }) {
             Text(stringResource(R.string.goto_pair_one))
         }
@@ -106,7 +113,16 @@ private fun ReadyRow(item: ReadyItem, actions: HomeActions) {
             if (item.line in NO_ARG_LINES) {
                 item.detail?.let {
                     Spacer(Modifier.width(8.dp))
-                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        // A bare number is a number whose unit somebody has to guess - the self
+                        // lead's detail is milliseconds and has to say so.
+                        if (item.line == R.string.ready_self_lead) {
+                            stringResource(R.string.ready_self_lead_value, it)
+                        } else {
+                            it
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }

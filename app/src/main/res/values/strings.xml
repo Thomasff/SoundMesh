@@ -41,6 +41,7 @@
     <string name="ready_goto_allow">一键放行</string>
     <string name="ready_goto_scan">去扫码</string>
     <string name="ready_goto_code">让另一台扫我</string>
+    <string name="goto_self">量这台自己慢多少</string>
     <string name="goto_pair_one">和某一台对时</string>
     <string name="goto_room">量一下房间里几台的位置</string>
     <string name="goto_overhead">量我坐在哪</string>
