@@ -370,4 +370,7 @@
     <string name="perm_settings">去设置里开</string>
     <string name="perm_continue">继续</string>
     <string name="perm_skip_hint">现在不给也行，用到的时候会再问一次。</string>
+    <string name="standby_lock_title">%1$s · 跟着主机</string>
+    <string name="standby_lock_title_down">%1$s · 没连上，正在重拨</string>
+    <string name="standby_lock_text">音量 %1$d%%</string>
 </resources>

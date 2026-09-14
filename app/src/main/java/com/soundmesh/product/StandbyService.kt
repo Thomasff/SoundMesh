@@ -6,6 +6,10 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Color as AndroidColor
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -14,7 +18,10 @@ import android.os.PowerManager
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.toArgb
 import com.soundmesh.core.CalibrationRole
+import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.RoomOrder
@@ -448,10 +455,11 @@ class StandbyService : Service() {
             "、" + getString(if (exempt()) R.string.standby_exempt else R.string.standby_not_exempt)
         val trouble = lastTrouble?.let { getString(R.string.standby_trouble, it) }
             ?: getString(R.string.standby_no_trouble)
-        // The same readings on both lines, deliberately. On 2026-09-14 every number worth having
-        // lived on the line that is up for about a second after the fault ends, so reading them
-        // meant racing a phone that was healing itself - twice, with a second handset filming.
-        val text =
+        // The same readings that used to be the whole of the collapsed line, word for word - see
+        // dot() and the title below for what took their place there. Nobody reads these; the
+        // evening they are wanted, not one of them can be missing, so they move to BigText rather
+        // than being dropped.
+        val readings =
             if (connected) getString(
                 R.string.standby_notification,
                 worst.longestGapMillis / 1000L,
@@ -469,14 +477,53 @@ class StandbyService : Service() {
                 locks,
                 trouble
             )
-        return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(text)
-            // Wrapped, because a line nobody can read to the end is the fixed string again.
-            .setStyle(Notification.BigTextStyle().bigText(text))
+        // Read off the session rather than kept locally: a sink has no colour of its own until
+        // the host's spatial field has assigned it one - see SinkSession.badgePlace - which is
+        // only true once a session is actually up. Standing by with nothing playing yet is the
+        // ordinary case, not a fault, and the grey fallback below is what that ordinary case draws.
+        val place = SessionService.ACTIVE?.badgePlace()
+        val colour = if (place != null) BadgePalette.colourOf(place, ComposeColor.Gray).toArgb() else AndroidColor.GRAY
+        val titleRes = if (connected) R.string.standby_lock_title else R.string.standby_lock_title_down
+        val builder = Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+            // The handset's own colour, which on a lock screen is a block of colour beside the
+            // text - readable from across a room, which is where these phones are.
+            .setColor(colour)
+            .setLargeIcon(dot(colour))
+            .setContentTitle(getString(titleRes, badgeWord(place)))
+            .setContentText(getString(R.string.standby_lock_text, handsetVolume.read(capturing = false).percent))
+            // Every reading is still here, one pull away. Nobody reads them; the evening they
+            // are wanted, not one of them can be missing.
+            .setStyle(Notification.BigTextStyle().bigText(readings))
             .setOngoing(true)
-            .build()
+        // Colorized only where the colour is real: a band drawn from the grey fallback would read
+        // to somebody who has never seen this handset any other way as its actual colour, which is
+        // worse than a plain notification.
+        if (place != null) builder.setColorized(true)
+        return builder.build()
+    }
+
+    /**
+     * The 128x128 solid-colour dot behind [notification]'s large icon.
+     *
+     * A drawn bitmap rather than a vector resource: the colour is known only at the moment the
+     * notification is built, and a circle this small has nothing else worth drawing in it.
+     */
+    private fun dot(argb: Int): Bitmap {
+        val bitmap = Bitmap.createBitmap(DOT_DIAMETER_PX, DOT_DIAMETER_PX, Bitmap.Config.ARGB_8888)
+        val radius = DOT_DIAMETER_PX / 2f
+        Canvas(bitmap).drawCircle(radius, radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = argb })
+        return bitmap
+    }
+
+    /**
+     * The same identity [badgeWords] draws on a Compose screen, said in words here instead - this
+     * runs from a service, which has no composition to draw one into.
+     */
+    private fun badgeWord(place: Int?): String {
+        val number = PeerBadge.numberOf(HostIdentity(filesDir).current())
+        val name = BadgePalette.nameOf(place) ?: return getString(R.string.badge_number_only, number)
+        return getString(R.string.badge_in_words, number, getString(name))
     }
 
     /**
@@ -548,6 +595,9 @@ class StandbyService : Service() {
          * waits before letting go - see RoomCommandServer.GONE_QUIET_MILLIS.
          */
         private const val SAY_HERE_EVERY_MILLIS = 2_000L
+
+        /** Side length of [dot]'s bitmap, in pixels. */
+        private const val DOT_DIAMETER_PX = 128
     }
 
     /** True while there is a socket to the host actually open, which is what standing by means. */
