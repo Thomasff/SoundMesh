@@ -205,7 +205,8 @@ class RoomCommandChannelTest {
             server.start()
             assertTrue(connected(client))
             assertTrue(client.sayHere())
-            assertNull(client.lastRefusal)
+            // Cleared when the frame actually goes out, which is not on this thread.
+            assertTrue(until { client.lastRefusal == null })
 
             server.stop()
             assertTrue(until { !client.connected })

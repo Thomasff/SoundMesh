@@ -574,8 +574,23 @@ class RoomCommandClient(
     @Volatile var lastRefusal: String? = null
         private set
 
+    /**
+     * Whatever this handset has been asked to say, and the thread that says it.
+     *
+     * Everything that asks is a screen or something a screen started, and Android refuses a socket
+     * write made on the thread that draws one. See [ThingsToSay].
+     */
+    private val toSay = ThingsToSay("SoundMeshCommandSay") { sayNow(it) }
+
+    /**
+     * Held around every write, so the frames a connection opens with cannot be cut in half by one
+     * that was queued a moment earlier. Nothing reads on this end, so there is nothing else in it.
+     */
+    private val writing = Any()
+
     fun start() {
         running = true
+        toSay.start()
         Thread({ hold() }, "SoundMeshCommandHold").start()
     }
 
@@ -585,26 +600,31 @@ class RoomCommandClient(
                 Socket().also { socket = it }.use { open ->
                     open.connect(InetSocketAddress(hostAddress, port), CONNECT_TIMEOUT_MILLIS)
                     open.tcpNoDelay = true
-                    open.getOutputStream().apply {
-                        write(SpatialFrame.encode(selfId))
-                        // A second frame rather than a longer first one: a host from before this
-                        // validates the first frame as a name and would drop a handset that put
-                        // anything else in it, while a frame it does not expect is read and
-                        // discarded by the loop that is only there to notice the socket close.
-                        write(SpatialFrame.encode(CARRYING + what()))
-                        // A third frame on the same terms as the second: a reader that does not
-                        // know it discards it, and the socket goes on being what it is for.
-                        called?.let { write(SpatialFrame.encode(CALLED + it)) }
-                        // A fourth on the same terms.
-                        volumeNow?.invoke()?.let {
-                            write(SpatialFrame.encode(sayingVolume(it.index, it.max, it.stream)))
+                    // Under the same lock as everything else written here, so that a frame queued
+                    // against the socket that just died cannot land in the middle of these.
+                    synchronized(writing) {
+                        open.getOutputStream().apply {
+                            write(SpatialFrame.encode(selfId))
+                            // A second frame rather than a longer first one: a host from before
+                            // this validates the first frame as a name and would drop a handset
+                            // that put anything else in it, while a frame it does not expect is
+                            // read and discarded by the loop that is only there to notice the
+                            // socket close.
+                            write(SpatialFrame.encode(CARRYING + what()))
+                            // A third frame on the same terms as the second: a reader that does
+                            // not know it discards it, and the socket goes on being what it is for.
+                            called?.let { write(SpatialFrame.encode(CALLED + it)) }
+                            // A fourth on the same terms.
+                            volumeNow?.invoke()?.let {
+                                write(SpatialFrame.encode(sayingVolume(it.index, it.max, it.stream)))
+                            }
+                            // And a fifth, which is the first of however many: the host counts a
+                            // handset that says this and then stops, and leaves alone one that has
+                            // never said it at all. Said here rather than waiting for the first
+                            // tick so that a handset is never in the second group by accident.
+                            write(SpatialFrame.encode(HERE))
+                            flush()
                         }
-                        // And a fifth, which is the first of however many: the host counts a
-                        // handset that says this and then stops, and leaves alone one that has
-                        // never said it at all. Said here rather than waiting for the first tick
-                        // so that a handset is never in the second group by accident.
-                        write(SpatialFrame.encode(HERE))
-                        flush()
                     }
                     connected = true
                     val stream = open.getInputStream()
@@ -617,6 +637,9 @@ class RoomCommandClient(
                 }
             }
             connected = false
+            // What was waiting belonged to the socket that just died, and the next one opens by
+            // saying who this handset is.
+            toSay.forget()
             if (running) runCatching { Thread.sleep(RETRY_MILLIS) }
         }
     }
@@ -631,8 +654,10 @@ class RoomCommandClient(
     /**
      * Says what this handset's volume actually is, and answers whether it went out.
      *
-     * Written from whatever thread just changed it, which is safe because this end only ever
-     * writes and the hold loop only ever reads.
+     * Asked from whatever thread just changed it, and said on [toSay]'s. Whatever thread just
+     * changed it is the one that draws the screen - the volume keys are polled from a timer on it,
+     * and being told to set a volume is answered on it - and Android throws rather than writing a
+     * socket from there.
      *
      * Answered rather than swallowed, and that is the whole of it: the caller writes down what it
      * has said so as to stop repeating itself, so a write that never left has to be told apart
@@ -655,23 +680,44 @@ class RoomCommandClient(
     /**
      * Writes one frame up the line, and remembers **why** if it did not go.
      *
-     * The three reasons are three different faults and until 2026-09-14 they shared one sentence
-     * on one screen: no socket yet, a line that is down, and a write that threw. A handset that
-     * had said nothing for eight seconds could be any of them, and a log that says "no line to
-     * say it on" while the host is reading commands off that very socket is not a clue, it is a
-     * wrong answer that costs a round of guessing.
+     * The reasons are different faults and until 2026-09-14 they shared one sentence on one
+     * screen: no socket yet, a line that is down, a queue that has stopped emptying, and a write
+     * that threw. A handset that had said nothing for eight seconds could be any of them, and a
+     * log that says "no line to say it on" while the host is reading commands off that very
+     * socket is not a clue, it is a wrong answer that costs a round of guessing.
      */
     private fun say(what: String): Boolean {
-        val open = socket ?: return refuse("there is no socket yet")
+        if (socket == null) return refuse("there is no socket yet")
         if (!connected) return refuse("the line is down")
-        return runCatching {
-            open.getOutputStream().apply {
-                write(SpatialFrame.encode(what))
-                flush()
+        // The fourth reason, and the one that says the line is up but nothing is moving on it:
+        // a write to a handset that walked out of the network waits in the kernel rather than
+        // failing, so what fills up is the queue in front of it.
+        if (!toSay.say(what)) return refuse("the line has stopped moving")
+        return true
+    }
+
+    /**
+     * Puts one frame on the wire, on [toSay]'s thread and nobody else's.
+     *
+     * A write that throws takes the socket down with it rather than being counted and forgotten:
+     * the hold loop is sitting in a read on that socket, and closing it is how it is told to go
+     * round again.
+     */
+    private fun sayNow(what: String) {
+        val open = socket ?: return
+        runCatching {
+            synchronized(writing) {
+                open.getOutputStream().apply {
+                    write(SpatialFrame.encode(what))
+                    flush()
+                }
             }
             lastRefusal = null
-            true
-        }.getOrElse { refuse("the write threw ${it.javaClass.simpleName}: ${it.message}") }
+        }.onFailure {
+            refuse("the write threw ${it.javaClass.simpleName}: ${it.message}")
+            connected = false
+            runCatching { open.close() }
+        }
     }
 
     private fun refuse(why: String): Boolean {
@@ -682,6 +728,7 @@ class RoomCommandClient(
     override fun close() {
         running = false
         connected = false
+        toSay.close()
         runCatching { socket?.close() }
     }
 
