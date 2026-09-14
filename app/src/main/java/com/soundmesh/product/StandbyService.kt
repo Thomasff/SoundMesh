@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Handler
+import android.os.PowerManager
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
@@ -131,6 +132,15 @@ class StandbyService : Service() {
 
     /** And the worst of all of it, which is what a person reading this later needs. */
     private val worst = StandbyWorst()
+
+    /**
+     * Why the line last went down, kept after it comes back up.
+     *
+     * The name of the exception is the discriminator nothing else here carries: a network that
+     * went away and a peer that reset the connection are different faults in different places,
+     * and both read as "not connected" everywhere else on this screen.
+     */
+    private var lastTrouble: String? = null
 
     /** What it last answered, because the notification is written from inside that run. */
     private var lastGap = 0L
@@ -353,6 +363,7 @@ class StandbyService : Service() {
     private fun complain(what: String) {
         val why = line?.lastRefusal ?: "there is no line at all"
         missed++
+        lastTrouble = why
         val said = "$what: $why"
         if (said == complained) return
         complained = said
@@ -433,12 +444,21 @@ class StandbyService : Service() {
         // the one that started, or one the ROM restarted underneath it. The hold says whether
         // the arm under test ever ran. On 2026-09-14 all four were a single fixed string.
         val locks = getString(if (heldAwake) R.string.standby_awake_held else R.string.standby_awake_refused) +
-            "、" + getString(if (heldRadio) R.string.standby_radio_held else R.string.standby_radio_refused)
+            "、" + getString(if (heldRadio) R.string.standby_radio_held else R.string.standby_radio_refused) +
+            "、" + getString(if (exempt()) R.string.standby_exempt else R.string.standby_not_exempt)
+        val trouble = lastTrouble?.let { getString(R.string.standby_trouble, it) }
+            ?: getString(R.string.standby_no_trouble)
+        // The same readings on both lines, deliberately. On 2026-09-14 every number worth having
+        // lived on the line that is up for about a second after the fault ends, so reading them
+        // meant racing a phone that was healing itself - twice, with a second handset filming.
         val text =
             if (connected) getString(
                 R.string.standby_notification,
                 worst.longestGapMillis / 1000L,
-                worst.longestAwayMillis / 1000L
+                worst.longestAwayMillis / 1000L,
+                (SystemClock.elapsedRealtime() - standingSince) / 1000L,
+                locks,
+                trouble
             )
             else getString(
                 R.string.standby_notification_down,
@@ -446,7 +466,8 @@ class StandbyService : Service() {
                 worst.longestGapMillis / 1000L,
                 worst.longestAwayMillis / 1000L,
                 (SystemClock.elapsedRealtime() - standingSince) / 1000L,
-                locks
+                locks,
+                trouble
             )
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
@@ -470,6 +491,18 @@ class StandbyService : Service() {
         val network = manager.activeNetwork ?: return false
         manager.getNetworkCapabilities(network)
             ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    }.getOrDefault(false)
+
+    /**
+     * Whether this handset exempts this app from its battery rules.
+     *
+     * Read rather than asked for. On 2026-09-14 a handset held both locks, kept its process alive
+     * for four minutes, never lost WiFi - and still stopped running this loop for a hundred and
+     * nineteen seconds. Neither lock can beat a ROM that has decided to freeze the process or to
+     * ignore the lock, and this is the one bit that says whether it has decided that.
+     */
+    private fun exempt(): Boolean = runCatching {
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
     }.getOrDefault(false)
 
     private fun close() {
