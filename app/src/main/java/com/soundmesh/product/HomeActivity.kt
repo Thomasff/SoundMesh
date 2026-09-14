@@ -100,6 +100,22 @@ class HomeActivity : ComponentActivity() {
     private var showingSettings by mutableStateOf(false)
 
     /**
+     * Whether the first-launch permissions screen is up, replacing everything else this screen
+     * draws.
+     *
+     * True until [Preferences] says this screen has been seen once - see [onCreate] - and false
+     * from the moment [PermissionsScreen]'s continue button is pressed, whatever was granted. A
+     * refusal never turns this back on: the screen exists to explain and ask early, not to gate.
+     */
+    private var showingPermissions by mutableStateOf(false)
+
+    /** Which of [PermissionsScreen]'s four keys are granted right now - see [refreshPermissionsState]. */
+    private var permissionsHeld by mutableStateOf(emptySet<String>())
+
+    /** Which of [PermissionsScreen]'s four keys have been asked for once already. */
+    private var permissionsAsked by mutableStateOf(emptySet<String>())
+
+    /**
      * The theme somebody picked on the settings screen, held as composable state rather than read
      * from [Preferences] inside `setContent`.
      *
@@ -256,6 +272,22 @@ class HomeActivity : ComponentActivity() {
     // notification is invisible, which is a phone playing music with nothing on screen to say so.
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    /**
+     * The permissions screen's own three dialog launchers, separate from [askRecordAudio] and
+     * [askNotifications] above.
+     *
+     * Those two are asked for at the moment something is actually about to need them, and granting
+     * mic access from there goes straight on into the capture consent dialog. A tap on this
+     * screen's own row asks for exactly the one permission and nothing after it, so it needs its
+     * own launcher rather than reusing one that has a next step wired to it.
+     */
+    private val askPermMic =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshPermissionsState() }
+    private val askPermNotify =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshPermissionsState() }
+    private val askPermCamera =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshPermissionsState() }
+
     // Required, unlike notifications: playback capture is an AudioRecord, and without this it does
     // not open at all. Asked for before the consent dialog so a refusal here costs one tap.
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -304,14 +336,30 @@ class HomeActivity : ComponentActivity() {
         val prefs = Preferences(filesDir)
         themeChoice = themeChoiceOf(prefs.read("theme"))
         showDetails = prefs.read("details") == "on"
+        // Asked once, on the very first launch this screen is ever created for - a fresh install
+        // or a fresh onCreate after the process was killed both read null the same way, which is
+        // the only two cases that should show this screen at all.
+        showingPermissions = prefs.read("seen_permissions") == null
+        refreshPermissionsState()
         // Meant to be put down on a table and looked at, like every other screen in this app.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             SoundMeshTheme(themeChoice) {
                 Surface {
                     // Its own branch rather than a block inside HomeScreen: the whole point of
-                    // each is that nothing else is on screen while it is up.
+                    // each is that nothing else is on screen while it is up. Checked first among
+                    // the four: a first launch shows this and nothing else, whatever else would
+                    // otherwise be up.
                     when {
+                        showingPermissions -> PermissionsScreen(
+                            held = permissionsHeld,
+                            askedBefore = permissionsAsked,
+                            onAsk = ::askPermission,
+                            onDone = {
+                                Preferences(filesDir).write("seen_permissions", "yes")
+                                showingPermissions = false
+                            }
+                        )
                         showingSettings -> SettingsScreen(
                             prefs = Preferences(filesDir),
                             themeChoice = themeChoice,
@@ -898,6 +946,9 @@ class HomeActivity : ComponentActivity() {
         readTheDrawing()
         readWifiName()
         takeUpTheRoom()
+        // Where a return from the system's own Settings page - the SETTINGS route above, or the
+        // background-battery ask - is noticed: neither has a callback of its own on this side.
+        refreshPermissionsState()
         handler.post(refresh)
     }
 
@@ -990,6 +1041,65 @@ class HomeActivity : ComponentActivity() {
         )
         if (runCatching { startActivity(direct) }.isSuccess) return
         runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+    }
+
+    /**
+     * What [permissionsHeld] and [permissionsAsked] actually are right now, read off the system
+     * and off [Preferences].
+     *
+     * Called from [onCreate], from [onResume] - the point this screen comes back from either the
+     * system's own permission dialog or its Settings page - and from each of the three dialog
+     * launchers above, so [PermissionsScreen] is never left showing a button for something that
+     * was just granted or just asked for.
+     */
+    private fun refreshPermissionsState() {
+        val prefs = Preferences(filesDir)
+        permissionsHeld = buildSet {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                add(Manifest.permission.RECORD_AUDIO)
+            }
+            // Below Tiramisu there is no such permission to hold - notifications simply post -
+            // so the row reads as already granted rather than offering a button for nothing.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                add(Manifest.permission.CAMERA)
+            }
+            if (backgroundAllowed()) add(PERMISSION_BACKGROUND)
+        }
+        permissionsAsked = PERMISSIONS_SCREEN_KEYS.filterTo(mutableSetOf()) { prefs.read("asked_$it") != null }
+    }
+
+    /**
+     * What a tap on one of [PermissionsScreen]'s rows does - [askRoute]'s decision, acted on.
+     *
+     * The write to [Preferences] happens the instant the dialog is launched, not in the launcher's
+     * callback: Android never says which refusal was "don't ask again", so what is recorded is
+     * that this screen asked, not what was answered - see [askRoute]'s own doc.
+     */
+    private fun askPermission(permission: String) {
+        val prefs = Preferences(filesDir)
+        val granted = permission in permissionsHeld
+        val askedBefore = permission in permissionsAsked
+        when (askRoute(granted, askedBefore)) {
+            AskRoute.NOTHING -> {}
+            AskRoute.DIALOG -> {
+                prefs.write("asked_$permission", "yes")
+                permissionsAsked = permissionsAsked + permission
+                when (permission) {
+                    Manifest.permission.RECORD_AUDIO -> askPermMic.launch(permission)
+                    Manifest.permission.POST_NOTIFICATIONS -> askPermNotify.launch(permission)
+                    Manifest.permission.CAMERA -> askPermCamera.launch(permission)
+                    PERMISSION_BACKGROUND -> askToRunInBackground()
+                }
+            }
+            AskRoute.SETTINGS -> startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            )
+        }
     }
 
     private fun stopStandingBy() {
@@ -1255,6 +1365,14 @@ class HomeActivity : ComponentActivity() {
         /** As many of an id as every screen in this app has always printed. */
         private const val SHORT_NAME_CHARACTERS = 4
         private const val AUDIO_MIME = "audio/*"
+
+        /** Every key [PermissionsScreen] draws a row for - see [refreshPermissionsState]. */
+        private val PERMISSIONS_SCREEN_KEYS = listOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.POST_NOTIFICATIONS,
+            Manifest.permission.CAMERA,
+            PERMISSION_BACKGROUND
+        )
     }
 }
 

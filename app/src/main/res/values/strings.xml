@@ -355,4 +355,19 @@
     <string name="about_author">作者：%1$s</string>
     <string name="about_repo">源码：%1$s</string>
     <string name="about_licence">许可：%1$s</string>
+    <string name="perm_title">要用到这几样</string>
+    <string name="perm_intro">每一样都只在需要的时候用，不用的时候什么都不做。</string>
+    <string name="perm_mic">麦克风</string>
+    <string name="perm_mic_why">手机要听见自己的声音，才能量出它慢了多少</string>
+    <string name="perm_notify">通知</string>
+    <string name="perm_notify_why">跟着播的时候得有一条通知，否则系统会把它停掉</string>
+    <string name="perm_camera">相机</string>
+    <string name="perm_camera_why">只用来扫另一台的配对码，不存照片</string>
+    <string name="perm_background">后台运行</string>
+    <string name="perm_background_why">不放行的话，你一切走它就跟不上了</string>
+    <string name="perm_grant">允许</string>
+    <string name="perm_granted">已允许</string>
+    <string name="perm_settings">去设置里开</string>
+    <string name="perm_continue">继续</string>
+    <string name="perm_skip_hint">现在不给也行，用到的时候会再问一次。</string>
 </resources>
