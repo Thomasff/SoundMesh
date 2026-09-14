@@ -91,6 +91,14 @@ class SlidingSpectrum(
         return if (count >= size) finished / OVERLAP_SUM else 0.0
     }
 
+    /** Drops everything heard and everything decided, leaving this as it was built. */
+    fun forget() {
+        heard.fill(0.0)
+        decided.fill(0.0)
+        count = 0
+        sinceFrame = 0
+    }
+
     /**
      * Transforms the window that just became whole, offers it to be changed, and adds it back in.
      *

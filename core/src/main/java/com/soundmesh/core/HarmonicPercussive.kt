@@ -98,6 +98,13 @@ class HarmonicPercussive(
         }
     }
 
+    /** Drops the run of frames this was deciding from, leaving it with nothing to look back at. */
+    fun forget() {
+        for (frame in past) frame.fill(0.0)
+        newest = -1
+        heard = 0
+    }
+
     private fun remember(re: DoubleArray, im: DoubleArray) {
         newest = (newest + 1) % acrossTime
         val now = past[newest]

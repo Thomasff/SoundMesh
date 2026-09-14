@@ -11,9 +11,11 @@ import com.soundmesh.core.PlaybackDecision
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
 import com.soundmesh.core.RendererPhase
+import com.soundmesh.core.Separation
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
+import com.soundmesh.core.SplitAxis
 import com.soundmesh.core.SpectrumMix
 import com.soundmesh.core.StereoGain
 import com.soundmesh.core.acquiringTotalNanos
@@ -104,11 +106,15 @@ internal fun spatialShaped(
     field: SpatialField?,
     peerId: String?,
     wasUnder: SpatialField? = null,
-    crossover: Crossover
+    crossover: Crossover,
+    halves: Separation
 ): ByteArray {
     if (field == null || peerId == null) return payload
     if (sequence >= SyncRenderer.CHIRP_SEQUENCE_BASE) return payload
     if (!field.layout.contains(peerId)) return payload
+    // Dropped rather than left standing, so that switching back to this axis starts from
+    // silence instead of from a window of whatever was playing when it was switched away.
+    if (field.splitAxis != SplitAxis.HELD_STRUCK) halves.forget()
     return SpatialShaper.shape(
         payload,
         field,
@@ -118,7 +124,8 @@ internal fun spatialShaped(
         from = cameFrom(wasUnder, field, peerId, playAtHostNanos),
         fromFold = foldCameFrom(wasUnder, field, peerId),
         fromSpectrum = spectrumCameFrom(wasUnder, field, peerId),
-        crossover = crossover
+        crossover = crossover,
+        halves = halves
     )
 }
 
@@ -293,6 +300,11 @@ class SyncRenderer(
     // Held here rather than inside the shaper because the shaper is a function of the instant and
     // this is the one thing in the path that is a function of the past.
     private val crossover = Crossover()
+
+    // The same, for the axis that divides the held from the struck. Far larger than the
+    // filter above and, unlike it, not kept warm while the room is not asking for it: a
+    // window of transforms is too expensive to run for nobody. See Separation.forget.
+    private val halves = Separation()
     @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
     @Volatile private var failureCode: String? = null
@@ -656,7 +668,8 @@ class SyncRenderer(
                             rule,
                             spatialPeerId,
                             wasUnder = shapedUnder,
-                            crossover = crossover
+                            crossover = crossover,
+                            halves = halves
                         )
                         shapedUnder = if (payload !== adjusted) rule else null
                         // Against the adjusted array, not against the chunk: applyPendingAdjust returns a

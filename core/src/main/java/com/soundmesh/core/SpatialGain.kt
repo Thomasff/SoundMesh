@@ -30,7 +30,7 @@ enum class SpatialMode {
 }
 
 /**
- * The two ways a room can be told to split the song up between its handsets.
+ * The three ways a room can be told to split the song up between its handsets.
  *
  * One at a time, and the same knob and the same list of handsets drive whichever is chosen. Two
  * separations running at once would need four parts named on a screen that has room for two, and
@@ -41,7 +41,17 @@ enum class SplitAxis {
     MIDDLE_SIDES,
 
     /** What is below the crossover against what is above it. */
-    LOW_HIGH
+    LOW_HIGH,
+
+    /**
+     * What is being held against what was just struck: the notes against the hits.
+     *
+     * The first of the three that divides by **what the sound is doing** rather than by where it
+     * sits, which is why it is the only one a listener would call "the drums on that phone". It is
+     * also the only one that costs a delay - see [SlidingSpectrum] - and the only one that needs
+     * the sound to have been going for a moment before it knows anything.
+     */
+    HELD_STRUCK
 }
 
 /**
@@ -53,6 +63,15 @@ enum class SplitAxis {
  * the low half does the opposite and lets go of the mix.
  */
 data class SpectrumMix(val whole: Double, val low: Double)
+
+/**
+ * How much of the held half and of the struck half one handset plays.
+ *
+ * Both at one is the mix exactly as it was sent, because the two shares a separation hands out
+ * always add to one - so unlike [SpectrumMix] there is no subtraction here and no half that is
+ * defined as what is left over. Both halves are computed and both are real.
+ */
+data class HalvesMix(val harmonic: Double, val percussive: Double)
 
 /**
  * One rule for turning a host instant into every handset's pair of gains.
@@ -276,6 +295,32 @@ data class SpatialField(
         val trim = highTrim()
         return if (peerId in otherHalfIds) SpectrumMix(trim, -separation * trim)
         else SpectrumMix(1.0 - separation, separation)
+    }
+
+    /**
+     * How much of the held half and of the struck half [peerId] plays, before any placement gain.
+     *
+     * The third axis, and the only one that divides by what the sound is doing rather than by where
+     * it sits. Like the low/high split it needs something that remembers - see [SlidingSpectrum] and
+     * [HarmonicPercussive] - and rather more of it: a held note is only recognisable as one against
+     * the moment before it. Nothing here holds any state.
+     *
+     * The same crossfade as the other two, so the knob lands in the same place on all three: at zero
+     * every handset plays what it was sent, at one it plays only its half. Written as **keeping** one
+     * half and fading the other, because the two shares always add to one - there is no subtraction
+     * to do and no half defined as the leftover. A handset carrying the struck half at a knob of one
+     * plays the hits and nothing else; at zero it plays the song.
+     *
+     * The warning this axis needs is the opposite of the other two, and it is the reason this one
+     * was worth building: it really does divide by instrument, near enough. What it cannot do is
+     * name them - a plucked string is struck and then held, and it will be heard from both handsets
+     * in that order, which is what it actually sounds like.
+     */
+    fun halvesFor(peerId: String): HalvesMix {
+        require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
+        if (splitAxis != SplitAxis.HELD_STRUCK) return HalvesMix(1.0, 1.0)
+        return if (peerId in otherHalfIds) HalvesMix(1.0 - separation, 1.0)
+        else HalvesMix(1.0, 1.0 - separation)
     }
 
     /**

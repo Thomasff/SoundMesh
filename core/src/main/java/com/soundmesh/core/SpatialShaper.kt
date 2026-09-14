@@ -65,6 +65,12 @@ object SpatialShaper {
      * than to this call: one per playing handset, handed in every chunk. Required whenever the rule
      * asks for any of the low half and refused when it is missing, because a filter that is not
      * there and a knob at zero sound exactly alike.
+     *
+     * [halves] is the same arrangement for the third axis, and carries far more: see [Separation].
+     * Required whenever the rule divides the held from the struck, and refused when missing for the
+     * same reason. It is the one thing here that gives back a **different** sample rather than a
+     * part of the one it was handed, and the sound it gives back is [Separation.held] samples
+     * older - so a room on this axis plays one window behind a room on either of the others.
      */
     fun shape(
         pcm: ByteArray,
@@ -75,7 +81,8 @@ object SpatialShaper {
         from: StereoGain? = null,
         fromFold: Double? = null,
         fromSpectrum: SpectrumMix? = null,
-        crossover: Crossover? = null
+        crossover: Crossover? = null,
+        halves: Separation? = null
     ): ByteArray {
         require(sampleRate > 0) { "frames need a rate to become instants: $sampleRate" }
         require(pcm.size % BYTES_PER_FRAME == 0) {
@@ -97,6 +104,15 @@ object SpatialShaper {
         require(crossover != null || (endSpectrum.low == 0.0 && beginSpectrum.low == 0.0)) {
             "a low/high split needs somewhere to keep what the filter has heard"
         }
+        val separating = field.splitAxis == SplitAxis.HELD_STRUCK
+        require(halves != null || !separating) {
+            "a held/struck split needs somewhere to keep what the separation has heard"
+        }
+        // Set once for the chunk and not ramped, for the same reason as the crossover coefficient:
+        // a share here belongs to a whole frame rather than to a sample. It does not step either -
+        // frames overlap by three quarters and are added through the synthesis window, so a share
+        // changed between two of them is heard as a crossfade across one window.
+        if (separating) halves!!.keep(field.halvesFor(peerId))
         // Read once per chunk rather than per frame: a coefficient is two transcendentals and the
         // rule cannot change inside a chunk. It is not ramped, because moving where a filter divides
         // leaves the signal already inside it alone - the output stays continuous through a drag.
@@ -122,13 +138,20 @@ object SpatialShaper {
             // It runs on every frame a filter exists for, so a rule arriving finds it already warm.
             val lowLeft = crossover?.lowLeft(sentLeft.toDouble(), coefficient) ?: 0.0
             val lowRight = crossover?.lowRight(sentRight.toDouble(), coefficient) ?: 0.0
+            // Fed the same mix, and the one thing in this loop that hands back a different sample
+            // rather than a part of the one it was given: what comes out is this handset's half and
+            // it is Separation.held samples older. Unlike the filter it is not kept warm while the
+            // room is not asking for it, because a window of transforms is too expensive to run
+            // for nobody - which is what Separation.forget is for.
+            val heardLeft = if (separating) halves!!.leftOf(sentLeft.toDouble()) else sentLeft.toDouble()
+            val heardRight = if (separating) halves!!.rightOf(sentRight.toDouble()) else sentRight.toDouble()
             // Both channels of the fold read both channels of the source, so the source samples are
             // read out before either is written. Writing into `out` rather than `pcm` already keeps
             // them apart, and this keeps it that way if that ever changes.
-            writeSample(out, at, (whole * (own * sentLeft + fold * sentRight) + lowShare * lowLeft) * left)
+            writeSample(out, at, (whole * (own * heardLeft + fold * heardRight) + lowShare * lowLeft) * left)
             writeSample(
                 out, at + BYTES_PER_SAMPLE,
-                (whole * (fold * sentLeft + own * sentRight) + lowShare * lowRight) * right
+                (whole * (fold * heardLeft + own * heardRight) + lowShare * lowRight) * right
             )
         }
         return out
