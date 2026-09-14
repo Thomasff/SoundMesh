@@ -71,9 +71,13 @@ class StandbyService : Service() {
         override fun run() {
             sayVolumeIfMoved()
             sayHereIfDue()
+            showTheLineIfItChanged()
             handler.postDelayed(this, TELL_EVERY_MILLIS)
         }
     }
+
+    /** Whether what the notification says is still true. */
+    private val notice = StandbyNotice()
 
     /** When this handset last told the host it was still there. */
     private var saidHereAt = 0L
@@ -322,6 +326,21 @@ class StandbyService : Service() {
         }
     }
 
+    /**
+     * Puts the state of the line on the notification, which is the only place a person who is not
+     * holding a cable can read it.
+     *
+     * Guarded: a notification that will not post is not a reason to stop standing by, and this
+     * runs on the same tick as the thing that actually matters.
+     */
+    private fun showTheLineIfItChanged() {
+        if (!notice.shouldPost(connected, SystemClock.elapsedRealtime())) return
+        runCatching {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, notification())
+        }
+    }
+
     private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
@@ -334,7 +353,12 @@ class StandbyService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(getString(R.string.standby_notification))
+            .setContentText(
+                if (connected) getString(R.string.standby_notification)
+                // The count, not just the word: it is what tells a person whether this handset is
+                // trying and failing or not trying at all, and those are different faults.
+                else getString(R.string.standby_notification_down, missed)
+            )
             .setOngoing(true)
             .build()
     }
@@ -391,6 +415,41 @@ class StandbyService : Service() {
  * calibration replaces the correction, a system rename changes the name - and each of them leaves
  * the host reading something that is no longer true.
  */
+/**
+ * Decides when the standing-by notification has to be written again.
+ *
+ * Split out of the service so the one thing that can go wrong here is testable: at one tick a
+ * second, "keep it up to date" and "rewrite it every second" are one line apart.
+ *
+ * It exists at all because the notification it now drives used to be a fixed sentence - it said
+ * the handset was standing by from the moment the service started until it died, whether or not
+ * there was a line. On 2026-09-14 that sentence was read as evidence during a hunt for why the
+ * host had let go of a handset, by a person standing in front of the phone that was saying it.
+ * A piece of screen that asserts a state has to read that state.
+ */
+internal class StandbyNotice(private val refreshMillis: Long = REFRESH_MILLIS) {
+    private var shownUp: Boolean? = null
+    private var shownAt = 0L
+
+    fun shouldPost(up: Boolean, now: Long): Boolean {
+        if (shownUp != up) {
+            shownUp = up
+            shownAt = now
+            return true
+        }
+        // A line that is up says one thing and goes on saying it. A line that is down carries a
+        // count of what did not go out, and that count is the whole value of the line: it says
+        // whether the loop behind it is running at all.
+        if (up || now - shownAt < refreshMillis) return false
+        shownAt = now
+        return true
+    }
+
+    private companion object {
+        const val REFRESH_MILLIS = 10_000L
+    }
+}
+
 internal data class StandbyAnnounce(
     val address: String,
     val selfId: String,
