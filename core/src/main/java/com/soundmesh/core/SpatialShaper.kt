@@ -104,7 +104,9 @@ object SpatialShaper {
         require(crossover != null || (endSpectrum.low == 0.0 && beginSpectrum.low == 0.0)) {
             "a low/high split needs somewhere to keep what the filter has heard"
         }
-        val separating = field.splitAxis == SplitAxis.HELD_STRUCK
+        // The rule's own answer rather than the axis, because with the knob at nothing the mask is
+        // one everywhere and the transform would be computing the sound it was handed.
+        val separating = field.separates
         require(halves != null || !separating) {
             "a held/struck split needs somewhere to keep what the separation has heard"
         }

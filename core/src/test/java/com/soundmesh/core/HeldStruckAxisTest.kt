@@ -1,6 +1,7 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -136,26 +137,33 @@ class HeldStruckAxisTest {
     }
 
     /**
-     * With the knob at nothing the room plays what it was sent - one window late, and nothing else.
+     * With the knob at nothing the room pays nothing for this axis - no transform, and no delay.
      *
-     * The end-to-end form of the property both halves are built around. A separation that leaks
-     * anywhere, a window that does not add back up, a share that does not reach one: all of them
-     * show up here as a sound that is not the song.
+     * The mask with the knob at nothing is one everywhere, so running the separation would be
+     * spending a window of transforms and a window of delay to arrive back at the sound it was
+     * handed. On the weakest handset in a room that is the difference between playing and
+     * stuttering, and the axis picker is not even drawn at this setting - winding the knob down
+     * is the only way out of this axis the screen offers, so it has to be one.
      */
     @Test
-    fun withTheKnobAtNothingTheSoundIsTheMixItArrivedAs() {
-        val sound = mixed(framesPerChunk * 24)
-        val halves = Separation(window)
+    fun withTheKnobAtNothingTheRoomPaysNothingForThisAxis() {
+        val sound = mixed(framesPerChunk * 4)
+        val field = solo(separation = 0.0)
 
-        val out = through(sound, solo(separation = 0.0), halves)
+        assertFalse(field.separates)
+        // Nowhere to keep anything, and not needed: nothing is being kept.
+        val out = SpatialShaper.shape(sound, field, "solo", 0L, sampleRate)
 
-        for (frame in halves.held until sound.size / 4) {
-            val was = sampleAt(sound, (frame - halves.held) * 4)
-            assertTrue(
-                "left of frame $frame came back as ${sampleAt(out, frame * 4)}, not $was",
-                abs(sampleAt(out, frame * 4) - was) <= 1
-            )
+        for (frame in 0 until sound.size / 4) {
+            assertEquals("frame $frame", sampleAt(sound, frame * 4), sampleAt(out, frame * 4))
         }
+    }
+
+    /** Off its stop, it is on: one window of delay and a real division. */
+    @Test
+    fun offItsStopTheSeparationIsRunning() {
+        assertTrue(solo(separation = 0.01).separates)
+        assertFalse(solo(separation = 1.0).copy(splitAxis = SplitAxis.LOW_HIGH).separates)
     }
 
     /** The two handsets between them play the mix, which is what lets a listener wind it back. */

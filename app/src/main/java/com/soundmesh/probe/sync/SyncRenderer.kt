@@ -15,7 +15,6 @@ import com.soundmesh.core.Separation
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
-import com.soundmesh.core.SplitAxis
 import com.soundmesh.core.SpectrumMix
 import com.soundmesh.core.StereoGain
 import com.soundmesh.core.acquiringTotalNanos
@@ -114,7 +113,9 @@ internal fun spatialShaped(
     if (!field.layout.contains(peerId)) return payload
     // Dropped rather than left standing, so that switching back to this axis starts from
     // silence instead of from a window of whatever was playing when it was switched away.
-    if (field.splitAxis != SplitAxis.HELD_STRUCK) halves.forget()
+    // Asked of the rule rather than of the axis: a knob wound back to nothing is a room that has
+    // stopped asking for this, and it is the only way out of it the screen offers.
+    if (!field.separates) halves.forget()
     return SpatialShaper.shape(
         payload,
         field,

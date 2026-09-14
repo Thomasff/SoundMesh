@@ -316,6 +316,25 @@ data class SpatialField(
      * name them - a plucked string is struck and then held, and it will be heard from both handsets
      * in that order, which is what it actually sounds like.
      */
+    /**
+     * Whether this rule actually asks anybody to separate anything.
+     *
+     * The axis on its own is not the question, and reading it as though it were is what this
+     * property exists to stop. With the knob at nothing every share is one, every mask is one, and
+     * what the transform computes is the sound that was already there - so a room that reads only
+     * the axis pays a window of transforms and a window of delay to arrive back where it started.
+     *
+     * Worse than wasteful, because of where the axis picker lives: it is only drawn while the knob
+     * is off its stop, so a listener who chose this axis and then wound the knob back to nothing
+     * has no control on screen that would switch it off. Winding the knob down has to be the way
+     * out, and this is what makes it one.
+     *
+     * The other two axes need nothing like this. Their cost with the knob at nothing is a multiply
+     * by one.
+     */
+    val separates: Boolean
+        get() = splitAxis == SplitAxis.HELD_STRUCK && separation > 0.0
+
     fun halvesFor(peerId: String): HalvesMix {
         require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
         if (splitAxis != SplitAxis.HELD_STRUCK) return HalvesMix(1.0, 1.0)
