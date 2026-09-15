@@ -28,8 +28,18 @@ class PeerCalibrateActivityTest {
     private val PLAN_LEAD = 7_000_000_000L
     private val CLOCK_FILL = 16_000_000_000L
 
+    /**
+     * One run, read as source, across the two files it is now spread over.
+     *
+     * The sink half moved to SinkRound.kt so a handset with its screen off could join a room
+     * round - Android will not let a background app start an activity, and that half never needed
+     * a screen. Every rule below is about the run and not about either file, so the ruler is both
+     * of them: a rule pointed at one file only would go quiet the next time a piece moved, and a
+     * quiet rule and a satisfied one look exactly alike.
+     */
     private val source =
-        File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8)
+        File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8) +
+            File("src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8)
 
     /**
      * The screen is singleTask, so a second start is delivered to onNewIntent and never reaches
@@ -332,7 +342,12 @@ class PeerCalibrateActivityTest {
         // the run the link gate turned away, and the combined report the host writes once both
         // halves are in. Two more for a room: this handset's own hearing of the window, filed
         // before anything is combined, and the field the whole room came to.
-        assertEquals(6, source.split("fileAttempt(").size - 2)
+        // Counted past the declarations rather than past one of them: the run has two halves now
+        // and each files its own attempts, so a fixed offset here would be an assertion about how
+        // many files the run lives in.
+        val declarations = source.split("private fun fileAttempt(").size - 1
+        assertEquals("each half of the run files its own attempts", 2, declarations)
+        assertEquals(6, source.split("fileAttempt(").size - 1 - declarations)
         assertTrue(
             "filing a second copy of the evidence is what ends a finished run",
             source.contains("runCatching { PeerRunLog(")
@@ -639,9 +654,19 @@ class PeerCalibrateActivityTest {
         assertTrue(source.contains("getBooleanExtra(\"frozen_count\""))
         assertTrue(source.contains("CalibrationAudioSource.parse(intent.getStringExtra(\"audio_source\"))"))
 
-        val runners = source.split("PeerCalibrationRunner(").size - 1
-        val sourced = source.split("audioSource = audioSource()").size - 1
-        assertEquals("a runner is built without a capture source", runners, sourced)
+        // Asked of each runner rather than as two totals that have to agree. The totals stopped
+        // agreeing when the sink half moved out - it is handed its source through
+        // SinkRoundRequest, so that hand-off counts as a use with no runner behind it - and the
+        // count was the weaker rule anyway: two sources on one runner and none on the next adds
+        // up to exactly the same pair of numbers.
+        val runners = source.split("PeerCalibrationRunner(").drop(1)
+        assertEquals("a runner appeared or vanished", 3, runners.size)
+        for (call in runners) {
+            assertTrue(
+                "a runner is built without a capture source",
+                call.lineSequence().take(20).any { it.contains("audioSource = ") }
+            )
+        }
     }
 
     /**

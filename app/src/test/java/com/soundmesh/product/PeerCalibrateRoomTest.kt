@@ -23,8 +23,18 @@ import java.io.File
  * which a host-centred round of pairs never reaches.
  */
 class PeerCalibrateRoomTest {
+    /**
+     * One run, read as source, across the two files it is now spread over.
+     *
+     * The sink half moved to SinkRound.kt so a handset with its screen off could join a room
+     * round - Android will not let a background app start an activity, and that half never needed
+     * a screen. Every rule below is about the run and not about either file, so the ruler is both
+     * of them: a rule pointed at one file only would go quiet the next time a piece moved, and a
+     * quiet rule and a satisfied one look exactly alike.
+     */
     private val source =
-        File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8)
+        File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8) +
+            File("src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8)
 
     private val one = "a1b2c3d4e5f60718"
     private val two = "0918273645abcdef"
