@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.R
@@ -822,26 +823,59 @@ internal fun StandbyLine(state: HomeState, actions: HomeActions) {
 
 @Composable
 internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boolean) {
+    // Only where a length is known, which is a file or a folder. A capture has no end to slide
+    // towards, and a slider whose right-hand end is a guess is worse than no slider - see
+    // HomeState.playhead.
+    state.playhead?.let { PlayheadPanel(it, actions.seek) }
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(28.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Button(
-            onClick = actions.play,
-            enabled = canPlay && !state.running && !state.checking,
-            modifier = Modifier.weight(1f)
-        ) {
-            Text(stringResource(R.string.play_start))
+        Spacer(Modifier.weight(1f))
+        // Previous and next are a folder's, because a single file has no neighbours and a capture
+        // is not a queue at all. Drawn quiet rather than hidden, so the row does not change shape
+        // under a finger that is reaching for the middle of it.
+        val stepping = state.songIsFolder && !state.capturing
+        Transport("⏮", enabled = stepping) { actions.stepSong(-1) }
+        // Pause and resume in all three modes, capture included: a capture that is paused stops
+        // handing chunks over, which is the room going quiet, which is what the button says.
+        Transport(if (state.paused) "▶" else "⏸", enabled = state.running, big = true) {
+            if (state.running) actions.setPaused(!state.paused) else actions.play()
         }
-        OutlinedButton(onClick = actions.stop, enabled = state.running, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.play_stop))
+        Transport("⏭", enabled = stepping) { actions.stepSong(1) }
+        Spacer(Modifier.weight(1f))
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (!state.running) {
+            Button(
+                onClick = actions.play,
+                enabled = canPlay && !state.checking,
+                modifier = Modifier.weight(1f)
+            ) { Text(stringResource(R.string.play_start)) }
+        } else {
+            OutlinedButton(onClick = actions.stop, modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.play_stop))
+            }
         }
     }
-    state.nowPlaying?.let {
-        Text(stringResource(R.string.now_playing, it), style = MaterialTheme.typography.bodyMedium)
-    }
-    state.playhead?.let { PlayheadPanel(it, state.paused, actions.seek, actions.stepSong, actions.setPaused) }
+}
+
+/** One transport glyph. Greyed rather than gone - see [PlayControls]. */
+@Composable
+private fun Transport(glyph: String, enabled: Boolean, big: Boolean = false, onClick: () -> Unit) {
+    Text(
+        glyph,
+        modifier = Modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(6.dp),
+        fontSize = if (big) 34.sp else 24.sp,
+        color = if (enabled) MaterialTheme.colorScheme.onSurface
+        else MaterialTheme.colorScheme.surfaceVariant
+    )
 }
 
 /**
@@ -863,13 +897,7 @@ internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boole
  * two words mean on a list of one and is better than a button that is there but does nothing.
  */
 @Composable
-private fun PlayheadPanel(
-    playhead: Playhead,
-    paused: Boolean,
-    seek: (Long) -> Unit,
-    stepSong: (Int) -> Unit,
-    setPaused: (Boolean) -> Unit
-) {
+private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     // Where the finger first landed, which is what tells a drag from a brush. A Material slider
     // treats a touch anywhere on the track as a complete gesture and reports it the same way it
@@ -878,14 +906,6 @@ private fun PlayheadPanel(
     var landedAt by remember { mutableStateOf<Float?>(null) }
     val duration = playhead.durationMicros.coerceAtLeast(1L)
     val position = dragging ?: (playhead.positionMicros.toFloat() / duration)
-    Text(
-        stringResource(
-            R.string.play_position,
-            clockOf((position * duration).toLong()),
-            clockOf(playhead.durationMicros)
-        ),
-        style = MaterialTheme.typography.bodySmall
-    )
     Slider(
         value = position.coerceIn(0f, 1f),
         onValueChange = {
@@ -902,19 +922,19 @@ private fun PlayheadPanel(
             dragging = null
         }
     )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        OutlinedButton(onClick = { stepSong(-1) }, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.play_previous))
-        }
-        Button(onClick = { setPaused(!paused) }, modifier = Modifier.weight(1f)) {
-            Text(stringResource(if (paused) R.string.play_resume else R.string.play_pause))
-        }
-        OutlinedButton(onClick = { stepSong(1) }, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.play_next))
-        }
+    // Under the track and at its two ends, which is where a person looks for them: the elapsed
+    // time is read against the thumb, and the length is read against the end of the track.
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(
+            clockOf((position * duration).toLong()),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            clockOf(playhead.durationMicros),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

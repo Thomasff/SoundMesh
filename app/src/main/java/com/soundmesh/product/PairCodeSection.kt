@@ -44,7 +44,7 @@ fun PairCodeSection(state: HomeState, actions: HomeActions) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             for (choice in state.codeChoices) {
-                Chosen(
+                Choice(
                     text = stringResource(networkWord(choice)),
                     chosen = state.pairingOffer?.by == choice
                 ) { actions.setCodeNetwork(choice) }
@@ -88,24 +88,6 @@ fun PairCodeSection(state: HomeState, actions: HomeActions) {
             ),
             style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center
-        )
-    }
-}
-
-/** One half of the two-way choice. Filled when it is the one the code names. */
-@Composable
-private fun Chosen(text: String, chosen: Boolean, onClick: () -> Unit) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.clickable(onClick = onClick),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-        color = if (chosen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = if (chosen) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.secondary
         )
     }
 }

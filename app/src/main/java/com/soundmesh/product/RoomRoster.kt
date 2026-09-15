@@ -32,7 +32,7 @@ fun RoomRoster(state: HomeState, actions: HomeActions) {
     Line(first = true) {
         Dot(state.selfPlace)
         LineName(state.calledHere.ifEmpty { stringResource(R.string.roster_self) })
-        Tag(stringResource(if (state.role == Role.HOST) R.string.role_host else R.string.role_sink))
+        Tag(stringResource(if (state.role == Role.HOST) R.string.roster_role_host else R.string.roster_role_sink))
     }
     for (row in state.standing) StandingLine(row, actions)
     if (state.role == Role.HOST && state.standing.isEmpty()) {

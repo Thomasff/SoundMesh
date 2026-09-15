@@ -484,7 +484,10 @@ private fun FitOffer(state: RoomState, actions: RoomMapActions) {
         return
     }
     if (fitOffer(state) == null) return
-    OutlinedButton(onClick = actions.fitToMeasured) {
+    // Solid, and that is the whole signal. Hollow, it read as an option somebody might take; what
+    // it actually means is that the drawing and the measurement have parted - which only happens
+    // because a finger moved an icon - and the state the button is in IS the notice that they have.
+    Button(onClick = actions.fitToMeasured) {
         Text(stringResource(R.string.room_fit))
     }
 }
