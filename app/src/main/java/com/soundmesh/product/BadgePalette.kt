@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import com.soundmesh.core.PeerBadge
@@ -100,7 +101,13 @@ object BadgePalette {
  * somebody quotes only the colour is a room with no way to write anything down.
  */
 @Composable
-fun BadgeChip(peerId: String, place: Int?, modifier: Modifier = Modifier, diameter: Dp = 22.dp) {
+fun BadgeChip(
+    peerId: String,
+    place: Int?,
+    modifier: Modifier = Modifier,
+    diameter: Dp = 22.dp,
+    fontSize: TextUnit = TextUnit.Unspecified
+) {
     Box(
         modifier = modifier
             .size(diameter)
@@ -113,6 +120,7 @@ fun BadgeChip(peerId: String, place: Int?, modifier: Modifier = Modifier, diamet
         Text(
             "${PeerBadge.numberOf(peerId)}",
             style = MaterialTheme.typography.labelSmall,
+            fontSize = fontSize,
             color = BadgePalette.labelColourOf(place, MaterialTheme.colorScheme.onPrimary)
         )
     }

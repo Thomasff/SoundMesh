@@ -351,14 +351,14 @@
     <string name="room_alone">还没有别的手机连上来。一台手机也能摆，但听不出方向。</string>
     <string name="room_fit">吸附到实测位置</string>
     <string name="room_fit_done">图标已按测量摆正。拖动任意一台可以再来一次。</string>
-    <string name="room_measured">量到的间距（米）：%1$s</string>
+    <string name="room_measured">量到的间距（米）</string>
     <string name="room_delay_on">延时补偿：开（点一下关掉，用来对比）</string>
     <string name="room_delay_off">延时补偿：关（点一下打开）</string>
-    <string name="room_arrival_delay">为了一起到达，各台延后（毫秒）：%1$s</string>
+    <string name="room_arrival_delay">为了一起到达，各台延后（毫秒）</string>
     <string name="room_listener_unmeasured">还没量过你坐在哪，图上按你坐在正中算。量过之后，音量和先后才是从你那儿算的。</string>
     <string name="room_listener_needs_three">要量你坐在哪，房间里至少得三台：举着的那台量不到它自己到你的距离。</string>
     <string name="room_measure_listener">量一下我坐在哪（举过头顶）</string>
-    <string name="room_listener_measured">量到你坐的位置，到各台（米）：%1$s</string>
+    <string name="room_listener_measured">到你坐的位置（米）</string>
     <string name="room_disagrees">测距说 %1$s 比 %2$s 远，你画的正相反——这两个图标是不是拖反了？</string>
     <string name="failure_port_in_use">起不来：对时和播放用的是同一个端口，多半是对时那边还开着。到「对时」那页按停止，等几秒再试一次。</string>
     <string name="now_playing">正在放：%1$s</string>

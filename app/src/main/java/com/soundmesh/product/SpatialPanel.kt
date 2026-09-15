@@ -3,17 +3,21 @@ package com.soundmesh.product
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -69,8 +73,8 @@ fun SpatialPanel(
     /** The just-pressed-play ripple's progress, 0f..1f, or null while nothing is animating. */
     ripple: Float? = null
 ) {
-    Section(R.string.room_title) {
-        Text(stringResource(R.string.room_hint), style = MaterialTheme.typography.bodySmall)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Note(stringResource(R.string.room_hint))
         MeasuredRoom(state, actions.onTheMap(), blockedPeerNames, ripple)
         ArrivalDelays(state, actions)
         ModePicker(state, actions)
@@ -409,15 +413,8 @@ private fun ArrivalDelays(state: RoomState, actions: RoomActions) {
         )
     }
     if (!state.delayCompensation) return
-    Text(
-        stringResource(
-            R.string.room_arrival_delay,
-            shown.joinToString("   ") { (peerId, millis) ->
-                "${PeerBadge.numberOf(peerId)} " + "%.1f".format(millis)
-            }
-        ),
-        style = MaterialTheme.typography.bodySmall
-    )
+    Label(R.string.room_arrival_delay)
+    Readings(shown.map { (peerId, millis) -> listOf(peerId) to "%.1f".format(millis) }, state.colours)
 }
 
 @Composable
@@ -442,32 +439,67 @@ private fun ListenerDistances(state: RoomState, actions: RoomMapActions) {
         }
         return
     }
-    Text(
-        stringResource(
-            R.string.room_listener_measured,
-            shown.joinToString("   ") { (peerId, metres) ->
-                "${PeerBadge.numberOf(peerId)} " + "%.2f".format(metres)
-            }
-        ),
-        style = MaterialTheme.typography.bodySmall
-    )
+    Label(R.string.room_listener_measured)
+    Readings(shown.map { (peerId, metres) -> listOf(peerId) to "%.2f".format(metres) }, state.colours)
 }
 
 @Composable
 private fun MeasuredDistances(state: RoomState) {
     val shown = measuredLines(state.icons, state.measuredMetres)
     if (shown.isEmpty()) return
-    Text(
-        stringResource(
-            R.string.room_measured,
-            shown.joinToString("   ") { (names, metres) ->
-                "${PeerBadge.numberOf(names.first)}-${PeerBadge.numberOf(names.second)} " +
-                    "%.2f".format(metres)
-            }
-        ),
-        style = MaterialTheme.typography.bodySmall
+    Label(R.string.room_measured)
+    Readings(
+        shown.map { (names, metres) -> listOf(names.first, names.second) to "%.2f".format(metres) },
+        state.colours
     )
 }
+
+/**
+ * One measured number per entry, named by the handsets it is about.
+ *
+ * Named by the same badge the drawing uses - the number on its own colour - rather than by the
+ * number alone, which is what these lines used to print. The badge is the identity everywhere
+ * else in this app, and a length that says "2-3" beside a picture where 2 and 3 are a teal dot
+ * and a blue one makes a person translate between two namings of one room. Smaller than the ones
+ * on the drawing, because these are a reading and those are something to drag.
+ *
+ * The value arrives already written out, because the three readings that use this are metres,
+ * metres and milliseconds, and the number of decimal places is a property of the unit.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Readings(rows: List<Pair<List<String>, String>>, colours: Map<String, Int>) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        for ((peerIds, written) in rows) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                for (peerId in peerIds) {
+                    BadgeChip(
+                        peerId,
+                        colours[peerId],
+                        diameter = LENGTH_BADGE,
+                        fontSize = LENGTH_BADGE_TEXT
+                    )
+                }
+                Text(
+                    written,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** Small enough to read as a label on a number, big enough for two digits on it. */
+private val LENGTH_BADGE = 17.dp
+private val LENGTH_BADGE_TEXT = 9.sp
 
 /**
  * The one button on this screen that changes the drawing without a finger on an icon.
@@ -539,10 +571,16 @@ private fun RoomDrawing(
         looks[icon.peerId] = look
         killedPulses[icon.peerId] = key(icon.peerId) { rememberKilledPulse(look) }
     }
+    val frame = MaterialTheme.colorScheme.surfaceVariant
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
+            // A hairline round the drawing, now that there is no card edge to say where it stops.
+            // Square on purpose: a place in here is a fraction of the width and a fraction of the
+            // height, so any other shape would stretch the room along one axis and the lengths
+            // underneath would stop agreeing with the picture.
+            .border(1.dp, frame, RoundedCornerShape(10.dp))
             .pointerInput(state.icons.map { it.peerId }) {
                 fun put(held: String, at: Offset) = onRoom.moveIcon(
                     SpatialRoom.clamped(
