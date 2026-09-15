@@ -12,11 +12,8 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -1073,8 +1070,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         // A minute of quiet room, and a screen that sleeps takes the CPU with it.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
-            val colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-            MaterialTheme(colorScheme = colors) {
+            SoundMeshTheme(themeChoiceOf(Preferences(filesDir).read("theme"))) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     val stored = storedCalibration()
                     PeerCalibrateScreen(
