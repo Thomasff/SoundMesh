@@ -25,6 +25,9 @@ class ReadyChecklistTest {
         standingBy = 2
     )
 
+    /** The same host streaming what it is playing, which is the one run the output lead is in. */
+    private val capturingHost = readyHost.copy(songName = null, capturing = true)
+
     @Test
     fun `a host with a song, a calibration and company can start`() {
         assertTrue(canStart(readyList(readyHost)))
@@ -52,7 +55,7 @@ class ReadyChecklistTest {
     // part people skip.
     @Test
     fun `an unmeasured output lead warns but does not block`() {
-        val state = readyHost.copy(selfCalibrated = null)
+        val state = capturingHost.copy(selfCalibrated = null)
         assertEquals(
             Mark.WARN,
             markOf(state, R.string.ready_self_lead, R.string.ready_self_lead_missing)
@@ -62,11 +65,31 @@ class ReadyChecklistTest {
 
     @Test
     fun `a measured output lead is shown with its number`() {
-        val item = readyList(readyHost).first {
+        val item = readyList(capturingHost).first {
             it.line in setOf(R.string.ready_self_lead, R.string.ready_self_lead_missing)
         }
         assertEquals(Mark.OK, item.mark)
         assertEquals("12.4", item.detail)
+    }
+
+    /**
+     * And it is not asked about at all where it would change nothing.
+     *
+     * The number is the gap between the accessibility output and media, and the only run that
+     * plays on the accessibility output is a host streaming what it is playing - see
+     * CAPTURING_HOST_USAGE and SessionService, which is the one place it is ever read. A file, a
+     * folder and every sink in the room play on media, where the gap is zero by definition.
+     *
+     * It was on all four lists until 2026-09-15, which put an amber mark and an errand in front
+     * of everybody - and the errand is a minute and a half of chirps in a quiet room.
+     */
+    @Test
+    fun `the output lead is only asked about where it is used`() {
+        val lines = setOf(R.string.ready_self_lead, R.string.ready_self_lead_missing)
+
+        assertTrue(readyList(capturingHost).any { it.line in lines })
+        assertFalse(readyList(readyHost).any { it.line in lines })
+        assertFalse(readyList(HomeState(role = Role.SINK)).any { it.line in lines })
     }
 
     // This is the one that blocks, and the evening of 2026-09-14 is why: a handset that is not

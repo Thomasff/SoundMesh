@@ -458,6 +458,14 @@ class HomeActivity : ComponentActivity() {
         openSettings = { showingSettings = true },
         backToPlaying = { steppedBack = false },
         showPairCode = { showingCode = true },
+        setCodeNetwork = { by ->
+            Preferences(filesDir).write(Preferences.CODE_NETWORK, by.name)
+            // Before the state is read back, so the screen that repaints is already describing a
+            // room nobody is standing in - see HomeActions.setCodeNetwork for why they are let go.
+            RoomCommands.letEverybodyGo()
+            events.write("pairing code switched to ${by.name}, everybody standing by was let go")
+            readPairing()
+        },
         goto = { destination, job ->
             when (destination) {
                 ReadyGoto.SONG -> { putDownWhatIsPlaying(); chooseSong.launch(arrayOf(AUDIO_MIME)) }
@@ -807,8 +815,9 @@ class HomeActivity : ComponentActivity() {
                 this,
                 HostIdentity(filesDir).current(),
                 SyncActivity.CHUNK_PORT,
-                LocalAddress.ReachedBy.entries.firstOrNull { it.name == Preferences(filesDir).read(Preferences.CODE_NETWORK) }
+                codeNetwork()
             ),
+            codeChoices = HostPairingCode.choices(this).map { it.by }.distinct(),
             songName = chosen?.name,
             songUri = chosen?.uri,
             songIsFolder = chosen?.kind == ChosenKind.FOLDER,
@@ -819,6 +828,11 @@ class HomeActivity : ComponentActivity() {
                 ?.takeIf { it != 0L }?.let { it / 1000.0 }
         )
     }
+
+    /** Which network somebody said the code is for, or null if nobody has. See [HostPairingCode]. */
+    private fun codeNetwork(): LocalAddress.ReachedBy? =
+        Preferences(filesDir).read(Preferences.CODE_NETWORK)
+            ?.let { saved -> LocalAddress.ReachedBy.entries.firstOrNull { it.name == saved } }
 
     private fun readSession() {
         val session = SessionService.ACTIVE

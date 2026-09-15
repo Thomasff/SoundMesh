@@ -69,6 +69,11 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
     // at which phone.
     RoomRoster(state, actions)
     when (state.role) {
+        Role.HOST -> PairCodeSection(state, actions)
+        // A sink has nothing to hand out: it is the one doing the scanning.
+        Role.SINK, Role.NONE -> Unit
+    }
+    when (state.role) {
         Role.HOST -> SongSection(state, actions)
         Role.SINK -> Section(R.string.pair_title) {
             OutlinedButton(onClick = actions.scan, modifier = Modifier.fillMaxWidth()) {
@@ -79,23 +84,41 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
         // Unreachable: routeOf only sends this screen a role that has been picked.
         Role.NONE -> Unit
     }
-    Section(R.string.ready_measure) {
-        // Unconditional, unlike the checklist row above for the same measurement: that row is
-        // gone the moment a lead exists, and a measurement that can only ever be taken once is
-        // not a measurement - moving to a different room or a different pair of speakers is
-        // exactly when this has to be run again.
-        TextButton(onClick = { actions.goto(ReadyGoto.SELF_CALIBRATE, null) }) {
-            Text(stringResource(R.string.goto_self))
-        }
-        TextButton(onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.PAIR) }) {
-            Text(stringResource(R.string.goto_pair_one))
-        }
-        TextButton(onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.ROOM) }) {
+    // The one this whole project is for, and it is drawn as such. It used to be the third of four
+    // text buttons under a heading that read "量一量（做过一次就不用再做了）", which reads as a
+    // nice-to-have somebody has already done - and the pair calibration moved onto each handset's
+    // own row, where the handset it is about is.
+    Section(R.string.calibrate_section) {
+        Button(
+            onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.ROOM) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text(stringResource(R.string.goto_room))
         }
-        TextButton(onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.OVERHEAD) }) {
+        Text(stringResource(R.string.goto_room_hint), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(
+            onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.OVERHEAD) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text(stringResource(R.string.goto_overhead))
         }
+        Text(stringResource(R.string.goto_overhead_hint), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(
+            onClick = { actions.goto(ReadyGoto.SELF_CALIBRATE, null) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.goto_self))
+        }
+        // Shown even where it is not used, which is most of the time - see selfLead for where it
+        // is. Somebody who measured it once and comes back looking for the number should find it
+        // rather than an empty place where it was.
+        state.selfCalibrated?.let {
+            Text(
+                stringResource(R.string.goto_self_done, String.format(null as java.util.Locale?, "%.1f", it)),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Text(stringResource(R.string.goto_self_hint), style = MaterialTheme.typography.bodySmall)
     }
     // The way back out of the role picked above. The flat page this screen replaces used to carry
     // this button; nothing called it any more once that page was cut apart, which left a person

@@ -45,6 +45,7 @@ import com.soundmesh.core.SessionState
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.HostPairingCode
+import com.soundmesh.probe.sync.LocalAddress
 import com.soundmesh.probe.sync.indexFor
 import com.soundmesh.probe.sync.Playhead
 
@@ -100,6 +101,15 @@ data class HomeState(
      * name one address it would be reached at. See [HostPairingCode].
      */
     val pairingOffer: HostPairingCode.Offer? = null,
+    /**
+     * Which networks this handset could hand out a code for, in the order [LocalAddress] lists
+     * them. One entry means there is nothing to choose and the screen offers no choice.
+     *
+     * Two is what Android 11 made possible and what these handsets do: an access point up and a
+     * network joined at the same time. The app cannot know which of them the phone doing the
+     * scanning can see, so somebody says - see [HostPairingCode].
+     */
+    val codeChoices: List<LocalAddress.ReachedBy> = emptyList(),
     val paired: PairingCode? = null,
     /**
      * How many handsets are standing by for this host, and whether this sink is one of them.
@@ -336,6 +346,15 @@ class HomeActions(
     val backToPlaying: () -> Unit,
     /** The full-screen pairing code, which is the whole screen because it is read from a metre away. */
     val showPairCode: () -> Unit,
+    /**
+     * Says which of two networks the code should name, and lets go of everybody standing by.
+     *
+     * The letting go is not a side effect, it is the point. A handset that joined over the hotspot
+     * goes on obeying after the code is switched to the joined WiFi, so without it a room ends up
+     * half on each network - and the phones that fall out of that do so one at a time, hours
+     * later, with nothing to connect it to a tap somebody made at the start.
+     */
+    val setCodeNetwork: (LocalAddress.ReachedBy) -> Unit,
     /**
      * Where a checklist line's button goes. See [ReadyGoto].
      *
@@ -671,6 +690,8 @@ internal fun RolePicker(actions: HomeActions) {
         }
         Text(stringResource(R.string.role_sink_hint), style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.role_sink_other), style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
+        Text(stringResource(R.string.welcome_role_later), style = MaterialTheme.typography.bodySmall)
     }
 }
 

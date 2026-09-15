@@ -498,6 +498,27 @@ class RoomCommandServer(
      */
     fun forgetExcuses() = synchronized(excuses) { excuses.clear() }
 
+    /**
+     * Lets go of every standing handset without closing the door.
+     *
+     * Unlike [stop] the server keeps listening, so the handsets that come back are the ones that
+     * can reach this one on the network the code now names. That is the whole point: after the
+     * code is switched from the hotspot to the joined WiFi, a handset that joined over the hotspot
+     * is still connected and still obeys, and a room half on each network is a room where the
+     * phones that fall out do so one at a time, hours later, for no visible reason.
+     */
+    fun letEverybodyGo() {
+        val told = synchronized(clients) {
+            val here = ArrayList(clients)
+            clients.clear()
+            here
+        }
+        for (standing in told) {
+            runCatching { standing.socket.close() }
+            left(standing.peerId, "the code was switched to another network")
+        }
+    }
+
     fun stop() {
         running = false
         onExcuse = null
@@ -799,6 +820,10 @@ object RoomCommands {
 
     @Synchronized
     fun carrying(): Map<String, Carried> = server?.carrying() ?: emptyMap()
+
+    /** See [RoomCommandServer.letEverybodyGo]. Nothing to do where no server is up. */
+    @Synchronized
+    fun letEverybodyGo() = server?.letEverybodyGo() ?: Unit
 
     @Synchronized
     fun unsaid(): Int = server?.unsaid() ?: 0

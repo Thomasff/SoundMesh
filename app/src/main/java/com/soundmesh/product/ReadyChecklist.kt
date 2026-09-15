@@ -59,7 +59,10 @@ private fun hostList(state: HomeState): List<ReadyItem> = buildList {
             goto = if (hasSource) null else ReadyGoto.SONG
         )
     )
-    add(selfLead(state))
+    // Only while streaming what this phone is playing: that is the one run whose audio goes out
+    // on the accessibility output, and the lead is the gap between that output and media. See
+    // selfLead.
+    if (state.capturing) add(selfLead(state))
     add(
         ReadyItem(
             mark = if (state.standingBy > 0) Mark.OK else Mark.BLOCK,
@@ -91,12 +94,16 @@ private fun sinkList(state: HomeState): List<ReadyItem> = buildList {
             goto = if (paired) null else ReadyGoto.SCAN
         )
     )
-    add(selfLead(state))
     addAll(blocked(state))
 }
 
 /**
- * This handset's own output lead.
+ * This handset's own output lead: how far ahead of media the accessibility output plays.
+ *
+ * Asked about only on a host that is streaming what it is playing, because that is the only run
+ * that goes out on that output - see CAPTURING_HOST_USAGE. Playing a file, playing a folder and
+ * every sink in the room all play on media, where the gap is zero by definition and the question
+ * is an amber mark in front of an errand that would change nothing.
  *
  * Warn rather than block: an unmeasured handset plays, it just plays early. Blocking would mean
  * nobody can hear the thing at all before doing the measurement, and the measurement is exactly

@@ -45,6 +45,15 @@ object HostPairingCode {
         return Offer(PairingCodeCodec.encode(PairingCode(hostId, address, chunkPort)), by)
     }
 
+    /**
+     * Every address a peer in the room could reach, each labelled with how.
+     *
+     * For the screen that offers the choice rather than for making it: with one entry there is
+     * nothing to choose, and a control that cannot change the answer is worse than none.
+     */
+    fun choices(context: Context): List<LocalAddress.Reachable> =
+        LocalAddress.reachable(LocalAddress.own(), joinedWifiAddress(context))
+
     /** Null when this handset cannot name one address a peer in the room would reach. */
     fun of(
         context: Context,
