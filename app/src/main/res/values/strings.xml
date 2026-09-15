@@ -35,6 +35,7 @@
     <string name="ready_paired_none">还没扫过主机的码</string>
     <string name="ready_background">这台已经放行后台运行</string>
     <string name="ready_go">开始播放</string>
+    <string name="ready_back_to_play">回到播放</string>
     <string name="ready_goto_song">换一首</string>
     <string name="ready_goto_self">去测</string>
     <string name="ready_goto_pair">去对时</string>

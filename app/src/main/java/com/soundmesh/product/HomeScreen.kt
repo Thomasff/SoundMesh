@@ -310,6 +310,14 @@ class HomeActions(
     val allowBackground: () -> Unit,
     /** The gear in the top bar. */
     val openSettings: () -> Unit,
+    /**
+     * Back onto the playing stage after having pressed back out of it.
+     *
+     * The one way forward again, and it has to exist: back out of a playing room and the music
+     * goes on playing with no control of it on screen, and the start button is not it - it would
+     * start a second session over the top of the first.
+     */
+    val backToPlaying: () -> Unit,
     /** The full-screen pairing code, which is the whole screen because it is read from a metre away. */
     val showPairCode: () -> Unit,
     /**
@@ -375,7 +383,7 @@ private fun Modifier.badgeEdge(colour: Color?, glow: Float): Modifier {
 }
 
 @Composable
-fun HomeScreen(state: HomeState, actions: HomeActions, showDetails: Boolean) {
+fun HomeScreen(state: HomeState, actions: HomeActions, showDetails: Boolean, steppedBack: Boolean) {
     val glow = edgeGlow(state)
     // Dimmed rather than only slowed: a disconnected sink's edge is meant to read as grey from
     // across the room, not just as a quieter version of its own colour.
@@ -395,7 +403,7 @@ fun HomeScreen(state: HomeState, actions: HomeActions, showDetails: Boolean) {
         }
         // Which of the three stages this handset is on is worked out fresh every draw rather than
         // remembered - see routeOf() - so there is one answer rather than two that can disagree.
-        when (routeOf(state)) {
+        when (routeOf(state, steppedBack)) {
             HomeRoute.WELCOME -> ScrollingStage { WelcomeScreen(state, actions) }
             HomeRoute.READY -> ScrollingStage { ReadyScreen(state, actions) }
             // PlayingScreen carries its own bottom tab bar, which is why its stage is not wrapped

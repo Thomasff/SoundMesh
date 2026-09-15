@@ -31,16 +31,28 @@ import com.soundmesh.probe.R
 @Composable
 fun ReadyScreen(state: HomeState, actions: HomeActions) {
     val items = readyList(state)
+    // Above the checklist rather than below it: with a room already playing, getting back to the
+    // controls is the only thing anybody came here for that the checklist cannot answer.
+    if (state.running) {
+        Button(onClick = actions.backToPlaying, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.ready_back_to_play))
+        }
+    }
     Section(R.string.ready_title) {
         for (item in items) ReadyRow(item, actions)
-        Button(
-            onClick = actions.play,
-            enabled = canStart(items),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(stringResource(R.string.ready_go))
+        // Not offered at all while a room is already playing: this screen is reachable then, by
+        // pressing back out of the playing stage, and pressing start there would lay a second
+        // session over the top of the first rather than doing nothing.
+        if (!state.running) {
+            Button(
+                onClick = actions.play,
+                enabled = canStart(items),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.ready_go))
+            }
         }
-        if (!canStart(items)) {
+        if (!state.running && !canStart(items)) {
             // Said again under the button a person is looking at, rather than only on the row
             // they may already have scrolled past.
             items.firstOrNull { it.mark == Mark.BLOCK }?.let {

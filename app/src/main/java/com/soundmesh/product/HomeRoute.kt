@@ -10,11 +10,17 @@ package com.soundmesh.product
  */
 enum class HomeRoute { WELCOME, READY, PLAYING }
 
-internal fun routeOf(state: HomeState): HomeRoute = when {
+/**
+ * [steppedBack] is somebody having pressed back out of the playing stage, which leaves a running
+ * session and nobody looking at it. It is a parameter rather than a field on [HomeState] for the
+ * same reason settings and the pairing code are held in the activity: it says where a person is
+ * standing, not what this handset is doing, and the state underneath it goes on changing.
+ */
+internal fun routeOf(state: HomeState, steppedBack: Boolean = false): HomeRoute = when {
     // The role decides even against a running session: the welcome screen is the only one that
     // can supply a missing role, so it has to win that argument.
     state.role == Role.NONE -> HomeRoute.WELCOME
-    state.running -> HomeRoute.PLAYING
+    state.running && !steppedBack -> HomeRoute.PLAYING
     else -> HomeRoute.READY
 }
 

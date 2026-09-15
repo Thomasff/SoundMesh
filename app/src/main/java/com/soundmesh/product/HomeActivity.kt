@@ -21,6 +21,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -103,6 +104,15 @@ class HomeActivity : ComponentActivity() {
 
     /** Whether the settings screen is up, replacing everything else this screen draws. */
     private var showingSettings by mutableStateOf(false)
+
+    /**
+     * Whether somebody pressed back out of the playing stage while the room went on playing.
+     *
+     * Beside the state rather than in it, for the reason [routeOf] gives. Put back down by
+     * [readSession] the moment there is no session, so that the next room to start is looked at
+     * rather than inheriting where the last one was left.
+     */
+    private var steppedBack by mutableStateOf(false)
 
     /**
      * Whether the first-launch permissions screen is up, replacing everything else this screen
@@ -365,16 +375,35 @@ class HomeActivity : ComponentActivity() {
                                 showingPermissions = false
                             }
                         )
-                        showingSettings -> SettingsScreen(
-                            prefs = Preferences(filesDir),
-                            themeChoice = themeChoice,
-                            showDetails = showDetails,
-                            onBack = { showingSettings = false },
-                            onThemeChanged = { choice -> themeChoice = choice },
-                            onDetailsChanged = { on -> showDetails = on }
-                        )
+                        showingSettings -> {
+                            BackHandler { showingSettings = false }
+                            SettingsScreen(
+                                prefs = Preferences(filesDir),
+                                themeChoice = themeChoice,
+                                showDetails = showDetails,
+                                onBack = { showingSettings = false },
+                                onThemeChanged = { choice -> themeChoice = choice },
+                                onDetailsChanged = { on -> showDetails = on }
+                            )
+                        }
                         showingCode -> PairCodeScreen(state.pairingOffer) { showingCode = false }
-                        else -> HomeScreen(state, actions, showDetails)
+                        else -> {
+                            // One step per press, up the three stages, rather than out of the app.
+                            // Until this existed the back gesture left the room playing with the
+                            // launcher on screen, from any stage, which is what a person does by
+                            // reflex the first time they want to change the song.
+                            val route = routeOf(state, steppedBack)
+                            BackHandler(enabled = route != HomeRoute.WELCOME) {
+                                when (route) {
+                                    // Says nothing to the session on purpose: the music carries on
+                                    // and this screen stops being the one in front of it.
+                                    HomeRoute.PLAYING -> steppedBack = true
+                                    HomeRoute.READY -> actions.pickRole(Role.NONE)
+                                    HomeRoute.WELCOME -> Unit
+                                }
+                            }
+                            HomeScreen(state, actions, showDetails, steppedBack)
+                        }
                     }
                 }
             }
@@ -415,6 +444,7 @@ class HomeActivity : ComponentActivity() {
             )
         },
         openSettings = { showingSettings = true },
+        backToPlaying = { steppedBack = false },
         showPairCode = { showingCode = true },
         goto = { destination, job ->
             when (destination) {
@@ -781,6 +811,10 @@ class HomeActivity : ComponentActivity() {
     private fun readSession() {
         val session = SessionService.ACTIVE
         if (session != null) awaitingSession = false
+        // Put back down here rather than when play is pressed, because a sink joins a room it
+        // never pressed anything to start. With no session there is nothing to have stepped back
+        // out of, so this is the one moment it can be cleared without guessing.
+        if (session == null) steppedBack = false
         val room = readRoom(session)
         state = state.copy(
             running = session != null,

@@ -29,6 +29,35 @@ class HomeRouteTest {
         assertEquals(HomeRoute.WELCOME, routeOf(HomeState(role = Role.NONE, running = true)))
     }
 
+    /**
+     * Back from the playing stage lands on the stage before it, and the music goes on playing.
+     *
+     * The session is what is running, not the screen - leaving the playing stage says nothing to
+     * it - so [routeOf] cannot go on reading a running session as "must be looking at it". Which
+     * is also why the answer is a parameter rather than a field on the state: it is where a
+     * person is standing, not what this handset is doing.
+     */
+    @Test
+    fun backOutOfAPlayingRoomLandsOnTheStageBeforeIt() {
+        assertEquals(
+            HomeRoute.READY,
+            routeOf(HomeState(role = Role.HOST, running = true), steppedBack = true)
+        )
+        assertEquals(
+            HomeRoute.READY,
+            routeOf(HomeState(role = Role.SINK, running = true), steppedBack = true)
+        )
+    }
+
+    /** And the role still wins that argument, for the reason [routeOf] gives. */
+    @Test
+    fun steppingBackStillCannotSkipTheRolePicker() {
+        assertEquals(
+            HomeRoute.WELCOME,
+            routeOf(HomeState(role = Role.NONE, running = true), steppedBack = true)
+        )
+    }
+
     @Test
     fun `an unset optional fact is null rather than an empty string`() {
         assertNull(configured(""))
