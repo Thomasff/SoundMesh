@@ -191,6 +191,16 @@ data class HomeState(
      */
     val captureSilentSeconds: Int? = null,
     val running: Boolean = false,
+    /**
+     * Between the tap on play and a session being up, which is a second or more of decoding a
+     * source and binding sockets.
+     *
+     * Its job is to grey the button out for that second. Tapping again while it is true is what
+     * used to start a second session that could not have the ports the first one took - see
+     * SessionService.startSession, which refuses that now on its own. This is the visible half:
+     * a button that goes quiet is the only way of saying the tap landed.
+     */
+    val starting: Boolean = false,
     val sessionState: SessionState? = null,
     val failure: String? = null,
     val counters: List<Counter> = emptyList(),
@@ -857,7 +867,7 @@ internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boole
         if (!state.running) {
             Button(
                 onClick = actions.play,
-                enabled = canPlay && !state.checking,
+                enabled = canPlay && !state.checking && !state.starting,
                 modifier = Modifier.weight(1f)
             ) { Text(stringResource(R.string.play_start)) }
         } else {

@@ -63,6 +63,10 @@ class SessionService : Service() {
     // rebuilt per start would leave the old one with nobody to give it back.
     private val awake by lazy { CpuAwake(cpuHoldOf(this)) }
 
+    /** Whether a session is being opened right now. See [startSession] for what it is for. */
+    @Volatile
+    private var starting = false
+
     // The lock screen's own state, touched only from the main thread - see [pushLockScreen].
     private val lockScreenHandler = Handler(Looper.getMainLooper())
     private var mediaSession: MediaSession? = null
@@ -96,8 +100,28 @@ class SessionService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * One start at a time, and [ACTIVE] alone cannot promise that.
+     *
+     * [ACTIVE] is assigned at the end of [open], on another thread, after a source has been
+     * decoded and sockets have been bound - a second or more after the tap that asked for it. Two
+     * taps inside that window both read null here and both go on to open a session. The second
+     * one cannot have the ports the first one took, so it fails; and its failure path sets
+     * [ACTIVE] back to null. What that leaves is a room playing music with no session any screen
+     * can see, and a play button that goes on doing the same thing every time it is pressed.
+     * Reported 2026-09-15 as "connect the taps quickly and it never gets to the playing screen".
+     *
+     * [starting] is set on the thread the tap arrived on, which is the main one for both of them,
+     * so the second tap sees the first. It is given back in [open]'s own finally - including on
+     * every path that refuses - because a flag that outlives its failure is a play button that
+     * never works again.
+     */
     private fun startSession(intent: Intent, host: Boolean) {
-        if (ACTIVE != null) return
+        if (ACTIVE != null || starting) return
+        starting = true
+        // A fresh attempt has not failed yet. Nothing else ever cleared this, so one refusal in
+        // the life of the process kept a reason on screen under every later attempt.
+        FAILURE = null
         startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         // Before anything else a session does, because everything a session does afterwards
         // assumes the handset is still running. See CpuAwake for the night this was taken for.
@@ -106,7 +130,13 @@ class SessionService : Service() {
         }
         // Opening a source decodes, and connecting waits on another handset. Neither belongs on the
         // thread the system delivered this intent on.
-        Thread({ open(intent, host) }, "SoundMeshSessionStart").start()
+        Thread({
+            try {
+                open(intent, host)
+            } finally {
+                starting = false
+            }
+        }, "SoundMeshSessionStart").start()
         startLockScreenLoop()
     }
 

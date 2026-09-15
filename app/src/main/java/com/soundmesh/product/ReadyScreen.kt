@@ -53,7 +53,11 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
     state.problem?.let { Note(stringResource(it), Tone.WRONG) }
     if (!state.running) {
         Column(modifier = Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Solid(stringResource(R.string.ready_go), enabled = canStart(items), onClick = actions.play)
+            Solid(
+                stringResource(R.string.ready_go),
+                enabled = canStart(items) && !state.starting,
+                onClick = actions.play
+            )
             // Said again under the button somebody is looking at, rather than only on the line
             // they may already have scrolled past.
             if (!canStart(items)) {
