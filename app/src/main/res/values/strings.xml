@@ -110,7 +110,7 @@
     <string name="song_choose">选择歌曲</string>
     <string name="song_choose_folder">选文件夹</string>
     <string name="song_folder_chosen">文件夹：%1$s</string>
-    <string name="song_checking">正在检查这首歌…</string>
+    <string name="song_checking">正在检查这首歌</string>
     <string name="song_capture">采集本机正在放的音乐</string>
     <string name="song_capturing">采集本机正在放的声音</string>
     <string name="song_capture_hint">把本机的媒体音量调到 0，再用你自己的音乐 App 播放。采到的声音会晚约 1.5 秒和另一台一起放出来；音量不调到 0，你会听到一前一后两遍。本机自己的声音走闹钟通道，响度用下面那条调。</string>

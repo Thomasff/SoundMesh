@@ -4,7 +4,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,17 +38,14 @@ fun PairCodeSection(state: HomeState, actions: HomeActions) {
     // whatever anybody picks, and a control that cannot change the answer teaches people their
     // taps do nothing.
     if (state.codeChoices.size > 1) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            for (choice in state.codeChoices) {
-                Choice(
-                    text = stringResource(networkWord(choice)),
-                    chosen = state.pairingOffer?.by == choice
-                ) { actions.setCodeNetwork(choice) }
-            }
-        }
+        Segmented(
+            state.codeChoices.map { choice ->
+                Segment(stringResource(networkWord(choice)), state.pairingOffer?.by == choice) {
+                    actions.setCodeNetwork(choice)
+                }
+            },
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
         Note(stringResource(R.string.pair_code_switch_warning))
     }
     val offer = state.pairingOffer

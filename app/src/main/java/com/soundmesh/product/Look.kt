@@ -3,6 +3,7 @@ package com.soundmesh.product
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,10 +11,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -24,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.stringResource
@@ -272,3 +277,56 @@ fun Ghost(text: String, onClick: () -> Unit) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
+
+/** One choice in a [Segmented]: what it says, whether it is the one in force, what it does. */
+data class Segment(val text: String, val chosen: Boolean, val onClick: () -> Unit)
+
+/**
+ * One of N, drawn as a single control rather than as N loose pills.
+ *
+ * The pills were the first try and they were wrong twice over: three of them huddled against the
+ * left edge of a screen they were meant to divide, and each was sized to its own word, so "歌曲"
+ * was half the size of "本机的声音" and the row read as three unrelated buttons. Cells of equal
+ * width inside one border read as one question with N answers, which is what this is.
+ *
+ * The filled cell is the state, not a memory of the last tap - see PlayingScreen's SourcePicker.
+ */
+@Composable
+fun Segmented(parts: List<Segment>, modifier: Modifier = Modifier) {
+    if (parts.isEmpty()) return
+    val line = MaterialTheme.colorScheme.surfaceVariant
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .clip(RoundedCornerShape(SEGMENT_CORNER))
+            .border(1.dp, line, RoundedCornerShape(SEGMENT_CORNER))
+    ) {
+        for ((index, part) in parts.withIndex()) {
+            if (index > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(line))
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(
+                        if (part.chosen) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.surface
+                    )
+                    .clickable(onClick = part.onClick)
+                    .padding(vertical = 10.dp, horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    part.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (part.chosen) FontWeight.Medium else FontWeight.Normal,
+                    color = if (part.chosen) MaterialTheme.colorScheme.surface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private val SEGMENT_CORNER = 9.dp

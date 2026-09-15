@@ -19,8 +19,10 @@ import com.soundmesh.probe.sync.LocalAddress
 /**
  * Stage two: a board, not a questionnaire.
  *
- * Reads top to bottom as network, code, handsets, song, calibration, way out - which is the order
+ * Reads top to bottom as network, code, handsets, calibration, way out - which is the order
  * somebody setting a room up needs them in, and the order the drawing of 2026-09-15 put them in.
+ * What the room will play is not among them: choosing a source is something people do while the
+ * music is on, and it lives on the playing stage where it can be heard taking effect.
  * Everything that is wrong says so on the line it is about; the only sentence repeated at the
  * bottom is the one standing between this room and playing.
  *
@@ -44,9 +46,11 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
         Role.NONE -> Unit
     }
     RoomRoster(state, actions)
-    if (state.role == Role.HOST) SongLines(state, actions)
     CalibrateSection(state, actions)
     Problems(items, actions)
+    // Said here as well, because the file is chosen from this screen too - off the blocked line
+    // above, which is the only way onto the playing stage when nothing has been picked yet.
+    state.problem?.let { Note(stringResource(it), Tone.WRONG) }
     if (!state.running) {
         Column(modifier = Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Solid(stringResource(R.string.ready_go), enabled = canStart(items), onClick = actions.play)
@@ -103,30 +107,6 @@ private fun ScanLine(state: HomeState, actions: HomeActions) {
             quiet = state.paired == null
         )
         Chip(stringResource(R.string.pair_scan), actions.scan)
-    }
-}
-
-/** What the host will play, and the three ways to change it. */
-@Composable
-private fun SongLines(state: HomeState, actions: HomeActions) {
-    Label(R.string.song_title)
-    Line(first = true) {
-        LineName(
-            when {
-                state.capturing -> stringResource(R.string.song_capturing)
-                state.songName != null -> state.songName
-                else -> stringResource(R.string.ready_song_missing)
-            },
-            quiet = !state.capturing && state.songName == null
-        )
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Chip(stringResource(R.string.song_pick_one), actions.chooseSong)
-        Chip(stringResource(R.string.song_pick_many), actions.chooseFolder)
-        Chip(stringResource(R.string.song_pick_capture), actions.captureAudio)
     }
 }
 
@@ -223,7 +203,7 @@ private fun Problems(items: List<ReadyItem>, actions: HomeActions) {
 
 /** The lines this screen already draws somewhere better, in the words of whatever states them. */
 private val SAID_ELSEWHERE = setOf(
-    R.string.ready_song, R.string.ready_song_missing,
+    R.string.ready_song,
     R.string.ready_paired, R.string.ready_paired_none,
     R.string.ready_standing, R.string.ready_standing_none,
     R.string.ready_uncalibrated

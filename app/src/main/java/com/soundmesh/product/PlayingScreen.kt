@@ -2,10 +2,7 @@ package com.soundmesh.product
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -59,7 +56,11 @@ fun PlayingScreen(
             .padding(horizontal = 20.dp)
             .padding(bottom = 28.dp)
     ) {
-        if (state.role == Role.HOST) SourcePicker(state, actions)
+        if (state.role == Role.HOST) {
+            SourcePicker(state, actions)
+            if (state.checking) Note(stringResource(R.string.song_checking))
+            state.problem?.let { Note(stringResource(it), Tone.WRONG) }
+        }
         NowPlaying(state)
         PlayControls(state, actions, canPlay = canPlay(state))
         state.room?.let {
@@ -96,14 +97,22 @@ fun PlayingScreen(
  */
 @Composable
 private fun SourcePicker(state: HomeState, actions: HomeActions) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Choice(stringResource(R.string.song_pick_one), !state.capturing && !state.songIsFolder && state.songName != null, actions.chooseSong)
-        Choice(stringResource(R.string.song_pick_many), !state.capturing && state.songIsFolder, actions.chooseFolder)
-        Choice(stringResource(R.string.song_pick_capture), state.capturing, actions.captureAudio)
-    }
+    Segmented(
+        listOf(
+            Segment(
+                stringResource(R.string.song_pick_one),
+                !state.capturing && !state.songIsFolder && state.songName != null,
+                actions.chooseSong
+            ),
+            Segment(
+                stringResource(R.string.song_pick_many),
+                !state.capturing && state.songIsFolder,
+                actions.chooseFolder
+            ),
+            Segment(stringResource(R.string.song_pick_capture), state.capturing, actions.captureAudio)
+        ),
+        modifier = Modifier.padding(top = 4.dp)
+    )
 }
 
 /** What is playing, and where in the room's queue it is. */
@@ -178,24 +187,6 @@ private fun VolumeLines(state: HomeState, actions: HomeActions) {
         Column(modifier = Modifier.padding(top = 8.dp)) {
             Ghost(stringResource(R.string.room_volume_restore), actions.restoreVolume)
         }
-    }
-}
-
-/** One of a row of choices. Filled when it is the one in force. */
-@Composable
-internal fun Choice(text: String, chosen: Boolean, onClick: () -> Unit) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.clickable(onClick = onClick),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-        color = if (chosen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = if (chosen) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.secondary
-        )
     }
 }
 
