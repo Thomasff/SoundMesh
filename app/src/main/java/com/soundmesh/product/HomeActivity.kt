@@ -63,12 +63,14 @@ import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.handsetName
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
+import com.soundmesh.probe.sync.StoredOutputLead
 import java.io.File
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
 import com.soundmesh.core.SpatialField
+import com.soundmesh.session.CAPTURING_HOST_USAGE
 import com.soundmesh.session.HostSession
 import com.soundmesh.session.SessionService
 import com.soundmesh.session.SyncSession
@@ -761,7 +763,12 @@ class HomeActivity : ComponentActivity() {
             pairingPayload = HostPairingCode.of(HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT),
             songName = chosen?.name,
             songUri = chosen?.uri,
-            songIsFolder = chosen?.kind == ChosenKind.FOLDER
+            songIsFolder = chosen?.kind == ChosenKind.FOLDER,
+            // Re-read for the same reason: CalibrateActivity is where this is measured, and
+            // coming back from it is where the answer changes. Stored in microseconds - see
+            // StoredOutputLead - and this field is milliseconds, the unit selfLead's line prints.
+            selfCalibrated = StoredOutputLead(filesDir, CAPTURING_HOST_USAGE).read()
+                ?.takeIf { it != 0L }?.let { it / 1000.0 }
         )
     }
 
