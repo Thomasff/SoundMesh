@@ -248,6 +248,9 @@ class HomeActivity : ComponentActivity() {
             // Charge and heat move on the scale of minutes, so they are read every few seconds
             // rather than five times a second alongside the counters.
             if (ticks++ % HEALTH_EVERY_TICKS == 0) {
+                // Whether this phone is on WiFi, whether it is serving a hotspot, and the code
+                // that depends on both - see readNetwork for why this cannot wait for a resume.
+                readNetwork()
                 state = state.copy(
                     health = DeviceHealth.read(this@HomeActivity),
                     // The volume keys are what move this, so the level changes under the screen
@@ -1032,7 +1035,7 @@ class HomeActivity : ComponentActivity() {
         readPairing()
         rereadDistances()
         readTheDrawing()
-        readWifiName()
+        readNetwork()
         takeUpTheRoom()
         // Where a return from the system's own Settings page - the SETTINGS route above, or the
         // background-battery ask - is noticed: neither has a callback of its own on this side.
@@ -1043,8 +1046,10 @@ class HomeActivity : ComponentActivity() {
     /**
      * Whether this handset is on WiFi at all, and its SSID when that name can actually be read.
      *
-     * Re-read on every resume rather than kept, for the same reason the pairing address is: this
-     * screen can come back from a system WiFi picker with a different network than it left with.
+     * Re-read on the slow tick as well as on every resume, and the tick is the half that matters:
+     * the way somebody turns a hotspot on is by pulling the shade down over this screen, which is
+     * not a resume at all. Until 2026-09-15 this screen would sit there saying the hotspot was off
+     * while the phone was serving one, and only a trip to another screen and back would fix it.
      *
      * The question this answers is "is this phone on WiFi", not "what is this phone's SSID" - the
      * two used to be the same read, `WifiManager.connectionInfo.ssid`, and that one has not been
@@ -1054,7 +1059,7 @@ class HomeActivity : ComponentActivity() {
      * The SSID is still attempted on top of that, and shown only when [readableSsid] says it is
      * worth showing.
      */
-    private fun readWifiName() {
+    private fun readNetwork() {
         val onWifi = runCatching {
             val connectivity = getSystemService(ConnectivityManager::class.java)
             connectivity.getNetworkCapabilities(connectivity.activeNetwork)
@@ -1062,7 +1067,20 @@ class HomeActivity : ComponentActivity() {
         }.getOrDefault(false)
         val ssid = if (!onWifi) null else
             runCatching { getSystemService(WifiManager::class.java).connectionInfo.ssid }.getOrNull()
-        state = state.copy(onWifi = onWifi, wifiName = readableSsid(ssid))
+        state = state.copy(
+            onWifi = onWifi,
+            wifiName = readableSsid(ssid),
+            // The code is part of the same answer: which address a peer would have to reach is
+            // the network question said a second way, and the two going out of step is how a
+            // handset ends up scanning a code for a network nobody is on any more.
+            codeChoices = HostPairingCode.choices(this).map { it.by }.distinct(),
+            pairingOffer = HostPairingCode.offer(
+                this,
+                HostIdentity(filesDir).current(),
+                SyncActivity.CHUNK_PORT,
+                codeNetwork()
+            )
+        )
     }
 
     /**
