@@ -124,6 +124,14 @@ class CalibrationPlanServer(private val port: Int) {
         // that has not arrived is usually one that is not on its home screen, and nobody can
         // know that from a line that says only that we are waiting.
         onJoined: (Int) -> Unit = {},
+        // Whether the room is complete, asked once each handset arrives. Gathering used to end
+        // only on silence, which cost every round a full settle window after the last handset was
+        // already in - and that window was sized for somebody walking to the next phone and
+        // pressing a button, back when that is how a round was started. A host that tells the
+        // room over the standing line knows how many it told, so it can say when they are all
+        // here. False every time falls back to the silence, which is what a caller that cannot
+        // count its room should do.
+        enough: (Int) -> Boolean = { false },
         planFor: (List<CalibrationRequest>) -> CalibrationPlan
     ): CalibrationPlan? {
         require(roomWindowMillis < CalibrationPlanClient.REPLY_TIMEOUT_MILLIS) {
@@ -177,6 +185,9 @@ class CalibrationPlanServer(private val port: Int) {
                 if (closesAt == Long.MAX_VALUE) closesAt = System.nanoTime() + roomWindowMillis * 1_000_000L
                 waiting += socket to request
                 runCatching { onJoined(waiting.size) }
+                // Before the window check rather than after: a complete room has nothing left to
+                // wait for, and the two conditions end the same loop.
+                if (runCatching { enough(waiting.size) }.getOrDefault(false)) break
                 if (System.nanoTime() >= closesAt) break
             }
             // Minted once, here, and written to everybody: a room whose handsets hold schedules

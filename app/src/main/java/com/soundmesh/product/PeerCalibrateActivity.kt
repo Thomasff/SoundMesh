@@ -65,6 +65,7 @@ import com.soundmesh.probe.sync.StoredCalibration
 import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
 import com.soundmesh.probe.sync.EventLog
+import java.util.Collections
 import java.util.Locale
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
@@ -1484,9 +1485,14 @@ class PeerCalibrateActivity : ComponentActivity() {
             // joined overwrote it 1.9 seconds later, so it was on screen for under two seconds
             // and the person it was for never saw it. There is one message and every later write
             // wins; these lines are one per handset and stay.
+            // Kept as names rather than a count, so a handset that excuses twice is still one
+            // handset. The room is complete when everybody told has either asked or said why not,
+            // and a count would let one noisy refusal close the room on somebody still arriving.
+            val excused = Collections.synchronizedSet(HashSet<String>())
             RoomCommands.listenForExcuses { peerId, excuse ->
                 events.write("room-excuse $peerId ${excuse.name}")
                 record(peerId, reasonFor(excuse))
+                excused += peerId
             }
             // Handsets told to leave their home screens a moment ago are on their way back to
             // them, and a room told while they are in the air reaches nobody at all. Reported on
@@ -1519,6 +1525,12 @@ class PeerCalibrateActivity : ComponentActivity() {
                 onJoined = { joined ->
                     events.write("room-joined $joined of $told told")
                     show(getString(R.string.pair_calibrate_room_joined, joined, told))
+                },
+                // Everybody told has either asked or said why not, so there is nobody left to
+                // wait for. Guarded on having told anybody at all: a round nobody was told about
+                // would otherwise be complete the moment one stranger asked.
+                enough = { joined ->
+                    told > 0 && joined >= told - excused.size
                 }
             ) { asks ->
                 // Every ask has to be this arm's. A handset running the pair flow would be
@@ -2180,11 +2192,18 @@ class PeerCalibrateActivity : ComponentActivity() {
          * How long the room waits between one handset asking and the next, before deciding
          * nobody else is coming.
          *
-         * The gap between two people pressing two buttons, not anything about the link. Short
-         * enough that a room of two is not held open pointlessly, long enough that somebody
-         * reaching across a table for the third phone is not left out.
+         * The fallback, and only that, since 2026-09-15: the host tells the room over the
+         * standing line and knows how many it told, so a complete room stops waiting the moment
+         * the last handset is in. What is left for this to cover is a handset that was told and
+         * never arrived and never said why - its app killed, its process gone - and three seconds
+         * is what that costs now.
+         *
+         * Eight until then, and eight was the right number for what it used to be: the gap
+         * between two people pressing two buttons, back when a round was started by walking to
+         * each phone. Nobody walks any more, so every round paid eight seconds of silence after
+         * the last handset had already asked.
          */
-        const val ROOM_SETTLE_MILLIS = 8_000
+        const val ROOM_SETTLE_MILLIS = 3_000
 
         /**
          * The whole gathering, from the first ask.

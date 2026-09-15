@@ -76,6 +76,87 @@ class CalibrationRoomChannelTest {
         }
     }
 
+    /**
+     * A room that is already complete stops waiting, rather than sitting out the settle window.
+     *
+     * The window is a silence: it ends when nobody has asked for a while. That was the only way to
+     * know gathering was over back when a round was started by walking to each phone in turn, and
+     * it cost every round one full window after the last handset was already in. A host that told
+     * the room over the standing line knows how many it told, so it can say so.
+     *
+     * Measured against the window rather than against a stopwatch of its own: asserting "under
+     * 500 ms" would be a claim about this machine, where what is being tested is that the four
+     * seconds below are not spent.
+     */
+    @Test
+    fun aRoomThatIsAllHereDoesNotWaitOutTheSettleWindow() {
+        val port = freePort()
+        val server = CalibrationPlanServer(port)
+        server.start()
+        val names = listOf(one, two, three)
+        val settleMillis = 4_000
+        try {
+            var plan: CalibrationPlan? = null
+            val gathered = Thread {
+                plan = server.awaitRoom(
+                    8_000,
+                    settleMillis,
+                    20_000,
+                    enough = { joined -> joined >= names.size },
+                    planFor = ::planNaming
+                )
+            }
+            gathered.start()
+
+            val startedAt = System.nanoTime()
+            val plans = askAll(port, names)
+            gathered.join(20_000)
+            val took = (System.nanoTime() - startedAt) / 1_000_000L
+
+            assertTrue("every handset was answered", plans.all { it != null })
+            assertEquals(names.toSet() + "ffffffffffffffff", plan!!.slotIds.toSet())
+            assertTrue("the room sat out its settle window with everybody already in", took < settleMillis)
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * And a room that cannot count itself still ends on silence.
+     *
+     * The exit above is an optimisation on top of the window, never a replacement for it: a
+     * handset that was told and never arrived - its app killed, its process gone - says nothing
+     * at all, and the only thing that can end a round waiting on it is the silence.
+     */
+    @Test
+    fun aRoomMissingSomebodyStillEndsOnSilence() {
+        val port = freePort()
+        val server = CalibrationPlanServer(port)
+        server.start()
+        try {
+            var plan: CalibrationPlan? = null
+            val gathered = Thread {
+                // Told four, and only two ever arrive.
+                plan = server.awaitRoom(
+                    8_000,
+                    600,
+                    20_000,
+                    enough = { joined -> joined >= 4 },
+                    planFor = ::planNaming
+                )
+            }
+            gathered.start()
+
+            val plans = askAll(port, listOf(one, two))
+            gathered.join(20_000)
+
+            assertTrue("the two that did arrive were left unanswered", plans.all { it != null })
+            assertEquals(setOf(one, two, "ffffffffffffffff"), plan!!.slotIds.toSet())
+        } finally {
+            server.stop()
+        }
+    }
+
     /** One plan, minted once, after the last handset asked rather than after the first. */
     @Test
     fun mintsThePlanOnceAndOnlyAfterEverybodyHasAsked() {
