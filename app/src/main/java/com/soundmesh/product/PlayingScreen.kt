@@ -70,6 +70,7 @@ fun PlayingScreen(
                 actions.room,
                 showDetails = showDetails,
                 blockedPeerNames = state.blockedPeerNames,
+                readings = state.roomReadings,
                 // Null rather than the raw value while nothing is playing: the ripple means "just
                 // started", and there is nothing on screen for it to mean that beside.
                 ripple = ripple.value.takeIf { state.running }

@@ -919,7 +919,16 @@ class HomeActivity : ComponentActivity() {
         // out of, so this is the one moment it can be cleared without guessing.
         if (session == null) steppedBack = false
         val room = readRoom(session)
+        // Worked out here rather than inside readRoom because it is the one reading that changes
+        // when nothing else has: the wander moves on its own, and readRoom deliberately hands the
+        // same RoomState back when the roster has not changed. Host only - the instant is read off
+        // this handset's own clock, which is the host clock on the host and an unknown offset away
+        // from it on a sink, and a strip of confidently wrong numbers is worse than no strip.
+        val readings = if (showDetails && room != null && state.role == Role.HOST) {
+            fieldOf(room)?.let { roomReadings(it, System.nanoTime()) }.orEmpty()
+        } else emptyList()
         state = state.copy(
+            roomReadings = readings,
             running = session != null,
             sessionState = session?.state(),
             playhead = session?.playhead(),

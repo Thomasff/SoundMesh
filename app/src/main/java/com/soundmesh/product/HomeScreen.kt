@@ -183,6 +183,14 @@ data class HomeState(
      */
     val blockedPeerNames: List<String> = emptyList(),
     /**
+     * What the rule is asking of each handset right now - see [roomReadings].
+     *
+     * Empty unless the diagnostic switch is on, and empty on a sink whatever the switch says.
+     * It is the one thing here that has to be worked out afresh on every pass of the poll, so a
+     * screen that is not showing it does not pay for it.
+     */
+    val roomReadings: List<RoomReading> = emptyList(),
+    /**
      * How many seconds the capture has been handing over exactly zero, or null when it is not.
      *
      * On screen because the failure it names is invisible from every other direction: the session

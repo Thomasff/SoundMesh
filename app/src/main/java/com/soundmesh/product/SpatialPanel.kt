@@ -79,6 +79,8 @@ fun SpatialPanel(
     showDetails: Boolean = false,
     /** Names standing handsets have reported as not exempt from power saving. See [StandbyLook]. */
     blockedPeerNames: List<String> = emptyList(),
+    /** What the rule is asking of each handset at this instant. See [RuleReadings]. */
+    readings: List<RoomReading> = emptyList(),
     /** The just-pressed-play ripple's progress, 0f..1f, or null while nothing is animating. */
     ripple: Float? = null
 ) {
@@ -86,7 +88,7 @@ fun SpatialPanel(
         Note(stringResource(R.string.room_hint))
         MeasuredRoom(state, actions.onTheMap(), blockedPeerNames, ripple)
         ArrivalDelays(state, actions, showDetails)
-        EffectSection(state, actions)
+        EffectSection(state, actions, readings)
     }
 }
 
@@ -950,6 +952,29 @@ private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
     }
 }
 
+/**
+ * The app's own answer to "where is the sound", next to the knob that moves it.
+ *
+ * Both numbers are bigger where the sound should be, by the room's two different routes: the
+ * loudest handset, and the earliest one. Which of the two is moving says which cue the rule is
+ * currently steering with - wind the travel knob up and the loudness numbers stop moving while
+ * the leads start to, which is that knob's whole content stated as two columns of digits.
+ *
+ * Diagnostic, and shown only with the switch on. It is here because a listener cannot check an
+ * effect they can only just hear against a claim nobody has written down - see [roomReadings].
+ */
+@Composable
+private fun RuleReadings(readings: List<RoomReading>, colours: Map<String, Int>) {
+    if (readings.isEmpty()) return
+    Label(R.string.room_live)
+    Readings(
+        readings.map {
+            listOf(it.peerId) to stringResource(R.string.room_live_row, it.loudness, it.leadMillis)
+        },
+        colours
+    )
+}
+
 /** Where the speed slider sits when nobody has moved it: eight seconds a turn. */
 const val DEFAULT_SHIMMER_SPEED = 0.8f
 
@@ -966,7 +991,11 @@ const val DEFAULT_ENVELOPMENT = 0.25f
  * unchanged, because a knob somebody has learnt to use is not a knob to take away.
  */
 @Composable
-private fun EffectSection(state: RoomState, actions: RoomActions) {
+private fun EffectSection(
+    state: RoomState,
+    actions: RoomActions,
+    readings: List<RoomReading> = emptyList()
+) {
     val current = effectOf(state)
     Label(R.string.room_effect_title)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -978,9 +1007,12 @@ private fun EffectSection(state: RoomState, actions: RoomActions) {
     // with nothing lit up and no explanation reads as the list having broken.
     if (current == null) Note(stringResource(R.string.room_effect_custom))
     if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
-    if (state.mode != SpatialMode.SPLIT) TravelSlider(state, actions)
+    if (state.mode != SpatialMode.SPLIT) {
+        TravelSlider(state, actions)
+        RuleReadings(readings, state.colours)
+    }
     if (state.separation > 0f) PartPicker(state, actions)
-    FineTuning(state, actions)
+    FineTuning(state, actions, readings)
 }
 
 /** One named result: what it is called, what it does in a line, and whether it is the one on. */
@@ -1044,7 +1076,11 @@ private fun apply(effect: RoomEffect, actions: RoomActions) {
  * they are for.
  */
 @Composable
-private fun FineTuning(state: RoomState, actions: RoomActions) {
+private fun FineTuning(
+    state: RoomState,
+    actions: RoomActions,
+    readings: List<RoomReading> = emptyList()
+) {
     var open by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(top = 4.dp)) {
         Ghost(stringResource(if (open) R.string.room_fine_hide else R.string.room_fine)) {
@@ -1057,6 +1093,10 @@ private fun FineTuning(state: RoomState, actions: RoomActions) {
     SeparationControl(state, actions)
     DiffusionSlider(state, actions)
     ShimmerSlider(state, actions)
+    // Beside the slider rather than once at the bottom of the screen, and beside the travel
+    // slider too. The reason is that it is read with a finger already on a control: a number
+    // somewhere else on a page that has to be scrolled is a number nobody checks while dragging.
+    RuleReadings(readings, state.colours)
 }
 
 @Composable

@@ -340,6 +340,8 @@
     <string name="room_travel">用早晚代替响度定位</string>
     <string name="room_travel_off">关着。位置全靠响度，声音多半会粘在离你最近的那台上。</string>
     <string name="room_travel_hint">越往右，各台响度越接近、早晚差越大。拉到底时每台一样响，位置只由谁先响决定——如果这时还听不出位置在动，就说明这条路对我们没用。再往右会开始听成回声。</string>
+    <string name="room_live">实时读数：哪台的数字大，声音就该在哪台那边</string>
+    <string name="room_live_row">响 %1$d · 早 %2$.1f</string>
     <string name="room_shimmer">各机轻微游移</string>
     <string name="room_shimmer_off">关着。每台手机一直待在原地。</string>
     <string name="room_shimmer_speed">游移快慢</string>
