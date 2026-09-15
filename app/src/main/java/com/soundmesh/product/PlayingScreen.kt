@@ -34,7 +34,7 @@ enum class PlayTab { ROOM, VOLUME, PLAY }
  * Stage three: the room is playing, and everything on this screen is something to do about it
  * right now.
  *
- * Replaces the flat [HostPanel]/[SinkPanel] page for this stage, the same way [ReadyScreen]
+ * Replaces the flat host/sink page for this stage, the same way [ReadyScreen]
  * already replaced it for [HomeRoute.READY]. That flat page ran four to six screens deep - the
  * pairing code sat past everything else, and every one of a room's handsets spent a whole slider's
  * worth of height on its own volume row - so this stage is cut into three tabs behind a bottom bar
@@ -143,7 +143,7 @@ fun PlayingScreen(
 }
 
 /**
- * Whether this handset can be started, mirrored from what [HostPanel]/[SinkPanel] used to compute
+ * Whether this handset can be started, mirrored from what the flat host/sink page used to compute
  * inline for the same button.
  */
 private fun canPlay(state: HomeState): Boolean = when (state.role) {

@@ -20,18 +20,6 @@ class HomeScreenTest {
             ?: throw AssertionError("no such string: $name")
 
     /**
-     * The pair calibration cannot start without a role - it is the one thing the screen it opens
-     * cannot work out for itself - so offering it before one is picked leads somewhere that can
-     * only say "go back and pick one". Gated here rather than explained there.
-     */
-    @Test
-    fun thePairCalibrationIsOfferedOnlyOnceARoleIsPicked() {
-        assertFalse(offersPairCalibration(HomeState(role = Role.NONE)))
-        assertTrue(offersPairCalibration(HomeState(role = Role.HOST)))
-        assertTrue(offersPairCalibration(HomeState(role = Role.SINK)))
-    }
-
-    /**
      * Whether to say out loud that this handset will be killed the moment it stops being looked at.
      *
      * Worth a rule of its own rather than an `if` on a screen, because the evening of 2026-09-14

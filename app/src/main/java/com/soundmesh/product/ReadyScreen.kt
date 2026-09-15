@@ -21,8 +21,8 @@ import com.soundmesh.probe.R
 
 /**
  * Stage two: what stands between this handset and a room that plays, one line per thing that is
- * wrong and one place to go about it - see [readyList]. Replaces the flat [HostPanel]/[SinkPanel]
- * page for this stage; those two still draw the playing stage.
+ * wrong and one place to go about it - see [readyList]. Replaces the flat host/sink page for this
+ * stage; that page still draws the playing stage.
  *
  * The button called "和配对的另一台手机对时" used to be the only door onto three unrelated jobs -
  * see [PeerJob] - so the "量一量" section below gives each of them its own line instead of one

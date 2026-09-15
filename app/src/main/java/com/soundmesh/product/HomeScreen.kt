@@ -1,6 +1,5 @@
 package com.soundmesh.product
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -37,7 +35,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -49,7 +46,6 @@ import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.indexFor
 import com.soundmesh.probe.sync.Playhead
-import com.soundmesh.probe.sync.PairingCodeImage
 
 /** Which half of the pair this handset is being right now. Not kept across launches - see below. */
 enum class Role { NONE, HOST, SINK }
@@ -310,16 +306,6 @@ class HomeActions(
     val goto: (ReadyGoto, PeerJob?) -> Unit,
     val room: RoomActions
 )
-
-/**
- * Whether the pair calibration is worth offering yet.
- *
- * It runs one half on each handset, and which half this one plays is the single thing that screen
- * cannot work out for itself - both phones of a pair hold a scanned pairing, so the file says
- * nothing. Offered with no role picked, the button leads somewhere whose only message is "go back
- * and pick one".
- */
-internal fun offersPairCalibration(state: HomeState): Boolean = state.role != Role.NONE
 
 /**
  * Whether to say that this handset will be stopped the moment nobody is looking at it.
@@ -650,8 +636,9 @@ internal fun RolePicker(actions: HomeActions) {
 /**
  * The host's choice of what to play, shared between the ready checklist and the playing screen.
  *
- * Pulled out of [HostPanel] rather than left inline, so the checklist stage does not carry a
- * second copy of the same three buttons - it draws exactly what the playing stage already has.
+ * Pulled out of the flat host panel this replaces rather than left inline, so the checklist stage
+ * does not carry a second copy of the same three buttons - it draws exactly what the playing stage
+ * already has.
  */
 @Composable
 internal fun SongSection(state: HomeState, actions: HomeActions) {
@@ -697,46 +684,6 @@ internal fun SongSection(state: HomeState, actions: HomeActions) {
             }
         }
     }
-}
-
-@Composable
-private fun HostPanel(state: HomeState, actions: HomeActions) {
-    SongSection(state, actions)
-    state.hostOutputVolume?.let { HostOutputVolumePanel(it) }
-    RoomVolumePanel(state, actions)
-    Section(R.string.pair_code) {
-        if (state.pairingPayload == null) {
-            Text(stringResource(R.string.pair_no_address))
-        } else {
-            // Remembered against the payload rather than the recomposition: the screen redraws five
-            // times a second and encoding a QR code that often would be the most expensive thing on
-            // it, for a picture that changes only when the address does.
-            val code = remember(state.pairingPayload) {
-                PairingCodeImage.bitmap(state.pairingPayload, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
-            }
-            Image(code, contentDescription = null, modifier = Modifier.size(240.dp))
-            Text(state.pairingPayload, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-    CaptureSilenceLine(state)
-    StandbyLine(state, actions)
-    PlayControls(state, actions, canPlay = state.capturing || state.songName != null)
-}
-
-@Composable
-private fun SinkPanel(state: HomeState, actions: HomeActions) {
-    Section(R.string.pair_title) {
-        Text(
-            state.paired?.let {
-                stringResource(R.string.pair_with, it.hostId, it.address, it.chunkPort)
-            } ?: stringResource(R.string.pair_none),
-            style = MaterialTheme.typography.bodyLarge
-        )
-        OutlinedButton(onClick = actions.scan) { Text(stringResource(R.string.pair_scan)) }
-        Text(stringResource(R.string.pair_scan_hint), style = MaterialTheme.typography.bodySmall)
-    }
-    StandbyLine(state, actions)
-    PlayControls(state, actions, canPlay = state.paired != null)
 }
 
 /**
