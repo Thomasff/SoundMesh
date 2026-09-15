@@ -837,13 +837,17 @@ internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boole
         // is not a queue at all. Drawn quiet rather than hidden, so the row does not change shape
         // under a finger that is reaching for the middle of it.
         val stepping = state.songIsFolder && !state.capturing
-        Transport("⏮", enabled = stepping) { actions.stepSong(-1) }
+        Transport(TransportIcon.PREVIOUS, enabled = stepping) { actions.stepSong(-1) }
         // Pause and resume in all three modes, capture included: a capture that is paused stops
         // handing chunks over, which is the room going quiet, which is what the button says.
-        Transport(if (state.paused) "▶" else "⏸", enabled = state.running, big = true) {
+        Transport(
+            if (state.paused) TransportIcon.PLAY else TransportIcon.PAUSE,
+            enabled = state.running,
+            filled = true
+        ) {
             if (state.running) actions.setPaused(!state.paused) else actions.play()
         }
-        Transport("⏭", enabled = stepping) { actions.stepSong(1) }
+        Transport(TransportIcon.NEXT, enabled = stepping) { actions.stepSong(1) }
         Spacer(Modifier.weight(1f))
     }
     Row(
@@ -862,20 +866,6 @@ internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boole
             }
         }
     }
-}
-
-/** One transport glyph. Greyed rather than gone - see [PlayControls]. */
-@Composable
-private fun Transport(glyph: String, enabled: Boolean, big: Boolean = false, onClick: () -> Unit) {
-    Text(
-        glyph,
-        modifier = Modifier
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(6.dp),
-        fontSize = if (big) 34.sp else 24.sp,
-        color = if (enabled) MaterialTheme.colorScheme.onSurface
-        else MaterialTheme.colorScheme.surfaceVariant
-    )
 }
 
 /**
