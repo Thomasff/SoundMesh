@@ -21,7 +21,9 @@ class RoomEffectsTest {
         separation = effect.settings.separation,
         splitAxis = effect.settings.axis,
         envelopment = effect.settings.envelopment,
-        diffusion = effect.settings.diffusion
+        diffusion = effect.settings.diffusion,
+        travel = effect.settings.travel,
+        shimmer = effect.settings.shimmer
     )
 
     @Test

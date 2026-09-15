@@ -48,6 +48,26 @@ class SpatialFieldCodecTest {
         assertEquals(0.0, SpatialFieldCodec.decode(SpatialFieldCodec.encode(field)).diffusion, 0.0)
     }
 
+    /**
+     * And so do the two times, which are the settings whose whole purpose is that the handsets
+     * disagree in a way they agreed on. A receiver dropping either plays on at no delay, which
+     * looks from the outside exactly like a handset that is simply not very enveloping.
+     */
+    @Test
+    fun theTwoDelaysSurviveTheWire() {
+        val moving = field.copy(
+            travelDelayNanos = 9_000_000L,
+            shimmerDelayNanos = 4_000_000L,
+            shimmerPeriodNanos = 7_000_000_000L
+        )
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(moving))
+        assertEquals(9_000_000L, back.travelDelayNanos)
+        assertEquals(4_000_000L, back.shimmerDelayNanos)
+        assertEquals(7_000_000_000L, back.shimmerPeriodNanos)
+        assertEquals(0L, SpatialFieldCodec.decode(SpatialFieldCodec.encode(field)).travelDelayNanos)
+        assertEquals(0L, SpatialFieldCodec.decode(SpatialFieldCodec.encode(field)).shimmerDelayNanos)
+    }
+
     /** Windows line endings reach this from a file as readily as from a socket. */
     @Test
     fun carriageReturnsDoNotChangeWhatWasSent() {

@@ -540,6 +540,8 @@ class HomeActivity : ComponentActivity() {
             setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
             setEnvelopment = { keep -> updateRoom { it.copy(envelopment = keep) } },
             setDiffusion = { apart -> updateRoom { it.copy(diffusion = apart) } },
+            setTravel = { far -> updateRoom { it.copy(travel = far) } },
+            setShimmer = { wander -> updateRoom { it.copy(shimmer = wander) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
@@ -604,12 +606,22 @@ class HomeActivity : ComponentActivity() {
             envelopment = room.envelopment.toDouble()
                 .coerceIn(0.0, SpatialField.MAX_ENVELOPMENT),
             diffusion = room.diffusion.toDouble().coerceIn(0.0, 1.0),
+            // Fractions on the screen, times on the wire. The screen has no business knowing how
+            // many milliseconds the rule allows, and the rule has no business carrying a number
+            // whose meaning is "how far along a slider": a delay is a delay everywhere else in
+            // this project, and a handset reading one out of a log should see one.
+            travelDelayNanos = nanosOf(room.travel, SpatialField.MAX_TRAVEL_DELAY_NANOS),
+            shimmerDelayNanos = nanosOf(room.shimmer, SpatialField.MAX_SHIMMER_DELAY_NANOS),
             // Zeroed rather than carried with a flag beside it: no scale is exactly what a room
             // that never measured its listener sends, so the switch off and the feature absent
             // are the same message on the wire and the same code on every handset.
             metresPerUnit = if (room.delayCompensation) room.metresPerUnit else 0.0
         )
     }
+
+    /** A slider's 0..1 as a time, clamped at both ends so a stray value cannot refuse a rule. */
+    private fun nanosOf(fraction: Float, longest: Long): Long =
+        (fraction.toDouble().coerceIn(0.0, 1.0) * longest).toLong()
 
     /**
      * Points this screen's volume keys at whichever output the host is being heard on.

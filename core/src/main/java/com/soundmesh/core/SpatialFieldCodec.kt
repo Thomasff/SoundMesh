@@ -35,10 +35,16 @@ object SpatialFieldCodec {
      * would default to no arrival delay and go on playing exactly as it did before the delay
      * existed - which is the one failure this whole feature is about, arriving silently, on the
      * one handset of the room whose owner did not update.
+     *
+     * Eight since a rule carries how far each handset's own output wanders and how far the far
+     * side of the room is held back. Both are times, and a receiver that dropped either would play
+     * on at no delay - which for the wander is the whole feature missing on one handset while the
+     * rest of the room does it, and that is not a room sounding slightly different. It is the two
+     * settings whose entire purpose is that the handsets disagree in a way they agreed on.
      */
-    const val VERSION = 7
+    const val VERSION = 8
 
-    private const val HEADER_FIELDS = 14
+    private const val HEADER_FIELDS = 17
     private const val POSITION_FIELDS = 4
 
     // Written out rather than taken from an enum because there is no enum: which part a handset
@@ -69,7 +75,9 @@ object SpatialFieldCodec {
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
                 "${field.epochHostNanos} ${field.separation} ${field.splitAxis.name} " +
                 "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.metresPerUnit} " +
-                "${field.envelopment} ${field.diffusion} ${field.layout.positions.size}"
+                "${field.envelopment} ${field.diffusion} ${field.travelDelayNanos} " +
+                "${field.shimmerDelayNanos} ${field.shimmerPeriodNanos} " +
+                "${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
             require(position.peerId.isNotEmpty() && position.peerId.none { it.isWhitespace() }) {
@@ -115,7 +123,13 @@ object SpatialFieldCodec {
             ?: throw IllegalArgumentException("unreadable envelopment: ${header[11]}")
         val diffusion = header[12].toDoubleOrNull()
             ?: throw IllegalArgumentException("unreadable diffusion: ${header[12]}")
-        val count = header[13].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[13]}")
+        val travelDelayNanos = header[13].toLongOrNull()
+            ?: throw IllegalArgumentException("unreadable travel delay: ${header[13]}")
+        val shimmerDelayNanos = header[14].toLongOrNull()
+            ?: throw IllegalArgumentException("unreadable wander depth: ${header[14]}")
+        val shimmerPeriodNanos = header[15].toLongOrNull()
+            ?: throw IllegalArgumentException("unreadable wander period: ${header[15]}")
+        val count = header[16].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[16]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -157,7 +171,10 @@ object SpatialFieldCodec {
             effectiveAtHostNanos = effectiveAtHostNanos,
             metresPerUnit = metresPerUnit,
             envelopment = envelopment,
-            diffusion = diffusion
+            diffusion = diffusion,
+            travelDelayNanos = travelDelayNanos,
+            shimmerDelayNanos = shimmerDelayNanos,
+            shimmerPeriodNanos = shimmerPeriodNanos
         )
     }
 }

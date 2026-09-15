@@ -77,6 +77,15 @@ object SpatialShaper {
      * interpolated towards; what a chunk edge carries when this moves is a phase pattern changing,
      * which a ramp between two of them would not smooth but smear. It moves when a finger moves a
      * slider, once.
+     *
+     * [travel] is the third, and the one that is refused on a different test from the other two.
+     * A crossover and a decorrelator are needed exactly when the knob that drives them is up; this
+     * one is needed whenever the **rule** moves in time, which is not the same as whenever the
+     * delay it asks for is non-zero - see [SpatialField.movesInTime]. It is also the one that is
+     * fed even when it is doing nothing: a delay line holds the last few milliseconds of the song,
+     * so one that stops being stepped while a knob is at zero is holding whatever was playing when
+     * the knob got there, and would play that back on the way up. Stepping it at a delay of zero
+     * hands every frame straight through and costs one array write.
      */
     fun shape(
         pcm: ByteArray,
@@ -88,7 +97,8 @@ object SpatialShaper {
         fromFold: Double? = null,
         fromSpectrum: SpectrumMix? = null,
         crossover: Crossover? = null,
-        diffuse: Decorrelator? = null
+        diffuse: Decorrelator? = null,
+        travel: TravellingDelay? = null
     ): ByteArray {
         require(sampleRate > 0) { "frames need a rate to become instants: $sampleRate" }
         require(pcm.size % BYTES_PER_FRAME == 0) {
@@ -122,6 +132,16 @@ object SpatialShaper {
             requireNotNull(diffuse) { "a rule that pulls the handsets apart needs this one's own filter" }
         } else null
         val headroom = Decorrelator.headroomFor(stages)
+        require(travel != null || !field.movesInTime) {
+            "a rule whose delay moves needs somewhere to hold the frames it is moving"
+        }
+        // Ramped across the chunk exactly as the gain is, and for the same reason plus one. The
+        // reason it shares: the law is a function of the instant, and evaluating it twice instead
+        // of per frame costs a straight line through an arc of about a degree. The one of its own:
+        // a step in a delay is a step in the waveform, which the ear hears as a click rather than
+        // as an error - so this is the one ramp here that is not an economy but a requirement.
+        val beginDelay = delaySamplesAt(travel, field, peerId, startHostNanos, sampleRate)
+        val endDelay = delaySamplesAt(travel, field, peerId, startHostNanos + spanNanos, sampleRate)
 
         val out = ByteArray(pcm.size)
         for (frame in 0 until frames) {
@@ -153,11 +173,34 @@ object SpatialShaper {
             // law, which already reaches past unity on its own.
             val heardLeft = if (diffuser == null) mixLeft else diffuser.left(mixLeft, stages) * headroom
             val heardRight = if (diffuser == null) mixRight else diffuser.right(mixRight, stages) * headroom
-            writeSample(out, at, heardLeft * left)
-            writeSample(out, at + BYTES_PER_SAMPLE, heardRight * right)
+            val placedLeft = heardLeft * left
+            val placedRight = heardRight * right
+            // Last of all, on what this handset has finished making. Anywhere earlier would delay
+            // the gain envelope along with the audio, which for a source going round the room
+            // means the placement and the arrival time disagree about where it is by however far
+            // this handset is held back.
+            if (travel == null) {
+                writeSample(out, at, placedLeft)
+                writeSample(out, at + BYTES_PER_SAMPLE, placedRight)
+            } else {
+                travel.step(placedLeft, placedRight, beginDelay + (endDelay - beginDelay) * across)
+                writeSample(out, at, travel.left)
+                writeSample(out, at + BYTES_PER_SAMPLE, travel.right)
+            }
         }
         return out
     }
+
+    /** Nothing at all when nothing is holding frames, so the rule is not even asked. */
+    private fun delaySamplesAt(
+        travel: TravellingDelay?,
+        field: SpatialField,
+        peerId: String,
+        hostNanos: Long,
+        sampleRate: Int
+    ): Double =
+        if (travel == null) 0.0
+        else TravellingDelay.samplesFor(field.playbackDelayNanosFor(peerId, hostNanos), sampleRate)
 
     /** One little-endian 16-bit sample, sign extended. */
     private fun sampleAt(pcm: ByteArray, at: Int): Int =

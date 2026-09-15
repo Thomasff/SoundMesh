@@ -452,4 +452,40 @@ class SpatialShaperTest {
         assertTrue("a ringing filter is not a cold one: ${leftChannel(after).first()}",
             leftChannel(after).first() > 5_000)
     }
+
+    /**
+     * A rule whose delay moves, handed to a shaper with nowhere to hold the frames, is refused.
+     *
+     * Refused rather than ignored, on the same terms as a missing crossover and for a sharper
+     * reason: a handset silently rendering no wander while the rest of the room renders one is the
+     * room disagreeing about what it is playing, which is the one failure this project's whole
+     * clock stack exists to prevent, arriving through the one path that never touches a clock.
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun aRuleThatMovesInTimeNeedsSomewhereToHoldFrames() {
+        val room = SpatialField(
+            SpatialMode.SPLIT, facingPair(), shimmerDelayNanos = 4_000_000L
+        )
+        SpatialShaper.shape(noise(), room, "left", 0L, sampleRate)
+    }
+
+    /**
+     * And a line that is present while both knobs are down changes not one sample.
+     *
+     * The case every session lands in the moment somebody turns either feature off again - the
+     * line is kept and fed rather than dropped, so "off" has to be the identity through it rather
+     * than merely close to it. Asserted on the bytes, because a delay line that was very slightly
+     * lossy would pass every listening test and quietly colour every room that had ever tried the
+     * feature once.
+     */
+    @Test
+    fun aDelayLineAtRestPassesTheChunkThroughUntouched() {
+        val room = SpatialField(SpatialMode.SPLIT, facingPair())
+        val pcm = noise()
+        val plain = SpatialShaper.shape(pcm, room, "left", 0L, sampleRate)
+        val through = SpatialShaper.shape(
+            pcm, room, "left", 0L, sampleRate, travel = TravellingDelay(sampleRate)
+        )
+        assertArrayEquals(plain, through)
+    }
 }

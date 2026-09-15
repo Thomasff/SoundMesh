@@ -244,6 +244,22 @@ data class RoomState(
      * compared against.
      */
     val diffusion: Float = 0f,
+    /**
+     * How far the far side of the room is held back, as a fraction of what the rule allows.
+     *
+     * Off, and off on purpose rather than by oversight. This is the one control here whose own
+     * project notes argue against it - see [com.soundmesh.core.SpatialField.travelDelayNanos] and
+     * the 09-14 note it points at - so it is offered rather than chosen, and the only way it gets
+     * turned up is somebody deciding to hear what it does.
+     */
+    val travel: Float = 0f,
+    /**
+     * How far each handset's own output wanders, as a fraction of what the rule allows.
+     *
+     * The other half of the same machinery and the half with nothing against it. Off by default
+     * for the same reason [diffusion] is: it changes the sound of a mix somebody already likes.
+     */
+    val shimmer: Float = 0f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -276,6 +292,8 @@ class RoomActions(
     val setSeparation: (Float) -> Unit,
     val setEnvelopment: (Float) -> Unit,
     val setDiffusion: (Float) -> Unit,
+    val setTravel: (Float) -> Unit,
+    val setShimmer: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -864,6 +882,46 @@ private fun DiffusionSlider(state: RoomState, actions: RoomActions) {
 /** The stops between off and all of it, which is one fewer than the filter has sections. */
 private const val DIFFUSION_STOPS = 3
 
+/**
+ * How far the sound really travels, rather than how loudly each handset says it has.
+ *
+ * On the front of the panel next to the pan slider rather than down in the fine tuning, because
+ * for the two modes that move a source it is the thing they are played with - and because it is
+ * the one control here whose effect nobody, including this project's own notes, can predict
+ * without hearing it. Something to be turned up and listened to has to be somewhere it can be
+ * found.
+ *
+ * The line under it says what to listen for on the way up, which is not "more": past a point the
+ * image stops travelling between handsets and starts belonging to one of them and then the next.
+ */
+@Composable
+private fun TravelSlider(state: RoomState, actions: RoomActions) {
+    Column {
+        Text(stringResource(R.string.room_travel), style = MaterialTheme.typography.bodySmall)
+        Slider(value = state.travel, onValueChange = actions.setTravel, valueRange = 0f..1f)
+        Note(
+            stringResource(
+                if (state.travel <= 0f) R.string.room_travel_off else R.string.room_travel_hint
+            )
+        )
+    }
+}
+
+/** Each handset drifting on its own, which is the one thing the decorrelator cannot do. */
+@Composable
+private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
+    Column {
+        Text(stringResource(R.string.room_shimmer), style = MaterialTheme.typography.bodySmall)
+        Slider(value = state.shimmer, onValueChange = actions.setShimmer, valueRange = 0f..1f)
+        Text(
+            stringResource(
+                if (state.shimmer <= 0f) R.string.room_shimmer_off else R.string.room_shimmer_hint
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
 /** What a room ships at, which is where a listener put the slider rather than where zero is. */
 const val DEFAULT_ENVELOPMENT = 0.25f
 
@@ -889,6 +947,7 @@ private fun EffectSection(state: RoomState, actions: RoomActions) {
     // with nothing lit up and no explanation reads as the list having broken.
     if (current == null) Note(stringResource(R.string.room_effect_custom))
     if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
+    if (state.mode != SpatialMode.SPLIT) TravelSlider(state, actions)
     if (state.separation > 0f) PartPicker(state, actions)
     FineTuning(state, actions)
 }
@@ -941,6 +1000,8 @@ private fun apply(effect: RoomEffect, actions: RoomActions) {
     actions.pickAxis(settings.axis)
     actions.setEnvelopment(settings.envelopment)
     actions.setDiffusion(settings.diffusion)
+    actions.setTravel(settings.travel)
+    actions.setShimmer(settings.shimmer)
 }
 
 /**
@@ -963,6 +1024,7 @@ private fun FineTuning(state: RoomState, actions: RoomActions) {
     if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
     SeparationControl(state, actions)
     DiffusionSlider(state, actions)
+    ShimmerSlider(state, actions)
 }
 
 @Composable

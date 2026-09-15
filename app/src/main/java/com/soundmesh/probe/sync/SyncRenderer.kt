@@ -17,6 +17,7 @@ import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
 import com.soundmesh.core.SpectrumMix
 import com.soundmesh.core.StereoGain
+import com.soundmesh.core.TravellingDelay
 import com.soundmesh.core.acquiringTotalNanos
 import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.extrapolatedPlaybackFrames
@@ -106,7 +107,8 @@ internal fun spatialShaped(
     peerId: String?,
     wasUnder: SpatialField? = null,
     crossover: Crossover,
-    diffuse: Decorrelator? = null
+    diffuse: Decorrelator? = null,
+    travel: TravellingDelay? = null
 ): ByteArray {
     if (field == null || peerId == null) return payload
     if (sequence >= SyncRenderer.CHIRP_SEQUENCE_BASE) return payload
@@ -121,7 +123,8 @@ internal fun spatialShaped(
         fromFold = foldCameFrom(wasUnder, field, peerId),
         fromSpectrum = spectrumCameFrom(wasUnder, field, peerId),
         crossover = crossover,
-        diffuse = diffuse
+        diffuse = diffuse,
+        travel = travel
     )
 }
 
@@ -301,6 +304,18 @@ class SyncRenderer(
     // handset's - see Decorrelator. Built on first use rather than eagerly: a room with the knob at
     // zero should not be carrying thirty milliseconds of delay lines it never reads.
     private val diffuser by lazy { spatialPeerId?.let { Decorrelator(it, SAMPLE_RATE) } }
+
+    // Where this handset's own output waits when the rule asks it to arrive later than it was
+    // made - see TravellingDelay. Built on first use like the diffuser and, unlike it, never let
+    // go of again: a delay line is the last few milliseconds of the song, so one that is dropped
+    // and rebuilt when a knob passes through zero plays a gap and then plays a fragment of
+    // whatever was in the old one. Once built it is stepped on every chunk, at a delay of zero
+    // when nothing is asking, which hands every frame straight back.
+    private val travelling by lazy { TravellingDelay(SAMPLE_RATE) }
+
+    // Whether anything has ever asked, so a session that never turns either of them on carries no
+    // delay line at all. Latched rather than read off the current rule for the reason above.
+    @Volatile private var everTravelled = false
 
     @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
@@ -676,7 +691,8 @@ class SyncRenderer(
                             spatialPeerId,
                             wasUnder = shapedUnder,
                             crossover = crossover,
-                            diffuse = diffuser
+                            diffuse = diffuser,
+                            travel = if (everTravelled) travelling else null
                         )
                         shapedUnder = if (payload !== adjusted) rule else null
                         // Against the adjusted array, not against the chunk: applyPendingAdjust returns a
@@ -1021,6 +1037,10 @@ class SyncRenderer(
         arrivalDelayNanos =
             if (field == null || spatialPeerId == null || !field.layout.contains(spatialPeerId)) 0L
             else field.arrivalDelayNanosFor(spatialPeerId)
+        // Latched here rather than when a chunk needs it, because a chunk that needs it and does
+        // not have it is refused by the shaper. Arriving early costs an array write per frame and
+        // no sound at all; arriving late is a rule this handset cannot play.
+        if (field != null && field.movesInTime) everTravelled = true
     }
 
     /** How long this handset is waiting for the furthest one, in nanoseconds. */

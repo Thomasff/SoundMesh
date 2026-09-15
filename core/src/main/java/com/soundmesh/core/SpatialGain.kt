@@ -173,7 +173,49 @@ data class SpatialField(
      * A fraction rather than a count of filter sections, so the ladder underneath can be re-cut
      * without a wire version. Zero means the filter does not run at all.
      */
-    val diffusion: Double = 0.0
+    val diffusion: Double = 0.0,
+    /**
+     * How far the side of the room the source has turned its back on is held back, in nanoseconds.
+     *
+     * Zero, and zero is the setting this project has shipped with since it began. Every rule here
+     * is otherwise an amplitude rule, and the comment at the top of this file says why: a listener
+     * places a sound by the time difference between their own two ears, which spans +-690 us, and
+     * we cannot steer inside that. This is the other time cue - the precedence effect, out in the
+     * room, spanning one to thirty milliseconds - and it is a genuinely available handle that this
+     * system has never used.
+     *
+     * It is off by default because being available is not the same as being good, and the argument
+     * against it is already written down: docs/feasibility-results/delay-as-a-spatial-cue.md,
+     * 09-14. Past about a millisecond the earlier handset takes the image outright however the
+     * levels are set, so winding this up does not move a source between handsets - it hands the
+     * source to one handset and then to the next, which is an amplified version of exactly what a
+     * listener complained about on 09-11 ("听起来是拿着一部手机在转") and which [envelopment] was
+     * added to cure. And two handsets playing the same waveform a few milliseconds apart comb
+     * filter at the listener, which is the thing [arrivalDelayNanosFor] exists to remove.
+     *
+     * So it is here as a knob somebody can turn and listen to, not as a setting anything picks for
+     * them. That is the honest state of it: the reasoning says it will sound worse, the reasoning
+     * has not been tested on a phone, and the experiment costs one slider.
+     */
+    val travelDelayNanos: Long = 0L,
+    /**
+     * How far each handset's own output wanders back and forth, in nanoseconds.
+     *
+     * The other feature [TravellingDelay] was built for, and the one with no argument against it.
+     * It steers nothing: every handset wanders on its own slow cycle, spread so that no two are
+     * ever doing the same thing, and the room has no direction it is trying to say. What it adds
+     * is the one property [diffusion] cannot have - **change**. An allpass gives every handset a
+     * different waveform, which a listener hears once and then stops hearing, because a fixed
+     * difference is what a room is. Something that moves goes on being heard.
+     *
+     * A few milliseconds of independent wander per speaker is what a chorus is, and the reason to
+     * expect it to work here rather than merely to work is that a chorus is normally squeezed
+     * through two speakers in front of somebody, where the parts have nowhere to go but into each
+     * other. Here the parts are already several metres apart.
+     */
+    val shimmerDelayNanos: Long = 0L,
+    /** How long one handset's wander takes at the slowest slot. See [shimmerDelayNanos]. */
+    val shimmerPeriodNanos: Long = DEFAULT_SHIMMER_PERIOD_NANOS
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
@@ -188,6 +230,19 @@ data class SpatialField(
         require(pan in -1.0..1.0) { "pan runs from -1 to +1: $pan" }
         require(diffusion in 0.0..1.0) { "how far apart the waveforms are pushed runs from 0 to 1: $diffusion" }
         require(separation in 0.0..1.0) { "separation runs from 0 to 1: $separation" }
+        require(travelDelayNanos in 0L..MAX_TRAVEL_DELAY_NANOS) {
+            "a handset cannot be held back by a negative time, nor past $MAX_TRAVEL_DELAY_NANOS: $travelDelayNanos"
+        }
+        require(shimmerDelayNanos in 0L..MAX_SHIMMER_DELAY_NANOS) {
+            "the wander runs from 0 to $MAX_SHIMMER_DELAY_NANOS nanoseconds: $shimmerDelayNanos"
+        }
+        // Floored rather than merely positive, and the floor is load bearing: together with
+        // [MAX_SHIMMER_DELAY_NANOS] and [SHIMMER_RATE_SLOTS] it is what keeps the steepest wander
+        // any legal rule can ask for underneath [TravellingDelay.MAX_SLEW_SAMPLES], so the slew
+        // limiter never has to clip this feature's own shape. SpatialDelayTest asserts the sum.
+        require(shimmerPeriodNanos >= SHORTEST_SHIMMER_PERIOD_NANOS) {
+            "a wander faster than $SHORTEST_SHIMMER_PERIOD_NANOS ns is a vibrato: $shimmerPeriodNanos"
+        }
         require(crossoverHz in LOWEST_CROSSOVER_HZ..HIGHEST_CROSSOVER_HZ) {
             "a crossover has to be somewhere a person can hear: $crossoverHz"
         }
@@ -221,6 +276,79 @@ data class SpatialField(
         val behindMetres = (layout.furthestReach - layout.reachOf(peerId)) * metresPerUnit
         val nanos = behindMetres / AlignmentAnalysis.SPEED_OF_SOUND_M_S * 1_000_000_000.0
         return nanos.roundToLong().coerceIn(0L, MAX_ARRIVAL_DELAY_NANOS)
+    }
+
+    /**
+     * Whether this rule asks any handset to hold its audio back by an amount that moves.
+     *
+     * Asked of the rule rather than of a moment, which is the whole point of it: the travel part
+     * is zero at whichever handset the source is facing, so "is the delay zero just now" is true
+     * at some instants and false at others for one unchanged rule. A renderer deciding whether to
+     * carry a delay line on that would build and drop one several times a second.
+     */
+    val movesInTime: Boolean get() = travelDelayNanos > 0L || shimmerDelayNanos > 0L
+
+    /**
+     * How long [peerId] holds this instant's audio back, on top of [arrivalDelayNanosFor].
+     *
+     * The two are separate because they are different kinds of number. That one is a constant for
+     * as long as the room keeps its shape, so the renderer applies it to the clock and never
+     * touches the audio. This one moves while the music plays, which means it has to be applied
+     * inside the audio a frame at a time - see [TravellingDelay], which is the only thing that
+     * reads this.
+     *
+     * A function of the instant, like [gainAt] and unlike [foldFor], so every handset works out
+     * its own without anything being sent and the room stays in step by agreeing about the clock.
+     *
+     * Never negative, in either part. A delay line cannot read a frame that has not happened yet,
+     * so the wander is a raised sine that runs from nothing to its depth rather than a sine about
+     * a centre - which costs half the depth in average latency and buys never having to explain
+     * why one handset is early.
+     */
+    fun playbackDelayNanosFor(peerId: String, hostNanos: Long): Long {
+        require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
+        return travelPartNanos(peerId, hostNanos) + shimmerPartNanos(peerId, hostNanos)
+    }
+
+    /**
+     * The part that says where the source is: nothing at the handset it is facing, all of
+     * [travelDelayNanos] at the one it has turned its back on.
+     *
+     * The same raised cosine [rawGain] places by, turned upside down, so the two agree about where
+     * the source is by construction rather than by two expressions that have to be kept in step.
+     *
+     * Nothing in [SpatialMode.SPLIT]: there is no source to be facing away from, which is the same
+     * reason [envelopment] is not read there.
+     */
+    private fun travelPartNanos(peerId: String, hostNanos: Long): Long {
+        if (travelDelayNanos <= 0L || mode == SpatialMode.SPLIT) return 0L
+        val facing = (1.0 + cos(sourceAzimuthAt(hostNanos) - layout.azimuthOf(peerId))) / 2.0
+        return ((1.0 - facing) * travelDelayNanos).roundToLong()
+    }
+
+    /**
+     * The part that says nothing at all: each handset's own slow wander, spread so that no two of
+     * them are ever at the same place in it.
+     *
+     * Spread by the handset's slot in the drawing rather than by a hash of its name. A hash gives
+     * independent draws, and independent draws collide: two handsets landing on nearly the same
+     * phase would wander together, which is the one outcome that makes this feature do nothing,
+     * and it would happen for some rooms and not others with nothing on screen to say which.
+     * Slots divide the cycle evenly, so N handsets are as far apart as N handsets can be, always.
+     *
+     * The rates differ too, in a few fixed steps, so a room does not settle into a fixed pattern
+     * that has simply been rotated - handsets sharing a rate step still start a full slot apart
+     * and stay there, which is a difference that does not decay. The steps are bounded rather than
+     * growing with the room because the steepest rate is what has to stay under the slew limit,
+     * and a room of twenty handsets must not be the room that quietly exceeds it.
+     */
+    private fun shimmerPartNanos(peerId: String, hostNanos: Long): Long {
+        if (shimmerDelayNanos <= 0L) return 0L
+        val slot = layout.peerIds.indexOf(peerId)
+        val rate = 1.0 + (slot % SHIMMER_RATE_SLOTS) * SHIMMER_RATE_SPREAD
+        val turns = (hostNanos - epochHostNanos).toDouble() / shimmerPeriodNanos
+        val phase = 2.0 * PI * (turns * rate + slot.toDouble() / layout.peerIds.size)
+        return ((1.0 + sin(phase)) / 2.0 * shimmerDelayNanos).roundToLong()
     }
 
     /** Where the source is at [hostNanos], as an azimuth. Meaningless for [SpatialMode.SPLIT]. */
@@ -399,6 +527,44 @@ data class SpatialField(
     companion object {
         /** Slow enough to hear as travel rather than as tremolo, fast enough to notice. */
         const val DEFAULT_PERIOD_NANOS = 6_000_000_000L
+
+        /**
+         * How far [travelDelayNanos] may be wound: fifteen milliseconds.
+         *
+         * Well inside the precedence window, which runs to about thirty, so that even at the top
+         * of the slider a late handset is still heard as part of one sound rather than as a second
+         * one. What happens well before the top is that the image stops moving and starts jumping;
+         * that is the thing to listen for, not a thing to clamp.
+         */
+        const val MAX_TRAVEL_DELAY_NANOS = 15_000_000L
+
+        /**
+         * How far [shimmerDelayNanos] may be wound: six milliseconds.
+         *
+         * Chosen against the slew limit rather than against the ear. A wander of depth D and
+         * period T moves at up to (D/2)(2 pi / T) times the fastest rate slot, and that has to
+         * stay under [TravellingDelay.MAX_SLEW_SAMPLES] or the limiter clips the shape of the
+         * feature itself and two handsets asked for the same wander render different ones. Six
+         * milliseconds against [SHORTEST_SHIMMER_PERIOD_NANOS] leaves most of a factor of two in
+         * hand. SpatialDelayTest is where that sum is written down as an assertion rather than as
+         * this paragraph.
+         *
+         * It is also about the depth a chorus uses, which is the reassuring half of the answer:
+         * the number the arithmetic allows and the number the ear wants are the same number.
+         */
+        const val MAX_SHIMMER_DELAY_NANOS = 6_000_000L
+
+        /** How long one wander takes by default: five seconds, which is a drift rather than a wobble. */
+        const val DEFAULT_SHIMMER_PERIOD_NANOS = 5_000_000_000L
+
+        /** The fastest wander allowed, for the reason in [MAX_SHIMMER_DELAY_NANOS]. */
+        const val SHORTEST_SHIMMER_PERIOD_NANOS = 3_000_000_000L
+
+        /** How much faster each rate step is than the one below it. */
+        const val SHIMMER_RATE_SPREAD = 0.11
+
+        /** How many rate steps there are before they repeat. See [shimmerPartNanos]. */
+        const val SHIMMER_RATE_SLOTS = 4
 
         /**
          * Where the split starts out, chosen for handset speakers rather than for music theory.
