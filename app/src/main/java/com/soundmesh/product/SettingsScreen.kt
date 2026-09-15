@@ -67,7 +67,7 @@ fun SettingsScreen(
             Text(stringResource(R.string.settings_language_system), style = MaterialTheme.typography.bodyMedium)
         }
 
-        Section(R.string.settings_details) {
+        Section(R.string.settings_diagnostics) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

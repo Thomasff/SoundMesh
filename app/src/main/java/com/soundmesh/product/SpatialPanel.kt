@@ -2,8 +2,10 @@ package com.soundmesh.product
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
@@ -17,17 +19,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +44,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -68,6 +75,8 @@ import kotlin.math.hypot
 fun SpatialPanel(
     state: RoomState,
     actions: RoomActions,
+    /** Whether the settings screen's diagnostic switch is on. See [ArrivalDelays]. */
+    showDetails: Boolean = false,
     /** Names standing handsets have reported as not exempt from power saving. See [StandbyLook]. */
     blockedPeerNames: List<String> = emptyList(),
     /** The just-pressed-play ripple's progress, 0f..1f, or null while nothing is animating. */
@@ -76,12 +85,8 @@ fun SpatialPanel(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Note(stringResource(R.string.room_hint))
         MeasuredRoom(state, actions.onTheMap(), blockedPeerNames, ripple)
-        ArrivalDelays(state, actions)
-        ModePicker(state, actions)
-        if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
-        if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
-        SeparationControl(state, actions)
-        DiffusionSlider(state, actions)
+        ArrivalDelays(state, actions, showDetails)
+        EffectSection(state, actions)
     }
 }
 
@@ -402,7 +407,7 @@ internal fun listenerLines(
  * handset always - it is the one everybody else is waiting for.
  */
 @Composable
-private fun ArrivalDelays(state: RoomState, actions: RoomActions) {
+private fun ArrivalDelays(state: RoomState, actions: RoomActions, showDetails: Boolean) {
     val shown = delayLines(state.icons, state.metresPerUnit)
     if (shown.isEmpty()) return
     OutlinedButton(onClick = { actions.setDelayCompensation(!state.delayCompensation) }) {
@@ -412,7 +417,7 @@ private fun ArrivalDelays(state: RoomState, actions: RoomActions) {
             )
         )
     }
-    if (!state.delayCompensation) return
+    if (!state.delayCompensation || !showDetails) return
     Label(R.string.room_arrival_delay)
     Readings(shown.map { (peerId, millis) -> listOf(peerId) to "%.1f".format(millis) }, state.colours)
 }
@@ -862,6 +867,104 @@ private const val DIFFUSION_STOPS = 3
 /** What a room ships at, which is where a listener put the slider rather than where zero is. */
 const val DEFAULT_ENVELOPMENT = 0.25f
 
+/**
+ * What the room can be asked to sound like, and the way to the knobs underneath.
+ *
+ * A list of named results rather than the five knobs that produce them - see [RoomEffect] for
+ * what was wrong with the knobs as the front page. Under the list is exactly one control: the one
+ * the chosen effect is actually played with, which is the pan slider for a source somebody drags
+ * and the part assignment for anything split between handsets. Everything else is behind 细调,
+ * unchanged, because a knob somebody has learnt to use is not a knob to take away.
+ */
+@Composable
+private fun EffectSection(state: RoomState, actions: RoomActions) {
+    val current = effectOf(state)
+    Label(R.string.room_effect_title)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (effect in RoomEffect.entries) {
+            EffectRow(effect, chosen = current == effect) { apply(effect, actions) }
+        }
+    }
+    // Said rather than hidden: somebody who moved a slider is between two of these, and a list
+    // with nothing lit up and no explanation reads as the list having broken.
+    if (current == null) Note(stringResource(R.string.room_effect_custom))
+    if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
+    if (state.separation > 0f) PartPicker(state, actions)
+    FineTuning(state, actions)
+}
+
+/** One named result: what it is called, what it does in a line, and whether it is the one on. */
+@Composable
+private fun EffectRow(effect: RoomEffect, chosen: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = if (chosen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            1.dp,
+            if (chosen) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
+            Text(
+                stringResource(effect.title),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (chosen) MaterialTheme.colorScheme.surface
+                else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                stringResource(effect.line),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (chosen) MaterialTheme.colorScheme.surface.copy(alpha = CHOSEN_LINE_ALPHA)
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** How much quieter the line under a chosen effect's name is than the name. */
+private const val CHOSEN_LINE_ALPHA = 0.78f
+
+/**
+ * Sets a room to one named result.
+ *
+ * Every knob the effect names is sent, including the ones it leaves at zero: an effect chosen
+ * after another one has to undo that one, and a room carrying half of each is the state nobody
+ * asked for and nothing on screen can name.
+ */
+private fun apply(effect: RoomEffect, actions: RoomActions) {
+    val settings = effect.settings
+    actions.pickMode(settings.mode)
+    actions.setSeparation(settings.separation)
+    actions.pickAxis(settings.axis)
+    actions.setEnvelopment(settings.envelopment)
+    actions.setDiffusion(settings.diffusion)
+}
+
+/**
+ * The knobs, folded away.
+ *
+ * Nothing here is new and nothing here has been taken out. What changed is that it is no longer
+ * the first thing on the screen: five controls with a paragraph each, above the list of things
+ * they are for.
+ */
+@Composable
+private fun FineTuning(state: RoomState, actions: RoomActions) {
+    var open by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.padding(top = 4.dp)) {
+        Ghost(stringResource(if (open) R.string.room_fine_hide else R.string.room_fine)) {
+            open = !open
+        }
+    }
+    if (!open) return
+    ModePicker(state, actions)
+    if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
+    SeparationControl(state, actions)
+    DiffusionSlider(state, actions)
+}
+
 @Composable
 private fun ModePicker(state: RoomState, actions: RoomActions) {
     Row(
@@ -933,13 +1036,28 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
         }
         AxisPicker(state, actions)
         if (state.splitAxis == SplitAxis.LOW_HIGH) CrossoverSlider(state, actions)
+    }
+}
+
+/**
+ * Which handset carries which half, for whichever axis the room is split along.
+ *
+ * On the front of the panel rather than down among the knobs, because it is the one control a
+ * split effect is played with: the effect decides that the song comes apart, and this decides
+ * which phone gets which piece of it. Every handset in the room has a row, this one included.
+ */
+@Composable
+private fun PartPicker(state: RoomState, actions: RoomActions) {
+    Label(R.string.room_parts)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (icon in state.icons) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    BadgeChip(icon.peerId, state.colours[icon.peerId])
+                    BadgeChip(icon.peerId, state.colours[icon.peerId], diameter = PART_BADGE)
                     if (icon.peerId == state.selfId) {
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -948,24 +1066,26 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
                         )
                     }
                 }
-                OutlinedButton(onClick = { actions.togglePart(icon.peerId) }) {
-                    Text(stringResource(partLabelOf(state.splitAxis, icon.peerId in state.otherHalfIds)))
+                Chip(stringResource(partLabelOf(state.splitAxis, icon.peerId in state.otherHalfIds))) {
+                    actions.togglePart(icon.peerId)
                 }
             }
         }
-        // Said before it is heard rather than after. Every one of these sounds like a fault to
-        // somebody who was told this separates instruments, and none of them is one.
-        Text(
-            stringResource(
-                when (state.splitAxis) {
-                    SplitAxis.MIDDLE_SIDES -> R.string.room_split_content_limits
-                    SplitAxis.LOW_HIGH -> R.string.room_split_low_high_limits
-                }
-            ),
-            style = MaterialTheme.typography.bodySmall
-        )
     }
+    // Said before it is heard rather than after: this sounds like a fault to somebody who was
+    // told it separates instruments, and it is not one.
+    Note(
+        stringResource(
+            when (state.splitAxis) {
+                SplitAxis.MIDDLE_SIDES -> R.string.room_split_content_limits
+                SplitAxis.LOW_HIGH -> R.string.room_split_low_high_limits
+            }
+        )
+    )
 }
+
+/** Big enough to read a number on beside a line of text, small enough not to be a button. */
+private val PART_BADGE = 19.dp
 
 /** Which name a handset button carries, since the two halves are named by the axis they divide. */
 private fun partLabelOf(axis: SplitAxis, farHalf: Boolean): Int = when (axis) {
