@@ -443,6 +443,18 @@ class HomeActivity : ComponentActivity() {
                     .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
             )
         },
+        calibratePeer = { peerId ->
+            // auto so the servers come up without a second press here, and the named handset is
+            // told only once they have - see PeerCalibrateActivity.aimedAt.
+            startActivity(
+                Intent(this, PeerCalibrateActivity::class.java)
+                    .putExtra("role", CalibrationRole.HOST.name)
+                    .putExtra(PEER_JOB_EXTRA, PeerJob.PAIR.name)
+                    .putExtra(PeerCalibrateActivity.AIMED_AT_EXTRA, peerId)
+                    .putExtra("serve_many", true)
+                    .putExtra("auto", true)
+            )
+        },
         openSettings = { showingSettings = true },
         backToPlaying = { steppedBack = false },
         showPairCode = { showingCode = true },
@@ -839,6 +851,13 @@ class HomeActivity : ComponentActivity() {
                 }
             },
             roomVolumes = volumeRows(),
+            standing = rosterOf(
+                peerIds = RoomCommands.standingPeerIds(),
+                name = RoomCommands::nameOf,
+                carrying = RoomCommands.carrying(),
+                quiet = RoomCommands.quietPeerIds().toSet(),
+                excuses = RoomCommands.excuses()
+            ),
             uncalibrated = RoomCommands.uncalibrated(),
             approximate = RoomCommands.approximate(),
             calledHere = handsetName(this),

@@ -64,6 +64,10 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
             }
         }
     }
+    // Under the checklist and above everything else, because it answers the question the
+    // checklist raises: the counts up there say something is wrong somewhere, and these rows say
+    // at which phone.
+    RoomRoster(state, actions)
     when (state.role) {
         Role.HOST -> SongSection(state, actions)
         Role.SINK -> Section(R.string.pair_title) {

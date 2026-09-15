@@ -883,4 +883,24 @@ class PeerCalibrateActivityTest {
     fun keepsAPairThatWasNeverAskedToSweepAnything() {
         assertEquals(0.2, measuredSeparationMetres(listOf(facing(0.2), facing(0.2)))!!, 1e-9)
     }
+
+    /**
+     * A handset is only told to measure once there is something for it to measure against.
+     *
+     * The order is the whole of it, and it is the order the room round already keeps: a sink that
+     * is told goes straight for the plan port, and one that gets there before the host has bound
+     * it finds nothing listening and gives up. The failure is a handset that simply never joined,
+     * with both ends believing they did their part - so it is held as source, because there is no
+     * other symptom to hold.
+     */
+    @Test
+    fun namesAHandsetForAPairRoundOnlyAfterTheServersAreListening() {
+        val serving = source.substringAfter("private fun measureAsHost(")
+        val told = serving.indexOf("RoomCommand.MEASURE_PAIR")
+        assertTrue("the host never tells the handset it is aimed at", told > 0)
+        assertTrue(
+            "the handset is told before the plan server is listening",
+            serving.indexOf("planServer.start()") in 1 until told
+        )
+    }
 }

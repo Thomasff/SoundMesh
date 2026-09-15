@@ -22,6 +22,19 @@ enum class RoomCommand {
     MEASURE_OVERHEAD,
 
     /**
+     * Go and measure against this host alone, the pair round rather than the room one.
+     *
+     * Said to one handset - see `RoomCommandServer.sendTo` - because that is what it means: the
+     * pair round is between this host and one sink, and a room told all at once would be several
+     * handsets trying to hold the same clock socket.
+     *
+     * Only the host can start one. Until this existed the person had to press start on the sink
+     * as well, having already pressed it here, and the two presses had to land in the right order
+     * for anything to happen at all.
+     */
+    MEASURE_PAIR,
+
+    /**
      * Set the volume of whichever stream this handset is actually playing on, as a percentage.
      *
      * A percentage rather than an index because handsets do not agree on how many steps a stream

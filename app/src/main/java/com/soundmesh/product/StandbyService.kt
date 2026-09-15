@@ -314,8 +314,9 @@ class StandbyService : Service() {
             RoomCommand.STOP -> if (SessionService.ACTIVE != null) {
                 startService(Intent(this, SessionService::class.java).setAction(SessionService.ACTION_STOP))
             }
-            RoomCommand.MEASURE_ROOM -> goAndMeasure(overhead = false)
-            RoomCommand.MEASURE_OVERHEAD -> goAndMeasure(overhead = true)
+            RoomCommand.MEASURE_ROOM -> goAndMeasure(room = true, called = "room")
+            RoomCommand.MEASURE_OVERHEAD -> goAndMeasure(room = true, called = "overhead")
+            RoomCommand.MEASURE_PAIR -> goAndMeasure(room = false, called = "pair")
             // Not guarded by anything: unlike the others this is a state and not an event, and a
             // handset told twice to be at sixty per cent is a handset at sixty per cent.
             RoomCommand.SET_VOLUME -> order.value?.let { applyVolume(it) }
@@ -344,17 +345,19 @@ class StandbyService : Service() {
      * the plan says to while recording, hand back what it heard. [SinkRound] is that, and this runs
      * it on a thread of its own.
      *
-     * [overhead] changes nothing on this side and is written down rather than used: the listener's
-     * position is worked out by the handset that gathers the room, and every sink measures the same
-     * way in both rounds. It is here so the record says which of the two this handset joined.
+     * [room] is the one thing that does change the run: a room round asks the host for a plan with
+     * everybody's slot in it, a pair round asks for this handset's own. [called] changes nothing
+     * and is written down rather than used - the overhead round differs only in what the handset
+     * gathering the room does with the answer, and every sink measures the same way in both - so
+     * the record says which of the three this handset joined.
      */
-    private fun goAndMeasure(overhead: Boolean) {
+    private fun goAndMeasure(room: Boolean, called: String) {
         if (!micGranted()) return excuse(RoomExcuse.NO_MICROPHONE)
         // Said as the nearest true thing rather than invented: from the host what matters is that
         // this handset cannot open a microphone, and the log above says which of the two reasons.
         if (!micTyped) return excuse(RoomExcuse.NO_MICROPHONE)
         MeasuringNow.inBackground = true
-        events.write("round-joining " + (if (overhead) "overhead" else "room") + " from the standing line")
+        events.write("round-joining $called from the standing line")
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and this one would take the standing line down with it.
         Thread({
@@ -364,7 +367,7 @@ class StandbyService : Service() {
                 withRadioAwake(this, events, held = { heldForTheRound = it }) {
                     SinkRound(
                         context = this,
-                        request = SinkRoundRequest(room = true),
+                        request = SinkRoundRequest(room = room),
                         radioHeld = { heldForTheRound },
                         report = object : SinkRoundReport {
                             override fun say(text: String, untilElapsedMillis: Long?) {
@@ -826,5 +829,8 @@ internal fun canObeyWhileAway(command: RoomCommand): Boolean = when (command) {
     // could not join a round: measuring drove a screen, and an app in the background may not start
     // one. SinkRound took the screen out of it, so the answer changed rather than the rule.
     RoomCommand.MEASURE_ROOM,
-    RoomCommand.MEASURE_OVERHEAD -> true
+    RoomCommand.MEASURE_OVERHEAD,
+    // Same answer and the same reason: what a sink does in any round is hold a socket open, play
+    // one chirp and hand back what it heard, none of which is a screen.
+    RoomCommand.MEASURE_PAIR -> true
 }

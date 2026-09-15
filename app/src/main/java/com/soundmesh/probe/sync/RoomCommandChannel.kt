@@ -21,7 +21,7 @@ const val COMMAND_PORT = 45128
  * silence is its own answer: calling it uncalibrated would send somebody off to recalibrate a
  * handset that is already fine.
  */
-private enum class Carried { UNSAID, NOTHING, SOMETHING, APPROXIMATE }
+enum class Carried { UNSAID, NOTHING, SOMETHING, APPROXIMATE }
 
 /** What a standing handset says after its id and its correction: what to call it on a screen. */
 private const val CALLED = "called "
@@ -413,6 +413,16 @@ class RoomCommandServer(
     fun uncalibrated(): Int = synchronized(clients) { clients.count { it.carrying == Carried.NOTHING } }
 
     /**
+     * What each standing handset said, one entry each, for the screen that draws them as rows.
+     *
+     * The three counts beside this stay: they are what the checklist reads, and a count is the
+     * right shape for "is anything wrong at all". This is the other question - which one - and a
+     * count has never been able to answer it.
+     */
+    fun carrying(): Map<String, Carried> =
+        synchronized(clients) { clients.associate { it.peerId to it.carrying } }
+
+    /**
      * How many said they are correcting off a room round rather than off their own measurement.
      *
      * Counted apart from [uncalibrated] rather than added to it, because the two ask for
@@ -788,6 +798,9 @@ object RoomCommands {
     fun uncalibrated(): Int = server?.uncalibrated() ?: 0
 
     @Synchronized
+    fun carrying(): Map<String, Carried> = server?.carrying() ?: emptyMap()
+
+    @Synchronized
     fun unsaid(): Int = server?.unsaid() ?: 0
 
     @Synchronized
@@ -805,6 +818,10 @@ object RoomCommands {
     /** Which handsets are standing by, for the drawing. See [RoomCommandServer.standingPeerIds]. */
     @Synchronized
     fun standingPeerIds(): List<String> = server?.standingPeerIds() ?: emptyList()
+
+    /** Which of those have stopped saying so. Quiet, not gone - see [RoomCommandServer.quietPeerIds]. */
+    @Synchronized
+    fun quietPeerIds(): List<String> = server?.quietPeerIds() ?: emptyList()
 
     @Synchronized
     fun volumeSaidAt(peerId: String): Long? = server?.volumeSaidAt(peerId)

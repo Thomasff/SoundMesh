@@ -46,6 +46,7 @@ import com.soundmesh.probe.sync.AlignmentResultServer
 import com.soundmesh.probe.sync.Calibration
 import com.soundmesh.probe.sync.CalibrationPlanClient
 import com.soundmesh.core.RoomCommand
+import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.RoomExcuse
 import com.soundmesh.probe.sync.CalibrationPlanServer
 import com.soundmesh.probe.sync.COMMAND_PORT
@@ -1227,6 +1228,15 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun roomAsked(): Boolean = intent.getBooleanExtra("room", false)
 
     /**
+     * The one handset this pair round is for, or null when nobody was named.
+     *
+     * Named only from the status screen's per-handset row, which is the only place that knows
+     * which handset is being pointed at. Null everywhere else - including every command-line arm -
+     * and then this screen behaves as it always has: it serves whichever sink presses start.
+     */
+    private fun aimedAt(): String? = intent.getStringExtra(AIMED_AT_EXTRA)
+
+    /**
      * `--ez overhead true` says this handset is being held above somebody's head, not standing
      * where it will play.
      *
@@ -1418,6 +1428,14 @@ class PeerCalibrateActivity : ComponentActivity() {
             // pressed at all. These two lines make the next occurrence answerable.
             Log.i(LOG_TAG, "the calibration servers are up: clock ${SyncActivity.CLOCK_PORT}, " +
                 "result ${SyncActivity.RESULT_PORT}, plan $PLAN_PORT")
+            // After the three servers are up and not before, which is the whole of the ordering
+            // problem this replaces: the handset being told goes straight for the plan port, and
+            // a sink that got there first found nothing listening and gave up.
+            aimedAt()?.let { peerId ->
+                val reached = RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.MEASURE_PAIR))
+                events.write("pair-told $peerId, reached=$reached")
+                if (!reached) show(getString(R.string.pair_calibrate_aimed_gone))
+            }
             // Opened once and held across every round, which is the whole of what one press
             // serving several handsets amounts to: they used to be opened and closed around a
             // single round, so the second sink to press start found nothing listening at all.
@@ -2151,6 +2169,9 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     internal companion object {
         const val LOG_TAG = "SoundMeshPeerCalibrate"
+
+        /** Intent extra naming the one handset a pair round is for. See [aimedAt]. */
+        const val AIMED_AT_EXTRA = "aimed_at"
 
         /**
          * The plan's chirp interval in frames, which is the grid an emission is measured against.

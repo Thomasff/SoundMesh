@@ -111,6 +111,14 @@ data class HomeState(
      */
     val standingBy: Int = 0,
     /**
+     * The standing handsets one by one, for the screen that draws them rather than counts them.
+     *
+     * Beside the three counts rather than instead of them: a count is the right shape for the
+     * checklist's "is anything wrong at all", and the wrong shape for the only thing anybody can
+     * actually do about it, which happens at one particular phone. See [StandingRow].
+     */
+    val standing: List<StandingRow> = emptyList(),
+    /**
      * How many of those said they carry no correction for this host.
      *
      * Beside the count rather than buried on each handset's own calibration screen, because
@@ -302,6 +310,14 @@ class HomeActions(
     val stepSong: (Int) -> Unit,
     val setPaused: (Boolean) -> Unit,
     val pairCalibrate: () -> Unit,
+    /**
+     * Line this handset up with one named peer, from that peer's own row on the status screen.
+     *
+     * Takes the peer because it tells it: a pair round needs both ends going at once, and until
+     * this existed somebody had to press start here and then walk to the other phone and press
+     * start there, in that order, or nothing happened at all.
+     */
+    val calibratePeer: (String) -> Unit,
     val setRoomVolume: (Int) -> Unit,
     /** One handset on its own, for the one standing next to a wall. */
     val setHandsetVolume: (String, Int) -> Unit,
