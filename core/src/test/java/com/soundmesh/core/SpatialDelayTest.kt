@@ -224,6 +224,104 @@ class SpatialDelayTest {
         }
     }
 
+    /**
+     * With the knob down, the room is placed by loudness alone and nothing about that has moved.
+     *
+     * The control arm for every assertion below it, and it is the same code path rather than a
+     * second one: one number changed, the whole law re-evaluated. A hard pan right leaves the left
+     * handset at exactly nothing, which is what a room with no travel has always done.
+     */
+    @Test
+    fun `with the knob down the far handset is placed by loudness and gets none`() {
+        val room = SpatialField(SpatialMode.PAN, sideBySide(), pan = 1.0)
+        assertEquals(0.0, room.gainAt("l", 0L).left, 1e-9)
+        assertEquals(1.0, room.gainAt("r", 0L).left, 1e-9)
+    }
+
+    /**
+     * Wound all the way up, the room places the source with nothing but who plays it first.
+     *
+     * This is the assertion the feature exists for after 09-16. Before it the delay was laid on
+     * top of the loudness law, which went on placing the source by itself - and since the delay is
+     * that same law upside down, the late handset was also the quiet one and the delay never said
+     * anything the loudness had not already said louder. A listener could not hear the knob at any
+     * depth, and would not have been able to at any depth this or any buffer could hold.
+     *
+     * So: equally loud, and separated in time. Both halves are asserted here because either alone
+     * is satisfied by something broken - equal gains alone are also what a room playing no rule at
+     * all does, and a delay alone is what the knob already did when nobody could hear it.
+     */
+    @Test
+    fun `at full travel the handsets are equally loud and the source is placed only in time`() {
+        val room = SpatialField(
+            SpatialMode.PAN,
+            sideBySide(),
+            pan = 1.0,
+            travelDelayNanos = SpatialField.MAX_TRAVEL_DELAY_NANOS
+        )
+        val left = room.gainAt("l", 0L)
+        val right = room.gainAt("r", 0L)
+        assertEquals(right.left, left.left, 1e-9)
+        assertEquals(right.right, left.right, 1e-9)
+        assertTrue("a room placed by time still has to be audible", left.left > 0.5)
+        assertEquals(0L, room.playbackDelayNanosFor("r", 0L))
+        assertEquals(SpatialField.MAX_TRAVEL_DELAY_NANOS, room.playbackDelayNanosFor("l", 0L))
+    }
+
+    /** And in between it is in between: half the knob closes half the gap, in level and in time. */
+    @Test
+    fun `halfway up the knob the loudness gap has half closed`() {
+        val room = SpatialField(
+            SpatialMode.PAN,
+            sideBySide(),
+            pan = 1.0,
+            travelDelayNanos = SpatialField.MAX_TRAVEL_DELAY_NANOS / 2
+        )
+        assertEquals(0.5, room.gainAt("l", 0L).left / room.gainAt("r", 0L).left, 1e-9)
+        assertEquals(
+            SpatialField.MAX_TRAVEL_DELAY_NANOS / 2,
+            room.playbackDelayNanosFor("l", 0L)
+        )
+    }
+
+    /**
+     * What flattens is where the source is, never how far the handset is.
+     *
+     * Two different questions that arrive at the same multiply: the placement says how loud this
+     * handset should be heard, the distance correction says what it has to play to be heard that
+     * loudly from where it is standing. Handing the placement to the clock does not move the far
+     * handset nearer, so a room whose handsets are at different distances stays corrected for
+     * them at every setting of the knob - and a listener who could not hear the flattening work
+     * would otherwise be listening to a room that had quietly stopped compensating as well.
+     */
+    @Test
+    fun `flattening the placement leaves the distance correction alone`() {
+        val room = SpatialField(
+            SpatialMode.PAN,
+            SpatialLayout(listOf(SpatialPosition("near", -1.0, 0.0), SpatialPosition("far", 2.0, 0.0))),
+            pan = 1.0,
+            travelDelayNanos = SpatialField.MAX_TRAVEL_DELAY_NANOS
+        )
+        assertEquals(2.0, room.gainAt("far", 0L).left / room.gainAt("near", 0L).left, 1e-9)
+    }
+
+    /** A split has no source to place, so the knob does not touch its levels either. */
+    @Test
+    fun `a split still splits however far the travel knob is wound`() {
+        val room = SpatialField(
+            SpatialMode.SPLIT,
+            sideBySide(),
+            travelDelayNanos = SpatialField.MAX_TRAVEL_DELAY_NANOS
+        )
+        assertEquals(1.0, room.gainAt("l", 0L).left, 1e-9)
+        assertEquals(0.0, room.gainAt("l", 0L).right, 1e-9)
+    }
+
+    /** Two handsets, one hard left and one hard right, both the same distance off. */
+    private fun sideBySide(): SpatialLayout = SpatialLayout(
+        listOf(SpatialPosition("l", -1.0, 0.0), SpatialPosition("r", 1.0, 0.0))
+    )
+
     /** And at the circuit anybody actually uses, the cap does nothing: the knob means what it says. */
     @Test
     fun `at the default circuit the travel knob reaches its full depth`() {

@@ -49,7 +49,7 @@ object SpatialFieldCodec {
      * constructor about a number it cannot name the origin of. Same fields, different meaning, and
      * the version is what turns "unreadable rule" into "that phone needs the new build".
      */
-    const val VERSION = 9
+    const val VERSION = 10
 
     private const val HEADER_FIELDS = 17
     private const val POSITION_FIELDS = 4

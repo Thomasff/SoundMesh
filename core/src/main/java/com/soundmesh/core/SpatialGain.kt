@@ -12,11 +12,20 @@ data class StereoGain(val left: Double, val right: Double)
 /**
  * The three things a room full of handsets can be made to do.
  *
- * All three are amplitude rules, and that is not a simplification - it is the only kind of rule
- * this system can carry. A listener locates a sound mainly by the time difference between their
- * ears, whose whole range is +-690 us, and the alignment between two handsets is good to about
- * 1 ms. Placing a sound by delay would therefore be steering with an error larger than the whole
- * control range. Loudness ratios do not care what the clocks are doing.
+ * All three place a source by loudness, and for a long time this paragraph said that was the only
+ * kind of rule the system could carry: a listener locates a sound mainly by the time difference
+ * between their ears, whose whole range is +-690 us, while the alignment between two handsets is
+ * good to about 1 ms - steering with an error as large as the whole control range.
+ *
+ * That argument is about a different delay. The +-690 us is the gap between one listener's two
+ * ears, and nothing here can put a sound between somebody's ears. The gap between two handsets
+ * standing metres apart is a coarser quantity with its own name: from about one millisecond to
+ * about thirty, whichever handset plays first takes the image however loud the others are. A
+ * millisecond of alignment error is small against thirty milliseconds, not larger than it.
+ *
+ * Whether that coarser cue is worth using is [SpatialField.travelDelayNanos]'s question and it is
+ * still open - the knob that asks it ships at zero. But it is a question, not something the
+ * clocks rule out.
  */
 enum class SpatialMode {
     /** A source that circles the listener on its own, once per period. */
@@ -328,6 +337,33 @@ data class SpatialField(
     }
 
     /**
+     * How much of the placement this rule is doing with time rather than with loudness, 0..1.
+     *
+     * The knob was an addition when it was written on 09-15: a delay laid on top of a gain law
+     * that went on placing the source by itself. As an addition it could not be heard, for a
+     * reason that is arithmetic rather than taste. [travelPartNanos] is the raised cosine
+     * [rawGain] places by, turned upside down - so the handset the source faces away from is the
+     * quietest one *and* the latest one. The two cues never disagree, and a cue that can only
+     * confirm what a louder cue has already said changes nothing when it is wound up. A listener
+     * on 09-16 reported exactly that, at every depth up to thirty milliseconds.
+     *
+     * So it is a crossfade instead. Winding it up hands the placement over: the angular part of
+     * the gain flattens towards every handset equally loud at the same rate the delay deepens,
+     * and at the top the room is placing the source with nothing but who plays it first. That is
+     * also the only setting at which the question this knob exists to ask - whether a few
+     * milliseconds can put a sound somewhere - has an answer a person can hear, because it is the
+     * only setting at which loudness is not answering it for them.
+     *
+     * Only the angular part flattens. How far a handset stands from the listener is not a
+     * placement, it is what that handset has to play to be heard at all, so [rawGain] keeps its
+     * distance correction at every setting of this.
+     */
+    private fun travelShare(): Double {
+        if (travelDelayNanos <= 0L || mode == SpatialMode.SPLIT) return 0.0
+        return (travelDelayNanos.toDouble() / MAX_TRAVEL_DELAY_NANOS).coerceIn(0.0, 1.0)
+    }
+
+    /**
      * The travel depth this rule's own speed leaves room for, which is all of it at any ordinary
      * setting and less than all of it for a circuit fast enough to outrun the delay line.
      *
@@ -542,7 +578,11 @@ data class SpatialField(
                 // handset that is quiet rather than one that is off. At zero this is exactly the
                 // expression it has always been.
                 val facing = (1.0 + cos(sourceAzimuthAt(hostNanos) - azimuth)) / 2.0
-                val weight = envelopment + (1.0 - envelopment) * facing
+                val angular = envelopment + (1.0 - envelopment) * facing
+                // Flattened towards every handset equally loud by however much of the placement
+                // the travel knob has taken over - see [travelShare]. At zero this line is the
+                // identity and the expression above it is what it has always been.
+                val weight = angular + (1.0 - angular) * travelShare()
                 StereoGain(weight, weight)
             }
             // How far to the side a handset stands is how much of that side it carries. A room
@@ -561,18 +601,22 @@ data class SpatialField(
         const val DEFAULT_PERIOD_NANOS = 6_000_000_000L
 
         /**
-         * How far [travelDelayNanos] may be wound: thirty milliseconds.
+         * How far [travelDelayNanos] may be wound: forty milliseconds.
          *
-         * The whole precedence window, from a delay that trades against level to one at the edge of
-         * being heard as a second sound. Deliberately the whole of it and not a safe part of it:
-         * the question this knob exists to answer is where along that range the image stops
-         * travelling between handsets and starts jumping between them, and a slider that stopped
-         * short of the jump could not answer it.
+         * The whole precedence window and then past the end of it. Deliberately past: the question
+         * this knob exists to answer is where along that range the image stops travelling between
+         * handsets and starts jumping between them, and then where it stops being one sound at
+         * all, and a slider stopping short of either could not answer them. Forty is far enough
+         * into echo territory that a listener can hear the failure and bound the useful range from
+         * above, rather than being told where it is in a comment like this one.
          *
-         * Fifteen at first, doubled 09-15 when a listener could not hear single milliseconds at
-         * all. Past thirty is an echo, which is a different feature nobody has asked for.
+         * Fifteen at first; thirty on 09-15 when a listener could not hear single milliseconds at
+         * all; forty on 09-16 when they could not hear thirty either. That second miss turned out
+         * not to be about depth at all - see [travelShare] - but the ceiling went up alongside the
+         * fix, because the setting at which the cue is finally audible on its own is also the
+         * first setting at which its range means anything.
          */
-        const val MAX_TRAVEL_DELAY_NANOS = 30_000_000L
+        const val MAX_TRAVEL_DELAY_NANOS = 40_000_000L
 
         /**
          * How far [shimmerDelayNanos] may be wound: twenty milliseconds.
