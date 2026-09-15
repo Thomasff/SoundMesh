@@ -2,207 +2,266 @@ package com.soundmesh.product
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.soundmesh.probe.R
+import com.soundmesh.probe.sync.LocalAddress
 
 /**
- * Stage two: what stands between this handset and a room that plays, one line per thing that is
- * wrong and one place to go about it - see [readyList]. Replaces the flat host/sink page for this
- * stage; that page still draws the playing stage.
+ * Stage two: a board, not a questionnaire.
  *
- * The button called "和配对的另一台手机对时" used to be the only door onto three unrelated jobs -
- * see [PeerJob] - so the "量一量" section below gives each of them its own line instead of one
- * name that only described the first of them.
+ * Reads top to bottom as network, code, handsets, song, calibration, way out - which is the order
+ * somebody setting a room up needs them in, and the order the drawing of 2026-09-15 put them in.
+ * Everything that is wrong says so on the line it is about; the only sentence repeated at the
+ * bottom is the one standing between this room and playing.
+ *
+ * Exactly two things here are drawn solid: the calibration box and the way onto the playing stage.
+ * A screen where everything is emphasised has nothing emphasised, and what people were skipping
+ * past is the calibration.
  */
 @Composable
 fun ReadyScreen(state: HomeState, actions: HomeActions) {
     val items = readyList(state)
-    // Above the checklist rather than below it: with a room already playing, getting back to the
-    // controls is the only thing anybody came here for that the checklist cannot answer.
     if (state.running) {
-        Button(onClick = actions.backToPlaying, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.ready_back_to_play))
-        }
+        // With a room already playing, getting back to the controls is the only thing anybody came
+        // here for that the rest of this screen cannot answer, so it goes first.
+        Solid(stringResource(R.string.ready_back_to_play), onClick = actions.backToPlaying)
     }
-    Section(R.string.ready_title) {
-        for (item in items) ReadyRow(item, actions)
-        // Not offered at all while a room is already playing: this screen is reachable then, by
-        // pressing back out of the playing stage, and pressing start there would lay a second
-        // session over the top of the first rather than doing nothing.
-        if (!state.running) {
-            Button(
-                onClick = actions.play,
-                enabled = canStart(items),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(stringResource(R.string.ready_go))
-            }
-        }
-        if (!state.running && !canStart(items)) {
-            // Said again under the button a person is looking at, rather than only on the row
-            // they may already have scrolled past.
-            items.firstOrNull { it.mark == Mark.BLOCK }?.let {
-                Text(
-                    readyLineText(it),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-        }
-    }
-    // Under the checklist and above everything else, because it answers the question the
-    // checklist raises: the counts up there say something is wrong somewhere, and these rows say
-    // at which phone.
-    RoomRoster(state, actions)
+    NetworkLines(state)
     when (state.role) {
         Role.HOST -> PairCodeSection(state, actions)
         // A sink has nothing to hand out: it is the one doing the scanning.
-        Role.SINK, Role.NONE -> Unit
-    }
-    when (state.role) {
-        Role.HOST -> SongSection(state, actions)
-        Role.SINK -> Section(R.string.pair_title) {
-            OutlinedButton(onClick = actions.scan, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.pair_scan))
-            }
-            Text(stringResource(R.string.pair_scan_hint), style = MaterialTheme.typography.bodySmall)
-        }
-        // Unreachable: routeOf only sends this screen a role that has been picked.
+        Role.SINK -> ScanLine(state, actions)
         Role.NONE -> Unit
     }
-    // The one this whole project is for, and it is drawn as such. It used to be the third of four
-    // text buttons under a heading that read "量一量（做过一次就不用再做了）", which reads as a
-    // nice-to-have somebody has already done - and the pair calibration moved onto each handset's
-    // own row, where the handset it is about is.
-    Section(R.string.calibrate_section) {
-        Button(
-            onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.ROOM) },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(stringResource(R.string.goto_room))
+    RoomRoster(state, actions)
+    if (state.role == Role.HOST) SongLines(state, actions)
+    CalibrateSection(state, actions)
+    Problems(items, actions)
+    if (!state.running) {
+        Column(modifier = Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Solid(stringResource(R.string.ready_go), enabled = canStart(items), onClick = actions.play)
+            // Said again under the button somebody is looking at, rather than only on the line
+            // they may already have scrolled past.
+            if (!canStart(items)) {
+                items.firstOrNull { it.mark == Mark.BLOCK }?.let { Note(readyLineText(it), Tone.WRONG) }
+            }
         }
-        Text(stringResource(R.string.goto_room_hint), style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(
-            onClick = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.OVERHEAD) },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(stringResource(R.string.goto_overhead))
-        }
-        Text(stringResource(R.string.goto_overhead_hint), style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(
-            onClick = { actions.goto(ReadyGoto.SELF_CALIBRATE, null) },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(stringResource(R.string.goto_self))
-        }
-        // Shown even where it is not used, which is most of the time - see selfLead for where it
-        // is. Somebody who measured it once and comes back looking for the number should find it
-        // rather than an empty place where it was.
-        state.selfCalibrated?.let {
-            Text(
-                stringResource(R.string.goto_self_done, String.format(null as java.util.Locale?, "%.1f", it)),
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-        Text(stringResource(R.string.goto_self_hint), style = MaterialTheme.typography.bodySmall)
     }
-    // The way back out of the role picked above. The flat page this screen replaces used to carry
-    // this button; nothing called it any more once that page was cut apart, which left a person
-    // who picked the wrong role with no way back short of clearing the app's data.
-    TextButton(onClick = { actions.pickRole(Role.NONE) }) {
-        Text(stringResource(R.string.role_change))
+    Ghost(stringResource(R.string.role_change)) { actions.pickRole(Role.NONE) }
+}
+
+/**
+ * Which networks this handset is on, one line each.
+ *
+ * Both, because on these handsets both can be up at once, and because which of them a peer used is
+ * the first question when a phone will not join. The hotspot is known by having an address that is
+ * not the joined one - see [LocalAddress] - rather than by a name, which this app has no
+ * permission to read.
+ */
+@Composable
+private fun NetworkLines(state: HomeState) {
+    Label(R.string.network_title)
+    val hotspot = LocalAddress.ReachedBy.HOTSPOT in state.codeChoices
+    Line(first = true) {
+        Dot(null, hollow = !hotspot)
+        LineName(
+            stringResource(if (hotspot) R.string.network_hotspot_on else R.string.network_hotspot_off),
+            quiet = !hotspot
+        )
+    }
+    Line {
+        Dot(null, hollow = !state.onWifi)
+        LineName(
+            when {
+                state.wifiName != null -> stringResource(R.string.welcome_wifi_name, state.wifiName)
+                state.onWifi -> stringResource(R.string.welcome_wifi_connected)
+                else -> stringResource(R.string.network_wifi_off)
+            },
+            quiet = !state.onWifi
+        )
+    }
+}
+
+/** The sink's half of pairing: it scans, and says whether it has. */
+@Composable
+private fun ScanLine(state: HomeState, actions: HomeActions) {
+    Label(R.string.pair_title)
+    Line(first = true) {
+        Dot(null, hollow = state.paired == null)
+        LineName(
+            stringResource(if (state.paired != null) R.string.ready_paired else R.string.ready_paired_none),
+            quiet = state.paired == null
+        )
+        Chip(stringResource(R.string.pair_scan), actions.scan)
+    }
+}
+
+/** What the host will play, and the three ways to change it. */
+@Composable
+private fun SongLines(state: HomeState, actions: HomeActions) {
+    Label(R.string.song_title)
+    Line(first = true) {
+        LineName(
+            when {
+                state.capturing -> stringResource(R.string.song_capturing)
+                state.songName != null -> state.songName
+                else -> stringResource(R.string.ready_song_missing)
+            },
+            quiet = !state.capturing && state.songName == null
+        )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Chip(stringResource(R.string.song_pick_one), actions.chooseSong)
+        Chip(stringResource(R.string.song_pick_many), actions.chooseFolder)
+        Chip(stringResource(R.string.song_pick_capture), actions.captureAudio)
     }
 }
 
 /**
- * One checklist line: a mark, the sentence [ReadyItem.line] currently states, and where to go
- * about it if anywhere.
+ * The one this whole project is for, and it is drawn as such.
  *
- * [ReadyItem.line] swaps with the mark rather than being a stable label for the row - see
- * [ReadyItem] - so it is read fresh here on every call instead of being kept.
+ * It used to be the third of four text buttons under a heading that read "量一量（做过一次就不用
+ * 再做了）" - which reads as a nice-to-have somebody has already done. The pair calibration is not
+ * here any more either: it moved onto each handset's own row, where the handset it is about is.
  */
 @Composable
-private fun ReadyRow(item: ReadyItem, actions: HomeActions) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Weighted so a long line wraps inside its own share of the row instead of taking the
-        // whole width and pushing the goto button off screen - ready_standing_none did exactly
-        // that, and the button it hid is the only way onto the pairing code.
-        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Text(markGlyph(item.mark), color = markColour(item.mark))
-            Spacer(Modifier.width(8.dp))
-            Text(readyLineText(item), style = MaterialTheme.typography.bodyMedium)
-            // ready_song / ready_self_lead / ready_paired carry no placeholder of their own, so a
-            // non-null detail beside them - a song's name, a measured lead - is said as its own
-            // line rather than silently dropped by String.format.
-            if (item.line in NO_ARG_LINES) {
-                item.detail?.let {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        // A bare number is a number whose unit somebody has to guess - the self
-                        // lead's detail is milliseconds and has to say so.
-                        if (item.line == R.string.ready_self_lead) {
-                            stringResource(R.string.ready_self_lead_value, it)
-                        } else {
-                            it
-                        },
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+private fun CalibrateSection(state: HomeState, actions: HomeActions) {
+    Label(R.string.calibrate_section)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Framed(strong = true) {
+            BoxTitle(stringResource(R.string.goto_room), strong = true)
+            Note(stringResource(R.string.goto_room_hint))
+            Column(modifier = Modifier.padding(top = 7.dp)) {
+                Solid(stringResource(R.string.goto_room_go)) {
+                    actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.ROOM)
                 }
             }
         }
-        item.goto?.let { goto ->
-            TextButton(
-                onClick = {
-                    actions.goto(goto, if (goto == ReadyGoto.PAIR_CALIBRATE) PeerJob.PAIR else null)
+        Framed {
+            BoxTitle(stringResource(R.string.goto_overhead))
+            Note(stringResource(R.string.goto_overhead_hint))
+            Column(modifier = Modifier.padding(top = 7.dp)) {
+                Ghost(stringResource(R.string.goto_overhead_go)) {
+                    actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.OVERHEAD)
                 }
+            }
+        }
+        Framed {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(stringResource(gotoLabel(goto)))
+                BoxTitle(stringResource(R.string.goto_self))
+                // Shown even where it is not used, which is most of the time - see selfLead for
+                // where it is. Somebody who measured it once and comes back for the number should
+                // find it rather than an empty place where it was.
+                state.selfCalibrated?.let {
+                    Tag(
+                        stringResource(
+                            R.string.goto_self_done,
+                            String.format(null as java.util.Locale?, "%.1f", it)
+                        ),
+                        Tone.GOOD
+                    )
+                }
+            }
+            Note(stringResource(R.string.goto_self_hint))
+            Column(modifier = Modifier.padding(top = 7.dp)) {
+                Ghost(
+                    stringResource(
+                        if (state.selfCalibrated != null) R.string.goto_self_again else R.string.goto_self_go
+                    )
+                ) { actions.goto(ReadyGoto.SELF_CALIBRATE, null) }
             }
         }
     }
 }
 
-/** [ReadyItem.line] read the way [ReadyRow] shows it, without the trailing detail line. */
+/**
+ * Whatever is still wrong and is not already said on a line of its own.
+ *
+ * Filtered rather than listed whole: the song, the pairing and the handsets each have a line above
+ * that states their own case, and saying it twice on one screen is how a board turns back into a
+ * questionnaire. What is left is the power-saving block and the output lead, neither of which has
+ * anywhere else to be.
+ */
 @Composable
-private fun readyLineText(item: ReadyItem): String =
-    if (item.line in NO_ARG_LINES) stringResource(item.line)
-    else item.detail?.let { stringResource(item.line, it) } ?: stringResource(item.line)
+private fun Problems(items: List<ReadyItem>, actions: HomeActions) {
+    val left = items.filter { it.mark != Mark.OK && it.line !in SAID_ELSEWHERE }
+    if (left.isEmpty()) return
+    Label(R.string.ready_title)
+    for ((index, item) in left.withIndex()) {
+        Line(first = index == 0) {
+            Text(
+                markGlyph(item.mark),
+                style = MaterialTheme.typography.labelMedium,
+                color = markColour(item.mark)
+            )
+            LineName(readyLineText(item))
+            item.goto?.let { goto ->
+                Chip(stringResource(gotoLabel(goto))) {
+                    actions.goto(goto, if (goto == ReadyGoto.PAIR_CALIBRATE) PeerJob.PAIR else null)
+                }
+            }
+        }
+    }
+}
+
+/** The lines this screen already draws somewhere better, in the words of whatever states them. */
+private val SAID_ELSEWHERE = setOf(
+    R.string.ready_song, R.string.ready_song_missing,
+    R.string.ready_paired, R.string.ready_paired_none,
+    R.string.ready_standing, R.string.ready_standing_none,
+    R.string.ready_uncalibrated
+)
+
+/** [ReadyItem.line] read the way it is shown, with its number folded in where the string takes one. */
+@Composable
+internal fun readyLineText(item: ReadyItem): String =
+    if (item.line in NO_ARG_LINES) {
+        val head = stringResource(item.line)
+        item.detail?.let { detail ->
+            if (item.line == R.string.ready_self_lead) {
+                head + " " + stringResource(R.string.ready_self_lead_value, detail)
+            } else {
+                "$head $detail"
+            }
+        } ?: head
+    } else {
+        item.detail?.let { stringResource(item.line, it) } ?: stringResource(item.line)
+    }
 
 /** The lines whose string carries no `%1$s` of its own - see [readyLineText]. */
 private val NO_ARG_LINES = setOf(R.string.ready_song, R.string.ready_self_lead, R.string.ready_paired)
 
 private fun markGlyph(mark: Mark): String = when (mark) {
     Mark.OK -> "✓"
-    Mark.WARN -> "⚠"
-    Mark.BLOCK -> "✗"
+    Mark.WARN -> "!"
+    Mark.BLOCK -> "✕"
 }
 
 @Composable
-private fun markColour(mark: Mark): Color = when (mark) {
+private fun markColour(mark: Mark) = when (mark) {
     Mark.OK -> MaterialTheme.colorScheme.onSurfaceVariant
     Mark.WARN -> MaterialTheme.colorScheme.secondary
     Mark.BLOCK -> MaterialTheme.colorScheme.error
 }
 
-/** Where a checklist line's own button says it goes. */
+/** Where a line's own button says it goes. */
 @StringRes
 private fun gotoLabel(goto: ReadyGoto): Int = when (goto) {
     ReadyGoto.SONG -> R.string.ready_goto_song

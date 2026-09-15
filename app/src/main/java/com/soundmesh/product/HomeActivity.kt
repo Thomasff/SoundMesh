@@ -393,16 +393,8 @@ class HomeActivity : ComponentActivity() {
                             // launcher on screen, from any stage, which is what a person does by
                             // reflex the first time they want to change the song.
                             val route = routeOf(state, steppedBack)
-                            BackHandler(enabled = route != HomeRoute.WELCOME) {
-                                when (route) {
-                                    // Says nothing to the session on purpose: the music carries on
-                                    // and this screen stops being the one in front of it.
-                                    HomeRoute.PLAYING -> steppedBack = true
-                                    HomeRoute.READY -> actions.pickRole(Role.NONE)
-                                    HomeRoute.WELCOME -> Unit
-                                }
-                            }
-                            HomeScreen(state, actions, showDetails, steppedBack)
+                            BackHandler(enabled = route != HomeRoute.WELCOME) { stepBack(route) }
+                            HomeScreen(state, actions, showDetails, steppedBack) { stepBack(route) }
                         }
                     }
                 }
@@ -827,6 +819,20 @@ class HomeActivity : ComponentActivity() {
             selfCalibrated = StoredOutputLead(filesDir, CAPTURING_HOST_USAGE).read()
                 ?.takeIf { it != 0L }?.let { it / 1000.0 }
         )
+    }
+
+    /**
+     * One step up the three stages, which is what both the gesture and the arrow do.
+     *
+     * Says nothing to the session on purpose: back out of a playing room and the music carries on,
+     * this screen simply stops being the one in front of it.
+     */
+    private fun stepBack(route: HomeRoute) {
+        when (route) {
+            HomeRoute.PLAYING -> steppedBack = true
+            HomeRoute.READY -> actions.pickRole(Role.NONE)
+            HomeRoute.WELCOME -> Unit
+        }
     }
 
     /** Which network somebody said the code is for, or null if nobody has. See [HostPairingCode]. */

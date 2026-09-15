@@ -1,70 +1,80 @@
 package com.soundmesh.product
 
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.soundmesh.probe.BuildConfig
+import androidx.compose.ui.unit.sp
 import com.soundmesh.probe.R
-import com.soundmesh.probe.sync.PairingCodeImage
 
 /**
  * Stage one: nobody has picked a role yet.
  *
- * This is the only screen a person who has never opened the app before is guaranteed to read, so
- * it says what the other screens assume: this needs a second phone, both need the app, both need
- * the same WiFi, and then this one needs to pick a side. [routeOf] sends every other state past
- * this screen without a second look.
+ * The one screen in the app drawn loose rather than dense - two choices, one of which has to be
+ * made before anything else exists, so they get the room. Every other stage is a board.
+ *
+ * What used to be here was a "要准备什么" list: two phones, both with the app, both on one WiFi.
+ * Those are facts about the room rather than instructions for this screen, and the status screen
+ * states all three of them as they actually stand - how many handsets have joined, which network
+ * the code is for. A list that says them here as prerequisites is a manual in front of a door.
  */
 @Composable
 fun WelcomeScreen(state: HomeState, actions: HomeActions) {
-    Text(stringResource(R.string.welcome_what), style = MaterialTheme.typography.bodyLarge)
-    Section(R.string.welcome_need) {
-        Text(stringResource(R.string.welcome_need_phones), style = MaterialTheme.typography.bodyMedium)
-        Text(stringResource(R.string.welcome_need_app), style = MaterialTheme.typography.bodyMedium)
-        // Only offered once there is somewhere for the code to point. An unset release URL would
-        // make a code that scans to nothing, which is worse than no code at all - see configured().
-        val releaseUrl = configured(BuildConfig.RELEASE_URL)
-        if (releaseUrl != null) {
-            var expanded by remember { mutableStateOf(false) }
-            TextButton(onClick = { expanded = !expanded }) {
-                Text(stringResource(R.string.welcome_need_app_share))
-            }
-            if (expanded) {
-                // Remembered against the URL rather than the recomposition, the same reason the
-                // pairing code on the host screen is: encoding one is the most expensive thing on
-                // this screen, for a picture that only ever changes if the release URL does.
-                val code = remember(releaseUrl) {
-                    PairingCodeImage.bitmap(releaseUrl, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
-                }
-                Image(code, contentDescription = null, modifier = Modifier.size(240.dp))
-            }
-        }
-        Text(stringResource(R.string.welcome_need_wifi), style = MaterialTheme.typography.bodyMedium)
-        if (state.onWifi) {
-            val wifiName = state.wifiName
-            Text(
-                if (wifiName != null) stringResource(R.string.welcome_wifi_name, wifiName)
-                else stringResource(R.string.welcome_wifi_connected),
-                style = MaterialTheme.typography.bodySmall
-            )
-        } else {
-            Text(
-                stringResource(R.string.welcome_wifi_none),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-        }
+    Column(modifier = Modifier.padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            stringResource(R.string.welcome_what),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 30.sp
+        )
+        Note(stringResource(R.string.welcome_role))
     }
     RolePicker(actions)
+    Box(
+        modifier = Modifier
+            .padding(top = 12.dp)
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+    )
+    // What this phone is called on everybody else's screen, which is the one thing about it a
+    // person needs before they walk to another handset. It is also the only place it is said
+    // before a room exists.
+    Note(stringResource(R.string.welcome_self, state.calledHere.ifEmpty { stringResource(R.string.roster_self) }))
+    Note(stringResource(R.string.welcome_role_later))
+}
+
+/**
+ * The two roles, each a box with its own sentence.
+ *
+ * Boxes rather than buttons: the sentence under each is what people actually read, and a Material
+ * button cannot carry one. The whole box is the tap.
+ */
+@Composable
+internal fun RolePicker(actions: HomeActions) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        RoleBox(R.string.role_host, R.string.role_host_hint) { actions.pickRole(Role.HOST) }
+        RoleBox(R.string.role_sink, R.string.role_sink_hint) { actions.pickRole(Role.SINK) }
+    }
+}
+
+@Composable
+private fun RoleBox(name: Int, hint: Int, onClick: () -> Unit) {
+    Box(modifier = Modifier.clickable(onClick = onClick)) {
+        Framed {
+            BoxTitle(stringResource(name), strong = true)
+            Note(stringResource(hint))
+        }
+    }
 }

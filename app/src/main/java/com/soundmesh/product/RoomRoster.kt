@@ -3,16 +3,8 @@ package com.soundmesh.product
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -23,97 +15,62 @@ import com.soundmesh.probe.sync.Carried
 /**
  * Every phone in the room, one line each, with what is wrong with it on its own line.
  *
- * This is where the three counts on the checklist stop being enough. "两台没校准" is true and
+ * This is where the three counts on the checklist stopped being enough. "两台没校准" is true and
  * useless: what fixes it is walking over to one particular handset, and a count cannot say which.
  * Same for the microphone permission a round was refused for, and for a handset that has gone
  * quiet - each of them is a fact about one phone.
  *
- * This handset is the first row, always, and is called 本机 rather than named: a person holding
- * it needs to find it in the list before anything else, and its name is on the row above anyway.
+ * This handset is the first row, always, and is called 本机 rather than named: whoever is holding
+ * it has to find it in the list before anything else.
  */
 @Composable
 fun RoomRoster(state: HomeState, actions: HomeActions) {
-    Section(R.string.roster_title) {
-        SelfRow(state)
-        for (row in state.standing) StandingLine(row, actions)
-        if (state.role == Role.HOST && state.standing.isEmpty()) {
-            Text(
-                stringResource(R.string.roster_nobody),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+    Label(
+        R.string.roster_title,
+        trailing = stringResource(R.string.roster_count, state.standing.size + 1)
+    )
+    Line(first = true) {
+        Dot(state.selfPlace)
+        LineName(state.calledHere.ifEmpty { stringResource(R.string.roster_self) })
+        Tag(stringResource(if (state.role == Role.HOST) R.string.role_host else R.string.role_sink))
     }
-}
-
-/** This handset's own line. No calibration entry: nothing here is measured against itself. */
-@Composable
-private fun SelfRow(state: HomeState) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        BadgeChip(state.selfId ?: "", state.selfPlace, diameter = 20.dp)
-        Spacer(Modifier.width(10.dp))
-        Text(
-            state.calledHere.ifEmpty { stringResource(R.string.roster_self) },
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            stringResource(R.string.roster_self),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+    for (row in state.standing) StandingLine(row, actions)
+    if (state.role == Role.HOST && state.standing.isEmpty()) {
+        Column(modifier = Modifier.padding(top = 6.dp)) {
+            Note(stringResource(R.string.roster_nobody))
+        }
     }
 }
 
 /**
  * One standing handset: what it is called, how it is lined up, and the way to fix that.
  *
- * The entry appears only where there is something to fix. A handset that is already carrying its
- * own measurement says so and offers nothing - which is the whole difference between a status
- * line and a menu, and the reason this screen can be read at a glance rather than worked through.
+ * The entry appears only where there is something to fix. A handset already carrying its own
+ * measurement says so and offers nothing - which is the whole difference between a status line and
+ * a menu, and the reason this screen can be read at a glance rather than worked through.
  */
 @Composable
 private fun StandingLine(row: StandingRow, actions: HomeActions) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            BadgeChip(row.peerId, null, diameter = 20.dp)
-            Spacer(Modifier.width(10.dp))
-            Text(row.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Text(
-                stringResource(carryingWord(row.carrying)),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (row.carrying == Carried.SOMETHING) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.secondary
-                }
-            )
-            if (row.carrying != Carried.SOMETHING) {
-                TextButton(onClick = { actions.calibratePeer(row.peerId) }) {
-                    Text(stringResource(R.string.roster_calibrate))
-                }
-            }
+    Line {
+        Dot(null, hollow = row.quiet)
+        LineName(row.name, quiet = row.quiet)
+        Tag(stringResource(carryingWord(row.carrying)), carryingTone(row.carrying))
+        if (row.carrying != Carried.SOMETHING) {
+            Chip(stringResource(R.string.roster_calibrate)) { actions.calibratePeer(row.peerId) }
         }
-        // Underneath rather than beside: these are sentences, and a sentence sharing a row with a
-        // name and a button is a sentence that wraps into three words per line.
-        val notes = buildList {
-            if (row.quiet) add(stringResource(R.string.roster_quiet))
-            row.excuse?.let { add(stringResource(excuseWord(it))) }
-        }
-        if (notes.isNotEmpty()) {
-            Column(
-                modifier = Modifier.padding(start = 30.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                for (note in notes) {
-                    Text(
-                        note,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-            }
-        }
+    }
+    // Underneath rather than beside: these are sentences, and a sentence sharing a row with a name
+    // and a button is a sentence that wraps into three words a line.
+    val notes = buildList {
+        if (row.quiet) add(stringResource(R.string.roster_quiet))
+        row.excuse?.let { add(stringResource(excuseWord(it))) }
+    }
+    if (notes.isEmpty()) return
+    Column(
+        modifier = Modifier.padding(start = 18.dp, bottom = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        for (note in notes) Note(note, Tone.WATCH)
     }
 }
 
@@ -133,11 +90,25 @@ private fun carryingWord(carrying: Carried): Int = when (carrying) {
 }
 
 /**
+ * How loudly to say it.
+ *
+ * A handset carrying nothing is tens of milliseconds out and audible across a room; one on a room
+ * round is about a millisecond out and can wait for a quiet minute. Two different sizes of problem
+ * get two different colours - see [Tone].
+ */
+private fun carryingTone(carrying: Carried): Tone = when (carrying) {
+    Carried.SOMETHING -> Tone.GOOD
+    Carried.APPROXIMATE -> Tone.QUIET
+    Carried.NOTHING -> Tone.WATCH
+    Carried.UNSAID -> Tone.QUIET
+}
+
+/**
  * The room's words for a refusal, on the host's screen this time.
  *
  * The same mapping `PeerCalibrateActivity.reasonFor` makes, and for the same reason it is made at
- * the reading end: a sentence arriving over the wire from the handset that just refused to work
- * is a sentence nobody checked on its way to a screen.
+ * the reading end: a sentence arriving over the wire from the handset that just refused to work is
+ * a sentence nobody checked on its way to a screen.
  */
 @StringRes
 private fun excuseWord(excuse: RoomExcuse): Int = when (excuse) {

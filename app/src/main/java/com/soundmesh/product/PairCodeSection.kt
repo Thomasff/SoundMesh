@@ -1,20 +1,22 @@
 package com.soundmesh.product
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.LocalAddress
@@ -25,57 +27,58 @@ import com.soundmesh.probe.sync.PairingCodeImage
  *
  * It used to be one tap away, and worse, the tap was a checklist row that disappeared the moment
  * the first handset joined - so a room gaining its third phone had no way to show the code at all.
- * It is the one thing on this screen somebody points another phone's camera at, so it is drawn.
+ * It is the one thing on this screen somebody points another phone's camera at, so it is drawn,
+ * and its height is fixed so that a long list of handsets underneath never pushes it off.
  *
- * The full-screen version stays, because reading one from a metre away is a different job.
+ * Tapping it opens the full-screen version, because reading one from a metre away is another job.
  */
 @Composable
 fun PairCodeSection(state: HomeState, actions: HomeActions) {
-    Section(R.string.pair_code_title) {
-        // Only where there is a choice to make. A handset with one address up is reachable at it
-        // whatever anybody picks, and a control that cannot change the answer is a control that
-        // teaches people their taps do nothing.
-        if (state.codeChoices.size > 1) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (choice in state.codeChoices) {
-                    FilterChip(
-                        selected = state.pairingOffer?.by == choice,
-                        onClick = { actions.setCodeNetwork(choice) },
-                        label = { Text(stringResource(networkWord(choice))) }
-                    )
-                }
-            }
-            Text(
-                stringResource(R.string.pair_code_switch_warning),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        val offer = state.pairingOffer
-        if (offer == null) {
-            Text(
-                stringResource(R.string.pair_code_nowhere),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-            return@Section
-        }
+    Label(R.string.pair_code_title)
+    // Only where there is a choice to make. A handset with one address up is reachable at it
+    // whatever anybody picks, and a control that cannot change the answer teaches people their
+    // taps do nothing.
+    if (state.codeChoices.size > 1) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Remembered against the payload rather than the recomposition: encoding one is the
-            // most expensive thing this screen does, for a picture that only changes when the
-            // address does, and this screen redraws on a poll.
-            val code = remember(offer.payload) {
-                PairingCodeImage.bitmap(offer.payload, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
-            }
-            Image(code, contentDescription = null, modifier = Modifier.size(INLINE_CODE_SIZE))
-            TextButton(onClick = actions.showPairCode) {
-                Text(stringResource(R.string.pair_code_enlarge))
+            for (choice in state.codeChoices) {
+                Chosen(
+                    text = stringResource(networkWord(choice)),
+                    chosen = state.pairingOffer?.by == choice
+                ) { actions.setCodeNetwork(choice) }
             }
         }
+        Note(stringResource(R.string.pair_code_switch_warning))
+    }
+    val offer = state.pairingOffer
+    if (offer == null) {
+        Note(stringResource(R.string.pair_code_nowhere), Tone.WRONG)
+        return
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Remembered against the payload rather than the recomposition: encoding one is the most
+        // expensive thing this screen does, for a picture that only changes when the address does,
+        // and this screen redraws on a poll.
+        val code = remember(offer.payload) {
+            PairingCodeImage.bitmap(offer.payload, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
+        }
+        Image(
+            code,
+            contentDescription = null,
+            modifier = Modifier.size(CODE_SIZE).clickable(onClick = actions.showPairCode)
+        )
+        Text(
+            stringResource(R.string.pair_code_how),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
         Text(
             stringResource(
                 when (offer.by) {
@@ -83,7 +86,26 @@ fun PairCodeSection(state: HomeState, actions: HomeActions) {
                     LocalAddress.ReachedBy.WIFI -> R.string.pair_code_by_wifi
                 }
             ),
-            style = MaterialTheme.typography.bodySmall
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+/** One half of the two-way choice. Filled when it is the one the code names. */
+@Composable
+private fun Chosen(text: String, chosen: Boolean, onClick: () -> Unit) {
+    androidx.compose.material3.Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        color = if (chosen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (chosen) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.secondary
         )
     }
 }
@@ -99,4 +121,4 @@ private fun networkWord(by: LocalAddress.ReachedBy): Int = when (by) {
  *
  * A metre away is what the full-screen version is for - see [PairCodeSection].
  */
-private val INLINE_CODE_SIZE = 140.dp
+private val CODE_SIZE = 148.dp

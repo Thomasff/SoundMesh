@@ -37,7 +37,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.soundmesh.core.PairingCode
@@ -418,7 +420,14 @@ private fun Modifier.badgeEdge(colour: Color?, glow: Float): Modifier {
 }
 
 @Composable
-fun HomeScreen(state: HomeState, actions: HomeActions, showDetails: Boolean, steppedBack: Boolean) {
+fun HomeScreen(
+    state: HomeState,
+    actions: HomeActions,
+    showDetails: Boolean,
+    steppedBack: Boolean,
+    onBack: () -> Unit = {}
+) {
+    val route = routeOf(state, steppedBack)
     val glow = edgeGlow(state)
     // Dimmed rather than only slowed: a disconnected sink's edge is meant to read as grey from
     // across the room, not just as a quieter version of its own colour.
@@ -433,12 +442,12 @@ fun HomeScreen(state: HomeState, actions: HomeActions, showDetails: Boolean, ste
             // status bar clock. Visible on the Magic6 and not on the X10, which is Android 10.
             .safeDrawingPadding()
     ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
-            TopBar(state, actions)
+        Column(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 10.dp, bottom = 6.dp)) {
+            TopBar(route, actions, onBack)
         }
         // Which of the three stages this handset is on is worked out fresh every draw rather than
         // remembered - see routeOf() - so there is one answer rather than two that can disagree.
-        when (routeOf(state, steppedBack)) {
+        when (route) {
             HomeRoute.WELCOME -> ScrollingStage { WelcomeScreen(state, actions) }
             HomeRoute.READY -> ScrollingStage { ReadyScreen(state, actions) }
             // PlayingScreen carries its own bottom tab bar, which is why its stage is not wrapped
@@ -470,49 +479,64 @@ private fun ColumnScope.ScrollingStage(content: @Composable ColumnScope.() -> Un
             .weight(1f)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp)
-            .padding(bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(bottom = 28.dp),
+        // Nothing between blocks: a label carries its own space above it, and a run of hairline
+        // rows is meant to read as one list rather than as rows with gaps. See Look.kt.
+        verticalArrangement = Arrangement.spacedBy(0.dp),
         content = content
     )
 }
 
 /**
- * The row that is on screen no matter which of the three stages this handset is on.
+ * Where you are, the way back, and the way into settings.
  *
- * Left is this handset's own identity - the same badge and name that used to sit in the page body
- * - because it answers "which phone is this" before anything else does, on every stage including
- * the welcome screen where there may be no role yet. Right is the way into settings, which is why
- * it does not move even though the page beneath it does.
+ * It used to carry this handset's own badge and name instead, on every stage. That answered "which
+ * phone is this" and nothing else, and it answered it three times over: the name is now the first
+ * row of the roster, where it sits beside the other phones it is being told apart from. What the
+ * bar says instead is which of the three stages this is, which is the thing a back gesture needs
+ * somebody to be able to see before they use it.
+ *
+ * No arrow on the first stage, because there is nowhere above it - see [routeOf].
  */
 @Composable
-private fun TopBar(state: HomeState, actions: HomeActions) {
+private fun TopBar(route: HomeRoute, actions: HomeActions, onBack: () -> Unit) {
     val settingsDescription = stringResource(R.string.settings_open)
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (state.selfId != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BadgeChip(state.selfId, state.selfPlace, diameter = 28.dp)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    stringResource(R.string.badge_this_phone, badgeWords(state.selfId, state.selfPlace)),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        } else {
-            // An empty first child rather than none, so SpaceBetween still has two children to
-            // space and the gear stays on the right instead of sliding to meet nothing.
-            Spacer(Modifier)
+        if (route != HomeRoute.WELCOME) {
+            Text(
+                "←",
+                modifier = Modifier.clickable(onClick = onBack),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        IconButton(
-            onClick = actions.openSettings,
-            modifier = Modifier.semantics { contentDescription = settingsDescription }
-        ) {
-            Text("⚙", style = MaterialTheme.typography.titleLarge)
-        }
+        Text(
+            stringResource(stageTitle(route)),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            stringResource(R.string.settings_open),
+            modifier = Modifier
+                .clickable(onClick = actions.openSettings)
+                .semantics { contentDescription = settingsDescription },
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
+}
+
+/** What each stage is called at the top of it. */
+@androidx.annotation.StringRes
+private fun stageTitle(route: HomeRoute): Int = when (route) {
+    HomeRoute.WELCOME -> R.string.welcome_title
+    HomeRoute.READY -> R.string.ready_title
+    HomeRoute.PLAYING -> R.string.play_title
 }
 
 /**
@@ -673,27 +697,6 @@ private fun HandsetVolumeRow(row: VolumeRow, actions: HomeActions) {
 /** The name [com.soundmesh.probe.sync.HandsetVolume] puts on the wire for the alarm stream. */
 private const val ALARM_STREAM_NAME = "ALARM"
 
-@Composable
-internal fun RolePicker(actions: HomeActions) {
-    // Titled for the welcome screen, its only caller since the routing split - the flat home page
-    // that used to show this under role_pick no longer exists. role_pick itself stays defined
-    // (deleting a shipped string is off the table) even though nothing reads it here any more.
-    Section(R.string.welcome_role) {
-        Button(onClick = { actions.pickRole(Role.HOST) }, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.role_host))
-        }
-        Text(stringResource(R.string.role_host_hint), style = MaterialTheme.typography.bodySmall)
-        Text(stringResource(R.string.role_host_other), style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = { actions.pickRole(Role.SINK) }, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.role_sink))
-        }
-        Text(stringResource(R.string.role_sink_hint), style = MaterialTheme.typography.bodySmall)
-        Text(stringResource(R.string.role_sink_other), style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(8.dp))
-        Text(stringResource(R.string.welcome_role_later), style = MaterialTheme.typography.bodySmall)
-    }
-}
 
 /**
  * The host's choice of what to play, shared between the ready checklist and the playing screen.

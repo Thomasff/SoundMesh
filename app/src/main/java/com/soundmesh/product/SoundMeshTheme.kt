@@ -33,31 +33,37 @@ internal fun darkWanted(choice: ThemeChoice, systemIsDark: Boolean): Boolean = w
  * which handset is which across a room. An accent colour of ANY hue collides with one of them. So
  * the app's own furniture is graphite and slate, and the only saturated things on the screen are
  * the phones.
+ *
+ * Warmed on 2026-09-15 to the greys the drawing was made in: the ground is a warm off-white rather
+ * than a blue-grey one, and panels are plain white on top of it. Same constraint, different
+ * temperature - the point was never that the furniture be cold, only that it not be a hue.
  */
 private val darkScheme = darkColorScheme(
-    primary = Color(0xFFB9C4CF),
-    onPrimary = Color(0xFF1B1F23),
-    secondary = Color(0xFF8A949E),
-    background = Color(0xFF14171A),
-    onBackground = Color(0xFFE3E6E8),
-    surface = Color(0xFF1C2024),
-    onSurface = Color(0xFFE3E6E8),
-    surfaceVariant = Color(0xFF272C31),
-    onSurfaceVariant = Color(0xFFB4BBC2),
-    error = Color(0xFFFF8A80)
+    primary = Color(0xFFDCDBD7),
+    onPrimary = Color(0xFF1A1C1F),
+    secondary = Color(0xFFB0B1AE),
+    background = Color(0xFF16171A),
+    onBackground = Color(0xFFE9E8E5),
+    surface = Color(0xFF1C1D20),
+    onSurface = Color(0xFFE9E8E5),
+    // Doing the work --line does in the drawing: it is what every hairline and every quiet edge
+    // is drawn in, so it has to sit just off the surface rather than being a panel of its own.
+    surfaceVariant = Color(0xFF2E3033),
+    onSurfaceVariant = Color(0xFF93948F),
+    error = Color(0xFFD98A82)
 )
 
 private val lightScheme = lightColorScheme(
-    primary = Color(0xFF3E4750),
-    onPrimary = Color.White,
-    secondary = Color(0xFF6B7681),
-    background = Color(0xFFF7F8F9),
-    onBackground = Color(0xFF14171A),
-    surface = Color.White,
-    onSurface = Color(0xFF14171A),
-    surfaceVariant = Color(0xFFE8EBEE),
-    onSurfaceVariant = Color(0xFF49525B),
-    error = Color(0xFFB3261E)
+    primary = Color(0xFF24282E),
+    onPrimary = Color(0xFFF7F6F4),
+    secondary = Color(0xFF43464B),
+    background = Color(0xFFF7F6F4),
+    onBackground = Color(0xFF1A1C1F),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1A1C1F),
+    surfaceVariant = Color(0xFFE3E2DF),
+    onSurfaceVariant = Color(0xFF75787E),
+    error = Color(0xFFA83A32)
 )
 
 @Composable

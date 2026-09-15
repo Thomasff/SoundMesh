@@ -6,7 +6,7 @@
     <string name="session_channel_name">SoundMesh session</string>
     <string name="session_notification">Playing in sync</string>
     <string name="standby_channel_name">SoundMesh standby</string>
-    <string name="home_build">这台装的版本：%1$s</string>
+    <string name="home_build">本机装的版本：%1$s</string>
     <string name="standby_notification">待命中：主机一按就跟着播\n最长停 %1$d 秒 · 最长断网 %2$d 秒 · 待命 %3$d 秒 · %4$s · %5$s</string>
     <string name="standby_notification_down">没连上主机，正在重拨\n%1$d 次没送出去 · 最长停 %2$d 秒 · 最长断网 %3$d 秒 · 待命 %4$d 秒 · %5$s · %6$s</string>
     <string name="standby_awake_held">按住了 CPU</string>
@@ -17,30 +17,37 @@
     <string name="standby_not_exempt">省电没放行</string>
     <string name="standby_trouble">上次断：%1$s</string>
     <string name="standby_no_trouble">没断过</string>
-    <string name="background_blocked">这台手机会在你切走之后把它停掉，那时它就跟不上播放</string>
+    <string name="background_blocked">本机会在你切走之后把它停掉，那时它就跟不上播放</string>
     <string name="background_allow">让它一直在后台运行</string>
+    <string name="welcome_title">选角色</string>
+    <string name="play_title">正在播放</string>
     <string name="ready_title">状态</string>
+    <string name="network_title">网络</string>
+    <string name="network_hotspot_on">已开热点</string>
+    <string name="network_hotspot_off">没开热点</string>
+    <string name="network_wifi_off">没连 WiFi</string>
     <string name="ready_song">选好歌了</string>
     <string name="ready_song_missing">还没选歌</string>
-    <string name="ready_self_lead">这台校准过输出延迟</string>
-    <string name="ready_self_lead_missing">这台还没量过自己慢多少，会比别人早响</string>
+    <string name="ready_self_lead">本机校准过输出延迟</string>
+    <string name="ready_self_lead_missing">本机还没量过自己慢多少，会比别人早响</string>
     <string name="ready_self_lead_value">早 %1$s 毫秒</string>
     <string name="ready_standing">%1$d 台在待命</string>
-    <string name="ready_standing_none">还没有手机跟上来，另一台要选「当从机」并扫这台的码</string>
-    <string name="ready_uncalibrated">%1$d 台没和这台对过时</string>
+    <string name="ready_standing_none">还没有手机跟上来，另一台要选「当从机」并扫本机的码</string>
+    <string name="ready_uncalibrated">%1$d 台没和本机对过时</string>
     <string name="ready_uncalibrated_why">会差几十毫秒，能听出来</string>
     <string name="ready_blocked">%1$s 会被省电杀掉</string>
     <string name="ready_blocked_why">一切走它就跟不上了，放行之后再开始</string>
     <string name="ready_paired">跟上主机了</string>
     <string name="ready_paired_none">还没扫过主机的码</string>
-    <string name="ready_background">这台已经放行后台运行</string>
+    <string name="ready_background">本机已经放行后台运行</string>
     <string name="pair_code_title">让其他手机连上</string>
     <string name="pair_code_choose_hotspot">通过热点连接</string>
     <string name="pair_code_choose_wifi">通过WiFi连接</string>
     <string name="pair_code_switch_warning">切换之后已经连上的手机会断开，需要重新扫码。</string>
-    <string name="pair_code_enlarge">放大</string>
+    <string name="pair_code_how">对方打开应用选「当从机」，扫这个码</string>
     <string name="pair_code_nowhere">本机现在没有别的手机能连上的地址。连个 WiFi 或者开个热点。</string>
     <string name="roster_title">房间里的手机</string>
+    <string name="roster_count">%1$d 台</string>
     <string name="roster_self">本机</string>
     <string name="roster_nobody">还没有手机连上。让别的手机扫下面的码。</string>
     <string name="roster_calibrated">已校准</string>
@@ -65,6 +72,10 @@
     <string name="goto_pair_one">和某一台对时</string>
     <string name="goto_room">位置同步校准</string>
     <string name="goto_room_hint">测每台手机的相对位置，并校准它们的时间。</string>
+    <string name="goto_room_go">开始校准</string>
+    <string name="goto_overhead_go">开始</string>
+    <string name="goto_self_go">开始测</string>
+    <string name="goto_self_again">重新测一遍</string>
     <string name="goto_overhead">量我坐在哪</string>
     <string name="goto_overhead_hint">测你听歌的位置，声音的方向和远近会更准。可跳过。</string>
     <string name="ready_measure">量一量（做过一次就不用再做了）</string>
@@ -80,33 +91,36 @@
 
     <!-- The product's own screen. Chinese, because it is read by the people using it, while every
          harness string above stays English because it is read by ADB. -->
-    <string name="role_pick">这台手机当什么？</string>
+    <string name="role_pick">本机当什么？</string>
     <string name="role_host">当主机</string>
-    <string name="role_host_hint">放歌的那台，选一首本地歌曲</string>
+    <string name="role_host_hint">放歌的那台。其他手机跟着它响。</string>
     <string name="role_sink">当从机</string>
-    <string name="role_sink_hint">跟着主机一起响的那台</string>
+    <string name="role_sink_hint">扫一下主机的码，跟着它响。</string>
     <string name="role_change">换个角色</string>
 
-    <string name="song_title">歌曲</string>
+    <string name="song_title">播放来源</string>
+    <string name="song_pick_one">歌曲</string>
+    <string name="song_pick_many">文件夹</string>
+    <string name="song_pick_capture">本机的声音</string>
     <string name="song_none">还没选歌</string>
     <string name="song_choose">选择歌曲</string>
     <string name="song_choose_folder">选文件夹</string>
     <string name="song_folder_chosen">文件夹：%1$s</string>
     <string name="song_checking">正在检查这首歌…</string>
-    <string name="song_capture">采集这台手机正在放的音乐</string>
-    <string name="song_capturing">采集这台手机正在放的声音</string>
-    <string name="song_capture_hint">把这台手机的媒体音量调到 0，再用你自己的音乐 App 播放。采到的声音会晚约 1.5 秒和另一台一起放出来；音量不调到 0，你会听到一前一后两遍。这台手机自己的声音走闹钟通道，响度用下面那条调。</string>
-    <string name="capture_no_permission">没有录音权限就采不了这台手机的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
+    <string name="song_capture">采集本机正在放的音乐</string>
+    <string name="song_capturing">采集本机正在放的声音</string>
+    <string name="song_capture_hint">把本机的媒体音量调到 0，再用你自己的音乐 App 播放。采到的声音会晚约 1.5 秒和另一台一起放出来；音量不调到 0，你会听到一前一后两遍。本机自己的声音走闹钟通道，响度用下面那条调。</string>
+    <string name="capture_no_permission">没有录音权限就采不了本机的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
     <string name="capture_declined">没有拿到采集授权，或者授权已经被收回了。</string>
     <string name="song_unnamed">未命名</string>
 
-    <string name="home_calibrate">校准这台手机的输出延迟</string>
+    <string name="home_calibrate">校准本机的输出延迟</string>
 
     <string name="calibrate_title">输出延迟校准</string>
     <string name="calibrate_what">这是在测什么</string>
-    <string name="calibrate_intro">这台手机采集别的 App 的声音时，媒体音量必须是 0，所以它不能用平时放音乐那条通道来放，改走「闹钟」通道。两条通道的发声时刻不一样，这个差要量出来补掉，否则两台手机对不齐。它是这台手机自己的属性，所以一台手机就能测，不需要另一台。</string>
+    <string name="calibrate_intro">本机采集别的 App 的声音时，媒体音量必须是 0，所以它不能用平时放音乐那条通道来放，改走「闹钟」通道。两条通道的发声时刻不一样，这个差要量出来补掉，否则两台手机对不齐。它是本机自己的属性，所以一台手机就能测，不需要另一台。</string>
     <string name="calibrate_stored">已经测过：早 %1$.3f 毫秒</string>
-    <string name="calibrate_unmeasured">还没测过。没测过就当作零来补，这台手机当主机时会对不齐。</string>
+    <string name="calibrate_unmeasured">还没测过。没测过就当作零来补，本机当主机时会对不齐。</string>
     <string name="calibrate_run">开始测</string>
     <string name="calibrate_quiet">把手机放在桌上别碰，房间保持安静。会放大约一分半的提示音和啁啾声，手机要听见自己的声音才能测。</string>
     <string name="calibrate_start">开始校准</string>
@@ -124,14 +138,14 @@
     <string name="home_pair_calibrate">和配对的另一台手机对时</string>
     <string name="pair_calibrate_title">两台手机对时</string>
     <string name="pair_calibrate_what">这是在测什么</string>
-    <string name="pair_calibrate_intro">两台手机的发声时刻差着一个固定的量，跟型号和系统有关。量出来记下，从机播放时就按它补偿，两台才真的齐。这是这一对手机的属性，所以两台都要在场，而且只对「这台放歌、那台跟着」这一个方向有效。</string>
+    <string name="pair_calibrate_intro">两台手机的发声时刻差着一个固定的量，跟型号和系统有关。量出来记下，从机播放时就按它补偿，两台才真的齐。这是这一对手机的属性，所以两台都要在场，而且只对「本机放歌、那台跟着」这一个方向有效。</string>
     <string name="pair_calibrate_stored">已经测过：%1$.3f 毫秒（%2$d 次观测的平均）</string>
-    <string name="pair_calibrate_approximate">这个数是估的：%1$.3f 毫秒，从「测量房间」那一轮顺带算出来的，误差大概一两毫秒。比不补强得多，但比正经测过差。有空在这台按一次「开始对时」，测出来的就会顶掉它。</string>
+    <string name="pair_calibrate_approximate">这个数是估的：%1$.3f 毫秒，从「测量房间」那一轮顺带算出来的，误差大概一两毫秒。比不补强得多，但比正经测过差。有空在本机按一次「开始对时」，测出来的就会顶掉它。</string>
     <string name="pair_calibrate_unmeasured">还没测过。没测过就当作零来补，两台会差几十毫秒。</string>
-    <string name="pair_calibrate_role_host">这台现在是主机——在首页选的，随时可以换。按开始，然后去另一台上也按开始。主机就这一个按钮：新测还是验证由另一台决定，这台两种都按「开始对时」。</string>
-    <string name="pair_calibrate_role_sink">这台现在是从机——在首页选的，随时可以换。结果会记在这台上。请先在主机上按开始。</string>
-    <string name="pair_calibrate_no_pairing">这台还没扫过另一台的配对码。先回首页扫一次。</string>
-    <string name="pair_calibrate_no_role">先回首页选这台是主机还是从机。校准只对「这台放歌、那台跟着」这一个方向有效，所以它要知道现在是哪个方向。</string>
+    <string name="pair_calibrate_role_host">本机现在是主机——在首页选的，随时可以换。按开始，然后去另一台上也按开始。主机就这一个按钮：新测还是验证由另一台决定，本机两种都按「开始对时」。</string>
+    <string name="pair_calibrate_role_sink">本机现在是从机——在首页选的，随时可以换。结果会记在本机上。请先在主机上按开始。</string>
+    <string name="pair_calibrate_no_pairing">本机还没扫过另一台的配对码。先回首页扫一次。</string>
+    <string name="pair_calibrate_no_role">先回首页选本机是主机还是从机。校准只对「本机放歌、那台跟着」这一个方向有效，所以它要知道现在是哪个方向。</string>
     <string name="pair_calibrate_run">开始测</string>
     <string name="pair_calibrate_quiet">把两台手机放在桌上，隔开一臂之内，扬声器别被挡住，房间保持安静。会放大约一分钟的提示音和啁啾声。开始之后谁都别碰。</string>
     <string name="pair_calibrate_start">开始对时</string>
@@ -140,28 +154,28 @@
     <string name="pair_calibrate_result">结果</string>
     <string name="pair_calibrate_now">正在进行</string>
     <string name="pair_calibrate_room_drawing">量到的摆位</string>
-    <string name="pair_calibrate_room_drawing_hint">和播放界面是同一张图：拖动就是你在说这台手机站在哪儿，按「按测量摆正」把图挪到量出来的形状上。两边永远一致。</string>
+    <string name="pair_calibrate_room_drawing_hint">和播放界面是同一张图：拖动就是你在说本机站在哪儿，按「按测量摆正」把图挪到量出来的形状上。两边永远一致。</string>
     <string name="pair_calibrate_hold_still">别动，还有 %1$d 秒。</string>
     <string name="pair_calibrate_waiting">在等另一台连过来。请在另一台上也按开始。</string>
     <string name="pair_calibrate_clock">正在和另一台对时钟。这一步不发声。</string>
     <string name="pair_calibrate_running">正在测。每一台都别碰，保持安静。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
     <string name="pair_calibrate_room_title">几台一起量距离</string>
-    <string name="pair_calibrate_room_intro">量的是**手机之间**的距离，一次量完所有组合。\n\n每台手机都摆到它该在的位置，其他手机开着这个应用停在首页别动，然后**只在这台上按一下**，它们会自己跟着开始。哪台没停在首页，就得走过去在那台上按一次——首页写着有几台在待命。\n\n按完约 10 秒开始响，响的时候谁都别碰。</string>
+    <string name="pair_calibrate_room_intro">量的是**手机之间**的距离，一次量完所有组合。\n\n每台手机都摆到它该在的位置，其他手机开着这个应用停在首页别动，然后**只在本机上按一下**，它们会自己跟着开始。哪台没停在首页，就得走过去在那台上按一次——首页写着有几台在待命。\n\n按完约 10 秒开始响，响的时候谁都别碰。</string>
     <string name="pair_calibrate_room_start">几台一起量</string>
-    <string name="pair_calibrate_overhead_hint">这一轮量的是**你坐的位置**。至少要三台：举着的那台量不到它自己到你的距离，两台只剩一条边，定不出位置。\n\n**一共两轮，都只在这台上按。**\n\n第一轮，按下面那个「举过头顶，量我坐在哪」：其他手机先摆好、停在首页；你拿着这台坐到平时听歌的地方，按一下，然后把这台举到头顶正上方别动。约 10 秒后开始响，响完放下。\n\n第二轮，按上面那个「几台一起量」：先把这台也放回它该在的位置，再按一下。\n\n为什么要两轮：举着的时候这台不在它的位置上，量不准手机之间的距离；而放好之后，又没人拿着它量你。</string>
+    <string name="pair_calibrate_overhead_hint">这一轮量的是**你坐的位置**。至少要三台：举着的那台量不到它自己到你的距离，两台只剩一条边，定不出位置。\n\n**一共两轮，都只在本机上按。**\n\n第一轮，按下面那个「举过头顶，量我坐在哪」：其他手机先摆好、停在首页；你拿着本机坐到平时听歌的地方，按一下，然后把本机举到头顶正上方别动。约 10 秒后开始响，响完放下。\n\n第二轮，按上面那个「几台一起量」：先把本机也放回它该在的位置，再按一下。\n\n为什么要两轮：举着的时候本机不在它的位置上，量不准手机之间的距离；而放好之后，又没人拿着它量你。</string>
     <string name="pair_calibrate_overhead_start">举过头顶，量我坐在哪</string>
     <string name="pair_calibrate_room_waiting">已经通知了 %1$d 台，在等它们连过来，最多等 %2$d 秒。它们会自己开始，不用去按。</string>
     <string name="pair_calibrate_room_joined">已经连过来 %1$d 台（通知了 %2$d 台）。两个数一样就等着，它们在忙。</string>
     <string name="pair_calibrate_room_told_nobody">**一台都没通知到，所以没有手机会自己开始。** 其他手机要开着这个应用、停在首页，才收得到这个指令——退到桌面、切到别的应用、或者还停在上一轮的对时结果页，都收不到。先去把它们都退回首页，首页上会写着待命几台，然后再按一次。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
     <string name="excuse_no_microphone">还没给它录音权限。那台手机屏幕上正弹着框，去点一下「允许」，然后回来重按一次。</string>
-    <string name="excuse_slow_link">它到这台的网络往返太慢，测出来的数不能用。</string>
+    <string name="excuse_slow_link">它到本机的网络往返太慢，测出来的数不能用。</string>
     <string name="excuse_clock_not_converged">它的对时没收敛，多半还是网络。</string>
     <string name="excuse_busy">它正在跑别的测量，还没跑完。等它结束再按。</string>
     <string name="excuse_asleep">它在待命，但屏幕是灭的。播放和音量不用亮屏，测量要——把那台手机点亮再按一次。</string>
-    <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。</string>
-    <string name="pair_calibrate_room_sink_approximate">送到了。房间里 %1$d 台，你这台有 %2$d 对量出来了。这台还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f 毫秒先用着（是估的，误差大概一两毫秒）。有空按一次「开始对时」，测出来的会顶掉它。</string>
+    <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你本机有 %2$d 对量出来了。</string>
+    <string name="pair_calibrate_room_sink_approximate">送到了。房间里 %1$d 台，你本机有 %2$d 对量出来了。本机还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f 毫秒先用着（是估的，误差大概一两毫秒）。有空按一次「开始对时」，测出来的会顶掉它。</string>
     <string name="pair_calibrate_stop">停止</string>
     <string name="pair_calibrate_stop_hint">正在测的这一台会测完，之后不再等新的手机。</string>
     <string name="pair_calibrate_stopping">这一台测完就结束，不再等下一台了。</string>
@@ -171,10 +185,10 @@
     <string name="pair_calibrate_room_called_off_here">这一轮取消了，已经进来的手机都收到了。</string>
     <string name="pair_calibrate_room_called_off">主机取消了这一轮。</string>
     <string name="pair_calibrate_served">这一轮一共测了 %1$d 台。</string>
-    <string name="pair_calibrate_host_done">这台是主机，测量结果记在另一台上。这一轮量到：偏差 %1$.3f 毫秒，两台间距约 %2$.2f 米。</string>
+    <string name="pair_calibrate_host_done">本机是主机，测量结果记在另一台上。这一轮量到：偏差 %1$.3f 毫秒，两台间距约 %2$.2f 米。</string>
     <string name="pair_calibrate_distance_done">量好了，两台间距约 %1$.2f 米。可以把手机放下了。</string>
     <string name="pair_calibrate_done">测完了：这一对的偏差是 %1$.3f 毫秒，已经记下来（第 %2$d 次观测）。</string>
-    <string name="pair_calibrate_slow_link">这个网络太慢，没法对齐：两台之间一来一回要 %1$.0f 毫秒，超过 %2$.0f 就对不准了。如果这台正在开热点，改成让另一台开热点、这台连过去；如果两台都连着路由器，改成一台开热点、另一台连它。</string>
+    <string name="pair_calibrate_slow_link">这个网络太慢，没法对齐：两台之间一来一回要 %1$.0f 毫秒，超过 %2$.0f 就对不准了。如果本机正在开热点，改成让另一台开热点、本机连过去；如果两台都连着路由器，改成一台开热点、另一台连它。</string>
     <string name="pair_calibrate_forget">清除这一对的校准，重新开始</string>
     <string name="pair_calibrate_forget_hint">如果第一轮就没测准，之后每一轮都会通不过，这个数就再也改不动了。清除之后，下一轮会像第一次那样整个采纳。</string>
     <string name="pair_calibrate_forget_title">清除已经记下的校准？</string>
@@ -196,7 +210,7 @@
     <string name="volume_hint">采集播放走的是闹钟通道，它的音量和媒体音量互不影响。停在这个页面按手机的音量键就能调它，也可以到 设置 → 声音 里调闹钟音量。</string>
     <string name="room_volume_title">全体音量</string>
     <string name="room_volume_level">%1$d%%</string>
-    <string name="room_volume_capturing_hint">这台手机在采集别的应用，它自己走闹钟通道；媒体音量会被调到 0，否则你会听到一前一后两遍。还原的时候一起放回去。</string>
+    <string name="room_volume_capturing_hint">本机在采集别的应用，它自己走闹钟通道；媒体音量会被调到 0，否则你会听到一前一后两遍。还原的时候一起放回去。</string>
     <string name="room_volume_row">%1$s %2$d%%（%3$d/%4$d，%5$s）</string>
     <string name="room_volume_row_missed">%1$s 没到你要的 %2$d%%——它的音量流没跟着动。</string>
     <string name="room_volume_row_silent">%1$s 收到了命令，但一直没把自己的音量报回来——它旁边这个数字是旧的。</string>
@@ -206,7 +220,7 @@
     <string name="room_volume_none">还没有手机报回自己的音量。</string>
     <string name="room_volume_restore">一键还原音量</string>
     <string name="room_volume_restore_hint">把每台手机放回动它之前的音量。各机的档数不一样，同一个百分比落到的格子也不一样，所以上面那几行是各自读回来的真值，不是照抄滑钮。</string>
-    <string name="capture_silent">主机这边收不到声音了，已经 %1$d 秒全是静音。把媒体音量调高一格、再调回去，通常马上就恢复。原因还在查：媒体音量为 0 的时候，这台手机可能把输出通路睡掉了，而抓声抓的正是那条通路。</string>
+    <string name="capture_silent">主机这边收不到声音了，已经 %1$d 秒全是静音。把媒体音量调高一格、再调回去，通常马上就恢复。原因还在查：媒体音量为 0 的时候，本机可能把输出通路睡掉了，而抓声抓的正是那条通路。</string>
 
     <string name="pair_title">配对</string>
     <string name="pair_code">配对码</string>
@@ -215,11 +229,11 @@
     <string name="pair_scan_hint">扫到之后按返回键回来</string>
     <string name="standby_host">待命中的手机：%1$d 台。主机这边开始播放、或者开始量距离的时候，它们会自己跟着做，不用一台台去按。</string>
     <string name="standby_approximate">其中 %1$d 台用的是「测量房间」顺带算出来的估算值，还没正经对过时。差大概一两毫秒，听不出来，但有空该各测一次。</string>
-    <string name="standby_uncalibrated">其中 %1$d 台还没和这台手机对过时。没对过就按零来补，它们会差几十毫秒，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>
-    <string name="standby_sink">已待命：主机一按，这台自己开始。留在这一页别退出。</string>
-    <string name="standby_sink_alone">没和主机连上，这台还得自己按开始。先扫码配对，并确认主机也开着这个应用的首页。</string>
+    <string name="standby_uncalibrated">其中 %1$d 台还没和本机对过时。没对过就按零来补，它们会差几十毫秒，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>
+    <string name="standby_sink">已待命：主机一按，本机自己开始。留在这一页别退出。</string>
+    <string name="standby_sink_alone">没和主机连上，本机还得自己按开始。先扫码配对，并确认主机也开着这个应用的首页。</string>
     <string name="pair_with">已配对 %1$s @ %2$s:%3$d</string>
-    <string name="pair_no_address">这台手机现在没有一个能让对方连上的地址</string>
+    <string name="pair_no_address">本机现在没有一个能让对方连上的地址</string>
 
     <string name="play_start">开始播放</string>
     <string name="play_stop">停止</string>
@@ -229,7 +243,7 @@
     <string name="play_pause">暂停</string>
     <string name="play_resume">继续</string>
 
-    <string name="state_called_here">别人屏幕上管这台叫</string>
+    <string name="state_called_here">别人屏幕上管本机叫</string>
     <string name="state_title">状态</string>
     <string name="state_idle">没在播</string>
     <string name="state_syncing">正在对时，马上出声</string>
@@ -240,7 +254,7 @@
     <string name="state_stopped">已停止</string>
     <string name="state_failed">起不来：%1$s</string>
 
-    <string name="health_title">这台手机</string>
+    <string name="health_title">本机</string>
     <string name="health_battery">电量</string>
     <string name="health_charging">充电中</string>
     <string name="health_temperature">电池温度</string>
@@ -287,7 +301,7 @@
 
     <string name="badge_in_words">%1$d 号（%2$s）</string>
     <string name="badge_number_only">%1$d 号</string>
-    <string name="badge_this_phone">这台是 %1$s</string>
+    <string name="badge_this_phone">本机是 %1$s</string>
     <string name="badge_red">红</string>
     <string name="badge_orange">橙</string>
     <string name="badge_yellow">黄</string>
@@ -304,7 +318,7 @@
     <string name="room_title">房间摆位</string>
     <string name="room_hint">拖动手机图标，摆成它们相对你的大致方位和远近。中间那个点是你，不用拖。整张图画多大都一样，算数的是各台之间的比例。摆得远的那台会自动放响一点补回距离——只补了音量，没补声音多跑的那段时间。</string>
     <string name="room_you">你</string>
-    <string name="room_this_phone">这台</string>
+    <string name="room_this_phone">本机</string>
     <string name="room_mode_rotate">旋转</string>
     <string name="room_mode_pan">左右平移</string>
     <string name="room_mode_split">拆声道</string>
@@ -344,7 +358,8 @@
     <string name="room_disagrees">测距说 %1$s 比 %2$s 远，你画的正相反——这两个图标是不是拖反了？</string>
     <string name="failure_port_in_use">起不来：对时和播放用的是同一个端口，多半是对时那边还开着。到「对时」那页按停止，等几秒再试一次。</string>
     <string name="now_playing">正在放：%1$s</string>
-    <string name="welcome_what">让几台手机同时放同一首歌，听起来像一套音响。</string>
+    <string name="welcome_what">把几台手机变成一套音箱</string>
+    <string name="welcome_self">本机 · %1$s</string>
     <string name="welcome_need">要准备什么</string>
     <string name="welcome_need_phones">至少两台安卓手机</string>
     <string name="welcome_need_app">每台都装这个应用</string>
@@ -353,7 +368,7 @@
     <string name="welcome_wifi_name">现在连着：%1$s</string>
     <string name="welcome_wifi_none">现在没连 WiFi。两台手机得在同一个 WiFi 里才能互相通信。</string>
     <string name="welcome_wifi_connected">现在连着 WiFi，读不到网络名称。</string>
-    <string name="welcome_role">本机作为</string>
+    <string name="welcome_role">本机作为：</string>
     <string name="welcome_role_later">需要时可返回此页更换角色。</string>
     <string name="role_host_other">另一台要选「当从机」</string>
     <string name="role_sink_other">另一台要选「当主机」</string>
