@@ -94,7 +94,7 @@ fun effectOf(state: RoomState): RoomEffect? {
  *
  * An axis nothing is being split along, and an envelopment for a source that never turns away,
  * are both carried in the state and change nothing about the room - so two rooms differing only
- * there are one effect, not two. Without this, choosing 绕着转 and then 按摆位分左右 would leave
+ * there are one effect, not two. Without this, choosing 绕着转 and then 双声道 would leave
  * an envelopment behind and the list would show nothing as chosen.
  */
 private fun settled(settings: EffectSettings): EffectSettings = EffectSettings(

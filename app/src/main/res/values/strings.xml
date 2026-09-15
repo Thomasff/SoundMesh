@@ -325,9 +325,9 @@
     <string name="room_this_phone">本机</string>
     <string name="room_effect_title">音效</string>
     <string name="room_effect_custom">当前是自定的设置，在下面「细调」里改过。</string>
-    <string name="room_effect_stereo">按摆位分左右</string>
+    <string name="room_effect_stereo">双声道</string>
     <string name="room_effect_stereo_line">偏左的手机放左声道，偏右的放右声道。</string>
-    <string name="room_effect_around">围住我</string>
+    <string name="room_effect_around">包围感</string>
     <string name="room_effect_around_line">每台放得略有不同，声音把你围起来。</string>
     <string name="room_effect_spin">绕着转</string>
     <string name="room_effect_spin_line">声音绕着你转圈。</string>
