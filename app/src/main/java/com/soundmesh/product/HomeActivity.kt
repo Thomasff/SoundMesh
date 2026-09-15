@@ -724,9 +724,11 @@ class HomeActivity : ComponentActivity() {
      * read from the outside.
      */
     private fun putDownWhatIsPlaying() {
-        // Whoever was watching the room play stays where they were watching it from. Not while
-        // they have already stepped back to the board - then the board is where they are.
-        holdingPlaying = state.running && !steppedBack
+        // Whoever was watching the room play stays where they were watching it from. Asked of the
+        // stage they are on rather than of what is playing, because the second switch in a row is
+        // made from a stage that has already been put down once: reading `running` there answered
+        // "nothing is playing" and sent them back to the board. Reported 2026-09-15.
+        holdingPlaying = stillWatching(state, steppedBack, holdingPlaying)
         // Stopped before the projection goes, so a running capture is not read from a source that
         // has already been handed back.
         if (state.running) stopSession()

@@ -36,6 +36,18 @@ internal fun routeOf(
 }
 
 /**
+ * Whether somebody watching the room is still watching it, at the moment the room is put down.
+ *
+ * The answer is the stage they are on, not whether anything is playing. Those look the same for
+ * the first switch and differ for every one after it: the second switch in a row is made from a
+ * stage that was already put down once, where nothing is playing and the person is standing there
+ * regardless - so asking `running` answered "nowhere" and sent them back to the board. Reported
+ * 2026-09-15, one round after [routeOf] gained [holding] for the first switch.
+ */
+internal fun stillWatching(state: HomeState, steppedBack: Boolean, holding: Boolean): Boolean =
+    routeOf(state, steppedBack, holding) == HomeRoute.PLAYING
+
+/**
  * An optional build fact, or null where nobody has set one.
  *
  * Blank counts as unset. Author, repository, licence and release page are all undecided as of

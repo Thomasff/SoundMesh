@@ -1,7 +1,9 @@
 package com.soundmesh.product
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeRouteTest {
@@ -81,6 +83,33 @@ class HomeRouteTest {
         assertEquals(
             HomeRoute.WELCOME,
             routeOf(HomeState(role = Role.NONE, running = false), holding = true)
+        )
+    }
+
+    /**
+     * And the switch after that one, which is the case the first fix got wrong.
+     *
+     * Every switch puts the room down, so the second is asked from a stage where nothing is
+     * playing. A hold worked out from `running` is false there and the person lands on the board -
+     * reported on a phone 2026-09-15, one round after the same journey was fixed for the first
+     * switch. The two directions run in the same test because the wrong answer is a constant.
+     */
+    @Test
+    fun aSecondSwitchInARowAlsoLeavesSomebodyWhereTheyMadeIt() {
+        val stopped = HomeState(role = Role.HOST, running = false)
+        assertTrue(stillWatching(stopped, steppedBack = false, holding = true))
+        assertFalse(stillWatching(stopped, steppedBack = false, holding = false))
+    }
+
+    /** Somebody who walked back to the board and picked a source there stays on the board. */
+    @Test
+    fun choosingASourceFromTheBoardDoesNotMoveAnybody() {
+        assertFalse(
+            stillWatching(
+                HomeState(role = Role.HOST, running = true),
+                steppedBack = true,
+                holding = false
+            )
         )
     }
 
