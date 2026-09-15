@@ -189,4 +189,50 @@ class SpatialDelayTest {
     fun `a wander faster than the floor is refused`() {
         four.copy(shimmerPeriodNanos = SpatialField.SHORTEST_SHIMMER_PERIOD_NANOS - 1)
     }
+
+    /**
+     * A circuit too fast for the delay line to follow gets a shallower sweep, not a clipped one.
+     *
+     * The distinction is the whole reason the cap is in the law rather than left to the limiter.
+     * A limiter clips a trajectory, and two handsets sit at different points of the same
+     * trajectory - so what they render after clipping is not one shape scaled down, it is two
+     * different shapes, and the room stops agreeing about where the source is. A depth every
+     * handset works out from the rule is a shape they all still agree on.
+     */
+    @Test
+    fun `a circuit faster than the delay line can follow is given a shallower sweep`() {
+        val room = SpatialField(
+            SpatialMode.ROTATE,
+            roomOf(4),
+            periodNanos = 1_000_000_000L,
+            travelDelayNanos = SpatialField.MAX_TRAVEL_DELAY_NANOS
+        )
+        val frameNanos = 1_000_000_000L / rate
+        for (peerId in room.layout.peerIds) {
+            var before = TravellingDelay.samplesFor(room.playbackDelayNanosFor(peerId, 0L), rate)
+            for (frame in 1..(room.periodNanos / frameNanos)) {
+                val now = TravellingDelay.samplesFor(
+                    room.playbackDelayNanosFor(peerId, frame * frameNanos),
+                    rate
+                )
+                assertTrue(
+                    "$peerId moved ${now - before} frames in one frame",
+                    abs(now - before) <= TravellingDelay.MAX_SLEW_SAMPLES
+                )
+                before = now
+            }
+        }
+    }
+
+    /** And at the circuit anybody actually uses, the cap does nothing: the knob means what it says. */
+    @Test
+    fun `at the default circuit the travel knob reaches its full depth`() {
+        val room = SpatialField(
+            SpatialMode.ROTATE,
+            SpatialLayout(listOf(SpatialPosition("l", -1.0, 0.0), SpatialPosition("r", 1.0, 0.0))),
+            travelDelayNanos = SpatialField.MAX_TRAVEL_DELAY_NANOS
+        )
+        val deepest = (0..2_000).maxOf { room.playbackDelayNanosFor("l", it * 3_000_000L) }
+        assertEquals(SpatialField.MAX_TRAVEL_DELAY_NANOS, deepest)
+    }
 }

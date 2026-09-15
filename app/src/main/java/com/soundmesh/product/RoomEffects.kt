@@ -82,7 +82,8 @@ data class EffectSettings(
     val envelopment: Float = 0f,
     val diffusion: Float = 0f,
     val travel: Float = 0f,
-    val shimmer: Float = 0f
+    val shimmer: Float = 0f,
+    val shimmerSpeed: Float = DEFAULT_SHIMMER_SPEED
 )
 
 /**
@@ -111,7 +112,8 @@ fun effectOf(state: RoomState): RoomEffect? {
             state.envelopment,
             state.diffusion,
             state.travel,
-            state.shimmer
+            state.shimmer,
+            state.shimmerSpeed
         )
     )
     return RoomEffect.entries.firstOrNull { settled(it.settings) == here }
@@ -134,7 +136,10 @@ private fun settled(settings: EffectSettings): EffectSettings = EffectSettings(
     // Nothing to travel between in a split, exactly as with the envelopment: the two modes that
     // read this are the two with a source to be moving.
     travel = if (settings.mode == SpatialMode.SPLIT) 0f else rounded(settings.travel),
-    shimmer = rounded(settings.shimmer)
+    shimmer = rounded(settings.shimmer),
+    // How fast a wander of nothing goes is nothing, the same case as an axis nothing is split
+    // along: without this, 双声道 would stop recognising itself after anybody touched the speed.
+    shimmerSpeed = if (settings.shimmer <= 0f) DEFAULT_SHIMMER_SPEED else rounded(settings.shimmerSpeed)
 )
 
 /**

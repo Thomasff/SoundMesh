@@ -542,6 +542,7 @@ class HomeActivity : ComponentActivity() {
             setDiffusion = { apart -> updateRoom { it.copy(diffusion = apart) } },
             setTravel = { far -> updateRoom { it.copy(travel = far) } },
             setShimmer = { wander -> updateRoom { it.copy(shimmer = wander) } },
+            setShimmerSpeed = { speed -> updateRoom { it.copy(shimmerSpeed = speed) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
@@ -612,6 +613,14 @@ class HomeActivity : ComponentActivity() {
             // this project, and a handset reading one out of a log should see one.
             travelDelayNanos = nanosOf(room.travel, SpatialField.MAX_TRAVEL_DELAY_NANOS),
             shimmerDelayNanos = nanosOf(room.shimmer, SpatialField.MAX_SHIMMER_DELAY_NANOS),
+            // A slider that runs the way a listener reads it - right is faster - against a period
+            // that runs the other way. Slowest at nothing, fastest at one.
+            shimmerPeriodNanos = SpatialField.LONGEST_SHIMMER_PERIOD_NANOS +
+                (
+                    room.shimmerSpeed.toDouble().coerceIn(0.0, 1.0) *
+                        (SpatialField.SHORTEST_SHIMMER_PERIOD_NANOS -
+                            SpatialField.LONGEST_SHIMMER_PERIOD_NANOS)
+                    ).toLong(),
             // Zeroed rather than carried with a flag beside it: no scale is exactly what a room
             // that never measured its listener sends, so the switch off and the feature absent
             // are the same message on the wire and the same code on every handset.

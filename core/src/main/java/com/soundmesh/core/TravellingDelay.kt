@@ -30,16 +30,16 @@ import kotlin.math.floor
  * ## The slew limit is the whole safety argument
  *
  * The delay is asked for, never set. Each frame it moves at most [MAX_SLEW_SAMPLES] towards what
- * was asked, which bounds the resampling ratio and therefore bounds the pitch: 1/64 is 1.6%,
- * about a quarter tone, and it is reached only by a change no listener made - a mode switching, a
+ * was asked, which bounds the resampling ratio and therefore bounds the pitch: 1/32 is 3.1%,
+ * about half a semitone, and it is reached only by a change no listener made - a mode switching, a
  * rule arriving, a handset appearing in the drawing and shifting everybody's slot. The movements
- * the features themselves ask for are an order of magnitude slower than the cap, so they pass
- * through it untouched and the cap is invisible to them; it is there for the discontinuities.
+ * the features themselves ask for stay well under the cap, so they pass through it untouched and
+ * the cap is invisible to them; it is there for the discontinuities.
  *
  * It buys one more thing, for free. A fresh line holds silence, so a delay it has not yet been
  * fed enough frames to satisfy would read that silence out. Starting at zero and rising by at most
- * 1/64 of a frame per frame, the delay after n frames is at most n/64 - and the two frames an
- * interpolation reads are at n/64 and n/64 + 1, both of which are inside the n + 1 frames that
+ * 1/32 of a frame per frame, the delay after n frames is at most n/32 - and the two frames an
+ * interpolation reads are at n/32 and n/32 + 1, both of which are inside the n + 1 frames that
  * have been written. So there is no priming case and no first-chunk dropout to special case: the
  * line is correct from its first frame. That the margin is exactly one frame is why [step] moves
  * the delay after producing a frame rather than before.
@@ -124,8 +124,8 @@ class TravellingDelay(sampleRate: Int, longestNanos: Long = LONGEST_NANOS) {
         // Moved after the frame has been produced, not before it. The very first frame is then
         // read at a delay of exactly zero - the frame just written, no interpolation - and the
         // delay only starts moving once there is a second frame for it to interpolate against.
-        // With the move ahead of the read the first frame came out 1.6% short, because a delay of
-        // 1/64 reads the newest frame and the one before it, and on frame zero the one before it
+        // With the move ahead of the read the first frame came out 3.1% short, because a delay of
+        // 1/32 reads the newest frame and the one before it, and on frame zero the one before it
         // is the silence the buffer was allocated full of. One frame, inaudible, and wrong for a
         // reason that would have been very hard to find later.
         val wanted = wantedSamples.coerceIn(0.0, longestSamples)
@@ -139,29 +139,36 @@ class TravellingDelay(sampleRate: Int, longestNanos: Long = LONGEST_NANOS) {
 
     companion object {
         /**
-         * How far a delay may move per frame: 1/64 of a frame, which is 1.6% and about a quarter
-         * tone of transposition while it is moving.
+         * How far a delay may move per frame: 1/32 of a frame, which is 3.1% and about half a
+         * semitone of transposition while it is moving.
          *
          * Not a taste setting. It is the bound on what a discontinuity is allowed to sound like,
          * and the two things it protects against pull opposite ways: too fast and a rule change is
-         * a click or a chirp, too slow and a fifteen millisecond correction takes a second and a
-         * half to arrive, during which the room is playing a delay nobody asked for. At 1/64 that
-         * correction takes 0.6 s and sounds like a tape wobble, which is the failure this feature
-         * should have - the one that reads as the sound moving rather than as the app breaking.
+         * a click or a chirp, too slow and a thirty millisecond correction takes seconds to arrive,
+         * during which the room is playing a delay nobody asked for. At 1/32 that correction takes
+         * about a second and sounds like a tape wobble, which is the failure this feature should
+         * have - the one that reads as the sound moving rather than as the app breaking.
+         *
+         * Doubled from 1/64 on 09-15, when the depths above it doubled and then some: a listener
+         * found single milliseconds too subtle to hear at all, and the deeper the delays the
+         * steeper the slopes underneath them.
          */
-        const val MAX_SLEW_SAMPLES = 1.0 / 64.0
+        const val MAX_SLEW_SAMPLES = 1.0 / 32.0
 
         /**
-         * The longest delay any of this can ask for: thirty milliseconds.
+         * The longest delay any of this can ask for: sixty milliseconds.
          *
-         * Past about thirty the ear stops hearing a delayed copy as part of the same sound and
-         * starts hearing a second one, which is an echo and is a different feature nobody asked
-         * for. Everything here works far below it - the wander is single milliseconds and even
-         * the travel cap is half of this - so the number is a guard rather than a range, in the
-         * same spirit as [SpatialField.MAX_ARRIVAL_DELAY_NANOS]: it decides what a wrong input
-         * can do, not what a right one does.
+         * A guard on the buffer rather than a range anything reaches, in the same spirit as
+         * [SpatialField.MAX_ARRIVAL_DELAY_NANOS]: it decides what a wrong input can do, not what a
+         * right one does. Both knobs wound all the way at once come to fifty, and SpatialDelayTest
+         * asserts that sum against this number so the two files cannot drift apart.
+         *
+         * Where the real limit sits is thirty or so, and it is the ear's rather than the buffer's:
+         * past about there a delayed copy stops being part of the same sound and starts being a
+         * second one, which is an echo and a different feature nobody asked for. That limit is the
+         * travel knob's top end, where it belongs - on the control, not on the allocation.
          */
-        const val LONGEST_NANOS = 30_000_000L
+        const val LONGEST_NANOS = 60_000_000L
 
         /** Nanoseconds as a fractional count of frames. Fractional on purpose - see [step]. */
         fun samplesFor(nanos: Long, sampleRate: Int): Double =

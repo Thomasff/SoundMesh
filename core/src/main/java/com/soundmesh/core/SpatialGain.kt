@@ -240,8 +240,9 @@ data class SpatialField(
         // [MAX_SHIMMER_DELAY_NANOS] and [SHIMMER_RATE_SLOTS] it is what keeps the steepest wander
         // any legal rule can ask for underneath [TravellingDelay.MAX_SLEW_SAMPLES], so the slew
         // limiter never has to clip this feature's own shape. SpatialDelayTest asserts the sum.
-        require(shimmerPeriodNanos >= SHORTEST_SHIMMER_PERIOD_NANOS) {
-            "a wander faster than $SHORTEST_SHIMMER_PERIOD_NANOS ns is a vibrato: $shimmerPeriodNanos"
+        require(shimmerPeriodNanos in SHORTEST_SHIMMER_PERIOD_NANOS..LONGEST_SHIMMER_PERIOD_NANOS) {
+            "a wander runs from $SHORTEST_SHIMMER_PERIOD_NANOS to " +
+                "$LONGEST_SHIMMER_PERIOD_NANOS ns: $shimmerPeriodNanos"
         }
         require(crossoverHz in LOWEST_CROSSOVER_HZ..HIGHEST_CROSSOVER_HZ) {
             "a crossover has to be somewhere a person can hear: $crossoverHz"
@@ -323,7 +324,38 @@ data class SpatialField(
     private fun travelPartNanos(peerId: String, hostNanos: Long): Long {
         if (travelDelayNanos <= 0L || mode == SpatialMode.SPLIT) return 0L
         val facing = (1.0 + cos(sourceAzimuthAt(hostNanos) - layout.azimuthOf(peerId))) / 2.0
-        return ((1.0 - facing) * travelDelayNanos).roundToLong()
+        return ((1.0 - facing) * travelDepthNanos()).roundToLong()
+    }
+
+    /**
+     * The travel depth this rule's own speed leaves room for, which is all of it at any ordinary
+     * setting and less than all of it for a circuit fast enough to outrun the delay line.
+     *
+     * Capped in the law rather than left to [TravellingDelay]'s limiter, which would also stop the
+     * delay going too fast and would do it differently on every handset: the limiter clips a
+     * trajectory, and two handsets are at different points of the same trajectory, so what they
+     * render after being clipped is not the same shape scaled down - it is two different shapes.
+     * A depth every handset computes from the rule is a shape they all still agree on.
+     *
+     * (D/2)(2 pi / T) is how fast the deepest point of the sweep moves, so D = slew * T / pi is the
+     * deepest sweep a period of T can carry. At the default six second circuit that allows about
+     * sixty milliseconds, which is twice what the knob can ask for - so this does nothing at all
+     * unless somebody winds the circuit down to a couple of seconds, where it turns "the effect
+     * quietly renders wrong" into "the effect is shallower, because you asked for it faster".
+     *
+     * [SPEED_MARGIN] is there because this returns whole nanoseconds. Rounding each instant to the
+     * nearest nanosecond is worth a few hundredths of a frame per frame at 48 kHz, which put the
+     * exact bound 0.15% over the limit - small enough to be worth nothing and large enough that
+     * the assertion pinning it could not be written as the strict inequality it ought to be.
+     *
+     * Only the rotation has a speed. A pan moves when a finger moves, which is a discontinuity
+     * rather than a rate, and discontinuities are exactly what the limiter is for.
+     */
+    private fun travelDepthNanos(): Long {
+        if (mode != SpatialMode.ROTATE) return travelDelayNanos
+        val allowed =
+            (TravellingDelay.MAX_SLEW_SAMPLES * periodNanos / PI * SPEED_MARGIN).toLong()
+        return minOf(travelDelayNanos, allowed)
     }
 
     /**
@@ -529,42 +561,58 @@ data class SpatialField(
         const val DEFAULT_PERIOD_NANOS = 6_000_000_000L
 
         /**
-         * How far [travelDelayNanos] may be wound: fifteen milliseconds.
+         * How far [travelDelayNanos] may be wound: thirty milliseconds.
          *
-         * Well inside the precedence window, which runs to about thirty, so that even at the top
-         * of the slider a late handset is still heard as part of one sound rather than as a second
-         * one. What happens well before the top is that the image stops moving and starts jumping;
-         * that is the thing to listen for, not a thing to clamp.
+         * The whole precedence window, from a delay that trades against level to one at the edge of
+         * being heard as a second sound. Deliberately the whole of it and not a safe part of it:
+         * the question this knob exists to answer is where along that range the image stops
+         * travelling between handsets and starts jumping between them, and a slider that stopped
+         * short of the jump could not answer it.
+         *
+         * Fifteen at first, doubled 09-15 when a listener could not hear single milliseconds at
+         * all. Past thirty is an echo, which is a different feature nobody has asked for.
          */
-        const val MAX_TRAVEL_DELAY_NANOS = 15_000_000L
+        const val MAX_TRAVEL_DELAY_NANOS = 30_000_000L
 
         /**
-         * How far [shimmerDelayNanos] may be wound: six milliseconds.
+         * How far [shimmerDelayNanos] may be wound: twenty milliseconds.
          *
-         * Chosen against the slew limit rather than against the ear. A wander of depth D and
-         * period T moves at up to (D/2)(2 pi / T) times the fastest rate slot, and that has to
-         * stay under [TravellingDelay.MAX_SLEW_SAMPLES] or the limiter clips the shape of the
-         * feature itself and two handsets asked for the same wander render different ones. Six
-         * milliseconds against [SHORTEST_SHIMMER_PERIOD_NANOS] leaves most of a factor of two in
-         * hand. SpatialDelayTest is where that sum is written down as an assertion rather than as
-         * this paragraph.
+         * Six at first, which was chosen as a chorus depth and turned out to be a depth a listener
+         * could barely hear on 09-15. Twenty is past chorus and into what a studio would call
+         * doubling, which is the point: the handsets are metres apart rather than centimetres, so
+         * the delays that do anything here are not the delays that do something between two
+         * speakers on a desk.
          *
-         * It is also about the depth a chorus uses, which is the reassuring half of the answer:
-         * the number the arithmetic allows and the number the ear wants are the same number.
+         * **Depth is not free, and what it costs is pitch.** A wander of depth D and period T moves
+         * at up to (D/2)(2 pi / T) times the fastest rate slot, and a moving delay is a resampling,
+         * so that number **is** the transposition. Two things follow. It has to stay under
+         * [TravellingDelay.MAX_SLEW_SAMPLES] or the limiter clips the shape of the feature itself
+         * and two handsets asked for the same wander render different ones - SpatialDelayTest is
+         * where that sum is written down as an assertion rather than as this paragraph. And well
+         * before that bound it is simply audible: deep and fast together is a tape wobble. The
+         * period is therefore on screen beside the depth rather than fixed behind it, because the
+         * two are one control in two halves and a listener who finds the wobble has to be able to
+         * trade it back.
          */
-        const val MAX_SHIMMER_DELAY_NANOS = 6_000_000L
+        const val MAX_SHIMMER_DELAY_NANOS = 20_000_000L
 
-        /** How long one wander takes by default: five seconds, which is a drift rather than a wobble. */
-        const val DEFAULT_SHIMMER_PERIOD_NANOS = 5_000_000_000L
+        /** How long one wander takes by default: eight seconds, which is a drift rather than a wobble. */
+        const val DEFAULT_SHIMMER_PERIOD_NANOS = 8_000_000_000L
 
         /** The fastest wander allowed, for the reason in [MAX_SHIMMER_DELAY_NANOS]. */
-        const val SHORTEST_SHIMMER_PERIOD_NANOS = 3_000_000_000L
+        const val SHORTEST_SHIMMER_PERIOD_NANOS = 5_000_000_000L
+
+        /** The slowest, which is a room that breathes about three times a minute. */
+        const val LONGEST_SHIMMER_PERIOD_NANOS = 20_000_000_000L
 
         /** How much faster each rate step is than the one below it. */
         const val SHIMMER_RATE_SPREAD = 0.11
 
         /** How many rate steps there are before they repeat. See [shimmerPartNanos]. */
         const val SHIMMER_RATE_SLOTS = 4
+
+        /** What [travelDepthNanos] leaves for the rounding to whole nanoseconds: one percent. */
+        private const val SPEED_MARGIN = 0.99
 
         /**
          * Where the split starts out, chosen for handset speakers rather than for music theory.

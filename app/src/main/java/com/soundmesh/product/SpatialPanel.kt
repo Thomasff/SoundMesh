@@ -260,6 +260,15 @@ data class RoomState(
      * for the same reason [diffusion] is: it changes the sound of a mix somebody already likes.
      */
     val shimmer: Float = 0f,
+    /**
+     * How fast that wander goes, from 0 at the slowest the rule allows to 1 at the fastest.
+     *
+     * Beside the depth rather than fixed behind it because the two are one control in two halves:
+     * depth over period is the transposition a moving delay produces, so deep and fast together is
+     * a tape wobble whether anybody wanted one or not. Somebody who finds the wobble has to be able
+     * to trade it back rather than only to give up the depth.
+     */
+    val shimmerSpeed: Float = DEFAULT_SHIMMER_SPEED,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -294,6 +303,7 @@ class RoomActions(
     val setDiffusion: (Float) -> Unit,
     val setTravel: (Float) -> Unit,
     val setShimmer: (Float) -> Unit,
+    val setShimmerSpeed: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -907,12 +917,30 @@ private fun TravelSlider(state: RoomState, actions: RoomActions) {
     }
 }
 
-/** Each handset drifting on its own, which is the one thing the decorrelator cannot do. */
+/**
+ * Each handset drifting on its own, which is the one thing the decorrelator cannot do.
+ *
+ * Two sliders and not one. How far it wanders and how fast it wanders multiply into a pitch shift -
+ * see [com.soundmesh.core.SpatialField.MAX_SHIMMER_DELAY_NANOS] - so a single "more" knob would
+ * reach a point where the only way to lose the wobble is to give up the depth that caused it. The
+ * speed is only on screen once the depth is up, because on its own it does nothing.
+ */
 @Composable
 private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
     Column {
         Text(stringResource(R.string.room_shimmer), style = MaterialTheme.typography.bodySmall)
         Slider(value = state.shimmer, onValueChange = actions.setShimmer, valueRange = 0f..1f)
+        if (state.shimmer > 0f) {
+            Text(
+                stringResource(R.string.room_shimmer_speed),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Slider(
+                value = state.shimmerSpeed,
+                onValueChange = actions.setShimmerSpeed,
+                valueRange = 0f..1f
+            )
+        }
         Text(
             stringResource(
                 if (state.shimmer <= 0f) R.string.room_shimmer_off else R.string.room_shimmer_hint
@@ -921,6 +949,9 @@ private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
         )
     }
 }
+
+/** Where the speed slider sits when nobody has moved it: eight seconds a turn. */
+const val DEFAULT_SHIMMER_SPEED = 0.8f
 
 /** What a room ships at, which is where a listener put the slider rather than where zero is. */
 const val DEFAULT_ENVELOPMENT = 0.25f
@@ -1002,6 +1033,7 @@ private fun apply(effect: RoomEffect, actions: RoomActions) {
     actions.setDiffusion(settings.diffusion)
     actions.setTravel(settings.travel)
     actions.setShimmer(settings.shimmer)
+    actions.setShimmerSpeed(settings.shimmerSpeed)
 }
 
 /**

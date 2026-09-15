@@ -342,7 +342,8 @@
     <string name="room_travel_hint">往右拉位置感更强。拉过头会变成整个跳到一台上，而不是走过去。</string>
     <string name="room_shimmer">各机轻微游移</string>
     <string name="room_shimmer_off">关着。每台手机一直待在原地。</string>
-    <string name="room_shimmer_hint">每台各自慢慢前后游移几毫秒，互不同步，声音会一直在动。</string>
+    <string name="room_shimmer_speed">游移快慢</string>
+    <string name="room_shimmer_hint">每台各自前后游移，互不同步。又深又快会有音高晃动，想要深就调慢一点。</string>
     <string name="room_parts">每台放哪一部分</string>
     <string name="room_fine">细调</string>
     <string name="room_fine_hide">收起细调</string>
