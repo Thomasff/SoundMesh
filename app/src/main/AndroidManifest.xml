@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Playback. Without it the system stops a sink the moment it leaves the foreground. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -92,9 +93,14 @@
             android:name="com.soundmesh.session.SessionService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <!--
+            microphone beside mediaPlayback because a room round records this handset, and the
+            sink half of that round moved in here so a phone lying face down could join one.
+            Taken only when RECORD_AUDIO is granted - see StandbyService.standBy.
+        -->
         <service
             android:name="com.soundmesh.product.StandbyService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback|microphone" />
     </application>
 </manifest>

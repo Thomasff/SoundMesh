@@ -31,13 +31,18 @@ enum class RoomExcuse {
     BUSY,
 
     /**
-     * Standing by with its screen away, which is a phone that can hear but cannot be looked at.
+     * Standing by with its screen away, and unable to do the thing that was asked because of it.
      *
-     * Playing, stopping and changing volume need nothing on screen, so a handset in somebody's
-     * pocket does those. Measuring needs its own screen - it opens one and drives it - and an app
-     * in the background is not allowed to start an activity at all. Said rather than silently
-     * skipped, because from the host the two look the same and the fix is a person picking that
-     * phone up.
+     * Nothing on the command list is in that position any more. Measuring was, until 2026-09-15:
+     * it drove a screen of its own, and an app in the background may not start an activity at all,
+     * so a phone lying face down answered a room round with this. The sink half of a round moved
+     * into the standing service and stopped needing a screen, which is why no handset on this
+     * build sends it.
+     *
+     * Kept on the wire rather than removed, for two reasons. A handset still running an older
+     * build says it, and a host that could not read it would show that phone as simply absent.
+     * And the question every new command has to answer - does obeying this put something on my
+     * own screen - still has to have somewhere to land when the answer is yes.
      */
     ASLEEP
 }

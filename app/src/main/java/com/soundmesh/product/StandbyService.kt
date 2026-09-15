@@ -1,10 +1,12 @@
 package com.soundmesh.product
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -20,7 +22,6 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.graphics.toArgb
-import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomExcuse
@@ -95,6 +96,19 @@ class StandbyService : Service() {
 
     /** Whether what the notification says is still true. */
     private val notice = StandbyNotice()
+
+    /**
+     * Whether this service actually holds the microphone half of its foreground type.
+     *
+     * Read before a round rather than assumed from the permission: the type can be refused on its
+     * own, and a round that opened no microphone would report silence as a room nobody could hear.
+     */
+    @Volatile
+    private var micTyped = false
+
+    /** What a round running here has to say, or null when none is. Goes in the notification. */
+    @Volatile
+    private var measuring: String? = null
 
     /**
      * Kept from suspending for as long as this handset is standing by.
@@ -191,11 +205,41 @@ class StandbyService : Service() {
      * change of that, and a line kept open through it would leave the host reading last week's.
      */
     private fun standBy() {
-        startForeground(
+        // Asked for with the microphone in it, because a room round records this handset and a
+        // foreground service may only open one under a type that says so. Two reasons it can be
+        // refused, and both end in a round this handset cannot join rather than in a crash: the
+        // permission is not granted, and Android will not let a while-in-use type be taken by a
+        // service the system restarted into the background. Which one happened is written down,
+        // because from the host the two look the same.
+        val micWanted = micGranted()
+        val took = runCatching {
+            startForeground(
+                NOTIFICATION_ID,
+                notification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                    if (micWanted) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+            )
+        }.isSuccess
+        // Media playback on its own is never refused; the while-in-use half is, to a service the
+        // system restarted into the background. Falling back keeps the line up either way.
+        if (!took) startForeground(
             NOTIFICATION_ID,
             notification(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         )
+        // Only when it changes. This runs on every start command, and a timeline that repeats one
+        // fact every few seconds is a timeline nobody can find anything in.
+        val typed = micWanted && took
+        if (typed != micTyped) {
+            micTyped = typed
+            events.write(
+                when {
+                    typed -> "standby holds the microphone type, so it can join a round"
+                    !micWanted -> "standby has no microphone permission, so it cannot join a round"
+                    else -> "standby could not take the microphone type, so it cannot join a round"
+                }
+            )
+        }
         // Before the line rather than after: a line dialled by a handset that is about to
         // suspend is a line that dies with nobody on either end writing down why. Which arm ran
         // goes in the log, on the same terms as the session side - a hold a vendor build refused
@@ -263,7 +307,7 @@ class StandbyService : Service() {
         // A handset in the middle of a round does nothing else at all, whichever way it is
         // facing. It used to be unreachable then - the line lived on the home screen, which a
         // round leaves - and that accident was doing this job until now.
-        if (MeasuringNow.onScreen) return excuse(RoomExcuse.BUSY)
+        if (MeasuringNow.busy) return excuse(RoomExcuse.BUSY)
         if (away && !canObeyWhileAway(order.command)) return excuse(RoomExcuse.ASLEEP)
         when (order.command) {
             RoomCommand.PLAY -> if (SessionService.ACTIVE == null) play()
@@ -291,24 +335,86 @@ class StandbyService : Service() {
     }
 
     /**
-     * The one command that needs this handset's own screen, and the one that can refuse.
+     * Joins a room round here, with nothing of this handset's own screen in it.
      *
-     * The calibration drives a screen of its own, and an app in the background cannot start one -
-     * so this is the boundary the whole service is drawn around. Said out loud to the host, where
-     * somebody is standing, because a handset that quietly did not join is the thing that cost an
-     * evening on 2026-09-13.
+     * It used to start [PeerCalibrateActivity] and refuse outright when nobody was looking, because
+     * an app in the background may not start an activity at all - so a phone lying face down
+     * answered a round with ASLEEP, and somebody had to walk round the room waking handsets. What
+     * a sink does in a round never needed a screen: hold a clock exchange open, play one chirp when
+     * the plan says to while recording, hand back what it heard. [SinkRound] is that, and this runs
+     * it on a thread of its own.
+     *
+     * [overhead] changes nothing on this side and is written down rather than used: the listener's
+     * position is worked out by the handset that gathers the room, and every sink measures the same
+     * way in both rounds. It is here so the record says which of the two this handset joined.
      */
     private fun goAndMeasure(overhead: Boolean) {
-        startActivity(
-            Intent(this, PeerCalibrateActivity::class.java)
-                .putExtra("role", CalibrationRole.SINK.name)
-                .putExtra("room", true)
-                .putExtra("overhead", overhead)
-                .putExtra("auto", true)
-                // Which is what sends it back to the home screen when the round ends.
-                .putExtra("sent", true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+        if (!micGranted()) return excuse(RoomExcuse.NO_MICROPHONE)
+        // Said as the nearest true thing rather than invented: from the host what matters is that
+        // this handset cannot open a microphone, and the log above says which of the two reasons.
+        if (!micTyped) return excuse(RoomExcuse.NO_MICROPHONE)
+        MeasuringNow.inBackground = true
+        events.write("round-joining " + (if (overhead) "overhead" else "room") + " from the standing line")
+        // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
+        // with it, and this one would take the standing line down with it.
+        Thread({
+            var heldForTheRound = false
+            runCatching {
+                hushWhateverIsPlaying()
+                withRadioAwake(this, events, held = { heldForTheRound = it }) {
+                    SinkRound(
+                        context = this,
+                        request = SinkRoundRequest(room = true),
+                        radioHeld = { heldForTheRound },
+                        report = object : SinkRoundReport {
+                            override fun say(text: String, untilElapsedMillis: Long?) {
+                                measuring = text
+                                handler.post { showTheRound() }
+                            }
+                        }
+                    ).run()
+                }
+            }.onFailure { events.write("round-failed " + it.javaClass.simpleName + ": " + it.message) }
+            MeasuringNow.inBackground = false
+            measuring = null
+            handler.post { showTheRound() }
+        }, "SoundMeshStandbyRound").start()
+    }
+
+    /**
+     * Stops whatever this handset is playing, because a round is about to record it.
+     *
+     * Not a courtesy. A round measures when a chirp arrived by correlating against the chirp, and
+     * a recording with music over the top of it still produces a number - so the cost of skipping
+     * this is not a failed round, it is a confident wrong answer that goes on to be applied to
+     * every session afterwards.
+     *
+     * Not restarted at the end. The others are still measuring, and a handset that started playing
+     * on its own in the middle of their window would be the next thing over their microphones. The
+     * host presses play when the room is done, which is where that decision belongs.
+     */
+    private fun hushWhateverIsPlaying() {
+        if (SessionService.ACTIVE == null) return
+        events.write("round-hush: stopping playback, a chirp measured through music measures the music")
+        startService(Intent(this, SessionService::class.java).setAction(SessionService.ACTION_STOP))
+        // Bounded, and short against the sixteen seconds of clock the round opens with. A session
+        // that will not let go is worth a round measured over it far less than it is worth saying
+        // so, and the wait ending is not the same as the session having stopped.
+        val until = SystemClock.elapsedRealtime() + HUSH_WAIT_MILLIS
+        while (SessionService.ACTIVE != null && SystemClock.elapsedRealtime() < until) {
+            runCatching { Thread.sleep(HUSH_POLL_MILLIS) }
+        }
+        if (SessionService.ACTIVE != null) events.write("round-hush: the session was still up when the round began")
+    }
+
+    private fun micGranted(): Boolean =
+        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    /** Puts the round's own line in the notification this handset already has up. */
+    private fun showTheRound() {
+        runCatching {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+        }
     }
 
     /**
@@ -490,8 +596,15 @@ class StandbyService : Service() {
             // text - readable from across a room, which is where these phones are.
             .setColor(colour)
             .setLargeIcon(dot(colour))
-            .setContentTitle(getString(titleRes, badgeWord(place)))
-            .setContentText(getString(R.string.standby_lock_text, handsetVolume.read(capturing = false).percent))
+            // A round takes the line over while it runs. Somebody holding this phone has a right
+            // to know why it just went quiet and started chirping, and this notification is the
+            // only surface it has - the round has no screen any more.
+            .setContentTitle(
+                if (measuring != null) getString(R.string.standby_measuring) else getString(titleRes, badgeWord(place))
+            )
+            .setContentText(
+                measuring ?: getString(R.string.standby_lock_text, handsetVolume.read(capturing = false).percent)
+            )
             // Every reading is still here, one pull away. Nobody reads them; the evening they
             // are wanted, not one of them can be missing.
             .setStyle(Notification.BigTextStyle().bigText(readings))
@@ -585,6 +698,11 @@ class StandbyService : Service() {
             private set
 
         const val ACTION_STOP = "com.soundmesh.product.STANDBY_STOP"
+
+        /** How long a round waits for playback to actually stop. See hushWhateverIsPlaying. */
+        const val HUSH_WAIT_MILLIS = 3_000L
+
+        const val HUSH_POLL_MILLIS = 50L
 
         private const val CHANNEL_ID = "soundmesh-standby"
         private const val NOTIFICATION_ID = 4
@@ -720,9 +838,10 @@ internal data class StandbyAnnounce(
  * Whether a command can be obeyed by a handset nobody is looking at.
  *
  * The line between the two halves is one thing and one thing only: whether obeying means putting
- * something on this handset's own screen. Playing, stopping and moving a volume do not, which is
- * why a room of phones lying face down is a room at all. Measuring does - it opens a screen and
- * drives it - and an app in the background is not allowed to start one.
+ * something on this handset's own screen. Nothing on the list does any more - measuring was the
+ * one that did, and it stopped when the sink half moved into this service - so every answer here
+ * is currently true. The question is still asked per command rather than defaulted, which is the
+ * point below.
  *
  * Spelled out per command rather than defaulted, so that the next command added to the channel has
  * to answer this question instead of inheriting an answer that happens to be wrong for it.
@@ -731,7 +850,10 @@ internal fun canObeyWhileAway(command: RoomCommand): Boolean = when (command) {
     RoomCommand.PLAY,
     RoomCommand.STOP,
     RoomCommand.SET_VOLUME,
-    RoomCommand.RESTORE_VOLUME -> true
+    RoomCommand.RESTORE_VOLUME,
+    // Both were false until 09-15, and that was the whole reason a phone in somebody's pocket
+    // could not join a round: measuring drove a screen, and an app in the background may not start
+    // one. SinkRound took the screen out of it, so the answer changed rather than the rule.
     RoomCommand.MEASURE_ROOM,
-    RoomCommand.MEASURE_OVERHEAD -> false
+    RoomCommand.MEASURE_OVERHEAD -> true
 }

@@ -2218,6 +2218,20 @@ class PeerCalibrateActivity : ComponentActivity() {
  * have no business being a busy flag's home.
  */
 internal object MeasuringNow {
+    /** A round on [PeerCalibrateActivity], which is the only kind there was until 09-15. */
     @Volatile
     var onScreen = false
+
+    /**
+     * A round [StandbyService] is driving with nobody looking at this handset.
+     *
+     * Kept apart from [onScreen] rather than folded into one flag, because the two are cleared by
+     * different things: that one by an activity's onPause, this one by a thread finishing. One
+     * flag written from both would have a screen closing behind a background round clear it.
+     */
+    @Volatile
+    var inBackground = false
+
+    /** What the standing line asks: is this handset already being told what to do by a round. */
+    val busy: Boolean get() = onScreen || inBackground
 }
