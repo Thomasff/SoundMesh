@@ -272,8 +272,20 @@ class HomeActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The picker's answer, and the moment the old source is put down.
+     *
+     * Put down here rather than before the picker opens, which is where it used to be. Opening the
+     * picker is not choosing anything: somebody who backs out of a folder, or looks at what is in
+     * one and changes their mind, meant for nothing to happen - and what happened was the room
+     * went quiet and the screen fell back two stages. Reported 2026-09-15. A cancel now costs
+     * exactly nothing, and the music it was playing is still playing.
+     */
     private val chooseSong = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) adopt(ChosenKind.SONG, uri)
+        if (uri != null) {
+            putDownWhatIsPlaying()
+            adopt(ChosenKind.SONG, uri)
+        }
     }
 
     /**
@@ -283,7 +295,10 @@ class HomeActivity : ComponentActivity() {
      * is the folder and not the twelve files that were in it this afternoon.
      */
     private val chooseFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) adopt(ChosenKind.FOLDER, uri)
+        if (uri != null) {
+            putDownWhatIsPlaying()
+            adopt(ChosenKind.FOLDER, uri)
+        }
     }
 
     // Asked for rather than required. A session runs either way; without it the ongoing
@@ -324,9 +339,14 @@ class HomeActivity : ComponentActivity() {
     private val askProjection = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
         if (result.resultCode != RESULT_OK || data == null) {
-            state = state.copy(capturing = false, problem = R.string.capture_declined)
+            // Declined, so nothing has been given up: whatever this room was playing a moment ago
+            // it is still playing, and saying capturing = false here would be this screen telling
+            // itself something changed when nothing did.
+            state = state.copy(problem = R.string.capture_declined)
             return@registerForActivityResult
         }
+        // Consent given, which is the moment the old source stops being the one in use.
+        putDownWhatIsPlaying()
         SyncProjectionService.pending = { projection ->
             state = if (projection == null) {
                 state.copy(capturing = false, problem = R.string.capture_declined)
@@ -407,8 +427,8 @@ class HomeActivity : ComponentActivity() {
 
     private val actions = HomeActions(
         pickRole = { role -> state = state.copy(role = role, problem = null); readPairing(); takeUpTheRoom() },
-        chooseSong = { putDownWhatIsPlaying(); chooseSong.launch(arrayOf(AUDIO_MIME)) },
-        chooseFolder = { putDownWhatIsPlaying(); chooseFolder.launch(null) },
+        chooseSong = { chooseSong.launch(arrayOf(AUDIO_MIME)) },
+        chooseFolder = { chooseFolder.launch(null) },
         captureAudio = ::captureAudio,
         scan = { startActivity(Intent(this, ScanActivity::class.java)) },
         play = ::play,
@@ -463,7 +483,7 @@ class HomeActivity : ComponentActivity() {
         },
         goto = { destination, job ->
             when (destination) {
-                ReadyGoto.SONG -> { putDownWhatIsPlaying(); chooseSong.launch(arrayOf(AUDIO_MIME)) }
+                ReadyGoto.SONG -> chooseSong.launch(arrayOf(AUDIO_MIME))
                 ReadyGoto.SELF_CALIBRATE -> startActivity(Intent(this, CalibrateActivity::class.java))
                 // job picks which of PeerCalibrateScreen's three blocks renders - see PeerJob.kt.
                 // Missing or unrecognised means PAIR, which is also what job being null here means.
@@ -667,11 +687,9 @@ class HomeActivity : ComponentActivity() {
      */
     private fun captureAudio() {
         state = state.copy(problem = null)
-        // The same as pressing stop, and pressed for them. Switching to capturing is choosing a
-        // different thing to play, and until this was here the room went on playing the old one
-        // until the host's new session came up - which is however long somebody takes over the
-        // consent dialog and picking an app, with the room still singing the last song.
-        if (state.running) stopSession()
+        // Nothing is put down here. Asking is not choosing, and the consent dialog is a dialog
+        // somebody can decline - see the picker callbacks above for the same rule and the evening
+        // it was reported on. What is playing is put down where consent is actually given.
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             askRecordAudio.launch(Manifest.permission.RECORD_AUDIO)
             return
@@ -858,6 +876,10 @@ class HomeActivity : ComponentActivity() {
             nowPlaying = session?.nowPlaying(),
             paused = session?.paused() == true,
             failure = if (awaitingSession) SessionService.FAILURE else null,
+            // Between the tap and the session being up. The service refuses a second start on its
+            // own - see SessionService.startSession - and this is the half a person can see: the
+            // button goes quiet rather than looking like it did nothing.
+            starting = awaitingSession && SessionService.FAILURE == null,
             counters = SessionReadout.counters(session?.report()),
             room = room,
             // Two different places for one reading, because a host holds the whole table and a
