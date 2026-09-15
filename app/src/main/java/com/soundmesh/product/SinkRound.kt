@@ -1,6 +1,7 @@
 package com.soundmesh.product
 
 import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
 import com.soundmesh.core.AlignmentAnalysis
@@ -35,6 +36,7 @@ import com.soundmesh.probe.sync.keepingAwake
 import com.soundmesh.probe.sync.radioHoldOf
 import com.soundmesh.probe.sync.routerPokeOf
 import com.soundmesh.probe.sync.tellHostWhy
+import com.soundmesh.session.SessionService
 import java.io.File
 import java.util.Locale
 
@@ -133,6 +135,42 @@ internal fun withRadioAwake(
         }, body = body)
     }
 }
+
+/**
+ * Stops whatever this handset is playing, because a round is about to record it.
+ *
+ * Not a courtesy, and not a sink's problem alone - every handset in a round records, the one that
+ * gathered it included. A round measures when a chirp arrived by correlating against the chirp,
+ * and a recording with music over the top of it still produces a number. So the cost of skipping
+ * this is not a failed round: it is a confident wrong answer, applied to every session afterwards
+ * with nothing anywhere to notice it by.
+ *
+ * Not restarted at the end. The rest of the room is still measuring, and a handset that started
+ * playing on its own in the middle of their window would be the next thing over their microphones.
+ * Somebody presses play when the room is done, which is where that decision belongs.
+ */
+internal fun hushWhateverIsPlaying(context: Context, events: EventLog) {
+    if (SessionService.ACTIVE == null) return
+    events.write("round-hush: stopping playback, a chirp measured through music measures the music")
+    context.startService(
+        Intent(context, SessionService::class.java).setAction(SessionService.ACTION_STOP)
+    )
+    // Bounded, and short against the sixteen seconds of clock a round opens with. A session that
+    // will not let go is worth a round measured over it far less than it is worth saying so, and
+    // the wait ending is not the same as the session having stopped.
+    val until = SystemClock.elapsedRealtime() + HUSH_WAIT_MILLIS
+    while (SessionService.ACTIVE != null && SystemClock.elapsedRealtime() < until) {
+        runCatching { Thread.sleep(HUSH_POLL_MILLIS) }
+    }
+    if (SessionService.ACTIVE != null) {
+        events.write("round-hush: the session was still up when the round began")
+    }
+}
+
+/** How long [hushWhateverIsPlaying] waits for playback to actually stop. */
+private const val HUSH_WAIT_MILLIS = 3_000L
+
+private const val HUSH_POLL_MILLIS = 50L
 
 /**
  * One handset measuring as a sink: the clock, the chirps, and what it does with the answer.

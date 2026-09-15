@@ -360,7 +360,7 @@ class StandbyService : Service() {
         Thread({
             var heldForTheRound = false
             runCatching {
-                hushWhateverIsPlaying()
+                hushWhateverIsPlaying(this, events)
                 withRadioAwake(this, events, held = { heldForTheRound = it }) {
                     SinkRound(
                         context = this,
@@ -381,31 +381,6 @@ class StandbyService : Service() {
         }, "SoundMeshStandbyRound").start()
     }
 
-    /**
-     * Stops whatever this handset is playing, because a round is about to record it.
-     *
-     * Not a courtesy. A round measures when a chirp arrived by correlating against the chirp, and
-     * a recording with music over the top of it still produces a number - so the cost of skipping
-     * this is not a failed round, it is a confident wrong answer that goes on to be applied to
-     * every session afterwards.
-     *
-     * Not restarted at the end. The others are still measuring, and a handset that started playing
-     * on its own in the middle of their window would be the next thing over their microphones. The
-     * host presses play when the room is done, which is where that decision belongs.
-     */
-    private fun hushWhateverIsPlaying() {
-        if (SessionService.ACTIVE == null) return
-        events.write("round-hush: stopping playback, a chirp measured through music measures the music")
-        startService(Intent(this, SessionService::class.java).setAction(SessionService.ACTION_STOP))
-        // Bounded, and short against the sixteen seconds of clock the round opens with. A session
-        // that will not let go is worth a round measured over it far less than it is worth saying
-        // so, and the wait ending is not the same as the session having stopped.
-        val until = SystemClock.elapsedRealtime() + HUSH_WAIT_MILLIS
-        while (SessionService.ACTIVE != null && SystemClock.elapsedRealtime() < until) {
-            runCatching { Thread.sleep(HUSH_POLL_MILLIS) }
-        }
-        if (SessionService.ACTIVE != null) events.write("round-hush: the session was still up when the round began")
-    }
 
     private fun micGranted(): Boolean =
         checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -699,10 +674,6 @@ class StandbyService : Service() {
 
         const val ACTION_STOP = "com.soundmesh.product.STANDBY_STOP"
 
-        /** How long a round waits for playback to actually stop. See hushWhateverIsPlaying. */
-        const val HUSH_WAIT_MILLIS = 3_000L
-
-        const val HUSH_POLL_MILLIS = 50L
 
         private const val CHANNEL_ID = "soundmesh-standby"
         private const val NOTIFICATION_ID = 4

@@ -1322,6 +1322,10 @@ class PeerCalibrateActivity : ComponentActivity() {
                 // milliseconds. Whether it was actually taken is recorded, not assumed.
                 // Held across the whole run and on both sides, and shared with StandbyService so
                 // that a round nobody is looking at is held awake exactly the same way.
+                // Before anything opens a microphone, and on this side too: the handset that
+                // gathers a room records it like every other, so a host measuring through its own
+                // music gets the same confident wrong answer a sink would.
+                hushWhateverIsPlaying(this, events)
                 withRadioAwake(this, events, held = { radioHeld = it }) {
                     when (role()) {
                         // A room and a pair are different runs rather than a wider and a

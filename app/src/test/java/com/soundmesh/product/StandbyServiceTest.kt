@@ -55,22 +55,40 @@ class StandbyServiceTest {
     }
 
     /**
-     * A round records this handset, so what it is playing has to stop before the chirps.
+     * Every handset in a round records, so whatever it is playing has to stop before the chirps.
      *
      * The cost of skipping it is not a failed round. A correlation against a recording with music
      * over the top still produces a number, and that number is then applied to every session
      * afterwards with nothing anywhere to notice it by.
+     *
+     * Both roles, and the host is the one that was missed: it gathers the room but it records like
+     * every other handset in it, so a host measuring through its own music gets exactly the same
+     * confident wrong answer a sink would.
      */
     @Test
-    fun aRoundStopsWhateverThisHandsetIsPlayingFirst() {
-        val source = File("src/main/java/com/soundmesh/product/StandbyService.kt").readText(Charsets.UTF_8)
-        val round = source.substringAfter("private fun goAndMeasure(")
-        val hush = round.indexOf("hushWhateverIsPlaying()")
-        val run = round.indexOf("SinkRound(")
-        assertTrue("a round begins without hushing what is playing", hush in 1 until run)
+    fun neitherRoleMeasuresThroughItsOwnMusic() {
+        val service = File("src/main/java/com/soundmesh/product/StandbyService.kt").readText(Charsets.UTF_8)
+        val round = service.substringAfter("private fun goAndMeasure(")
+        assertTrue(
+            "a round joined from the standing line begins without hushing what is playing",
+            round.indexOf("hushWhateverIsPlaying(") in 1 until round.indexOf("SinkRound(")
+        )
+
+        val screen = File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8)
+        val started = screen.substringAfter("private fun start(verifying: Boolean")
+        assertTrue(
+            "a round started from the screen begins without hushing what is playing",
+            started.indexOf("hushWhateverIsPlaying(") in 1 until started.indexOf("withRadioAwake(")
+        )
+
+        val helper = File("src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8)
         assertTrue(
             "the hush asks the session to stop rather than assuming it has",
-            source.contains("SessionService.ACTION_STOP")
+            helper.contains("SessionService.ACTION_STOP")
+        )
+        assertTrue(
+            "the hush returns before the session has actually let go",
+            helper.contains("while (SessionService.ACTIVE != null")
         )
     }
 
