@@ -10,12 +10,16 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaMetadata
+import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.HostId
@@ -59,6 +63,10 @@ class SessionService : Service() {
     // rebuilt per start would leave the old one with nobody to give it back.
     private val awake by lazy { CpuAwake(cpuHoldOf(this)) }
 
+    // The lock screen's own state, touched only from the main thread - see [pushLockScreen].
+    private val lockScreenHandler = Handler(Looper.getMainLooper())
+    private var mediaSession: MediaSession? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -70,6 +78,7 @@ class SessionService : Service() {
             // a field and empty two queues. The waiting is the decoder's, on its own thread.
             ACTION_SEEK -> runCatching {
                 ACTIVE?.seekTo(intent.getLongExtra(EXTRA_SEEK_MICROS, 0L))
+                pushLockScreen()
             }.onFailure { Log.e(LOG_TAG, "could not jump", it) }
             // The same shape and the same thread, because it is the same mechanism: a step
             // names a song where a drag names a place, and both end in one field and two
@@ -77,9 +86,11 @@ class SessionService : Service() {
             // for nothing, so it is not sent rather than being guarded further down.
             ACTION_SET_PAUSED -> runCatching {
                 ACTIVE?.setPaused(intent.getBooleanExtra(EXTRA_PAUSED, false))
+                pushLockScreen()
             }.onFailure { Log.e(LOG_TAG, "could not pause", it) }
             ACTION_STEP_SONG -> runCatching {
                 intent.getIntExtra(EXTRA_SONG_STEP, 0).takeIf { it != 0 }?.let { ACTIVE?.stepSong(it) }
+                pushLockScreen()
             }.onFailure { Log.e(LOG_TAG, "could not change song", it) }
         }
         return START_NOT_STICKY
@@ -96,6 +107,133 @@ class SessionService : Service() {
         // Opening a source decodes, and connecting waits on another handset. Neither belongs on the
         // thread the system delivered this intent on.
         Thread({ open(intent, host) }, "SoundMeshSessionStart").start()
+        startLockScreenLoop()
+    }
+
+    /**
+     * The lock screen's only polling, at 1 Hz rather than the 200 ms [HomeActivity] refreshes at.
+     *
+     * [PlaybackState] carries a position, a speed and the moment that position was taken, and the
+     * system extrapolates the progress bar between updates on its own - so the only thing this
+     * loop exists to notice is a song that changed by itself, which happens on track boundaries
+     * rather than continuously. Every place playback changes on purpose already calls
+     * [pushLockScreen] itself; this is only for the one case none of them cover.
+     *
+     * Re-armed rather than left running twice: a session that failed to open leaves [ACTIVE] null,
+     * and a retry through [startSession] would otherwise post a second copy of the same [Runnable].
+     */
+    private fun startLockScreenLoop() {
+        lockScreenHandler.removeCallbacks(lockScreenTick)
+        lockScreenHandler.postDelayed(lockScreenTick, LOCK_SCREEN_TICK_MILLIS)
+    }
+
+    private val lockScreenTick = object : Runnable {
+        override fun run() {
+            updateLockScreen()
+            lockScreenHandler.postDelayed(this, LOCK_SCREEN_TICK_MILLIS)
+        }
+    }
+
+    /**
+     * Posts a lock screen refresh onto the main thread from wherever the event happened.
+     *
+     * [updateLockScreen] touches a single [MediaSession], and not every caller of this is already
+     * on the main thread - [open] runs on its own thread, and a host's `onEnded` can call
+     * [stopSession] back from a decode thread. Routing every touch through the same [Handler] the
+     * 1 Hz loop already uses keeps [mediaSession] to one thread without adding a lock.
+     */
+    private fun pushLockScreen() {
+        lockScreenHandler.post { updateLockScreen() }
+    }
+
+    /**
+     * Routes a lock screen button to the exact call the on-screen one makes.
+     *
+     * Never a second path: these are the same calls [onStartCommand] makes for
+     * ACTION_SET_PAUSED, ACTION_STEP_SONG and ACTION_STOP, and [stopSession] for the stop button
+     * on screen - see those for why a zero step is not sent and why a pause reads the room before
+     * emptying the queues.
+     */
+    private val lockScreenCallback = object : MediaSession.Callback() {
+        override fun onPlay() {
+            runCatching { ACTIVE?.setPaused(false) }.onFailure { Log.e(LOG_TAG, "could not resume from the lock screen", it) }
+            updateLockScreen()
+        }
+
+        override fun onPause() {
+            runCatching { ACTIVE?.setPaused(true) }.onFailure { Log.e(LOG_TAG, "could not pause from the lock screen", it) }
+            updateLockScreen()
+        }
+
+        override fun onStop() {
+            runCatching { stopSession() }.onFailure { Log.e(LOG_TAG, "could not stop from the lock screen", it) }
+        }
+
+        override fun onSkipToNext() {
+            runCatching { ACTIVE?.stepSong(1) }.onFailure { Log.e(LOG_TAG, "could not change song from the lock screen", it) }
+            updateLockScreen()
+        }
+
+        override fun onSkipToPrevious() {
+            runCatching { ACTIVE?.stepSong(-1) }.onFailure { Log.e(LOG_TAG, "could not change song from the lock screen", it) }
+            updateLockScreen()
+        }
+    }
+
+    /**
+     * Pushes the room's current state onto the lock screen, or lets go of it once the session
+     * that owned it has ended.
+     *
+     * Host-only, by the same signal the on-screen playback panel already uses to decide whether it
+     * has anything to draw - see [SyncSession.playhead]: only a host with a measurable length
+     * answers it, so a sink never reaches past the first line here and keeps the coloured standby
+     * notification it already owns. A host whose source has no length (the file-prefix ruler, or a
+     * capture) does not either - there is nothing to put a duration or a position to.
+     *
+     * A [mediaSession] already built is kept and simply left unrefreshed on a tick where the
+     * playhead is momentarily null, rather than torn down and rebuilt - the only case that happens
+     * in is a song boundary a fraction of a second wide, and rebuilding across it would flash the
+     * lock screen's controls off and back on for nothing.
+     *
+     * Main thread only. [lockScreenTick] already runs there, and [pushLockScreen] is how every
+     * other caller reaches this without a lock.
+     */
+    private fun updateLockScreen() {
+        val session = ACTIVE
+        if (session == null) {
+            mediaSession?.let {
+                it.isActive = false
+                it.release()
+            }
+            mediaSession = null
+            return
+        }
+        val playhead = session.playhead() ?: return
+        val lockScreen = mediaSession ?: MediaSession(this, "SoundMesh").also {
+            it.setCallback(lockScreenCallback, lockScreenHandler)
+            it.isActive = true
+            mediaSession = it
+            // The foreground notification was already showing before this session had a media
+            // session to point at - see [notification] - so it is rebuilt once here with the
+            // style added. Nothing else about it changes per tick, so it is not rebuilt again.
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+        }
+        lockScreen.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, session.nowPlaying() ?: getString(R.string.song_unnamed))
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, playhead.durationMicros / 1_000L)
+                .build()
+        )
+        val paused = session.paused()
+        lockScreen.setPlaybackState(
+            PlaybackState.Builder()
+                .setState(lockScreenState(paused, ACTIVE != null), playhead.positionMicros / 1_000L, if (paused) 0f else 1f)
+                .setActions(
+                    PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_STOP or
+                        PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                )
+                .build()
+        )
     }
 
     private fun open(intent: Intent, host: Boolean) {
@@ -136,6 +274,7 @@ class SessionService : Service() {
             if (takesAudioFocus(host, capturing)) requestAudioFocus(session) else true
         )
         watchNetwork(session)
+        pushLockScreen()
     }
 
     private fun openHost(intent: Intent): SyncSession {
@@ -465,6 +604,7 @@ class SessionService : Service() {
     private fun stopSession() {
         val session = ACTIVE
         ACTIVE = null
+        pushLockScreen()
         runCatching { EventLog(filesDir).write("session-stop") }
         Thread({
             // Read before the stop, not after: stopping ends the renderer, and the counters this
@@ -507,12 +647,16 @@ class SessionService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, getString(R.string.session_channel_name), NotificationManager.IMPORTANCE_LOW)
         )
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.session_notification))
             .setOngoing(true)
-            .build()
+        // Only a host session ever has one - see [updateLockScreen] - and this notification is
+        // first shown before that is known, so the style rides along on whichever later rebuild
+        // finds a media session to point at rather than on every build of this notification.
+        mediaSession?.let { builder.setStyle(Notification.MediaStyle().setMediaSession(it.sessionToken)) }
+        return builder.build()
     }
 
     override fun onDestroy() {
@@ -521,6 +665,12 @@ class SessionService : Service() {
         releaseAudioFocus()
         stopWatchingNetwork()
         withdrawAdvertisement()
+        lockScreenHandler.removeCallbacks(lockScreenTick)
+        mediaSession?.let {
+            it.isActive = false
+            it.release()
+        }
+        mediaSession = null
         super.onDestroy()
     }
 
@@ -589,6 +739,15 @@ class SessionService : Service() {
 
         /** Where the last session left its counters, under filesDir so run-as can read it. */
         const val REPORT_FILE = "session-report.json"
+
+        /**
+         * How often [startLockScreenLoop] notices a track that changed on its own.
+         *
+         * 1 Hz, not the 200 ms [HomeActivity] polls at - see [startLockScreenLoop]'s own doc for
+         * why a slow loop is enough here and a fast one would put cost on the one path that must
+         * never be the reason a room falls out of step.
+         */
+        const val LOCK_SCREEN_TICK_MILLIS = 1_000L
 
         /**
          * The running session, for whatever is showing its state.
