@@ -41,8 +41,15 @@ object SpatialFieldCodec {
      * on at no delay - which for the wander is the whole feature missing on one handset while the
      * rest of the room does it, and that is not a room sounding slightly different. It is the two
      * settings whose entire purpose is that the handsets disagree in a way they agreed on.
+     *
+     * Nine although nothing was added, which is the case this number is least obviously for and is
+     * still for. On 09-16 those two times got wider ranges - the wander to twenty milliseconds, its
+     * period out to twenty seconds - and [SpatialField] refuses what falls outside them. A build
+     * holding the old range and reading a message in the new one would throw somewhere deep in a
+     * constructor about a number it cannot name the origin of. Same fields, different meaning, and
+     * the version is what turns "unreadable rule" into "that phone needs the new build".
      */
-    const val VERSION = 8
+    const val VERSION = 9
 
     private const val HEADER_FIELDS = 17
     private const val POSITION_FIELDS = 4
