@@ -221,11 +221,23 @@ data class HomeState(
      */
     val room: RoomState? = null,
     /**
-     * The SSID of the WiFi this handset is on right now, or null where it could not be read.
+     * Whether this handset is on WiFi right now, from ConnectivityManager's active network
+     * capabilities.
+     *
+     * Its own field rather than folded into [wifiName] being non-null: reading the actual SSID
+     * needs ACCESS_FINE_LOCATION and live location services since Android 10, which this app does
+     * not ask for just to print a network name, so "on WiFi with an unreadable name" and "not on
+     * WiFi at all" have to be told apart some other way.
      *
      * Shown on the welcome screen because a phone on the wrong WiFi looks identical to a phone
      * that has not been told anything is wrong - the fix is switching networks and coming back,
-     * so a stale name here would go on saying "connected" after somebody already left.
+     * so a stale value here would go on saying "connected" after somebody already left.
+     */
+    val onWifi: Boolean = false,
+    /**
+     * The SSID of the WiFi this handset is on, when it comes back as an actual name - see
+     * [readableSsid]. Null whenever [onWifi] is false, and also null on WiFi with no readable
+     * name.
      */
     val wifiName: String? = null
 )

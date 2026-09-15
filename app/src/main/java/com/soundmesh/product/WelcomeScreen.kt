@@ -51,10 +51,11 @@ fun WelcomeScreen(state: HomeState, actions: HomeActions) {
             }
         }
         Text(stringResource(R.string.welcome_need_wifi), style = MaterialTheme.typography.bodyMedium)
-        val wifiName = state.wifiName
-        if (wifiName != null) {
+        if (state.onWifi) {
+            val wifiName = state.wifiName
             Text(
-                stringResource(R.string.welcome_wifi_name, wifiName),
+                if (wifiName != null) stringResource(R.string.welcome_wifi_name, wifiName)
+                else stringResource(R.string.welcome_wifi_connected),
                 style = MaterialTheme.typography.bodySmall
             )
         } else {

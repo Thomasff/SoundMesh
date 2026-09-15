@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -953,17 +955,28 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
-     * This handset's current WiFi SSID, or null where it cannot be read.
+     * Whether this handset is on WiFi at all, and its SSID when that name can actually be read.
      *
      * Re-read on every resume rather than kept, for the same reason the pairing address is: this
      * screen can come back from a system WiFi picker with a different network than it left with.
-     * runCatching because a handset with the radio off, or with the location permission the SSID
-     * read depends on, must not crash a screen that has nothing else to do with either.
+     *
+     * The question this answers is "is this phone on WiFi", not "what is this phone's SSID" - the
+     * two used to be the same read, `WifiManager.connectionInfo.ssid`, and that one has not been
+     * able to answer on a real device since Android 10: it needs ACCESS_FINE_LOCATION *and* live
+     * location services, neither of which this app asks for just to print a network name. Asked of
+     * [ConnectivityManager] instead, which needs no permission at all - see [NetworkCapabilities].
+     * The SSID is still attempted on top of that, and shown only when [readableSsid] says it is
+     * worth showing.
      */
     private fun readWifiName() {
-        state = state.copy(
-            wifiName = runCatching { getSystemService(WifiManager::class.java).connectionInfo.ssid }.getOrNull()
-        )
+        val onWifi = runCatching {
+            val connectivity = getSystemService(ConnectivityManager::class.java)
+            connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        }.getOrDefault(false)
+        val ssid = if (!onWifi) null else
+            runCatching { getSystemService(WifiManager::class.java).connectionInfo.ssid }.getOrNull()
+        state = state.copy(onWifi = onWifi, wifiName = readableSsid(ssid))
     }
 
     /**
@@ -1453,3 +1466,26 @@ internal fun measuredDistances(
  * not answering - and those two want opposite things said about them on screen.
  */
 internal data class Told(val percent: Int, val at: Long)
+
+/**
+ * What WifiManager's raw SSID read is worth showing, or null when it is not a real name.
+ *
+ * Since Android 10, that read hands back "<unknown ssid>" - or throws - to any app without
+ * ACCESS_FINE_LOCATION and live location services, which this app does not hold. Rather than
+ * treat that as an error, [readWifiName] asks whether this handset is on WiFi at all somewhere
+ * that needs no permission, and this decides only whether the SSID string, if any came back, is
+ * one worth printing beside that answer.
+ *
+ * A real SSID arrives quoted - `"MyNetwork"` - so the quotes are stripped before anything else is
+ * checked. A non-UTF-8 SSID arrives as a bare hex string instead, unquoted and starting `0x`,
+ * which is exactly as unreadable as the placeholder and is refused the same way.
+ */
+internal fun readableSsid(rawSsid: String?): String? {
+    val unquoted = rawSsid?.removeSurrounding("\"") ?: return null
+    if (unquoted.isBlank()) return null
+    if (unquoted == UNKNOWN_SSID) return null
+    if (unquoted.startsWith("0x")) return null
+    return unquoted
+}
+
+private const val UNKNOWN_SSID = "<unknown ssid>"

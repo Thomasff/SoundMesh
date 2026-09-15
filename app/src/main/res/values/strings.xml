@@ -330,6 +330,7 @@
     <string name="welcome_need_wifi">都连同一个 WiFi</string>
     <string name="welcome_wifi_name">现在连着：%1$s</string>
     <string name="welcome_wifi_none">现在没连 WiFi。两台手机得在同一个 WiFi 里才能互相说话。</string>
+    <string name="welcome_wifi_connected">现在连着 WiFi，读不到网络名称。</string>
     <string name="welcome_role">这台当什么</string>
     <string name="role_host_other">另一台要选「当从机」</string>
     <string name="role_sink_other">另一台要选「当主机」</string>
