@@ -56,7 +56,7 @@ import androidx.compose.ui.unit.sp
 
 /** A small grey heading over a list, with an optional count or state at its right-hand end. */
 @Composable
-fun Label(title: Int, trailing: String? = null) {
+fun Label(title: Int, trailing: String? = null, onTrailing: (() -> Unit)? = null) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 5.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -70,17 +70,25 @@ fun Label(title: Int, trailing: String? = null) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         trailing?.let {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = Color.Transparent,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Text(
-                    it,
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 1.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.secondary
-                )
+            // With an action it is the button it already looked like; without one it stays a
+            // reading. The two were the same drawing, so the room's volume label carried a pill
+            // nobody could press and a second copy of the same command below the rows, and the
+            // one people reached for first was the one that did nothing. Reported 2026-09-15.
+            if (onTrailing != null) {
+                Chip(it, onTrailing)
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Transparent,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Text(
+                        it,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
             }
         }
     }

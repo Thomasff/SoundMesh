@@ -157,9 +157,11 @@ private fun NowPlaying(state: HomeState) {
 private fun VolumeLines(state: HomeState, actions: HomeActions) {
     val room = state.roomVolumePercent
     if (room == null && state.roomVolumes.isEmpty()) return
+    val restorable = state.volumeChanged
     Label(
         R.string.room_volume_title,
-        trailing = if (state.volumeChanged) stringResource(R.string.room_volume_restore) else null
+        trailing = if (restorable) stringResource(R.string.room_volume_restore) else null,
+        onTrailing = if (restorable) actions.restoreVolume else null
     )
     if (room != null) {
         VolumeLine(
@@ -187,11 +189,6 @@ private fun VolumeLines(state: HomeState, actions: HomeActions) {
         ) { actions.setHandsetVolume(row.peerId, it) }
     }
     if (state.capturing) Note(stringResource(R.string.room_volume_capturing_hint))
-    if (state.volumeChanged) {
-        Column(modifier = Modifier.padding(top = 8.dp)) {
-            Ghost(stringResource(R.string.room_volume_restore), actions.restoreVolume)
-        }
-    }
 }
 
 /**
