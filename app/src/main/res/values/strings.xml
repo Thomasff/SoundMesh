@@ -336,6 +336,9 @@
     <string name="role_sink_other">另一台要选「当主机」</string>
     <string name="settings_open">设置</string>
     <string name="pair_code_fullscreen">让另一台扫这个码</string>
+    <!-- Which network the code on screen is good on. See HostPairingCode.Offer. -->
+    <string name="pair_code_by_hotspot">这个码给连本机热点的手机</string>
+    <string name="pair_code_by_wifi">这个码给同一个 WiFi 的手机</string>
     <string name="back">返回</string>
 
     <string name="tab_room">房间</string>

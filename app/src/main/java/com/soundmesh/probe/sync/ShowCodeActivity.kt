@@ -55,7 +55,7 @@ class ShowCodeActivity : Activity() {
     }
 
     private fun drawCode() {
-        val payload = HostPairingCode.of(HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT)
+        val payload = HostPairingCode.of(this, HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT)
         if (payload == null) {
             // Said rather than left blank. A handset with two candidate addresses and one with no
             // network at all both show nothing, and only one of them is worth walking over to fix.

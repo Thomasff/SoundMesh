@@ -58,6 +58,7 @@ import com.soundmesh.probe.sync.PairingCodeImage
 import com.soundmesh.probe.sync.percentOf
 import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
+import com.soundmesh.probe.sync.LocalAddress
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.ScanActivity
 import com.soundmesh.probe.sync.handsetName
@@ -372,7 +373,7 @@ class HomeActivity : ComponentActivity() {
                             onThemeChanged = { choice -> themeChoice = choice },
                             onDetailsChanged = { on -> showDetails = on }
                         )
-                        showingCode -> PairCodeScreen(state.pairingPayload) { showingCode = false }
+                        showingCode -> PairCodeScreen(state.pairingOffer) { showingCode = false }
                         else -> HomeScreen(state, actions, showDetails)
                     }
                 }
@@ -760,7 +761,12 @@ class HomeActivity : ComponentActivity() {
             // Re-read on every resume, because the way it changes is somebody leaving this
             // screen for the system one and coming back.
             backgroundAllowed = backgroundAllowed(),
-            pairingPayload = HostPairingCode.of(HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT),
+            pairingOffer = HostPairingCode.offer(
+                this,
+                HostIdentity(filesDir).current(),
+                SyncActivity.CHUNK_PORT,
+                LocalAddress.ReachedBy.entries.firstOrNull { it.name == Preferences(filesDir).read(Preferences.CODE_NETWORK) }
+            ),
             songName = chosen?.name,
             songUri = chosen?.uri,
             songIsFolder = chosen?.kind == ChosenKind.FOLDER,
@@ -1403,11 +1409,17 @@ class HomeActivity : ComponentActivity() {
  * and scrolled, and the one thing worth doing to a code that is about to be scanned is making it
  * as large as the screen allows and removing everything a scroll could hide it behind.
  *
- * [payload] is null exactly when [HomeState.pairingPayload] is - no address this handset could be
- * reached on - and then there is nothing to draw but the way back.
+ * [offer] is null exactly when [HomeState.pairingOffer] is - no address this handset could be
+ * reached on, or two of them with nothing said about which - and then there is nothing to draw
+ * but the way back.
+ *
+ * The network the code is good on is written under it, and that is not decoration. A handset
+ * running its access point while joined to a network has two addresses and the code can only
+ * carry one; the app cannot know which of them the phone doing the scanning can see, so the only
+ * thing that makes a wrong pick visible is saying out loud which one this is.
  */
 @Composable
-private fun PairCodeScreen(payload: String?, onBack: () -> Unit) {
+private fun PairCodeScreen(offer: HostPairingCode.Offer?, onBack: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1417,14 +1429,23 @@ private fun PairCodeScreen(payload: String?, onBack: () -> Unit) {
         verticalArrangement = Arrangement.Center
     ) {
         Text(stringResource(R.string.pair_code_fullscreen), style = MaterialTheme.typography.headlineSmall)
-        payload?.let {
+        offer?.let {
             // Remembered against the payload rather than the recomposition, for the same reason
             // the checklist's own song section does it: encoding one is the most expensive thing
             // this screen does, for a picture that only changes when the address does.
-            val code = remember(it) {
-                PairingCodeImage.bitmap(it, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
+            val code = remember(it.payload) {
+                PairingCodeImage.bitmap(it.payload, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
             }
             Image(code, contentDescription = null, modifier = Modifier.fillMaxWidth())
+            Text(
+                stringResource(
+                    when (it.by) {
+                        LocalAddress.ReachedBy.HOTSPOT -> R.string.pair_code_by_hotspot
+                        LocalAddress.ReachedBy.WIFI -> R.string.pair_code_by_wifi
+                    }
+                ),
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
         TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
     }

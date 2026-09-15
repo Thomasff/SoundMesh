@@ -510,7 +510,7 @@ class SyncActivity : Activity() {
         // Shown whether or not this run advertised. The code exists for the case where the two
         // handsets have not found each other, so making it conditional on the mechanism that
         // requires they already have would leave it useful only where it is not needed.
-        val pairingCode = HostPairingCode.of(hostId, CHUNK_PORT)
+        val pairingCode = HostPairingCode.of(this, hostId, CHUNK_PORT)
         if (pairingCode != null) showPairingCode(pairingCode)
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,

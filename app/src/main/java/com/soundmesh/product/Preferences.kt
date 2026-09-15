@@ -41,7 +41,16 @@ class Preferences(private val dir: File) {
         }.getOrDefault(emptyMap())
     }
 
-    private companion object {
-        const val FILE_NAME = "preferences"
+    companion object {
+        /**
+         * Which network this handset puts in the code it shows, when it has two to choose from.
+         *
+         * Stored rather than worked out, because it cannot be worked out: the app has no way to
+         * know which network the phone doing the scanning can see. One of LocalAddress.ReachedBy
+         * by name, or absent when nobody has said and the code refuses to guess.
+         */
+        const val CODE_NETWORK = "code_network"
+
+        private const val FILE_NAME = "preferences"
     }
 }

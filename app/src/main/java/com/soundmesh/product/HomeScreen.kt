@@ -44,6 +44,7 @@ import com.soundmesh.core.PairingCode
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CaptureSilence
+import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.indexFor
 import com.soundmesh.probe.sync.Playhead
 
@@ -94,7 +95,11 @@ data class HomeState(
     val capturing: Boolean = false,
     val checking: Boolean = false,
     val problem: Int? = null,
-    val pairingPayload: String? = null,
+    /**
+     * The code to show a peer and the network it is good on, or null when this handset cannot
+     * name one address it would be reached at. See [HostPairingCode].
+     */
+    val pairingOffer: HostPairingCode.Offer? = null,
     val paired: PairingCode? = null,
     /**
      * How many handsets are standing by for this host, and whether this sink is one of them.
