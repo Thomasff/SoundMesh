@@ -68,6 +68,7 @@ fun PlayingScreen(
             SpatialPanel(
                 it,
                 actions.room,
+                showDetails = showDetails,
                 blockedPeerNames = state.blockedPeerNames,
                 // Null rather than the raw value while nothing is playing: the ripple means "just
                 // started", and there is nothing on screen for it to mean that beside.
@@ -120,7 +121,10 @@ private fun SourcePicker(state: HomeState, actions: HomeActions) {
 private fun NowPlaying(state: HomeState) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 2.dp)) {
         Text(
-            state.nowPlaying ?: state.songName ?: stringResource(R.string.song_none),
+            when {
+                state.capturing -> stringResource(R.string.song_pick_capture)
+                else -> state.nowPlaying ?: state.songName ?: stringResource(R.string.song_none)
+            },
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             fontSize = 17.sp

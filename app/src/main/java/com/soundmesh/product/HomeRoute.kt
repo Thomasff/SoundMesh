@@ -12,15 +12,26 @@ enum class HomeRoute { WELCOME, READY, PLAYING }
 
 /**
  * [steppedBack] is somebody having pressed back out of the playing stage, which leaves a running
- * session and nobody looking at it. It is a parameter rather than a field on [HomeState] for the
- * same reason settings and the pairing code are held in the activity: it says where a person is
- * standing, not what this handset is doing, and the state underneath it goes on changing.
+ * session and nobody looking at it. [holding] is the other way round: nothing is playing, and the
+ * person is on the playing stage anyway because they just changed what the room will play from
+ * there. Both are parameters rather than fields on [HomeState] for the same reason settings and
+ * the pairing code are held in the activity: they say where a person is standing, not what this
+ * handset is doing, and the state underneath them goes on changing.
+ *
+ * Without [holding], picking a different source while the music was on dropped somebody two
+ * stages back to find the play button again - reported 2026-09-15, right after the same journey
+ * had been fixed for a cancelled pick.
  */
-internal fun routeOf(state: HomeState, steppedBack: Boolean = false): HomeRoute = when {
+internal fun routeOf(
+    state: HomeState,
+    steppedBack: Boolean = false,
+    holding: Boolean = false
+): HomeRoute = when {
     // The role decides even against a running session: the welcome screen is the only one that
     // can supply a missing role, so it has to win that argument.
     state.role == Role.NONE -> HomeRoute.WELCOME
-    state.running && !steppedBack -> HomeRoute.PLAYING
+    steppedBack -> HomeRoute.READY
+    state.running || holding -> HomeRoute.PLAYING
     else -> HomeRoute.READY
 }
 

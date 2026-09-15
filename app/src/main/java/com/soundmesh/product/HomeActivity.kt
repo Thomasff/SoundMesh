@@ -115,6 +115,16 @@ class HomeActivity : ComponentActivity() {
     private var steppedBack by mutableStateOf(false)
 
     /**
+     * Whether somebody is standing on the playing stage with nothing playing.
+     *
+     * Exactly one thing puts them there: changing the source from that stage, which stops the
+     * room. Before this they were dropped back to the status board and had to scroll down and
+     * press play again - and the switch they had just asked for was two stages away from where
+     * they asked for it. Pressing back, or picking a role, is how somebody actually leaves.
+     */
+    private var holdingPlaying by mutableStateOf(false)
+
+    /**
      * Whether the first-launch permissions screen is up, replacing everything else this screen
      * draws.
      *
@@ -415,9 +425,11 @@ class HomeActivity : ComponentActivity() {
                             // Until this existed the back gesture left the room playing with the
                             // launcher on screen, from any stage, which is what a person does by
                             // reflex the first time they want to change the song.
-                            val route = routeOf(state, steppedBack)
+                            val route = routeOf(state, steppedBack, holdingPlaying)
                             BackHandler(enabled = route != HomeRoute.WELCOME) { stepBack(route) }
-                            HomeScreen(state, actions, showDetails, steppedBack) { stepBack(route) }
+                            HomeScreen(state, actions, showDetails, steppedBack, holdingPlaying) {
+                                stepBack(route)
+                            }
                         }
                     }
                 }
@@ -426,7 +438,12 @@ class HomeActivity : ComponentActivity() {
     }
 
     private val actions = HomeActions(
-        pickRole = { role -> state = state.copy(role = role, problem = null); readPairing(); takeUpTheRoom() },
+        pickRole = { role ->
+            holdingPlaying = false
+            state = state.copy(role = role, problem = null)
+            readPairing()
+            takeUpTheRoom()
+        },
         chooseSong = { chooseSong.launch(arrayOf(AUDIO_MIME)) },
         chooseFolder = { chooseFolder.launch(null) },
         captureAudio = ::captureAudio,
@@ -707,6 +724,9 @@ class HomeActivity : ComponentActivity() {
      * read from the outside.
      */
     private fun putDownWhatIsPlaying() {
+        // Whoever was watching the room play stays where they were watching it from. Not while
+        // they have already stepped back to the board - then the board is where they are.
+        holdingPlaying = state.running && !steppedBack
         // Stopped before the projection goes, so a running capture is not read from a source that
         // has already been handed back.
         if (state.running) stopSession()
@@ -850,7 +870,10 @@ class HomeActivity : ComponentActivity() {
      */
     private fun stepBack(route: HomeRoute) {
         when (route) {
-            HomeRoute.PLAYING -> steppedBack = true
+            HomeRoute.PLAYING -> {
+                steppedBack = true
+                holdingPlaying = false
+            }
             HomeRoute.READY -> actions.pickRole(Role.NONE)
             HomeRoute.WELCOME -> Unit
         }
@@ -863,7 +886,11 @@ class HomeActivity : ComponentActivity() {
 
     private fun readSession() {
         val session = SessionService.ACTIVE
-        if (session != null) awaitingSession = false
+        if (session != null) {
+            awaitingSession = false
+            // The session itself is what holds the stage now, so the stand-in is given back.
+            holdingPlaying = false
+        }
         // Put back down here rather than when play is pressed, because a sink joins a room it
         // never pressed anything to start. With no session there is nothing to have stepped back
         // out of, so this is the one moment it can be cleared without guessing.

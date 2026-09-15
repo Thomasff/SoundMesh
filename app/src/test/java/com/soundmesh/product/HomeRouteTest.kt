@@ -58,6 +58,32 @@ class HomeRouteTest {
         )
     }
 
+    /**
+     * Changing what the room plays stops it, and the person who asked for the change was standing
+     * on the playing stage when they asked. Dropping them two stages back to find the play button
+     * again is what this holds open - see [routeOf].
+     */
+    @Test
+    fun changingTheSourceLeavesSomebodyWhereTheyChangedItFrom() {
+        assertEquals(
+            HomeRoute.PLAYING,
+            routeOf(HomeState(role = Role.HOST, running = false), holding = true)
+        )
+    }
+
+    /** And back still leaves, which is the only way off a stage with nothing playing on it. */
+    @Test
+    fun backOutOfAHeldStageLandsOnTheBoard() {
+        assertEquals(
+            HomeRoute.READY,
+            routeOf(HomeState(role = Role.HOST, running = false), steppedBack = true, holding = true)
+        )
+        assertEquals(
+            HomeRoute.WELCOME,
+            routeOf(HomeState(role = Role.NONE, running = false), holding = true)
+        )
+    }
+
     @Test
     fun `an unset optional fact is null rather than an empty string`() {
         assertNull(configured(""))

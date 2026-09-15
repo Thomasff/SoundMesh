@@ -436,9 +436,10 @@ fun HomeScreen(
     actions: HomeActions,
     showDetails: Boolean,
     steppedBack: Boolean,
+    holding: Boolean = false,
     onBack: () -> Unit = {}
 ) {
-    val route = routeOf(state, steppedBack)
+    val route = routeOf(state, steppedBack, holding)
     val glow = edgeGlow(state)
     // Dimmed rather than only slowed: a disconnected sink's edge is meant to read as grey from
     // across the room, not just as a quieter version of its own colour.
