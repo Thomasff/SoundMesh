@@ -103,7 +103,10 @@ private fun ReadyRow(item: ReadyItem, actions: HomeActions) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Weighted so a long line wraps inside its own share of the row instead of taking the
+        // whole width and pushing the goto button off screen - ready_standing_none did exactly
+        // that, and the button it hid is the only way onto the pairing code.
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(markGlyph(item.mark), color = markColour(item.mark))
             Spacer(Modifier.width(8.dp))
             Text(readyLineText(item), style = MaterialTheme.typography.bodyMedium)
