@@ -973,9 +973,12 @@ private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
  * this room is a function of something that will not hold still, so a listener asked what a few
  * milliseconds do to a room has been asked to hear an amount that is never twice the same.
  *
- * Stops rather than a free drag, five milliseconds apart. Not a matter of feel: the answer wanted
+ * Free to drag and rounded to whole milliseconds on the way past. Nothing needs the rounding -
+ * the field is nanoseconds and the delay line reads fractional samples - but the answer wanted
  * from this is "at what gap does it start, and at what gap does it become an echo", which is a
- * number somebody has to be able to read off, write down, and set again tomorrow.
+ * number somebody has to read off, write down, and set again tomorrow. Rounding is what keeps
+ * the figure on the screen and the gap in the room the same figure; drawn stops would only have
+ * decided in advance how fine the answer is allowed to be.
  *
  * Untouched by the effect list above, unlike every other knob on this screen. Somebody comparing
  * what a fixed gap does across the three modes should not have it silently zeroed by the change
@@ -988,9 +991,8 @@ private fun SkewSlider(state: RoomState, actions: RoomActions) {
         Text(stringResource(R.string.room_skew), style = MaterialTheme.typography.bodySmall)
         Slider(
             value = state.skew,
-            onValueChange = actions.setSkew,
-            valueRange = -1f..1f,
-            steps = SKEW_STOPS
+            onValueChange = { actions.setSkew(wholeMillisOf(it)) },
+            valueRange = -1f..1f
         )
         Text(
             when {
@@ -1007,11 +1009,9 @@ private fun SkewSlider(state: RoomState, actions: RoomActions) {
 /** How many milliseconds either end of the gap slider is, which is what the readout counts in. */
 private val SKEW_MILLIS = SpatialField.MAX_SKEW_NANOS / 1_000_000L
 
-/** The stops between them: five milliseconds apart, so every round number is reachable exactly. */
-private val SKEW_STOPS = (SKEW_MILLIS / SKEW_STEP_MILLIS * 2L - 1L).toInt()
-
-/** How far apart those stops are. */
-private const val SKEW_STEP_MILLIS = 5L
+/** Where the finger is, as the nearest whole millisecond of gap. See [SkewSlider]. */
+private fun wholeMillisOf(value: Float): Float =
+    (value * SKEW_MILLIS).roundToInt() / SKEW_MILLIS.toFloat()
 
 /**
  * The app's own answer to "where is the sound", next to the knob that moves it.

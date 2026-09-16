@@ -76,6 +76,7 @@ import com.soundmesh.session.CAPTURING_HOST_USAGE
 import com.soundmesh.session.HostSession
 import com.soundmesh.session.SessionService
 import com.soundmesh.session.SyncSession
+import kotlin.math.roundToLong
 
 /**
  * The product's home, and the only screen a user who never attaches a cable ever sees.
@@ -631,10 +632,13 @@ class HomeActivity : ComponentActivity() {
             metresPerUnit = if (room.delayCompensation) room.metresPerUnit else 0.0,
             // Signed on the screen and signed on the wire, because which end of the gap is early
             // is what the control is: the rule turns it into a wait on whichever end is not.
+            // Rounded rather than truncated, unlike the two fractions above it: this one is a
+            // whole number of milliseconds on the screen, and a float a hair under it cut down
+            // would publish a rule one nanosecond off the number the listener is writing down.
             skewNanos = if (self == null) 0L
             else (
                 room.skew.toDouble().coerceIn(-1.0, 1.0) * SpatialField.MAX_SKEW_NANOS
-                ).toLong(),
+                ).roundToLong(),
             skewPeerId = self
         )
     }

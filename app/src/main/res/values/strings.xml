@@ -346,7 +346,7 @@
     <string name="room_skew_together">两边同时响</string>
     <string name="room_skew_self">本机早 %1$d 毫秒</string>
     <string name="room_skew_others">其他手机早 %1$d 毫秒</string>
-    <string name="room_skew_hint">只改早晚，不改响度：谁早，声音就该偏谁那边。一格 5 毫秒，两头各到 70 毫秒。往大了调会先变成「贴在一台上」，再往大会听成回声，这两条界线就是要找的东西。</string>
+    <string name="room_skew_hint">只改早晚，不改响度：谁早，声音就该偏谁那边。按毫秒调，两头各到 70 毫秒。往大了调会先变成「贴在一台上」，再往大会听成回声，这两条界线就是要找的东西。</string>
     <string name="room_shimmer">各机轻微游移</string>
     <string name="room_shimmer_off">关着。每台手机一直待在原地。</string>
     <string name="room_shimmer_speed">游移快慢</string>
