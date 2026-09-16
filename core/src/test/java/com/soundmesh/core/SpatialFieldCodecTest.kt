@@ -37,6 +37,25 @@ class SpatialFieldCodecTest {
     }
 
     /**
+     * How far the room has been pulled back.
+     *
+     * A receiver that dropped it plays at full loudness while every other handset plays quietly,
+     * which is not a room slightly louder: it is one handset placed somewhere nobody put it, in
+     * the one arrangement whose whole point is that the handsets are equally loud.
+     */
+    @Test
+    fun theRoomsRetreatSurvivesTheWire() {
+        val away = field.copy(retreat = 0.6)
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(away))
+
+        assertEquals(0.6, back.retreat, 0.0)
+        for (peerId in away.layout.peerIds) {
+            val at = 3_300_000_000L
+            assertEquals(away.gainAt(peerId, at).left, back.gainAt(peerId, at).left, 0.0)
+        }
+    }
+
+    /**
      * The head start somebody set by hand, and the handset the sign of it is about.
      *
      * The one setting on this wire whose entire purpose is that two handsets do not play together,

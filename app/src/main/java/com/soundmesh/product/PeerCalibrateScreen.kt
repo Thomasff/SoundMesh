@@ -510,10 +510,14 @@ private fun PairBody(
     // Above everything else while a round runs, because it is the only thing on this screen
     // that is about the next few seconds.
     if (state.running) {
-        Label(R.string.pair_calibrate_now)
+        Label(R.string.room_calibrate_now)
         state.message?.let { Note(it) }
+        // The same two lines the room walk-through shows, because it is the same minute of the
+        // same request. Two wordings for one instruction is two chances to write one of them
+        // badly and no way to notice which screen somebody read.
         state.until?.let {
-            HoldStill(it, R.string.pair_calibrate_hold_still, MaterialTheme.typography.titleMedium)
+            Note(stringResource(R.string.room_calibrate_quiet))
+            HoldStill(it, R.string.room_calibrate_left, MaterialTheme.typography.titleMedium)
         }
     }
     Label(R.string.pair_calibrate_what)

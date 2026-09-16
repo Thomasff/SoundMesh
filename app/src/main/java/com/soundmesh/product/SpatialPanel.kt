@@ -279,6 +279,14 @@ data class RoomState(
      * app with no memory of having set it.
      */
     val skew: Float = 0f,
+    /**
+     * How far the whole room has been pulled back, from 0 where it stands to 1 at the quietest
+     * the rule allows. Every handset together - see [com.soundmesh.core.SpatialField.retreat].
+     *
+     * Beside [skew] because it is the other half of one question, and temporary on the same terms:
+     * behind the diagnostic switch, absent from the saved drawing, back at zero tomorrow.
+     */
+    val retreat: Float = 0f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -316,6 +324,7 @@ class RoomActions(
     val setShimmerSpeed: (Float) -> Unit,
     /** The hand set gap, -1 for this handset earliest to +1 for the rest of the room earliest. */
     val setSkew: (Float) -> Unit,
+    val setRetreat: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -1006,6 +1015,36 @@ private fun SkewSlider(state: RoomState, actions: RoomActions) {
     }
 }
 
+/**
+ * How far away the whole room has been moved, which is a different question from which side it
+ * is on.
+ *
+ * Under [SkewSlider] and reading the same way, because the two are one experiment. A gap in time
+ * turned out to say which handset the sound is at and next to nothing about how far along the way
+ * it got: on 09-16 a listener found the side at two or three milliseconds, found it stuck at ten,
+ * and heard the settings in between as much the same. So the distance is asked for separately,
+ * the way distance actually reaches an ear - everything quieter at once.
+ *
+ * Every handset by the same amount, which is the part that makes this worth having rather than a
+ * second loudness pan. Turning one down further than another is the cue this room already has,
+ * and the one that makes it impossible to say afterwards what the gap in time did.
+ */
+@Composable
+private fun RetreatSlider(state: RoomState, actions: RoomActions) {
+    val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
+    Column {
+        Knob(
+            title = stringResource(R.string.room_retreat),
+            value = state.retreat,
+            readout =
+                if (state.retreat <= 0f) stringResource(R.string.room_retreat_here)
+                else stringResource(R.string.room_retreat_away, decibels),
+            onChange = actions.setRetreat
+        )
+        Note(stringResource(R.string.room_retreat_hint))
+    }
+}
+
 /** How many milliseconds either end of the gap slider is, which is what the readout counts in. */
 private val SKEW_MILLIS = SpatialField.MAX_SKEW_NANOS / 1_000_000L
 
@@ -1078,6 +1117,7 @@ private fun EffectSection(
     // there is a source being moved around it.
     if (showDetails) {
         SkewSlider(state, actions)
+        RetreatSlider(state, actions)
         if (state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     }
     if (state.separation > 0f) PartPicker(state, actions)

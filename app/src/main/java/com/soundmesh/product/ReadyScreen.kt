@@ -46,7 +46,14 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
         Role.NONE -> Unit
     }
     RoomRoster(state, actions)
-    CalibrateSection(state, actions)
+    // Host only. A sink has nothing here it can act on: the room round is started by whoever is
+    // holding the room together, and this handset's own output lead is asked about on the one
+    // handset that streams what it is playing - which a sink by definition is not. Both used to
+    // be drawn anyway, so a sink offered two errands, one of which put a button under somebody's
+    // finger that measures nothing and the other of which opened a screen whose every control
+    // said to go and press something on the host. The room is run from the host; this screen now
+    // says so by having nothing else on it.
+    if (state.role == Role.HOST) CalibrateSection(state, actions)
     Problems(items, actions)
     // Said here as well, because the file is chosen from this screen too - off the blocked line
     // above, which is the only way onto the playing stage when nothing has been picked yet.
@@ -123,6 +130,7 @@ private fun ScanLine(state: HomeState, actions: HomeActions) {
  */
 @Composable
 private fun CalibrateSection(state: HomeState, actions: HomeActions) {
+    // Drawn on the host alone - see the call site.
     Label(R.string.calibrate_section)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Framed(strong = true) {

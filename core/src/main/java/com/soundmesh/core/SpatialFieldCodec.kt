@@ -54,10 +54,15 @@ object SpatialFieldCodec {
      * that dropped them would be the one handset in the room playing on time while the listener
      * looked at a slider saying it was seventy milliseconds early. That is the same failure as the
      * scale, in the one place where somebody is deliberately trying to hear a small difference.
+     *
+     * Twelve for how far the room has been pulled back - see [SpatialField.retreat]. A receiver
+     * that dropped it would play at full loudness while every other handset played quietly, which
+     * is not the room a little louder: it is one handset placed somewhere nobody put it, in the
+     * one arrangement whose whole point is that the handsets are equally loud.
      */
-    const val VERSION = 11
+    const val VERSION = 12
 
-    private const val HEADER_FIELDS = 19
+    private const val HEADER_FIELDS = 20
     private const val POSITION_FIELDS = 4
 
     // What stands in the head start's handset field when nothing is skewed. A handset name is
@@ -100,7 +105,7 @@ object SpatialFieldCodec {
                 "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.metresPerUnit} " +
                 "${field.envelopment} ${field.diffusion} ${field.travelDelayNanos} " +
                 "${field.shimmerDelayNanos} ${field.shimmerPeriodNanos} " +
-                "${field.skewNanos} ${skewName ?: NO_SKEW} " +
+                "${field.skewNanos} ${skewName ?: NO_SKEW} ${field.retreat} " +
                 "${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
@@ -156,7 +161,9 @@ object SpatialFieldCodec {
         val skewNanos = header[16].toLongOrNull()
             ?: throw IllegalArgumentException("unreadable head start: ${header[16]}")
         val skewPeerId = header[17].takeIf { it != NO_SKEW }
-        val count = header[18].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[18]}")
+        val retreat = header[18].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable retreat: ${header[18]}")
+        val count = header[19].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[19]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -203,7 +210,8 @@ object SpatialFieldCodec {
             shimmerDelayNanos = shimmerDelayNanos,
             shimmerPeriodNanos = shimmerPeriodNanos,
             skewNanos = skewNanos,
-            skewPeerId = skewPeerId
+            skewPeerId = skewPeerId,
+            retreat = retreat
         )
     }
 }

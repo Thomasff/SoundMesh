@@ -167,6 +167,25 @@ internal fun hushWhateverIsPlaying(context: Context, events: EventLog) {
     }
 }
 
+/**
+ * Stops the music because somebody has walked onto a screen that measures, rather than because a
+ * round has started.
+ *
+ * The round already hushes, and that was late by exactly the part a person notices. A round opens
+ * with sixteen seconds of clock before the first chirp, so the music used to keep playing through
+ * the reading of the page, stop at the press, and then leave the room in silence with nothing
+ * apparently happening. Arriving is the moment the decision is actually made - nobody opens this
+ * screen to keep listening - so the stop happens then and the wait for it happens while the page
+ * is being read.
+ *
+ * Off the main thread because the stop below waits for the session to let go. Cheap when there is
+ * nothing playing: it returns before starting anything.
+ */
+internal fun hushOnArrival(context: Context, events: EventLog) {
+    if (SessionService.ACTIVE == null) return
+    Thread({ hushWhateverIsPlaying(context, events) }, "SoundMeshArrivalHush").start()
+}
+
 /** How long [hushWhateverIsPlaying] waits for playback to actually stop. */
 private const val HUSH_WAIT_MILLIS = 3_000L
 

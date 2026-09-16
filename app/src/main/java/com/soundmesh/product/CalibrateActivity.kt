@@ -20,6 +20,7 @@ import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.CalibrationAudioSource
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.OutputLeadRunner
 import com.soundmesh.probe.sync.StoredOutputLead
 import com.soundmesh.session.CAPTURING_HOST_USAGE
@@ -80,6 +81,10 @@ class CalibrateActivity : ComponentActivity() {
                 }
             }
         }
+        // This screen records a minute and a half of chirps through this handset's own microphone,
+        // and hushed nothing at all until now - a room playing over it produces a number rather
+        // than a failure, which is the shape of fault this project keeps paying for.
+        hushOnArrival(this, EventLog(filesDir))
         if (intent.getBooleanExtra("auto", false)) begin(intent.getBooleanExtra("verify", false))
     }
 
@@ -93,6 +98,7 @@ class CalibrateActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        hushOnArrival(this, EventLog(filesDir))
         if (intent.getBooleanExtra("auto", false)) begin(intent.getBooleanExtra("verify", false))
     }
 

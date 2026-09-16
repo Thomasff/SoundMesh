@@ -319,7 +319,18 @@ class SessionService : Service() {
             val songs = FolderSongs.of(this, folder)
             return openStreamingHost(songs.map { Uri.parse(it.uri) }, intent, songs.map { it.name })
         }
-        intent.getStringExtra(EXTRA_SOURCE_URI)?.let { return openStreamingHost(listOf(Uri.parse(it)), intent) }
+        intent.getStringExtra(EXTRA_SOURCE_URI)?.let {
+            // The name comes with the address rather than being read back off the provider here.
+            // Whoever chose the song already asked for it, showed it on the screen and wrote it
+            // down beside the address - so asking again would be a second answer to a question
+            // that has one, and a provider is free to give a different one.
+            val named = intent.getStringExtra(EXTRA_SOURCE_NAME)?.takeIf(String::isNotEmpty)
+            return openStreamingHost(
+                listOf(Uri.parse(it)),
+                intent,
+                listOf(named ?: getString(R.string.song_unnamed))
+            )
+        }
         val name = intent.getStringExtra(EXTRA_SOURCE_FILE)
             ?: throw IllegalArgumentException("missing source file")
         if (!SAFE_SOURCE_FILE.matches(name)) throw IllegalArgumentException("unusable source file name")
@@ -331,7 +342,8 @@ class SessionService : Service() {
         advertise()
         return HostSession(
             source::readChunk, deadbandFrames(intent), trimFrames(intent),
-            spatialId = HostIdentity(filesDir).current()
+            spatialId = HostIdentity(filesDir).current(),
+            sourceLabel = name
         )
     }
 
@@ -445,7 +457,11 @@ class SessionService : Service() {
             playbackUsage = CAPTURING_HOST_USAGE,
             outputLeadNanos = (lead ?: 0L) * 1_000L,
             closeSource = { CaptureSilence.forget(); source.close() },
-            spatialId = HostIdentity(filesDir).current()
+            spatialId = HostIdentity(filesDir).current(),
+            // There is no name to read and there is still something true to say. Worded from the
+            // reader's side: this is shown on the other handsets, where the audio does come from
+            // the host - the host's own screen says "本机的声音" and is right about itself.
+            sourceLabel = getString(R.string.song_from_host)
         )
     }
 
@@ -731,6 +747,9 @@ class SessionService : Service() {
          * ruler's own path would then have had to keep answering.
          */
         const val EXTRA_SOURCE_URI = "source_uri"
+
+        /** What the song at [EXTRA_SOURCE_URI] is called. See openHost. */
+        const val EXTRA_SOURCE_NAME = "source_name"
 
         /**
          * A folder, as the tree address the listener granted. Its songs are read when the session

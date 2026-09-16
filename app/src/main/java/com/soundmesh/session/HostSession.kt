@@ -127,6 +127,24 @@ internal fun heardMicros(sourceMicros: Long, durationMicros: Long, leadMicros: L
     (sourceMicros - leadMicros).coerceIn(0L, maxOf(0L, durationMicros))
 
 /**
+ * What the room should be told it is playing, or null when there is genuinely nothing to say.
+ *
+ * A function of its values so it can be tested off a handset, like the two above.
+ *
+ * [songIndex] is where the source has got to in its list, or null for a source that has no list to
+ * be anywhere in - a capture, or the ruler's looping prefix. **Null is not "say nothing"**, and
+ * that is the whole of the defect this replaces: a room that never says what it is playing and a
+ * room that has stopped saying are the same silence over the wire, so a handset that once sat in a
+ * folder session went on displaying a song out of it through every session afterwards. A source
+ * with no list has a name of its own instead, and says that.
+ *
+ * Only a source that has neither - no name at its place in the list and no name for itself - gets
+ * null, and no host in this app passes that.
+ */
+internal fun nowPlayingName(songIndex: Int?, songNames: List<String>, sourceLabel: String): String? =
+    (songIndex?.let { songNames.getOrNull(it) } ?: sourceLabel).takeIf { it.isNotEmpty() }
+
+/**
  * The handset that holds the timeline: it decides when every chunk is heard and plays its own copy
  * alongside the sinks.
  *
@@ -253,6 +271,20 @@ class HostSession(
      * what every build before this one did for all of them.
      */
     private val songNames: List<String> = emptyList(),
+    /**
+     * What to call what this room is playing when it is not a song with a name of its own.
+     *
+     * A capture has no name to read - there is no file, only whatever another app on this handset
+     * is doing - and yet it is exactly the case where a phone across the room most needs to be
+     * told something, because its own screen is otherwise showing the last thing it heard about.
+     * That was the defect this exists for: a room that never says what it is playing and a room
+     * that stopped saying are the same silence on the wire, so a handset that was once in a folder
+     * session goes on displaying a song from it through every session afterwards.
+     *
+     * Every kind of host passes one, and the room is told at the first chunk whichever it is. The
+     * rule is that a session says what it is playing rather than that some sessions do.
+     */
+    private val sourceLabel: String = "",
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
     private val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
@@ -303,6 +335,11 @@ class HostSession(
 
     // Which song the room has already been told about. Written by the producer thread, read by
     // the screen, so volatile rather than plain.
+    //
+    // Three kinds of value, and they have to be three: -1 is "nothing said yet", FIXED_SOURCE is
+    // "said the one thing this source has to say", and zero upwards is a song in the list. Folding
+    // the first two together is what used to make a capture silent - there was no index, so the
+    // comparison below could never become false and the room was never told anything at all.
     @Volatile private var announcedSong = -1
 
     private var rendererThread: Thread? = null
@@ -371,14 +408,19 @@ class HostSession(
      * position with every chunk through the queue; the cost of not fixing it is three seconds of a
      * wrong name, once a song.
      *
-     * Named from the list this session was opened with, so an index the list does not reach says
-     * nothing rather than guessing - a source that is not a folder has no names at all.
+     * Named from the list this session was opened with, and from [sourceLabel] where there is no
+     * list - a capture, or a source that is one file. **Every session says something**, which is
+     * the fix rather than a nicety: a sink keeps the last name it was given until it is given
+     * another, so a room that says nothing leaves whichever handset was in an earlier session
+     * displaying a song out of that one, in a session that is playing something else entirely.
      */
     private fun sayWhatIsPlaying() {
-        val at = sourcePlayhead()?.songIndex ?: return
-        if (at == announcedSong) return
-        announcedSong = at
-        songNames.getOrNull(at)?.let { name -> spatialServer?.publishNowPlaying(name) }
+        val at = sourcePlayhead()?.songIndex
+        // A source with no place in a list has one thing to say and says it once. See the field.
+        val place = at ?: FIXED_SOURCE
+        if (place == announcedSong) return
+        announcedSong = place
+        nowPlayingName(at, songNames, sourceLabel)?.let { spatialServer?.publishNowPlaying(it) }
     }
 
     /**
@@ -644,6 +686,9 @@ class HostSession(
     }
 
     private companion object {
+        /** Where [announcedSong] sits for a source that has no list to be at a place in. */
+        const val FIXED_SOURCE = -2
+
         /** playAtHostNanos = generation instant + this lead. The harness's own value. */
         const val LEAD_NANOS = 1_500_000_000L
 

@@ -1,6 +1,8 @@
 package com.soundmesh.product
 
 import android.view.View
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -52,12 +55,23 @@ internal fun previewShown(say: ScanSay): Boolean =
  *
  * [preview] hands over the camera's own view rather than making one here: it is what the camera is
  * bound to, it outlives any one composition, and nothing about it is drawn by this file.
+ *
+ * Three ways out, all of them [onBack]: the handset's own back, the arrow at the top, and anywhere
+ * on the page that is not the picture. This is the one screen in the app somebody is holding at
+ * arm's length and pointing at another phone, with their attention on that phone rather than on
+ * this one, and a way out they have to aim for is a way out they will not find. No ripple under
+ * the tap, because a whole page lighting up says the page is a button.
  */
 @Composable
 fun ScanScreen(say: ScanSay, preview: () -> View, onBack: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onBack
+            )
             .safeDrawingPadding()
             .padding(horizontal = 20.dp)
             .padding(bottom = 28.dp),

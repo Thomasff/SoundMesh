@@ -1143,6 +1143,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                 }
             }
         }
+        // Before anything is pressed. See hushOnArrival.
+        hushOnArrival(this, events)
         if (intent.getBooleanExtra("auto", false)) beginFrom(intent)
     }
 
@@ -1177,6 +1179,7 @@ class PeerCalibrateActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        hushOnArrival(this, events)
         if (intent.getBooleanExtra("auto", false)) beginFrom(intent)
     }
 
@@ -1865,9 +1868,17 @@ class PeerCalibrateActivity : ComponentActivity() {
         resultServer: AlignmentResultServer,
         alreadyServed: Int
     ): RoundResult {
+        // Three different waits, and the difference is who has to act. The original sentence
+        // asks for a press on the other handset, which stopped being true the moment a named
+        // handset could be told over the standing line - it is already on its way, and a screen
+        // asking somebody to walk to it is a screen sending them on an errand that undoes itself.
+        // See [a button asserts its own scope]: the words are the assertion, not the button.
         show(
-            if (alreadyServed == 0) getString(R.string.pair_calibrate_waiting)
-            else getString(R.string.pair_calibrate_waiting_next, alreadyServed)
+            when {
+                alreadyServed > 0 -> getString(R.string.pair_calibrate_waiting_next, alreadyServed)
+                aimedAt() != null -> getString(R.string.pair_calibrate_waiting_aimed)
+                else -> getString(R.string.pair_calibrate_waiting)
+            }
         )
         // Which handset this round is with. Set on the accept, because that is the only
         // moment it is known, and every file this run writes is named with it.

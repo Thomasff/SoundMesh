@@ -114,6 +114,8 @@
     <string name="capture_no_permission">没有录音权限就采不了本机的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
     <string name="capture_declined">没有拿到采集授权，或者授权已经被收回了。</string>
     <string name="song_unnamed">未命名</string>
+    <!-- Shown on the OTHER handsets while this one captures its own audio. See openCapturingHost. -->
+    <string name="song_from_host">正在播放主机上的声音</string>
 
     <string name="home_calibrate">校准本机的输出延迟</string>
 
@@ -154,11 +156,11 @@
     <string name="pair_calibrate_verify">验证已经测过的结果</string>
     <string name="pair_calibrate_verify_hint">把已经记下的数装回去再测一遍。数是对的，就应该几乎什么都不剩。和新测一样，要先在主机上按「开始对时」，主机那边不用选验证。</string>
     <string name="pair_calibrate_result">结果</string>
-    <string name="pair_calibrate_now">正在进行</string>
     <string name="pair_calibrate_room_drawing">量到的摆位</string>
     <string name="pair_calibrate_room_drawing_hint">和播放界面是同一张图：拖动就是你在说本机站在哪儿，按「按测量摆正」把图挪到量出来的形状上。两边永远一致。</string>
-    <string name="pair_calibrate_hold_still">别动，还有 %1$d 秒。</string>
     <string name="pair_calibrate_waiting">在等另一台连过来。请在另一台上也按开始。</string>
+    <!-- The host told one named handset itself, so nobody has to go and press anything. -->
+    <string name="pair_calibrate_waiting_aimed">已经叫上那台手机了，它正在和本机对时，大约二十秒。把两台手机放近一点，扬声器别挡住，谁都别碰。</string>
     <string name="pair_calibrate_clock">正在和另一台对时钟。这一步不发声。</string>
     <string name="pair_calibrate_running">正在测。每一台都别碰，保持安静。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
@@ -376,6 +378,11 @@
     <string name="room_skew_self">本机早 %1$d 毫秒</string>
     <string name="room_skew_others">其他手机早 %1$d 毫秒</string>
     <string name="room_skew_hint">只改早晚，不改响度：谁早，声音就该偏谁那边。按毫秒调，两头各到 70 毫秒。往大了调会先变成「贴在一台上」，再往大会听成回声，这两条界线就是要找的东西。</string>
+    <!-- The other half of the manual gap: distance instead of side. See RetreatSlider. -->
+    <string name="room_retreat">一起变轻（临时调试）</string>
+    <string name="room_retreat_here">就在这儿</string>
+    <string name="room_retreat_away">轻 %1$.1f 分贝</string>
+    <string name="room_retreat_hint">所有手机一起变轻，谁也不比谁轻，所以方向还是上面那根滑杆说了算，这根只管远近。配着上面那根用：上面定左右，这根定远近。</string>
     <string name="room_shimmer">各机轻微游移</string>
     <string name="room_shimmer_off">关着。每台手机一直待在原地。</string>
     <string name="room_shimmer_speed">游移快慢</string>

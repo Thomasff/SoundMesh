@@ -1,6 +1,8 @@
 package com.soundmesh.core
 
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.log10
 import kotlin.math.sqrt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -485,5 +487,101 @@ class SpatialGainTest {
             assertEquals(small.gainAt(peerId, 0L).left, large.gainAt(peerId, 0L).left, 1e-12)
             assertEquals(small.gainAt(peerId, 0L).right, large.gainAt(peerId, 0L).right, 1e-12)
         }
+    }
+
+    /**
+     * The one thing the room moving away could be silently wrong about, and the whole reason it is
+     * applied where it is: [SpatialField.gainAt] divides the room by its own power so that a room
+     * is equally loud whatever the placement asks of it, and an attenuation applied before that
+     * division comes straight back out of it. The wrong version is not quieter-by-less. It is a
+     * knob that moves a slider and changes nothing at all.
+     */
+    @Test
+    fun aRoomThatHasRetreatedIsQuieterThanTheRoomItRetreatedFrom() {
+        val here = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 0.0)
+        val away = here.copy(retreat = 1.0)
+
+        for (peerId in listOf("left", "right")) {
+            assertTrue(away.gainAt(peerId, 0L).left < here.gainAt(peerId, 0L).left)
+            assertTrue(away.gainAt(peerId, 0L).right < here.gainAt(peerId, 0L).right)
+        }
+    }
+
+    /**
+     * Together, and that is the entire claim being made. The instant one handset is turned down
+     * further than another this is a pan by loudness - the cue this room already had, and the one
+     * whose presence makes it impossible to say afterwards what a gap in time did.
+     */
+    @Test
+    fun retreatingLeavesEveryHandsetAsLoudAgainstTheOthersAsItWas() {
+        val here = SpatialField(
+            mode = SpatialMode.ROTATE, layout = triangle, periodNanos = 4_000_000_000L
+        )
+        val away = here.copy(retreat = 0.37)
+
+        // A ratio rather than a difference: a listener places a source by how loud each handset is
+        // against the others, and that is the quantity that must not have moved.
+        val was = here.gainAt("left", 1_000_000_000L).left / here.gainAt("front", 1_000_000_000L).left
+        val now = away.gainAt("left", 1_000_000_000L).left / away.gainAt("front", 1_000_000_000L).left
+        assertEquals(was, now, 1e-12)
+    }
+
+    /** Off is off, to the last bit. A knob at rest that changes the sound is a knob nobody trusts. */
+    @Test
+    fun aRoomThatHasNotRetreatedPlaysExactlyWhatItAlwaysDid() {
+        val field = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 0.4)
+
+        assertEquals(0.0, field.retreat, 0.0)
+        assertEquals(
+            field.gainAt("left", 0L).left,
+            field.copy(retreat = 0.0).gainAt("left", 0L).left,
+            0.0
+        )
+    }
+
+    /**
+     * The far end is the two doublings of distance it is sold as, and not some other number.
+     *
+     * Twelve written out rather than read from [SpatialField.RETREAT_DECIBELS]: an expectation
+     * taken from the module under test agrees with whatever that module does, including with a
+     * decibel formula that halves or doubles it - which is the arithmetic here most likely to be
+     * written for power when the quantity is an amplitude.
+     */
+    @Test
+    fun theFarEndOfTheKnobIsTwelveDecibelsDown() {
+        val here = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 0.0)
+        val away = here.copy(retreat = 1.0)
+
+        val quieterBy = 20.0 * log10(here.gainAt("left", 0L).left / away.gainAt("left", 0L).left)
+        assertEquals(12.0, quieterBy, 1e-9)
+    }
+
+    /**
+     * A source pointing away from every handset in the room falls into its own branch, which
+     * shares the room out evenly by arithmetic of its own rather than by the line above it. A
+     * retreat that missed that branch would put the room back to full loudness for as long as the
+     * source pointed that way - heard as the music jumping forward, in the one arrangement that
+     * is already a compromise.
+     *
+     * One handset at azimuth zero and the source half a turn round is that case exactly, and the
+     * first assertion is what holds it there: the even branch is the only one that answers a
+     * positive gain when nothing in the room faces the source.
+     */
+    @Test
+    fun aSourceNoHandsetFacesRetreatsAlongWithTheRestOfTheRoom() {
+        val alone = SpatialLayout(listOf(SpatialPosition("one", 0.0, 1.0)))
+        val facingAway = SpatialField(
+            mode = SpatialMode.ROTATE,
+            layout = alone,
+            periodNanos = 4_000_000_000L,
+            epochHostNanos = 0L
+        )
+        val halfWayRound = 2_000_000_000L
+        assertEquals(0.0, cos(facingAway.sourceAzimuthAt(halfWayRound)) + 1.0, 1e-12)
+
+        val here = facingAway.gainAt("one", halfWayRound).left
+        val away = facingAway.copy(retreat = 1.0).gainAt("one", halfWayRound).left
+        assertTrue(here > 0.0)
+        assertEquals(12.0, 20.0 * log10(here / away), 1e-9)
     }
 }

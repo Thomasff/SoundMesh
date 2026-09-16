@@ -540,6 +540,7 @@ class HomeActivity : ComponentActivity() {
             setShimmer = { wander -> updateRoom { it.copy(shimmer = wander) } },
             setShimmerSpeed = { speed -> updateRoom { it.copy(shimmerSpeed = speed) } },
             setSkew = { gap -> updateRoom { it.copy(skew = gap) } },
+            setRetreat = { back -> updateRoom { it.copy(retreat = back) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
@@ -634,7 +635,10 @@ class HomeActivity : ComponentActivity() {
             else (
                 room.skew.toDouble().coerceIn(-1.0, 1.0) * SpatialField.MAX_SKEW_NANOS
                 ).roundToLong(),
-            skewPeerId = self
+            skewPeerId = self,
+            // Unlike the gap above it, this one needs nobody named: it is the same number for
+            // every handset, which is the whole of what makes it a distance rather than a pan.
+            retreat = room.retreat.toDouble().coerceIn(0.0, 1.0)
         )
     }
 
@@ -842,6 +846,10 @@ class HomeActivity : ComponentActivity() {
                         else SessionService.EXTRA_SOURCE_URI,
                         state.songUri ?: return
                     )
+                    // Only the single song needs it: a folder is listed by the service, which
+                    // reads every name in it there. Harmless beside a folder and not worth a
+                    // branch to leave out.
+                    .putExtra(SessionService.EXTRA_SOURCE_NAME, state.songName ?: "")
             }
             Role.SINK -> state.paired?.let { code ->
                 request(SessionService.ACTION_START_SINK)

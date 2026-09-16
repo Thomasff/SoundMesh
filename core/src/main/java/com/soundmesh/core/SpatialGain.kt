@@ -2,6 +2,7 @@ package com.soundmesh.core
 
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -255,7 +256,35 @@ data class SpatialField(
      * a rule whose meaning silently reverses when a drawing is reordered is a rule that gets read
      * backwards with nothing on any screen to say so.
      */
-    val skewPeerId: String? = null
+    val skewPeerId: String? = null,
+    /**
+     * How far the whole room is pulled back, from 0 at where it stands to 1 at the furthest this
+     * allows. Every handset, together, by the same amount.
+     *
+     * The second half of [skewNanos] and only useful beside it. On 09-16 a listener walked that
+     * gap out and found its shape: two or three milliseconds is enough to hear which side the
+     * sound is on, ten has it stuck to one handset, and every setting between them sounds much
+     * the same. A time difference answers "which way" and has almost nothing to say about "how
+     * far" - so a listener winding it up hears the answer stop changing and has no way to tell
+     * whether the room ran out of effect or they ran out of ears.
+     *
+     * This is the other question, asked separately. Turning every handset down together is what a
+     * source moving away does, and distance is a thing people hear well. **Together is the whole
+     * of it**: the moment one handset is turned down further than another, the room is being
+     * panned by loudness, which is the cue this project already had and the one whose presence
+     * makes it impossible to say what the time difference did. Held equal, the two cues are
+     * answering two different questions and a listener can hear which of them moved.
+     *
+     * Applied after the room is normalised rather than inside the placement, which is not a
+     * detail: [gainAt] divides by the room's own power so that the room is equally loud whatever
+     * the rule asks for, and an attenuation applied before that division is divided straight back
+     * out. A quieter room has to be asked for on the far side of the arithmetic that exists to
+     * stop rooms being quieter.
+     *
+     * Off at zero, kept nowhere, gone at the next start - on the same terms and for the same
+     * reasons as [skewNanos].
+     */
+    val retreat: Double = 0.0
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
@@ -292,6 +321,7 @@ data class SpatialField(
         require(otherHalfIds.all { layout.contains(it) }) {
             "these handsets carry the sides but are not in the drawing: ${otherHalfIds.filterNot { layout.contains(it) }}"
         }
+        require(retreat in 0.0..1.0) { "a room retreats from 0 to 1: $retreat" }
         require(skewNanos in -MAX_SKEW_NANOS..MAX_SKEW_NANOS) {
             "a hand set head start runs either way to $MAX_SKEW_NANOS ns: $skewNanos"
         }
@@ -608,12 +638,26 @@ data class SpatialField(
             val reaches = layout.peerIds.associateWith { layout.distanceGainOf(it) }
             val evenScale = sqrt(reaches.values.sumOf { it * it })
             val even = reaches.getValue(peerId) / evenScale
-            return StereoGain(even, even)
+            return StereoGain(even * retreatGain(), even * retreatGain())
         }
-        val scale = 1.0 / sqrt(power)
+        val scale = 1.0 / sqrt(power) * retreatGain()
         val mine = raw.getValue(peerId)
         return StereoGain(mine.left * scale, mine.right * scale)
     }
+
+    /**
+     * What [retreat] multiplies the finished room by: one at zero, and down from there.
+     *
+     * Counted in decibels rather than in the fraction itself, because loudness is what a listener
+     * is being asked about and a linear fraction spends most of its travel in the part of the
+     * range where a halving is barely a step. Even in decibels is even to an ear.
+     *
+     * Only ever less than one. This project has been bitten by gains that multiply - each with a
+     * bound of its own, the product with none - so the room moving away is written as the only
+     * arithmetic that cannot overflow anything downstream of it.
+     */
+    private fun retreatGain(): Double =
+        if (retreat <= 0.0) 1.0 else 10.0.pow(-RETREAT_DECIBELS * retreat / 20.0)
 
     /**
      * What the rule asks of [peerId] before the room is normalised, distance included.
@@ -692,6 +736,16 @@ data class SpatialField(
          * SpatialDelayTest asserts the sum so the two files cannot drift apart.
          */
         const val MAX_SKEW_NANOS = 70_000_000L
+
+        /**
+         * How far down [retreat] takes the room at its far end: twelve decibels.
+         *
+         * Two doublings of distance, which is as far as a source can go before it stops being the
+         * thing the room is playing and becomes something audible in the next street. Far enough
+         * that the end of the slider is unmistakably a different place, near enough that every
+         * setting along the way is still music somebody would listen to.
+         */
+        const val RETREAT_DECIBELS = 12.0
 
         /**
          * How far [shimmerDelayNanos] may be wound: twenty milliseconds.
