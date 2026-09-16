@@ -1000,6 +1000,17 @@ class PeerCalibrateActivity : ComponentActivity() {
     private val events: EventLog by lazy { EventLog(filesDir) }
     private var state by mutableStateOf(PeerCalibrateState())
 
+    /**
+     * Which of the position calibration's two steps is the one to do now.
+     *
+     * Held here rather than in the screen because the screen is composed afresh every time a round
+     * hands this activity a new intent - see [restartAsRoom] - and a step remembered inside it
+     * would go back to the first one each time a round ended. It starts at the first step on every
+     * visit: the one it measures is where somebody is sitting, which is a thing that changes
+     * between one evening and the next, and the step below it says out loud that it can be skipped.
+     */
+    private var roomStep by mutableStateOf(1)
+
     /** One calibration at a time: two would share a microphone, a port and a run directory. */
     @Volatile private var running = false
 
@@ -1071,13 +1082,16 @@ class PeerCalibrateActivity : ComponentActivity() {
                             role = role(),
                             stored = stored?.micros,
                             approximate = approximateCalibration(),
-                            observations = stored?.observations ?: 0
+                            observations = stored?.observations ?: 0,
+                            step = roomStep
                         ),
                         // Unrecognised or absent means PAIR - see peerJobOf - which is what every
                         // ADB-driven `am start` of this activity has always meant with no extra.
                         job = peerJobOf(intent.getStringExtra(PEER_JOB_EXTRA)),
                         actions = PeerCalibrateActions(
                             calibrate = { begin(verifying = false, serveMany = true, allowSlowLink = false) },
+                            skipStep = { roomStep = 2 },
+                            back = { finish() },
                             verify = { begin(verifying = true, serveMany = true, allowSlowLink = false) },
                             forget = { forget() },
                             stop = { stopServing() },
@@ -1117,6 +1131,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         startActivity(
             Intent(this, PeerCalibrateActivity::class.java)
                 .putExtra("role", role()?.name)
+                .putExtra(PEER_JOB_EXTRA, PeerJob.ROOM.name)
                 .putExtra("room", true)
                 .putExtra("overhead", overhead)
                 .putExtra("auto", true)
@@ -1709,6 +1724,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                     else StoredSeparation(filesDir, peer).write(metres)
                 }
             }
+            if (overhead()) handler.post { roomStep = 2 }
             show(getString(
                 R.string.pair_calibrate_room_done,
                 plan.slotIds.size,

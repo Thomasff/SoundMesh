@@ -53,6 +53,9 @@ class CalibrateActivity : ComponentActivity() {
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
 
+    /** Which output the measurement now on the screen was taken on. See [replace]. */
+    private var offeredSubject: PlaybackUsage? = null
+
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) start(verifyingAfterPermission)
         else state = state.copy(message = getString(R.string.calibrate_no_permission))
@@ -69,7 +72,9 @@ class CalibrateActivity : ComponentActivity() {
                         state = state.copy(stored = storedMicros()),
                         actions = CalibrateActions(
                             calibrate = { begin(verifying = false) },
-                            verify = { begin(verifying = true) }
+                            replace = { replace() },
+                            keep = { state = state.copy(offered = null) },
+                            back = { finish() }
                         )
                     )
                 }
@@ -103,7 +108,9 @@ class CalibrateActivity : ComponentActivity() {
 
     private fun start(verifying: Boolean) {
         running = true
-        state = state.copy(running = true, message = getString(R.string.calibrate_running))
+        // No sentence saying a run has started: the screen says so, and the message line here is
+        // kept for the runs that come to nothing.
+        state = state.copy(running = true, message = null, offered = null)
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
         Thread({
@@ -149,22 +156,38 @@ class CalibrateActivity : ComponentActivity() {
         // the constant lives would quietly halve the correction on every run after it. Nor does a
         // repeatability run, and for a blunter reason: its subject is the reference path, so what
         // it reads is near zero by construction and storing it would wipe the media constant.
-        if (micros != null && !verifying && !samePath && intent.getBooleanExtra("apply", true)) {
-            StoredOutputLead(filesDir, subject).write(micros)
+        val keeps = !verifying && !samePath && intent.getBooleanExtra("apply", true)
+        val landing = landingFor(micros, StoredOutputLead(filesDir, subject).read()?.takeIf { it != 0L }, keeps)
+        landing.store?.let { StoredOutputLead(filesDir, subject).write(it) }
+        // Nothing is said about a run that worked. What it changed is the number at the top of the
+        // screen, or the two numbers it is now asking about - a sentence underneath saying it has
+        // just measured is the screen reporting on itself.
+        val note = when {
+            micros == null -> getString(R.string.calibrate_refused, run.result.refusal ?: "")
+            samePath -> getString(
+                R.string.calibrate_repeatability,
+                micros / 1000.0,
+                (run.result.spreadMicros ?: 0L) / 1000.0,
+                run.result.usedReadings
+            )
+            verifying -> getString(R.string.calibrate_verified, micros / 1000.0)
+            else -> null
         }
-        show(
-            when {
-                micros == null -> getString(R.string.calibrate_refused, run.result.refusal ?: "")
-                samePath -> getString(
-                    R.string.calibrate_repeatability,
-                    micros / 1000.0,
-                    (run.result.spreadMicros ?: 0L) / 1000.0,
-                    run.result.usedReadings
-                )
-                verifying -> getString(R.string.calibrate_verified, micros / 1000.0)
-                else -> getString(R.string.calibrate_done, micros / 1000.0, subject.name)
-            }
-        )
+        offeredSubject = subject
+        handler.post { state = state.copy(message = note, offered = landing.offer) }
+    }
+
+    /**
+     * Adopts the measurement the screen is holding, against the output it was measured on.
+     *
+     * The subject is remembered rather than read back off the intent: a run driven by name can
+     * name an output other than the capturing one, and writing its answer under the usual output
+     * would leave this handset playing off a number measured on something else.
+     */
+    private fun replace() {
+        val micros = state.offered ?: return
+        StoredOutputLead(filesDir, offeredSubject ?: CAPTURING_HOST_USAGE).write(micros)
+        state = state.copy(offered = null)
     }
 
     /**

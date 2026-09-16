@@ -135,15 +135,6 @@ private fun CalibrateSection(state: HomeState, actions: HomeActions) {
             }
         }
         Framed {
-            BoxTitle(stringResource(R.string.goto_overhead))
-            Note(stringResource(R.string.goto_overhead_hint))
-            Column(modifier = Modifier.padding(top = 7.dp)) {
-                Ghost(stringResource(R.string.goto_overhead_go)) {
-                    actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.OVERHEAD)
-                }
-            }
-        }
-        Framed {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

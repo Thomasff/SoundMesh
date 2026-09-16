@@ -350,9 +350,11 @@ class PeerCalibrateRoomTest {
     @Test
     fun onlyTheHostIsOfferedTheRoundThatMeasuresTheListener() {
         assertTrue(screen.contains("onClick = actions.measureRoom"))
-        val gate = screen.indexOf("if (state.role == CalibrationRole.HOST) {")
+        val gate = screen.indexOf("CalibrationRole.HOST -> {")
+        val next = screen.indexOf("CalibrationRole.SINK ->")
         val offer = screen.indexOf("onClick = actions.measureOverhead")
-        assertTrue("the overhead button is offered outside the host gate", gate in 0 until offer)
+        assertTrue("the host arm of the role branch is gone", gate >= 0)
+        assertTrue("the overhead button is offered outside the host arm", offer in gate until next)
     }
 
     /**

@@ -258,15 +258,26 @@ fun BoxTitle(text: String, strong: Boolean = false) {
     )
 }
 
-/** The full-width solid button. One or two on a screen, never more - see [Framed]. */
+/**
+ * The full-width solid button. One or two on a screen, never more - see [Framed].
+ *
+ * [modifier] is here so two of these can share a row by weight. Everything on this screen is a
+ * column of full-width controls but "replace it / leave it" is one question with two answers, and
+ * stacking those reads as two separate things to do in order.
+ */
 @Composable
-fun Solid(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+fun Solid(
+    text: String,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     Button(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(10.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
     ) {
         Text(text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
     }
@@ -274,15 +285,51 @@ fun Solid(text: String, enabled: Boolean = true, onClick: () -> Unit) {
 
 /** The full-width outlined one, for what sits beside or under a [Solid]. */
 @Composable
-fun Ghost(text: String, onClick: () -> Unit) {
+fun Ghost(
+    text: String,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     OutlinedButton(
         onClick = onClick,
+        enabled = enabled,
         shape = RoundedCornerShape(10.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
     ) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * The bar at the top of a screen that is not one of the three stages: a way back, and a name.
+ *
+ * The stages have their own in [HomeScreen]; this is for the two calibration screens, which are
+ * activities of their own and until now opened with nothing at the top of them at all. A screen
+ * with no name and no arrow is one somebody has to guess their way out of, and both of these are
+ * screens people are sent to from somewhere else.
+ */
+@Composable
+fun PageBar(title: Int, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "←",
+            modifier = Modifier.clickable(onClick = onBack),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            stringResource(title),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
