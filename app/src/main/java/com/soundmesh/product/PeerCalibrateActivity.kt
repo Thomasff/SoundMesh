@@ -3,6 +3,7 @@ package com.soundmesh.product
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -54,7 +55,9 @@ import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.tellHostWhy
 import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.ClockSyncServer
+import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.HostIdentity
+import com.soundmesh.probe.sync.handsetName
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.CalibrationAudioSource
 import com.soundmesh.probe.sync.PeerCalibrationRunner
@@ -1001,6 +1004,29 @@ class PeerCalibrateActivity : ComponentActivity() {
     private var state by mutableStateOf(PeerCalibrateState())
 
     /**
+     * This handset's own volume, and the room's, while this screen is up.
+     *
+     * The room has to be loud enough for every handset to be heard by every other one, and that is
+     * not a thing this screen can work out from anything it already knows - so it draws what each
+     * handset reads back and refuses a round that cannot work. See [tooQuietFor].
+     */
+    private val handsetVolume by lazy {
+        HandsetVolume(getSystemService(AudioManager::class.java), filesDir)
+    }
+
+    /**
+     * Whether anything had already moved the volume when this screen opened.
+     *
+     * Read once, before this screen touches anything, because what it decides is whether leaving
+     * here puts the room back - and that has to be about the state this screen found rather than
+     * the state it made. See [restoresOnLeaving].
+     */
+    private var volumeChangedBefore = false
+
+    /** Which colour each handset is drawn in, off the saved drawing. Re-read on every resume. */
+    private var colours by mutableStateOf(emptyMap<String, Int>())
+
+    /**
      * Which of the position calibration's two steps is the one to do now.
      *
      * Held here rather than in the screen because the screen is composed afresh every time a round
@@ -1073,6 +1099,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // A minute of quiet room, and a screen that sleeps takes the CPU with it.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        volumeChangedBefore = handsetVolume.changed()
         setContent {
             SoundMeshTheme(themeChoiceOf(Preferences(filesDir).read("theme"))) {
                 Surface(color = MaterialTheme.colorScheme.background) {
@@ -1083,7 +1110,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                             stored = stored?.micros,
                             approximate = approximateCalibration(),
                             observations = stored?.observations ?: 0,
-                            step = roomStep
+                            step = roomStep,
+                            colours = colours
                         ),
                         // Unrecognised or absent means PAIR - see peerJobOf - which is what every
                         // ADB-driven `am start` of this activity has always meant with no extra.
@@ -1092,6 +1120,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                             calibrate = { begin(verifying = false, serveMany = true, allowSlowLink = false) },
                             skipStep = { roomStep = 2 },
                             back = { finish() },
+                            setRoomVolume = { percent -> setRoomVolume(percent) },
                             verify = { begin(verifying = true, serveMany = true, allowSlowLink = false) },
                             forget = { forget() },
                             stop = { stopServing() },
@@ -1406,16 +1435,90 @@ class PeerCalibrateActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         MeasuringNow.onScreen = true
+        colours = runCatching { StoredRoomDrawing(filesDir).read()?.room?.colours }
+            .getOrNull().orEmpty()
+        handler.post(readVolumes)
     }
 
     override fun onPause() {
         MeasuringNow.onScreen = false
+        handler.removeCallbacks(readVolumes)
         super.onPause()
     }
 
     override fun onDestroy() {
-        if (isFinishing) stopServing()
+        if (isFinishing) {
+            stopServing()
+            putVolumeBack()
+        }
         super.onDestroy()
+    }
+
+    /**
+     * What every handset is at, re-read rather than waited for.
+     *
+     * A poll because the thing that moves these is somebody pressing the volume keys on a phone,
+     * which happens beside this screen rather than because of it - on this handset there is
+     * nothing to listen to at all, and on the others the report arrives whenever it arrives.
+     */
+    private val readVolumes = object : Runnable {
+        override fun run() {
+            if (role() == CalibrationRole.HOST) state = state.copy(volumes = roomVolumes())
+            handler.postDelayed(this, VOLUME_MILLIS)
+        }
+    }
+
+    /**
+     * What each handset in the room actually landed on, this one first.
+     *
+     * This handset's row is read off its own streams here and now; everybody else's is what they
+     * said after setting theirs. Neither is what was asked for, which is the point - a stream that
+     * took a value and did not move is only visible in what it reads back.
+     */
+    private fun roomVolumes(): List<VolumeRow> {
+        val mine = handsetVolume.read(capturing = false)
+        return listOf(
+            VolumeRow(
+                HostIdentity(filesDir).current(),
+                handsetName(this),
+                mine.percent,
+                mine.index,
+                mine.max,
+                mine.stream
+            )
+        ) + RoomCommands.volumes().map { (peerId, said) ->
+            VolumeRow(
+                peerId,
+                RoomCommands.nameOf(peerId) ?: peerId.takeLast(SHORT_NAME_CHARACTERS),
+                said.percent,
+                said.index,
+                said.max,
+                said.stream
+            )
+        }
+    }
+
+    /** Tells the whole room, this handset included, what volume to be. */
+    private fun setRoomVolume(percent: Int) {
+        val now = handsetVolume.set(percent, capturing = false)
+        RoomCommands.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
+        events.write("room volume for a round: asked $percent%, this handset is ${now.percent}%")
+        state = state.copy(volumes = roomVolumes())
+    }
+
+    /**
+     * Puts the room back on the way out, but only if this screen is what moved it.
+     *
+     * Only the host does it, and only over the standing line: each handset holds what it was at
+     * before this app touched it, on its own disk, so one command is enough and it survives a
+     * handset that has been restarted since.
+     */
+    private fun putVolumeBack() {
+        if (role() != CalibrationRole.HOST) return
+        if (!restoresOnLeaving(volumeChangedBefore, handsetVolume.changed())) return
+        RoomCommands.send(RoomCommand.RESTORE_VOLUME)
+        handsetVolume.restore()
+        events.write("room volume put back on leaving the calibration")
     }
 
     /**
@@ -2185,6 +2288,22 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     internal companion object {
         const val LOG_TAG = "SoundMeshPeerCalibrate"
+
+        /**
+         * How often the volume rows are re-read.
+         *
+         * Half a second, because the thing it is watching is a thumb on somebody's volume keys and
+         * a row that lags behind the phone in their hand reads as a row that is not listening.
+         */
+        const val VOLUME_MILLIS = 500L
+
+        /**
+         * How much of an identity to show when a handset has never said what it is called.
+         *
+         * The last four rather than the whole thing, because the point of a name is that somebody
+         * can say it out loud - see `RoomCommandServer.nameOf`, which falls back the same way.
+         */
+        const val SHORT_NAME_CHARACTERS = 4
 
         /** Intent extra naming the one handset a pair round is for. See [aimedAt]. */
         const val AIMED_AT_EXTRA = "aimed_at"

@@ -163,6 +163,14 @@
     <string name="pair_calibrate_running">正在测。每一台都别碰，保持安静。</string>
     <string name="pair_calibrate_waiting_next">已经测完 %1$d 台。要再测一台就去那台上按「开始对时」——一次按一台。不再测了就按停止。</string>
     <string name="room_calibrate_intro">通过校准来同步手机时间，并测量距离从而精确调控音量与延时。</string>
+    <string name="room_volume_gate_hint">拖动此音量条改变所有手机音量，确保能让所有手机听见。</string>
+    <string name="room_volume_unify">统一媒体音量</string>
+    <string name="room_volume_now">当前音量</string>
+    <string name="room_volume_name_join">、</string>
+    <string name="room_volume_too_quiet_row">%1$d%% · 太小</string>
+    <string name="room_volume_too_quiet_one">%1$s 太小了，到那台手机上把媒体音量调过 %2$d%%。</string>
+    <string name="room_volume_too_quiet_some">%1$s 太小了，到那几台手机上把媒体音量调过 %2$d%%。</string>
+    <string name="room_volume_gate_shut">有 %1$d 台音量低于 %2$d%%，量不了</string>
     <string name="room_calibrate_step">第 %1$d 步 / 共 2 步</string>
     <string name="room_calibrate_line">%1$d.</string>
     <string name="room_calibrate_step1">量你坐在哪</string>

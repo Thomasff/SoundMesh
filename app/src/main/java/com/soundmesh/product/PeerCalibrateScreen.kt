@@ -86,6 +86,15 @@ data class PeerCalibrateState(
     val observations: Int = 0,
     val outcomes: List<SinkOutcome> = emptyList(),
     /**
+     * What every handset standing with this one is at, this one first.
+     *
+     * Only the host fills it - it is the handset holding the standing line everybody reports on -
+     * and it is what the gate above the steps is judged on. See [tooQuietFor].
+     */
+    val volumes: List<VolumeRow> = emptyList(),
+    /** Which colour each handset is drawn in, off the saved drawing. Empty before a room is one. */
+    val colours: Map<String, Int> = emptyMap(),
+    /**
      * Which of the two steps of the position calibration is the one to do now.
      *
      * The order is not a preference: while the handset is held over somebody's head it is not in
@@ -149,6 +158,8 @@ class PeerCalibrateActions(
     val measureOverhead: () -> Unit,
     /** Past the step that measures where the listener sits, without measuring it. */
     val skipStep: () -> Unit,
+    /** One number for the whole room, this handset included. */
+    val setRoomVolume: (Int) -> Unit,
     /** A finger moving one handset on the drawing, which is a person saying where it is. */
     val moveIcon: (RoomIcon) -> Unit,
     /** The drawing moved onto the lengths just measured, offered rather than done. */
@@ -270,6 +281,8 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
     Column(modifier = Modifier.padding(top = 6.dp)) {
         Note(stringResource(R.string.room_calibrate_intro))
     }
+    val tooQuiet = tooQuietFor(state.volumes)
+    if (state.role == CalibrationRole.HOST) VolumeGate(state, tooQuiet, actions)
     if (state.running) {
         Label(R.string.room_calibrate_now)
         Framed(strong = true) {
@@ -306,9 +319,10 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
             ) {
                 Solid(
                     stringResource(R.string.room_calibrate_step1_go),
-                    enabled = !state.running,
+                    enabled = !state.running && tooQuiet.isEmpty(),
                     onClick = actions.measureOverhead
                 )
+                TooQuietNote(tooQuiet)
                 Ghost(stringResource(R.string.room_calibrate_skip), onClick = actions.skipStep)
                 Note(stringResource(R.string.room_calibrate_skip_note))
             }
@@ -324,9 +338,10 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
             ) {
                 Solid(
                     stringResource(R.string.room_calibrate_step2_go),
-                    enabled = !state.running,
+                    enabled = !state.running && tooQuiet.isEmpty(),
                     onClick = actions.measureRoom
                 )
+                TooQuietNote(tooQuiet)
             }
         }
         // A sink has no button here at all. The round is one command from the host and every
@@ -340,6 +355,67 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
         }
     }
     StopControl(state, actions)
+}
+
+/**
+ * One number for the whole room, and every handset's own answer to it underneath.
+ *
+ * The rows are not decoration. Every handset in a round has to be heard by every other one, so the
+ * one thing that stops a round being worth running is a phone nobody can hear - and the only way
+ * to see that a stream refused to move is to draw what it read back beside what it was asked for.
+ *
+ * No level is chosen for anybody. How loud a room has to be is a thing only somebody standing in
+ * it knows; what this refuses is the settings that cannot work at any room size.
+ */
+@Composable
+private fun VolumeGate(
+    state: PeerCalibrateState,
+    tooQuiet: List<String>,
+    actions: PeerCalibrateActions
+) {
+    if (state.volumes.isEmpty()) return
+    Note(stringResource(R.string.room_volume_gate_hint))
+    Label(R.string.room_volume_unify)
+    VolumeLine(
+        name = stringResource(R.string.room_volume_all),
+        percent = state.volumes.first().percent,
+        colour = MaterialTheme.colorScheme.onSurface,
+        strong = true,
+        onSet = actions.setRoomVolume
+    )
+    Label(R.string.room_volume_now)
+    for ((index, row) in state.volumes.withIndex()) {
+        val quiet = row.percent < QUIET_FLOOR_PERCENT
+        Line(first = index == 0) {
+            Dot(state.colours[row.peerId])
+            LineName(row.name, quiet = quiet)
+            Tag(
+                stringResource(
+                    if (quiet) R.string.room_volume_too_quiet_row else R.string.room_volume_level,
+                    row.percent
+                ),
+                if (quiet) Tone.WRONG else Tone.GOOD
+            )
+        }
+    }
+    if (tooQuiet.isNotEmpty()) {
+        Note(
+            stringResource(
+                if (tooQuiet.size == 1) R.string.room_volume_too_quiet_one
+                else R.string.room_volume_too_quiet_some,
+                tooQuiet.joinToString(stringResource(R.string.room_volume_name_join)),
+                QUIET_FLOOR_PERCENT
+            ),
+            Tone.WRONG
+        )
+    }
+}
+
+/** Why the button above it is grey, said under the button rather than only next to the rows. */
+@Composable
+private fun TooQuietNote(tooQuiet: List<String>) {
+    if (tooQuiet.isEmpty()) return
+    Note(stringResource(R.string.room_volume_gate_shut, tooQuiet.size, QUIET_FLOOR_PERCENT), Tone.WRONG)
 }
 
 /**

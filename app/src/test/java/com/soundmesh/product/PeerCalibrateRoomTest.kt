@@ -374,7 +374,8 @@ class PeerCalibrateRoomTest {
         assertTrue(source.contains("private fun putItselfAway()"))
         assertTrue(source.contains("if (!intent.getBooleanExtra(\"sent\", false)) return"))
         // And a round nobody is watching ends rather than running on holding those same ports.
-        assertTrue(source.contains("if (isFinishing) stopServing()"))
+        assertTrue(source.contains("if (isFinishing) {"))
+        assertTrue(source.contains("            stopServing()"))
         // The lead is the shipped one again. It was fifteen seconds while the listener had to
         // walk round pressing a button on every handset; the host says go now, and whoever
         // pressed it is already sitting down holding the phone.
