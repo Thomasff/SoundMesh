@@ -540,7 +540,7 @@ class HomeActivity : ComponentActivity() {
             setShimmer = { wander -> updateRoom { it.copy(shimmer = wander) } },
             setShimmerSpeed = { speed -> updateRoom { it.copy(shimmerSpeed = speed) } },
             setSkew = { gap -> updateRoom { it.copy(skew = gap) } },
-            setRetreat = { back -> updateRoom { it.copy(retreat = back) } },
+            setSkewCarriesDistance = { on -> updateRoom { it.copy(skewCarriesDistance = on) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
