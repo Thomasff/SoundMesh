@@ -40,6 +40,79 @@ class SpatialDelayTest {
     }
 
     /**
+     * A head start set by hand: whichever end of the gap is not the early one does the waiting.
+     *
+     * Both signs, because the two are not one test run twice. Nothing here can play early, so the
+     * negative side is implemented by holding everybody **else** back - a different branch, on a
+     * different set of handsets, producing what a listener is told is the same gap the other way
+     * round. A sign error there reads on screen as the slider working and in the room as the
+     * sound sitting on the wrong phone.
+     */
+    @Test
+    fun `a head start by hand holds whichever end is not the early one`() {
+        val gap = 25_000_000L
+        val early = four.copy(skewNanos = -gap, skewPeerId = "p0")
+        assertEquals(0L, early.playbackDelayNanosFor("p0", 0L))
+        for (peerId in four.layout.peerIds - "p0") {
+            assertEquals(gap, early.playbackDelayNanosFor(peerId, 0L))
+        }
+        val late = four.copy(skewNanos = gap, skewPeerId = "p0")
+        assertEquals(gap, late.playbackDelayNanosFor("p0", 0L))
+        for (peerId in four.layout.peerIds - "p0") {
+            assertEquals(0L, late.playbackDelayNanosFor(peerId, 0L))
+        }
+    }
+
+    /**
+     * Still the same number a minute later, which is the whole of why it was added.
+     *
+     * The other two delays here are functions of the instant, so a listener asked what a few
+     * milliseconds do to a room is being asked to hear an amount that is never twice the same.
+     * This one is the control arm for that question and it is only that if it holds still.
+     */
+    @Test
+    fun `a head start does not move`() {
+        val held = four.copy(skewNanos = -30_000_000L, skewPeerId = "p1")
+        val first = four.layout.peerIds.map { held.playbackDelayNanosFor(it, 0L) }
+        val later = four.layout.peerIds.map { held.playbackDelayNanosFor(it, 60_000_000_000L) }
+        assertEquals(first, later)
+    }
+
+    /**
+     * And it leaves every gain exactly where it was, which is the other half of the same point.
+     *
+     * The travel knob had to be turned into a crossfade because its delay could only ever repeat
+     * what its own loudness rule had already said. This one says nothing about loudness at all, so
+     * what a listener hears move is the time or it is nothing.
+     */
+    @Test
+    fun `a head start leaves every gain where it was`() {
+        val held = four.copy(skewNanos = 40_000_000L, skewPeerId = "p2")
+        for (peerId in four.layout.peerIds) {
+            assertEquals(four.gainAt(peerId, 0L), held.gainAt(peerId, 0L))
+        }
+    }
+
+    /** It does not move and it still needs somewhere to hold the frames it is holding back. */
+    @Test
+    fun `a head start is a rule that needs a delay line`() {
+        assertTrue(four.copy(skewNanos = 1_000_000L, skewPeerId = "p0").movesInTime)
+        assertTrue(four.copy(skewNanos = -1_000_000L, skewPeerId = "p0").movesInTime)
+    }
+
+    /** A gap held against a handset the drawing does not name is a delay nobody could point at. */
+    @Test(expected = IllegalArgumentException::class)
+    fun `a head start against a handset that is not in the room is refused`() {
+        four.copy(skewNanos = 5_000_000L, skewPeerId = "nobody")
+    }
+
+    /** And past the end of the slider it is refused rather than clipped, like every time here. */
+    @Test(expected = IllegalArgumentException::class)
+    fun `a head start past the end of its range is refused`() {
+        four.copy(skewNanos = SpatialField.MAX_SKEW_NANOS + 1, skewPeerId = "p0")
+    }
+
+    /**
      * The travel part is the placement rule read as a time: nothing where the source is, all of it
      * where the source is not.
      *
@@ -174,10 +247,11 @@ class SpatialDelayTest {
         )
     }
 
-    /** And both knobs at once still fit in the line that has to hold them. */
+    /** And every knob at once still fits in the line that has to hold them. */
     @Test
-    fun `the longest delay the two knobs can ask for together fits in the line`() {
-        val longest = SpatialField.MAX_TRAVEL_DELAY_NANOS + SpatialField.MAX_SHIMMER_DELAY_NANOS
+    fun `the longest delay the knobs can ask for together fits in the line`() {
+        val longest = SpatialField.MAX_TRAVEL_DELAY_NANOS + SpatialField.MAX_SHIMMER_DELAY_NANOS +
+            SpatialField.MAX_SKEW_NANOS
         assertTrue(
             "$longest ns asked for, ${TravellingDelay.LONGEST_NANOS} ns held",
             longest <= TravellingDelay.LONGEST_NANOS

@@ -1,6 +1,7 @@
 package com.soundmesh.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,6 +34,37 @@ class SpatialFieldCodecTest {
             assertEquals(field.gainAt(peerId, at).left, back.gainAt(peerId, at).left, 0.0)
             assertEquals(field.gainAt(peerId, at).right, back.gainAt(peerId, at).right, 0.0)
         }
+    }
+
+    /**
+     * The head start somebody set by hand, and the handset the sign of it is about.
+     *
+     * The one setting on this wire whose entire purpose is that two handsets do not play together,
+     * so a receiver that dropped it plays on time, looks perfectly healthy, and answers the
+     * question the listener is in the room asking with the wrong answer.
+     */
+    @Test
+    fun theHandSetHeadStartSurvivesTheWire() {
+        val skewed = field.copy(skewNanos = -31_000_000L, skewPeerId = "a1b2c3d4e5f60718")
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(skewed))
+
+        assertEquals(-31_000_000L, back.skewNanos)
+        assertEquals("a1b2c3d4e5f60718", back.skewPeerId)
+        for (peerId in skewed.layout.peerIds) {
+            assertEquals(
+                skewed.playbackDelayNanosFor(peerId, 0L),
+                back.playbackDelayNanosFor(peerId, 0L)
+            )
+        }
+    }
+
+    /** And a room with nobody skewed names nobody, rather than a handset called by the placeholder. */
+    @Test
+    fun aRoomWithNoHeadStartNamesNobody() {
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(field))
+
+        assertEquals(0L, back.skewNanos)
+        assertNull(back.skewPeerId)
     }
 
     /**

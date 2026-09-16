@@ -224,7 +224,38 @@ data class SpatialField(
      */
     val shimmerDelayNanos: Long = 0L,
     /** How long one handset's wander takes at the slowest slot. See [shimmerDelayNanos]. */
-    val shimmerPeriodNanos: Long = DEFAULT_SHIMMER_PERIOD_NANOS
+    val shimmerPeriodNanos: Long = DEFAULT_SHIMMER_PERIOD_NANOS,
+    /**
+     * A head start for [skewPeerId] against every other handset, in nanoseconds, set by hand.
+     *
+     * Instrumentation rather than an effect, and it exists because every other time cue in this
+     * file is one nobody can hold still. The travel part is a function of where the source is
+     * pointing and the wander is a function of the clock, so a listener trying to find out what a
+     * few milliseconds do to a room is asked to hear an amount that is never the same twice. On
+     * 09-16 a listener spent an evening unable to say whether what they could just about hear was
+     * the feature or the wish. What was missing was not depth: it was a delay a person can set to
+     * a number, leave there, and walk around.
+     *
+     * A difference and not a delay, which is why it is signed. Nothing in this project can play
+     * early - a delay line cannot hand out a frame that has not arrived - so a negative value
+     * holds every **other** handset back by its size instead. For the two handsets a listener
+     * puts to their left and right that is the same room seen from the other side, and being the
+     * gap between two handsets is the whole of what this claims to be.
+     *
+     * Off at zero, and nothing keeps it: it is not written to the saved drawing, so it is back at
+     * zero the next time the app starts. That is deliberate for a control that has no name a
+     * listener would recognise on a screen they were not expecting it on.
+     */
+    val skewNanos: Long = 0L,
+    /**
+     * Which handset the sign of [skewNanos] is about, or null when nothing is skewed.
+     *
+     * Named rather than taken as the first handset in the drawing. The room's own roster does put
+     * the host first, deliberately, but that is a convention held two files away from here - and
+     * a rule whose meaning silently reverses when a drawing is reordered is a rule that gets read
+     * backwards with nothing on any screen to say so.
+     */
+    val skewPeerId: String? = null
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
@@ -261,6 +292,14 @@ data class SpatialField(
         require(otherHalfIds.all { layout.contains(it) }) {
             "these handsets carry the sides but are not in the drawing: ${otherHalfIds.filterNot { layout.contains(it) }}"
         }
+        require(skewNanos in -MAX_SKEW_NANOS..MAX_SKEW_NANOS) {
+            "a hand set head start runs either way to $MAX_SKEW_NANOS ns: $skewNanos"
+        }
+        // Same terms as otherHalfIds above: a name that is in neither the drawing nor an error
+        // message is a handset somebody is holding a delay against and cannot see.
+        require(skewPeerId == null || layout.contains(skewPeerId)) {
+            "the handset the head start is about is not in the drawing: $skewPeerId"
+        }
     }
 
     /**
@@ -295,8 +334,13 @@ data class SpatialField(
      * is zero at whichever handset the source is facing, so "is the delay zero just now" is true
      * at some instants and false at others for one unchanged rule. A renderer deciding whether to
      * carry a delay line on that would build and drop one several times a second.
+     *
+     * [skewNanos] is here despite not moving at all. What this question is really asked for is
+     * whether the renderer needs somewhere to hold frames, and a constant delay needs that just as
+     * much as a moving one does - the name is about the commonest reason, not the only one.
      */
-    val movesInTime: Boolean get() = travelDelayNanos > 0L || shimmerDelayNanos > 0L
+    val movesInTime: Boolean get() =
+        travelDelayNanos > 0L || shimmerDelayNanos > 0L || skewNanos != 0L
 
     /**
      * How long [peerId] holds this instant's audio back, on top of [arrivalDelayNanosFor].
@@ -317,7 +361,8 @@ data class SpatialField(
      */
     fun playbackDelayNanosFor(peerId: String, hostNanos: Long): Long {
         require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
-        return travelPartNanos(peerId, hostNanos) + shimmerPartNanos(peerId, hostNanos)
+        return travelPartNanos(peerId, hostNanos) + shimmerPartNanos(peerId, hostNanos) +
+            skewPartNanos(peerId)
     }
 
     /**
@@ -417,6 +462,21 @@ data class SpatialField(
         val turns = (hostNanos - epochHostNanos).toDouble() / shimmerPeriodNanos
         val phase = 2.0 * PI * (turns * rate + slot.toDouble() / layout.peerIds.size)
         return ((1.0 + sin(phase)) / 2.0 * shimmerDelayNanos).roundToLong()
+    }
+
+    /**
+     * The part somebody set by hand, as a wait rather than as the head start it is written as.
+     *
+     * Whichever end of the gap is not the early one does the waiting. A positive [skewNanos] is
+     * that handset waiting and everybody else going first; a negative one is everybody else
+     * waiting. Both are the same gap, and neither asks anything to play in the past.
+     *
+     * Not a function of the instant, unlike the two above it, and that is the point of it: it is
+     * the same number in a minute's time. See [skewNanos].
+     */
+    private fun skewPartNanos(peerId: String): Long {
+        val named = skewPeerId ?: return 0L
+        return if (peerId == named) maxOf(0L, skewNanos) else maxOf(0L, -skewNanos)
     }
 
     /** Where the source is at [hostNanos], as an azimuth. Meaningless for [SpatialMode.SPLIT]. */
@@ -617,6 +677,21 @@ data class SpatialField(
          * first setting at which its range means anything.
          */
         const val MAX_TRAVEL_DELAY_NANOS = 40_000_000L
+
+        /**
+         * How far [skewNanos] runs either way: seventy milliseconds.
+         *
+         * Wider than anywhere anybody expects to settle, and wide for that reason. Everything
+         * above about where the useful range ends - one millisecond, thirty, the edge where a
+         * delayed copy stops being the same sound - is a number read off other people's papers,
+         * and the one thing this control is for is letting somebody find those edges in their own
+         * room with their own music. A slider that stopped at the answer would be a slider that
+         * assumed it.
+         *
+         * [TravellingDelay.LONGEST_NANOS] holds this plus both of the other two at once, and
+         * SpatialDelayTest asserts the sum so the two files cannot drift apart.
+         */
+        const val MAX_SKEW_NANOS = 70_000_000L
 
         /**
          * How far [shimmerDelayNanos] may be wound: twenty milliseconds.

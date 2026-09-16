@@ -88,7 +88,7 @@ fun SpatialPanel(
         Note(stringResource(R.string.room_hint))
         MeasuredRoom(state, actions.onTheMap(), blockedPeerNames, ripple)
         ArrivalDelays(state, actions, showDetails)
-        EffectSection(state, actions, readings)
+        EffectSection(state, actions, showDetails, readings)
     }
 }
 
@@ -271,6 +271,17 @@ data class RoomState(
      * to trade it back rather than only to give up the depth.
      */
     val shimmerSpeed: Float = DEFAULT_SHIMMER_SPEED,
+    /**
+     * A fixed gap between this handset and every other, as a fraction of what the rule allows,
+     * signed: negative is this one early, positive is the rest of the room early.
+     *
+     * Temporary instrumentation rather than an effect - see
+     * [com.soundmesh.core.SpatialField.skewNanos] - so it is on screen only behind the diagnostic
+     * switch, and it is not among the settings the saved drawing writes down. A control with no
+     * name a listener would recognise should not be waiting for them the next time they open the
+     * app with no memory of having set it.
+     */
+    val skew: Float = 0f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -306,6 +317,8 @@ class RoomActions(
     val setTravel: (Float) -> Unit,
     val setShimmer: (Float) -> Unit,
     val setShimmerSpeed: (Float) -> Unit,
+    /** The hand set gap, -1 for this handset earliest to +1 for the rest of the room earliest. */
+    val setSkew: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -953,6 +966,54 @@ private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
 }
 
 /**
+ * A gap between this handset and the rest that a person sets to a number and leaves there.
+ *
+ * Temporary, and behind the diagnostic switch with the readings it is meant to be read beside.
+ * What it is for is written at [com.soundmesh.core.SpatialField.skewNanos]: every other delay in
+ * this room is a function of something that will not hold still, so a listener asked what a few
+ * milliseconds do to a room has been asked to hear an amount that is never twice the same.
+ *
+ * Stops rather than a free drag, five milliseconds apart. Not a matter of feel: the answer wanted
+ * from this is "at what gap does it start, and at what gap does it become an echo", which is a
+ * number somebody has to be able to read off, write down, and set again tomorrow.
+ *
+ * Untouched by the effect list above, unlike every other knob on this screen. Somebody comparing
+ * what a fixed gap does across the three modes should not have it silently zeroed by the change
+ * of mode they are making the comparison with.
+ */
+@Composable
+private fun SkewSlider(state: RoomState, actions: RoomActions) {
+    val millis = (state.skew * SKEW_MILLIS).roundToInt()
+    Column {
+        Text(stringResource(R.string.room_skew), style = MaterialTheme.typography.bodySmall)
+        Slider(
+            value = state.skew,
+            onValueChange = actions.setSkew,
+            valueRange = -1f..1f,
+            steps = SKEW_STOPS
+        )
+        Text(
+            when {
+                millis < 0 -> stringResource(R.string.room_skew_self, -millis)
+                millis > 0 -> stringResource(R.string.room_skew_others, millis)
+                else -> stringResource(R.string.room_skew_together)
+            },
+            style = MaterialTheme.typography.bodySmall
+        )
+        Note(stringResource(R.string.room_skew_hint))
+    }
+}
+
+/** How many milliseconds either end of the gap slider is, which is what the readout counts in. */
+private val SKEW_MILLIS = SpatialField.MAX_SKEW_NANOS / 1_000_000L
+
+/** The stops between them: five milliseconds apart, so every round number is reachable exactly. */
+private val SKEW_STOPS = (SKEW_MILLIS / SKEW_STEP_MILLIS * 2L - 1L).toInt()
+
+/** How far apart those stops are. */
+private const val SKEW_STEP_MILLIS = 5L
+
+/**
  * The app's own answer to "where is the sound", next to the knob that moves it.
  *
  * Both numbers are bigger where the sound should be, by the room's two different routes: the
@@ -994,6 +1055,7 @@ const val DEFAULT_ENVELOPMENT = 0.25f
 private fun EffectSection(
     state: RoomState,
     actions: RoomActions,
+    showDetails: Boolean = false,
     readings: List<RoomReading> = emptyList()
 ) {
     val current = effectOf(state)
@@ -1010,6 +1072,13 @@ private fun EffectSection(
     if (state.mode != SpatialMode.SPLIT) {
         TravelSlider(state, actions)
         RuleReadings(readings, state.colours)
+    }
+    // Above the fine tuning rather than inside it, and in every mode including the split, because
+    // the one thing it asks about is a gap between two handsets - which a room has whether or not
+    // there is a source being moved around it.
+    if (showDetails) {
+        SkewSlider(state, actions)
+        if (state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     }
     if (state.separation > 0f) PartPicker(state, actions)
     FineTuning(state, actions, readings)

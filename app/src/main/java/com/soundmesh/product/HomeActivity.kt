@@ -543,6 +543,7 @@ class HomeActivity : ComponentActivity() {
             setTravel = { far -> updateRoom { it.copy(travel = far) } },
             setShimmer = { wander -> updateRoom { it.copy(shimmer = wander) } },
             setShimmerSpeed = { speed -> updateRoom { it.copy(shimmerSpeed = speed) } },
+            setSkew = { gap -> updateRoom { it.copy(skew = gap) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
@@ -595,6 +596,9 @@ class HomeActivity : ComponentActivity() {
      */
     private fun fieldOf(room: RoomState): SpatialField? {
         val layout = SpatialRoom.layoutOf(room.icons) ?: return null
+        // Which handset the hand set gap is measured against: this one. Null when this phone is
+        // somehow not in its own drawing, and a gap with nothing at one end of it is no gap.
+        val self = room.selfId?.takeIf(layout::contains)
         return SpatialField(
             room.mode,
             layout,
@@ -624,7 +628,14 @@ class HomeActivity : ComponentActivity() {
             // Zeroed rather than carried with a flag beside it: no scale is exactly what a room
             // that never measured its listener sends, so the switch off and the feature absent
             // are the same message on the wire and the same code on every handset.
-            metresPerUnit = if (room.delayCompensation) room.metresPerUnit else 0.0
+            metresPerUnit = if (room.delayCompensation) room.metresPerUnit else 0.0,
+            // Signed on the screen and signed on the wire, because which end of the gap is early
+            // is what the control is: the rule turns it into a wait on whichever end is not.
+            skewNanos = if (self == null) 0L
+            else (
+                room.skew.toDouble().coerceIn(-1.0, 1.0) * SpatialField.MAX_SKEW_NANOS
+                ).toLong(),
+            skewPeerId = self
         )
     }
 

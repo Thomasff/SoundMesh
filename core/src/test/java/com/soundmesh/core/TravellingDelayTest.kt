@@ -107,11 +107,19 @@ class TravellingDelayTest {
         }
     }
 
-    /** More than it can hold is clamped to what it can, not an index off the end of the buffer. */
+    /**
+     * More than it can hold is clamped to what it can, not an index off the end of the buffer.
+     *
+     * How long to ramp for is worked out from the line rather than written down. It was 200_000
+     * frames, which was enough to cross an eighty millisecond line at the slew limit and stopped
+     * being enough the moment the line grew to a hundred and forty - the assertion then failed
+     * for the one reason it is not about, which is that the delay had not finished arriving.
+     */
     @Test
     fun `asking for more delay than the line holds is clamped`() {
         val line = TravellingDelay(rate)
-        rampInto(line, 200_000, line.longestSamples * 4)
+        val frames = (line.longestSamples / TravellingDelay.MAX_SLEW_SAMPLES).toInt() + 1_000
+        rampInto(line, frames, line.longestSamples * 4)
         assertEquals(line.longestSamples, line.heldSamples, 1e-9)
     }
 

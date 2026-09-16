@@ -48,11 +48,23 @@ object SpatialFieldCodec {
      * holding the old range and reading a message in the new one would throw somewhere deep in a
      * constructor about a number it cannot name the origin of. Same fields, different meaning, and
      * the version is what turns "unreadable rule" into "that phone needs the new build".
+     *
+     * Eleven for a head start somebody set by hand - see [SpatialField.skewNanos]. Two fields
+     * rather than one, because a gap has to say which handset it is measured from, and a receiver
+     * that dropped them would be the one handset in the room playing on time while the listener
+     * looked at a slider saying it was seventy milliseconds early. That is the same failure as the
+     * scale, in the one place where somebody is deliberately trying to hear a small difference.
      */
-    const val VERSION = 10
+    const val VERSION = 11
 
-    private const val HEADER_FIELDS = 17
+    private const val HEADER_FIELDS = 19
     private const val POSITION_FIELDS = 4
+
+    // What stands in the head start's handset field when nothing is skewed. A handset name is
+    // checked hexadecimal wherever one is read, so this can never be one - and the field has to
+    // hold something, since an empty one would merge with the space beside it and shorten the
+    // header into a message that no longer parses.
+    private const val NO_SKEW = "-"
 
     // Written out rather than taken from an enum because there is no enum: which part a handset
     // carries is a membership of [SpatialField.otherHalfIds], and a two-valued enum beside a set that
@@ -78,12 +90,17 @@ object SpatialFieldCodec {
 
     fun encode(field: SpatialField): String {
         val lines = ArrayList<String>(field.layout.positions.size + 1)
+        val skewName = field.skewPeerId
+        require(skewName == null || (skewName.isNotEmpty() && skewName.none { it.isWhitespace() })) {
+            "a handset name is a wire field: it must be non-empty and carry no whitespace"
+        }
         lines.add(
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
                 "${field.epochHostNanos} ${field.separation} ${field.splitAxis.name} " +
                 "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.metresPerUnit} " +
                 "${field.envelopment} ${field.diffusion} ${field.travelDelayNanos} " +
                 "${field.shimmerDelayNanos} ${field.shimmerPeriodNanos} " +
+                "${field.skewNanos} ${skewName ?: NO_SKEW} " +
                 "${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
@@ -136,7 +153,10 @@ object SpatialFieldCodec {
             ?: throw IllegalArgumentException("unreadable wander depth: ${header[14]}")
         val shimmerPeriodNanos = header[15].toLongOrNull()
             ?: throw IllegalArgumentException("unreadable wander period: ${header[15]}")
-        val count = header[16].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[16]}")
+        val skewNanos = header[16].toLongOrNull()
+            ?: throw IllegalArgumentException("unreadable head start: ${header[16]}")
+        val skewPeerId = header[17].takeIf { it != NO_SKEW }
+        val count = header[18].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[18]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -181,7 +201,9 @@ object SpatialFieldCodec {
             diffusion = diffusion,
             travelDelayNanos = travelDelayNanos,
             shimmerDelayNanos = shimmerDelayNanos,
-            shimmerPeriodNanos = shimmerPeriodNanos
+            shimmerPeriodNanos = shimmerPeriodNanos,
+            skewNanos = skewNanos,
+            skewPeerId = skewPeerId
         )
     }
 }

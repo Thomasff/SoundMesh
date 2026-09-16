@@ -156,12 +156,14 @@ class TravellingDelay(sampleRate: Int, longestNanos: Long = LONGEST_NANOS) {
         const val MAX_SLEW_SAMPLES = 1.0 / 32.0
 
         /**
-         * The longest delay any of this can ask for: eighty milliseconds.
+         * The longest delay any of this can ask for: a hundred and forty milliseconds.
          *
          * A guard on the buffer rather than a range anything reaches, in the same spirit as
          * [SpatialField.MAX_ARRIVAL_DELAY_NANOS]: it decides what a wrong input can do, not what a
-         * right one does. Both knobs wound all the way at once come to sixty, and SpatialDelayTest
-         * asserts that sum against this number so the two files cannot drift apart.
+         * right one does. Every knob wound all the way at once comes to a hundred and thirty -
+         * forty of travel, twenty of wander and seventy of [SpatialField.skewNanos] - and
+         * SpatialDelayTest asserts that sum against this number so the two files cannot drift
+         * apart.
          *
          * Where the real limit sits is thirty or so, and it is the ear's rather than the buffer's:
          * past about there a delayed copy stops being part of the same sound and starts being a
@@ -169,7 +171,7 @@ class TravellingDelay(sampleRate: Int, longestNanos: Long = LONGEST_NANOS) {
          * milliseconds past that on purpose, so that a listener can find that edge rather than be
          * told where it is - but it is still the control that decides, not the allocation.
          */
-        const val LONGEST_NANOS = 80_000_000L
+        const val LONGEST_NANOS = 140_000_000L
 
         /** Nanoseconds as a fractional count of frames. Fractional on purpose - see [step]. */
         fun samplesFor(nanos: Long, sampleRate: Int): Double =

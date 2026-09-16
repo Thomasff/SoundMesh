@@ -342,6 +342,11 @@
     <string name="room_travel_hint">越往右，各台响度越接近、早晚差越大。拉到底时每台一样响，位置只由谁先响决定——如果这时还听不出位置在动，就说明这条路对我们没用。再往右会开始听成回声。</string>
     <string name="room_live">实时读数：哪台的数字大，声音就该在哪台那边</string>
     <string name="room_live_row">响 %1$d · 早 %2$.1f</string>
+    <string name="room_skew">手动早晚差（临时调试）</string>
+    <string name="room_skew_together">两边同时响</string>
+    <string name="room_skew_self">本机早 %1$d 毫秒</string>
+    <string name="room_skew_others">其他手机早 %1$d 毫秒</string>
+    <string name="room_skew_hint">只改早晚，不改响度：谁早，声音就该偏谁那边。一格 5 毫秒，两头各到 70 毫秒。往大了调会先变成「贴在一台上」，再往大会听成回声，这两条界线就是要找的东西。</string>
     <string name="room_shimmer">各机轻微游移</string>
     <string name="room_shimmer_off">关着。每台手机一直待在原地。</string>
     <string name="room_shimmer_speed">游移快慢</string>
