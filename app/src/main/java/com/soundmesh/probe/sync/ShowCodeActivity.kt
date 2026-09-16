@@ -1,12 +1,18 @@
 package com.soundmesh.probe.sync
 
-import android.app.Activity
 import android.os.Bundle
-import android.view.Gravity
 import android.view.WindowManager
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.soundmesh.product.PairCodeScreen
+import com.soundmesh.product.Preferences
+import com.soundmesh.product.SoundMeshTheme
+import com.soundmesh.product.themeChoiceOf
 
 /**
  * The host's half of pairing, standing still.
@@ -18,54 +24,43 @@ import android.widget.TextView
  * It reads the identity rather than deciding one. [HostIdentity] names this handset once and every
  * run afterwards answers to that name, so a code shown here and a code shown by a run are the same
  * code, and a peer that scanned either files its calibration under the same host.
+ *
+ * What it draws is the status screen's own full-screen code and not a second drawing of one: this
+ * is reached by name from the tools, and a tools-only spelling would be the one nobody notices
+ * going stale.
  */
-class ShowCodeActivity : Activity() {
-    private lateinit var codeView: ImageView
-    private lateinit var statusView: TextView
+class ShowCodeActivity : ComponentActivity() {
+    private var offer by mutableStateOf<HostPairingCode.Offer?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        codeView = ImageView(this)
-        statusView = TextView(this)
-        setContentView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                addView(codeView)
-                addView(statusView)
+        setContent {
+            SoundMeshTheme(themeChoiceOf(Preferences(filesDir).read("theme"))) {
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    PairCodeScreen(offer) { finish() }
+                }
             }
-        )
+        }
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
-        drawCode()
+        readCode()
     }
 
     /**
-     * Launched again while already open. Redrawn rather than left alone: the address in the code is
+     * Launched again while already open. Re-read rather than left alone: the address in the code is
      * this handset's, and a handset that changed networks since the last launch is showing a code
      * that scans cleanly and then connects to nothing.
      */
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        drawCode()
+        readCode()
     }
 
-    private fun drawCode() {
-        val payload = HostPairingCode.of(this, HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT)
-        if (payload == null) {
-            // Said rather than left blank. A handset with two candidate addresses and one with no
-            // network at all both show nothing, and only one of them is worth walking over to fix.
-            codeView.setImageDrawable(null)
-            statusView.text = "NO CODE: no single address a peer could reach"
-            return
-        }
-        codeView.setImageBitmap(PairingCodeImage.bitmap(payload, PairingCodeImage.DEFAULT_PIXELS))
-        // Under the code, because a code is unreadable to a person and this is the one screen
-        // someone stands in front of. It is also what a screenshot can be checked against.
-        statusView.text = payload
+    private fun readCode() {
+        offer = HostPairingCode.offer(this, HostIdentity(filesDir).current(), SyncActivity.CHUNK_PORT)
     }
 }

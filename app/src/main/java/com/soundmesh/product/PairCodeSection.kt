@@ -4,8 +4,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,6 +20,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.soundmesh.probe.R
+import com.soundmesh.probe.sync.HostPairingCode
 import com.soundmesh.probe.sync.LocalAddress
 import com.soundmesh.probe.sync.PairingCodeImage
 
@@ -92,6 +95,65 @@ fun PairCodeSection(state: HomeState, actions: HomeActions) {
 private fun networkWord(by: LocalAddress.ReachedBy): Int = when (by) {
     LocalAddress.ReachedBy.HOTSPOT -> R.string.pair_code_choose_hotspot
     LocalAddress.ReachedBy.WIFI -> R.string.pair_code_choose_wifi
+}
+
+/**
+ * The pairing code, held up to a camera from a metre away, and nothing else.
+ *
+ * Its own screen rather than a block on the checklist: the checklist is meant to be read close up
+ * and scrolled, and the one thing worth doing to a code that is about to be scanned is making it
+ * as large as the screen allows and removing everything a scroll could hide it behind.
+ *
+ * Two places open it: tapping the code on the status screen, and [ShowCodeActivity], which is the
+ * same screen reached by name from the tools. One spelling rather than two, for the same reason
+ * [HostPairingCode] is one place - the one thing a code cannot afford is to be almost right.
+ *
+ * [offer] is null exactly when [HomeState.pairingOffer] is: no address this handset could be
+ * reached on, or two of them with nothing said about which. Said out loud rather than drawn as an
+ * empty screen, because a phone with no network and a phone with two of them show the same
+ * nothing, and only one of them is worth walking over to fix.
+ *
+ * The network the code is good on is written under it, and that is not decoration. A handset
+ * running its access point while joined to a network has two addresses and the code can only
+ * carry one; the app cannot know which of them the phone doing the scanning can see, so the only
+ * thing that makes a wrong pick visible is saying out loud which one this is.
+ */
+@Composable
+fun PairCodeScreen(offer: HostPairingCode.Offer?, onBack: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        BoxTitle(stringResource(R.string.pair_code_fullscreen), strong = true)
+        if (offer == null) {
+            Note(stringResource(R.string.pair_code_nowhere), Tone.WRONG)
+        } else {
+            // Remembered against the payload rather than the recomposition, for the same reason
+            // the status screen's own code does it: encoding one is the most expensive thing this
+            // screen does, for a picture that only changes when the address does.
+            val code = remember(offer.payload) {
+                PairingCodeImage.bitmap(offer.payload, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
+            }
+            Image(
+                code,
+                contentDescription = null,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)
+            )
+            Note(
+                stringResource(
+                    when (offer.by) {
+                        LocalAddress.ReachedBy.HOTSPOT -> R.string.pair_code_by_hotspot
+                        LocalAddress.ReachedBy.WIFI -> R.string.pair_code_by_wifi
+                    }
+                )
+            )
+        }
+        Ghost(stringResource(R.string.back), modifier = Modifier.padding(top = 22.dp), onClick = onBack)
+    }
 }
 
 /**

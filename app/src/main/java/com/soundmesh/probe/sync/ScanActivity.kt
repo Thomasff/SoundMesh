@@ -5,18 +5,26 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.Gravity
 import android.view.WindowManager
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.soundmesh.core.PairingCodeCodec
+import com.soundmesh.product.Preferences
+import com.soundmesh.product.ScanSay
+import com.soundmesh.product.ScanScreen
+import com.soundmesh.product.SoundMeshTheme
+import com.soundmesh.product.themeChoiceOf
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -32,8 +40,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * screen is any use at all; the code names a host, it does not carry a way onto the WiFi.
  */
 class ScanActivity : ComponentActivity() {
-    private lateinit var statusView: TextView
-    private lateinit var previewView: PreviewView
+    /**
+     * Held by this activity rather than made by the composition, because the camera is bound to
+     * it: a view the screen could replace on a recomposition would leave the camera drawing into
+     * one nobody can see. See [ScanScreen].
+     */
+    private val previewView by lazy { PreviewView(this) }
+
+    /** What the screen says. Written through [say], which puts it on the main thread. */
+    private var saying by mutableStateOf(ScanSay.LOOKING)
 
     /** The decode runs off the main thread, so what it finds is published back through the looper. */
     private val analysis = Executors.newSingleThreadExecutor()
@@ -42,7 +57,7 @@ class ScanActivity : ComponentActivity() {
     private val scanned = AtomicBoolean(false)
 
     /** Held only to put the camera down again once there is nothing left to look for. */
-    
+
     private var camera: ProcessCameraProvider? = null
 
     private val handler = Handler(Looper.getMainLooper())
@@ -58,16 +73,13 @@ class ScanActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        previewView = PreviewView(this)
-        statusView = TextView(this)
-        setContentView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                addView(previewView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-                addView(statusView)
+        setContent {
+            SoundMeshTheme(themeChoiceOf(Preferences(filesDir).read("theme"))) {
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    ScanScreen(saying, preview = { previewView }, onBack = { finish() })
+                }
             }
-        )
+        }
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
@@ -92,7 +104,7 @@ class ScanActivity : ComponentActivity() {
     private fun beginScanning() {
         handler.removeCallbacks(finishAfterScan)
         scanned.set(false)
-        say("SCANNING")
+        say(ScanSay.LOOKING)
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             openCamera()
         } else {
@@ -103,10 +115,10 @@ class ScanActivity : ComponentActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != CAMERA_REQUEST) return
-        // Said out loud rather than retried. The harness reads this line off the screen, and a
-        // scanner silently waiting on a permission nobody granted looks exactly like one pointed
-        // at a screen with no code on it.
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) openCamera() else say("NO CAMERA PERMISSION")
+        // Said out loud rather than retried. A scanner silently waiting on a permission nobody
+        // granted looks exactly like one pointed at a screen with no code on it.
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) openCamera()
+        else say(ScanSay.NO_PERMISSION)
     }
 
     override fun onDestroy() {
@@ -120,7 +132,7 @@ class ScanActivity : ComponentActivity() {
         pending.addListener({
             val provider = runCatching { pending.get() }.getOrNull()
             if (provider == null) {
-                say("NO CAMERA")
+                say(ScanSay.NO_CAMERA)
                 return@addListener
             }
             val preview = Preview.Builder().build()
@@ -134,7 +146,7 @@ class ScanActivity : ComponentActivity() {
             camera = provider
             provider.unbindAll()
             runCatching { provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, reader) }
-                .onFailure { say("NO CAMERA") }
+                .onFailure { say(ScanSay.NO_CAMERA) }
         }, mainExecutor)
     }
 
@@ -154,19 +166,19 @@ class ScanActivity : ComponentActivity() {
             // cannot see anything" are different problems with the same silence.
             val code = runCatching { PairingCodeCodec.decode(text) }.getOrNull()
             if (code == null) {
-                say("NOT A PAIRING CODE")
+                say(ScanSay.NOT_OURS)
                 return
             }
             if (!scanned.compareAndSet(false, true)) return
             PairedHost(filesDir).write(code)
             runOnUiThread { camera?.unbindAll() }
-            say("SCANNED ${code.hostId} at ${code.address}:${code.chunkPort}")
+            say(ScanSay.SCANNED)
             // Scanning is the one act in this system that needs a hand on the phone, and it is
             // done once. Leaving somebody on a dead preview to find the back button is the part of
             // it they should not have to think about.
             //
-            // Not at once, though: the line above names the handset that was paired, and a screen
-            // that vanishes before it can be read leaves exactly the doubt it exists to remove.
+            // Not at once, though: the line above says the code was read, and a screen that
+            // vanishes before it can be read leaves exactly the doubt it exists to remove.
             //
             // Nothing driven over ADB is watching this screen - scan-pair polls the pairing file,
             // which is written above - so finishing costs the tools nothing and saves them a
@@ -177,7 +189,8 @@ class ScanActivity : ComponentActivity() {
         }
     }
 
-    private fun say(text: String) = runOnUiThread { statusView.text = text }
+    /** On the main thread, because the decode that has something to say runs off it. */
+    private fun say(what: ScanSay) = runOnUiThread { saying = what }
 
     private companion object {
         const val CAMERA_REQUEST = 1

@@ -252,6 +252,14 @@
     <string name="pair_none">还没配对</string>
     <string name="pair_scan">扫描主机的码</string>
     <string name="pair_scan_hint">扫到之后按返回键回来</string>
+    <!-- The scanner. ScanSay is the five things it can be doing; see ScanScreen.kt. -->
+    <string name="scan_title">扫主机的码</string>
+    <string name="scan_hint">把本机对准主机屏幕上的那个码，对准就会自动扫到。</string>
+    <string name="scan_looking">正在找码</string>
+    <string name="scan_not_ours">看到一个码，但不是这个应用的</string>
+    <string name="scan_done">扫到了，已经记住这台主机</string>
+    <string name="scan_no_permission">没有相机权限。去设置里打开，再回到这一页。</string>
+    <string name="scan_no_camera">打不开相机</string>
     <string name="standby_host">待命中的手机：%1$d 台。主机这边开始播放、或者开始量距离的时候，它们会自己跟着做，不用一台台去按。</string>
     <string name="standby_approximate">其中 %1$d 台用的是「测量房间」顺带算出来的估算值，还没正经对过时。差大概一两毫秒，听不出来，但有空该各测一次。</string>
     <string name="standby_uncalibrated">其中 %1$d 台还没和本机对过时。没对过就按零来补，它们会差几十毫秒，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>

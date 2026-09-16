@@ -24,17 +24,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,7 +39,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.soundmesh.core.CalibrationRole
@@ -55,7 +51,6 @@ import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.HostIdentity
-import com.soundmesh.probe.sync.PairingCodeImage
 import com.soundmesh.probe.sync.percentOf
 import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
@@ -1586,55 +1581,6 @@ class HomeActivity : ComponentActivity() {
             Manifest.permission.CAMERA,
             PERMISSION_BACKGROUND
         )
-    }
-}
-
-/**
- * The pairing code, held up to a camera from a metre away, and nothing else.
- *
- * Its own screen rather than a block on the checklist: the checklist is meant to be read close up
- * and scrolled, and the one thing worth doing to a code that is about to be scanned is making it
- * as large as the screen allows and removing everything a scroll could hide it behind.
- *
- * [offer] is null exactly when [HomeState.pairingOffer] is - no address this handset could be
- * reached on, or two of them with nothing said about which - and then there is nothing to draw
- * but the way back.
- *
- * The network the code is good on is written under it, and that is not decoration. A handset
- * running its access point while joined to a network has two addresses and the code can only
- * carry one; the app cannot know which of them the phone doing the scanning can see, so the only
- * thing that makes a wrong pick visible is saying out loud which one this is.
- */
-@Composable
-private fun PairCodeScreen(offer: HostPairingCode.Offer?, onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(stringResource(R.string.pair_code_fullscreen), style = MaterialTheme.typography.headlineSmall)
-        offer?.let {
-            // Remembered against the payload rather than the recomposition, for the same reason
-            // the checklist's own song section does it: encoding one is the most expensive thing
-            // this screen does, for a picture that only changes when the address does.
-            val code = remember(it.payload) {
-                PairingCodeImage.bitmap(it.payload, PairingCodeImage.DEFAULT_PIXELS).asImageBitmap()
-            }
-            Image(code, contentDescription = null, modifier = Modifier.fillMaxWidth())
-            Text(
-                stringResource(
-                    when (it.by) {
-                        LocalAddress.ReachedBy.HOTSPOT -> R.string.pair_code_by_hotspot
-                        LocalAddress.ReachedBy.WIFI -> R.string.pair_code_by_wifi
-                    }
-                ),
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-        TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
     }
 }
 
