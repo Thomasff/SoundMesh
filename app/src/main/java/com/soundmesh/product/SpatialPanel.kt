@@ -21,10 +21,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -453,13 +450,12 @@ internal fun listenerLines(
 private fun ArrivalDelays(state: RoomState, actions: RoomActions, showDetails: Boolean) {
     val shown = delayLines(state.icons, state.metresPerUnit)
     if (shown.isEmpty()) return
-    OutlinedButton(onClick = { actions.setDelayCompensation(!state.delayCompensation) }) {
-        Text(
-            stringResource(
-                if (state.delayCompensation) R.string.room_delay_on else R.string.room_delay_off
-            )
-        )
-    }
+    Ghost(
+        stringResource(
+            if (state.delayCompensation) R.string.room_delay_on else R.string.room_delay_off
+        ),
+        modifier = Modifier.padding(top = 8.dp)
+    ) { actions.setDelayCompensation(!state.delayCompensation) }
     if (!state.delayCompensation || !showDetails) return
     Label(R.string.room_arrival_delay)
     Readings(shown.map { (peerId, millis) -> listOf(peerId) to "%.1f".format(millis) }, state.colours)
@@ -473,17 +469,18 @@ private fun ListenerDistances(state: RoomState, actions: RoomMapActions) {
         // person cannot find out by looking: the drawing shows where the phones are and has
         // never shown where they are sitting, so an unmeasured listener looks exactly like a
         // measured one that happens to be in the middle.
-        Text(
+        Note(
             stringResource(
                 if (overheadRoundCanPlaceTheListener(state.icons)) R.string.room_listener_unmeasured
                 else R.string.room_listener_needs_three
-            ),
-            style = MaterialTheme.typography.bodySmall
+            )
         )
         actions.measureListener?.takeIf { overheadRoundCanPlaceTheListener(state.icons) }?.let { go ->
-            OutlinedButton(onClick = go) {
-                Text(stringResource(R.string.room_measure_listener))
-            }
+            Ghost(
+                stringResource(R.string.room_measure_listener),
+                modifier = Modifier.padding(top = 8.dp),
+                onClick = go
+            )
         }
         return
     }
@@ -560,16 +557,18 @@ private val LENGTH_BADGE_TEXT = 9.sp
 @Composable
 private fun FitOffer(state: RoomState, actions: RoomMapActions) {
     if (state.fitted) {
-        Text(stringResource(R.string.room_fit_done), style = MaterialTheme.typography.bodySmall)
+        Note(stringResource(R.string.room_fit_done))
         return
     }
     if (fitOffer(state) == null) return
     // Solid, and that is the whole signal. Hollow, it read as an option somebody might take; what
     // it actually means is that the drawing and the measurement have parted - which only happens
     // because a finger moved an icon - and the state the button is in IS the notice that they have.
-    Button(onClick = actions.fitToMeasured) {
-        Text(stringResource(R.string.room_fit))
-    }
+    Solid(
+        stringResource(R.string.room_fit),
+        modifier = Modifier.padding(top = 8.dp),
+        onClick = actions.fitToMeasured
+    )
 }
 
 @Composable
@@ -855,19 +854,20 @@ internal const val GRAB_RADIUS = 0.12
  */
 @Composable
 private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
+    val range = 0f..SpatialField.MAX_ENVELOPMENT.toFloat()
     Column {
-        Text(stringResource(R.string.room_envelopment), style = MaterialTheme.typography.bodySmall)
-        Slider(
+        Knob(
+            title = stringResource(R.string.room_envelopment),
             value = state.envelopment,
-            onValueChange = actions.setEnvelopment,
-            valueRange = 0f..SpatialField.MAX_ENVELOPMENT.toFloat()
+            readout = stringResource(R.string.room_knob_percent, knobPercent(state.envelopment, range)),
+            range = range,
+            onChange = actions.setEnvelopment
         )
-        Text(
+        Note(
             stringResource(
                 if (state.envelopment <= 0f) R.string.room_envelopment_off
                 else R.string.room_envelopment_hint
-            ),
-            style = MaterialTheme.typography.bodySmall
+            )
         )
     }
 }
@@ -887,19 +887,18 @@ private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
 @Composable
 private fun DiffusionSlider(state: RoomState, actions: RoomActions) {
     Column {
-        Text(stringResource(R.string.room_diffusion), style = MaterialTheme.typography.bodySmall)
-        Slider(
+        Knob(
+            title = stringResource(R.string.room_diffusion),
             value = state.diffusion,
-            onValueChange = actions.setDiffusion,
-            valueRange = 0f..1f,
-            steps = DIFFUSION_STOPS
+            readout = stringResource(R.string.room_knob_percent, knobPercent(state.diffusion, 0f..1f)),
+            steps = DIFFUSION_STOPS,
+            onChange = actions.setDiffusion
         )
-        Text(
+        Note(
             stringResource(
                 if (state.diffusion <= 0f) R.string.room_diffusion_off
                 else R.string.room_diffusion_hint
-            ),
-            style = MaterialTheme.typography.bodySmall
+            )
         )
     }
 }
@@ -922,8 +921,12 @@ private const val DIFFUSION_STOPS = 3
 @Composable
 private fun TravelSlider(state: RoomState, actions: RoomActions) {
     Column {
-        Text(stringResource(R.string.room_travel), style = MaterialTheme.typography.bodySmall)
-        Slider(value = state.travel, onValueChange = actions.setTravel, valueRange = 0f..1f)
+        Knob(
+            title = stringResource(R.string.room_travel),
+            value = state.travel,
+            readout = stringResource(R.string.room_knob_percent, knobPercent(state.travel, 0f..1f)),
+            onChange = actions.setTravel
+        )
         Note(
             stringResource(
                 if (state.travel <= 0f) R.string.room_travel_off else R.string.room_travel_hint
@@ -943,24 +946,24 @@ private fun TravelSlider(state: RoomState, actions: RoomActions) {
 @Composable
 private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
     Column {
-        Text(stringResource(R.string.room_shimmer), style = MaterialTheme.typography.bodySmall)
-        Slider(value = state.shimmer, onValueChange = actions.setShimmer, valueRange = 0f..1f)
+        Knob(
+            title = stringResource(R.string.room_shimmer),
+            value = state.shimmer,
+            readout = stringResource(R.string.room_knob_percent, knobPercent(state.shimmer, 0f..1f)),
+            onChange = actions.setShimmer
+        )
         if (state.shimmer > 0f) {
-            Text(
-                stringResource(R.string.room_shimmer_speed),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Slider(
+            Knob(
+                title = stringResource(R.string.room_shimmer_speed),
                 value = state.shimmerSpeed,
-                onValueChange = actions.setShimmerSpeed,
-                valueRange = 0f..1f
+                readout = stringResource(R.string.room_knob_percent, knobPercent(state.shimmerSpeed, 0f..1f)),
+                onChange = actions.setShimmerSpeed
             )
         }
-        Text(
+        Note(
             stringResource(
                 if (state.shimmer <= 0f) R.string.room_shimmer_off else R.string.room_shimmer_hint
-            ),
-            style = MaterialTheme.typography.bodySmall
+            )
         )
     }
 }
@@ -988,19 +991,16 @@ private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
 private fun SkewSlider(state: RoomState, actions: RoomActions) {
     val millis = (state.skew * SKEW_MILLIS).roundToInt()
     Column {
-        Text(stringResource(R.string.room_skew), style = MaterialTheme.typography.bodySmall)
-        Slider(
+        Knob(
+            title = stringResource(R.string.room_skew),
             value = state.skew,
-            onValueChange = { actions.setSkew(wholeMillisOf(it)) },
-            valueRange = -1f..1f
-        )
-        Text(
-            when {
+            readout = when {
                 millis < 0 -> stringResource(R.string.room_skew_self, -millis)
                 millis > 0 -> stringResource(R.string.room_skew_others, millis)
                 else -> stringResource(R.string.room_skew_together)
             },
-            style = MaterialTheme.typography.bodySmall
+            range = -1f..1f,
+            onChange = { actions.setSkew(wholeMillisOf(it)) }
         )
         Note(stringResource(R.string.room_skew_hint))
     }
@@ -1170,49 +1170,46 @@ private fun FineTuning(
 
 @Composable
 private fun ModePicker(state: RoomState, actions: RoomActions) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        for (mode in SpatialMode.entries) {
-            val label = stringResource(
-                when (mode) {
-                    SpatialMode.ROTATE -> R.string.room_mode_rotate
-                    SpatialMode.PAN -> R.string.room_mode_pan
-                    SpatialMode.SPLIT -> R.string.room_mode_split
-                }
-            )
-            if (mode == state.mode) {
-                Button(onClick = { actions.pickMode(mode) }, modifier = Modifier.weight(1f)) {
-                    Text(label)
-                }
-            } else {
-                OutlinedButton(onClick = { actions.pickMode(mode) }, modifier = Modifier.weight(1f)) {
-                    Text(label)
-                }
+    Column(modifier = Modifier.padding(top = 8.dp)) {
+        Segmented(
+            SpatialMode.entries.map { mode ->
+                Segment(
+                    stringResource(
+                        when (mode) {
+                            SpatialMode.ROTATE -> R.string.room_mode_rotate
+                            SpatialMode.PAN -> R.string.room_mode_pan
+                            SpatialMode.SPLIT -> R.string.room_mode_split
+                        }
+                    ),
+                    chosen = mode == state.mode
+                ) { actions.pickMode(mode) }
             }
-        }
+        )
+        Note(
+            when (state.mode) {
+                SpatialMode.ROTATE -> stringResource(R.string.room_mode_rotate_hint, state.periodSeconds)
+                SpatialMode.PAN -> stringResource(R.string.room_mode_pan_hint)
+                SpatialMode.SPLIT -> stringResource(R.string.room_mode_split_hint)
+            }
+        )
     }
-    Text(
-        when (state.mode) {
-            SpatialMode.ROTATE -> stringResource(R.string.room_mode_rotate_hint, state.periodSeconds)
-            SpatialMode.PAN -> stringResource(R.string.room_mode_pan_hint)
-            SpatialMode.SPLIT -> stringResource(R.string.room_mode_split_hint)
-        },
-        style = MaterialTheme.typography.bodySmall
-    )
 }
 
 @Composable
 private fun PanSlider(state: RoomState, actions: RoomActions) {
     Column {
-        Slider(value = state.pan, onValueChange = actions.setPan, valueRange = -1f..1f)
+        Knob(
+            title = stringResource(R.string.room_pan_title),
+            value = state.pan,
+            range = -1f..1f,
+            onChange = actions.setPan
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(stringResource(R.string.room_pan_left), style = MaterialTheme.typography.bodySmall)
-            Text(stringResource(R.string.room_pan_right), style = MaterialTheme.typography.bodySmall)
+            Note(stringResource(R.string.room_pan_left))
+            Note(stringResource(R.string.room_pan_right))
         }
     }
 }
@@ -1231,10 +1228,14 @@ private fun PanSlider(state: RoomState, actions: RoomActions) {
 @Composable
 private fun SeparationControl(state: RoomState, actions: RoomActions) {
     Column {
-        Text(stringResource(R.string.room_split_content), style = MaterialTheme.typography.bodySmall)
-        Slider(value = state.separation, onValueChange = actions.setSeparation, valueRange = 0f..1f)
+        Knob(
+            title = stringResource(R.string.room_split_content),
+            value = state.separation,
+            readout = stringResource(R.string.room_knob_percent, knobPercent(state.separation, 0f..1f)),
+            onChange = actions.setSeparation
+        )
         if (state.separation <= 0f) {
-            Text(stringResource(R.string.room_split_content_off), style = MaterialTheme.typography.bodySmall)
+            Note(stringResource(R.string.room_split_content_off))
             return@Column
         }
         AxisPicker(state, actions)
@@ -1304,42 +1305,30 @@ private fun partLabelOf(axis: SplitAxis, farHalf: Boolean): Int = when (axis) {
  */
 @Composable
 private fun AxisPicker(state: RoomState, actions: RoomActions) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        for (axis in SplitAxis.entries) {
-            val label = stringResource(
-                when (axis) {
-                    SplitAxis.MIDDLE_SIDES -> R.string.room_axis_middle_sides
-                    SplitAxis.LOW_HIGH -> R.string.room_axis_low_high
-                }
-            )
-            if (axis == state.splitAxis) {
-                Button(onClick = { actions.pickAxis(axis) }, modifier = Modifier.weight(1f)) {
-                    Text(label)
-                }
-            } else {
-                OutlinedButton(onClick = { actions.pickAxis(axis) }, modifier = Modifier.weight(1f)) {
-                    Text(label)
-                }
-            }
-        }
-    }
+    Segmented(
+        SplitAxis.entries.map { axis ->
+            Segment(
+                stringResource(
+                    when (axis) {
+                        SplitAxis.MIDDLE_SIDES -> R.string.room_axis_middle_sides
+                        SplitAxis.LOW_HIGH -> R.string.room_axis_low_high
+                    }
+                ),
+                chosen = axis == state.splitAxis
+            ) { actions.pickAxis(axis) }
+        },
+        modifier = Modifier.padding(top = 8.dp)
+    )
 }
 
 /** Where the low half stops. Read out in hertz because a slider with no number on it is a guess. */
 @Composable
 private fun CrossoverSlider(state: RoomState, actions: RoomActions) {
-    Column {
-        Slider(
-            value = state.crossoverHz,
-            onValueChange = actions.setCrossoverHz,
-            valueRange = SpatialField.LOWEST_CROSSOVER_HZ.toFloat()..SpatialField.HIGHEST_CROSSOVER_HZ.toFloat()
-        )
-        Text(
-            stringResource(R.string.room_crossover_at, state.crossoverHz.roundToInt()),
-            style = MaterialTheme.typography.bodySmall
-        )
-    }
+    Knob(
+        title = stringResource(R.string.room_crossover),
+        value = state.crossoverHz,
+        readout = stringResource(R.string.room_crossover_hz, state.crossoverHz.roundToInt()),
+        range = SpatialField.LOWEST_CROSSOVER_HZ.toFloat()..SpatialField.HIGHEST_CROSSOVER_HZ.toFloat(),
+        onChange = actions.setCrossoverHz
+    )
 }

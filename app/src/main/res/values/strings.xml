@@ -395,8 +395,11 @@
     <string name="room_diffusion_off">关着。每台波形一样，听起来声音都在离你最近的那台上。</string>
     <string name="room_diffusion_hint">往右拉包围感更强，鼓点会软一点，整体轻约 2 dB，用音量键补回来。</string>
     <string name="room_envelopment_hint">往右拉包裹感更强、方向感更弱。</string>
+    <string name="room_pan_title">左右位置</string>
     <string name="room_pan_left">左</string>
     <string name="room_pan_right">右</string>
+    <!-- Every knob's readout that is just "how far along". See Knob in ThinSlider.kt. -->
+    <string name="room_knob_percent">%1$d%%</string>
     <string name="room_split_content">分开播：一部分手机放两声道共有的声音，另一部分放它们不同的声音</string>
     <string name="room_split_content_off">关着。每台都放完整的混音，往右拉才开始分。</string>
     <string name="room_split_content_limits">按声音摆在哪儿分，不是按乐器分：底鼓贝斯也在中间，会跟人声一起走。单声道的歌分不出两边。</string>
@@ -404,7 +407,8 @@
     <string name="room_axis_low_high">按高低音分</string>
     <string name="room_part_low">低音</string>
     <string name="room_part_high">高音</string>
-    <string name="room_crossover_at">分界点 %1$d Hz 以下算低音</string>
+    <string name="room_crossover">分界点：这以下算低音</string>
+    <string name="room_crossover_hz">%1$d Hz</string>
     <string name="room_split_low_high_limits">按频率分，不是按乐器分：人声和吉他两边都有。手机喇叭放不出很低的声音，低音那台本来就会轻。</string>
     <string name="room_part_middle">中间</string>
     <string name="room_part_sides">两边</string>

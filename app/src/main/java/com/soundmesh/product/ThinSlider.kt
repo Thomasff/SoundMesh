@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +29,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 /**
  * A two-point track with a glowing dot on it, in the handset's own colour.
@@ -169,6 +171,128 @@ internal fun volumeShown(dragging: Int?, asked: Int?, before: Int?, reported: In
     else -> reported.coerceIn(0, 100)
 }
 
+/**
+ * A knob, drawn the way [VolumeLine] is drawn, with its number beside its name.
+ *
+ * Every control on the spatial panel used to be a Material slider, which is a different object in
+ * the same column as the volume rows: taller, with a thumb the size of a fingertip and a track in
+ * the accent colour. This one is the same two-point track with a dot on it, in ink rather than in
+ * a handset's hue - the hues mean "this particular phone" and nothing here is about one phone.
+ *
+ * The number on the right is the point of it as much as the drawing is. Six of these knobs had no
+ * number at all, and the one that did says why in its own comment: a slider with no number on it
+ * is a guess, and the question people bring to this screen is "at what setting does it start".
+ *
+ * Reported all the way through the drag, unlike [VolumeLine]. That is not an oversight either -
+ * the room follows a finger here (see HomeActivity's updateRoom: the control channel holds one
+ * rule and a new one replaces what is waiting), and these are knobs somebody turns while listening
+ * to what they do.
+ */
+@Composable
+fun Knob(
+    title: String,
+    value: Float,
+    readout: String? = null,
+    range: ClosedFloatingPointRange<Float> = 0f..1f,
+    steps: Int = 0,
+    onChange: (Float) -> Unit
+) {
+    // Held live: the gesture handlers below are remembered against Unit, so a captured lambda or
+    // a captured range would go on answering with the first one this knob was ever given.
+    val change by rememberUpdatedState(onChange)
+    val bounds by rememberUpdatedState(range)
+    val stops by rememberUpdatedState(steps)
+    val ink = MaterialTheme.colorScheme.onSurface
+    val empty = MaterialTheme.colorScheme.surfaceVariant
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            readout?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(TOUCH_HEIGHT)
+                .pointerInput(Unit) {
+                    detectTapGestures { at ->
+                        change(knobValue(at.x, size.width.toFloat(), bounds, stops))
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures { moved, _ ->
+                        change(knobValue(moved.position.x, size.width.toFloat(), bounds, stops))
+                    }
+                }
+        ) {
+            val y = size.height / 2f
+            val at = size.width * knobFraction(value, bounds)
+            // Filled from wherever zero is rather than from the left edge. Two of these knobs run
+            // either side of zero, and a bar that always grows from the left says "less of this"
+            // at the setting that means "neither way".
+            val origin = size.width * knobFraction(0f, bounds)
+            drawLine(empty, Offset(0f, y), Offset(size.width, y), strokeWidth = TRACK_PIXELS)
+            drawLine(ink, Offset(minOf(origin, at), y), Offset(maxOf(origin, at), y), strokeWidth = TRACK_PIXELS)
+            // Drawn where the value can actually land, so that a dot between two marks is a dot
+            // somebody is still dragging rather than a control that missed.
+            if (stops > 0) {
+                for (mark in 0..(stops + 1)) {
+                    val x = size.width * (mark.toFloat() / (stops + 1))
+                    drawCircle(empty, radius = STOP_PIXELS, center = Offset(x, y))
+                }
+            }
+            drawCircle(ink, radius = DOT_PIXELS, center = Offset(at, y))
+        }
+    }
+}
+
+/**
+ * What a finger at [x] on a track [width] across is asking for.
+ *
+ * Clamped rather than trusted, for the reason [trackPercent] is: a horizontal drag goes on being
+ * reported after the finger has left the track.
+ *
+ * [steps] counts the stops BETWEEN the two ends, the way Material's slider counts them, so that
+ * the knob that had three of them still has three.
+ */
+internal fun knobValue(
+    x: Float,
+    width: Float,
+    range: ClosedFloatingPointRange<Float>,
+    steps: Int = 0
+): Float {
+    if (width <= 0f) return range.start
+    val fraction = (x / width).coerceIn(0f, 1f)
+    val intervals = steps + 1
+    val landed = if (steps <= 0) fraction else (fraction * intervals).roundToInt().toFloat() / intervals
+    return range.start + landed * (range.endInclusive - range.start)
+}
+
+/** Where along the track a value sits, from 0 at the left end to 1 at the right. */
+internal fun knobFraction(value: Float, range: ClosedFloatingPointRange<Float>): Float {
+    val span = range.endInclusive - range.start
+    return if (span <= 0f) 0f else ((value - range.start) / span).coerceIn(0f, 1f)
+}
+
+/** The same position as a whole number, for the knobs whose readout is just "how far along". */
+internal fun knobPercent(value: Float, range: ClosedFloatingPointRange<Float>): Int =
+    (knobFraction(value, range) * 100).roundToInt()
+
 /** Wide enough for a system device name to be recognisable, narrow enough to leave a track. */
 private val NAME_WIDTH = 92.dp
 
@@ -178,5 +302,8 @@ private val TOUCH_HEIGHT = 28.dp
 private const val TRACK_PIXELS = 5f
 private const val DOT_PIXELS = 11f
 private const val HALO_PIXELS = 24f
+
+/** Small enough to read as a mark on the track rather than as a second dot on it. */
+private const val STOP_PIXELS = 3f
 
 private val PERCENT_WIDTH = 34.dp
