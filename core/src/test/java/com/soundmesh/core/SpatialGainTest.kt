@@ -584,4 +584,109 @@ class SpatialGainTest {
         assertTrue(here > 0.0)
         assertEquals(12.0, 20.0 * log10(here / away), 1e-9)
     }
+
+    /**
+     * The whole of the rule, as a number nothing here computed.
+     *
+     * An unmeasured room is taken to be 2.5 m to the furthest handset, sound covers 343 m/s, so a
+     * ten millisecond wait is 3.43 m further off and the handset arrives at 2.5 / 5.93 of what it
+     * had. The expected side is arithmetic written out here rather than anything asked of the
+     * field, because a test that asks the rule what the rule should say passes whatever the rule
+     * says.
+     */
+    @Test
+    fun aHandsetHeldBackIsQuieterByTheDistanceThatDelayStandsFor() {
+        val standing = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0,
+            skewNanos = 10_000_000L, skewPeerId = "left"
+        )
+        val moved = standing.copy(skewRecedes = true)
+
+        val ratio = moved.gainAt("left", 0L).left / standing.gainAt("left", 0L).left
+        assertEquals(2.5 / (2.5 + 0.010 * 343.0), ratio, 1e-9)
+    }
+
+    /**
+     * Only the handset that waits. The early one is standing exactly where it was standing, and a
+     * rule that quietly moved it too would be panning the room by loudness under another name.
+     */
+    @Test
+    fun theHandsetThatDidNotWaitIsLeftWhereItWasStanding() {
+        val standing = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0,
+            skewNanos = 10_000_000L, skewPeerId = "left"
+        )
+        val moved = standing.copy(skewRecedes = true)
+
+        assertEquals(standing.gainAt("right", 0L).left, moved.gainAt("right", 0L).left, 1e-12)
+        assertEquals(standing.gainAt("right", 0L).right, moved.gainAt("right", 0L).right, 1e-12)
+    }
+
+    /**
+     * The room really does get quieter, and by a bounded amount: losing one of two handsets
+     * altogether is half the power and no more, which is 3.01 dB.
+     *
+     * Both halves matter. The floor is what the attenuation surviving the power normalisation
+     * looks like from outside - put it inside and the room's level does not move at all. The
+     * ceiling is what says this is a distance and not a volume control: no setting of the gap
+     * can turn the room down by the twelve decibels the hand-set version of this used.
+     */
+    @Test
+    fun losingPartOfOneCopyIsAllTheRoomHasToLose() {
+        val standing = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0, skewPeerId = "left"
+        )
+        val loud = roomPower(standing)
+
+        var deepest = 0.0
+        for (millis in 1..70) {
+            val moved = standing.copy(skewNanos = millis * 1_000_000L, skewRecedes = true)
+            val down = -10.0 * log10(roomPower(moved) / loud)
+            assertTrue("a gap of $millis ms made the room louder", down > 0.0)
+            deepest = maxOf(deepest, down)
+        }
+        assertTrue("the room fell $deepest dB, past what one of two handsets is", deepest < 3.011)
+        assertTrue("the room barely moved: $deepest dB", deepest > 2.9)
+    }
+
+    /** The comparison has two arms, and this is the one that has to be the old room exactly. */
+    @Test
+    fun aGapNotAllowedToMeanDistancePlaysExactlyWhatItAlwaysPlayed() {
+        val standing = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0,
+            skewNanos = 40_000_000L, skewPeerId = "left"
+        )
+
+        for (peerId in listOf("left", "right")) {
+            assertEquals(
+                standing.gainAt(peerId, 0L).left,
+                standing.copy(skewRecedes = false).gainAt(peerId, 0L).left,
+                1e-12
+            )
+        }
+    }
+
+    /**
+     * A measured room takes over from the guess, and the same gap does less in a larger one.
+     *
+     * True of rooms, and the reason the scale is worth reading rather than assuming: three metres
+     * added to a handset standing two metres off is most of the way to inaudible, and three metres
+     * added to one standing ten metres off is barely a step.
+     */
+    @Test
+    fun theSameGapDoesLessInARoomMeasuredLarger() {
+        val standing = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0,
+            skewNanos = 10_000_000L, skewPeerId = "left", skewRecedes = true
+        )
+        val small = standing.copy(metresPerUnit = 2.0)
+        val large = standing.copy(metresPerUnit = 8.0)
+
+        assertTrue(small.gainAt("left", 0L).left < large.gainAt("left", 0L).left)
+    }
+
+    private fun roomPower(field: SpatialField): Double = field.layout.peerIds.sumOf {
+        val gain = field.gainAt(it, 0L)
+        (gain.left * gain.left + gain.right * gain.right) / 2.0
+    }
 }

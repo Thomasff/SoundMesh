@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.SpatialField
+import com.soundmesh.core.AlignmentAnalysis
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.soundmesh.core.SplitAxis
@@ -1035,10 +1036,7 @@ private fun SkewSlider(state: RoomState, actions: RoomActions) {
         )
         Note(
             if (state.skewCarriesDistance) {
-                stringResource(
-                    R.string.room_skew_distance_on,
-                    state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
-                )
+                stringResource(R.string.room_skew_distance_on, abs(millis), state.skewMetres)
             } else {
                 stringResource(R.string.room_skew_distance_off)
             }
@@ -1047,21 +1045,15 @@ private fun SkewSlider(state: RoomState, actions: RoomActions) {
 }
 
 /**
- * How far away the whole room has been moved, which this screen reads off the gap rather than
- * asking for separately.
+ * How far back the gap stands for, in metres, which is the one part of this a screen can state on
+ * its own.
  *
- * A gap in time turned out to say which handset the sound is at and next to nothing about how far
- * along the way it got: on 09-16 a listener found the side at two or three milliseconds, found it
- * stuck at ten, and heard the settings in between as much the same. So the two cues are driven
- * together - level in the middle, quieter towards either end - which is what a source moving out
- * to one side of a room actually does to an ear, and what one drag can be asked about at all.
- *
- * Every handset by the same amount at every setting, which is the part that makes this worth
- * having rather than a second loudness pan. Turning one down further than another is the cue this
- * room already has, and the one that makes it impossible to say afterwards what the gap did.
+ * How much quieter that makes the late handset depends on how far off it is standing, which lives
+ * in the rule and not here. How far back it has been moved does not: a delay is a distance at 343
+ * metres a second and nothing else goes into it.
  */
-internal val RoomState.retreat: Float
-    get() = if (skewCarriesDistance) abs(skew) else 0f
+internal val RoomState.skewMetres: Float
+    get() = abs(skew) * SKEW_MILLIS / 1000f * AlignmentAnalysis.SPEED_OF_SOUND_M_S.toFloat()
 
 /** How many milliseconds either end of the gap slider is, which is what the readout counts in. */
 private val SKEW_MILLIS = SpatialField.MAX_SKEW_NANOS / 1_000_000L

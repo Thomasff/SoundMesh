@@ -636,9 +636,9 @@ class HomeActivity : ComponentActivity() {
                 room.skew.toDouble().coerceIn(-1.0, 1.0) * SpatialField.MAX_SKEW_NANOS
                 ).roundToLong(),
             skewPeerId = self,
-            // Unlike the gap above it, this one needs nobody named: it is the same number for
-            // every handset, which is the whole of what makes it a distance rather than a pan.
-            retreat = room.retreat.toDouble().coerceIn(0.0, 1.0)
+            // Reads the same gap rather than carrying a number of its own, because it is not a
+            // second setting: it is whether the gap is allowed to mean the distance it already is.
+            skewRecedes = room.skewCarriesDistance
         )
     }
 

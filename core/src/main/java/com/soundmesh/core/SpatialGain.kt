@@ -258,22 +258,46 @@ data class SpatialField(
      */
     val skewPeerId: String? = null,
     /**
+     * Whether the handset [skewNanos] makes late is also made quieter, by the distance that delay
+     * stands for.
+     *
+     * A delay is not an effect. Sound covers 343 metres a second, so holding a handset back by ten
+     * milliseconds is, to an ear, that handset standing three and a half metres further away - and
+     * a handset three and a half metres further away is quieter. Until this existed the room said
+     * both things at once: the delay said one handset had moved back, the levels said nothing had
+     * moved, and a listener got two accounts of the same room that could not both be true. That is
+     * the likeliest reason a gap wound up steadily reads as barely moving - see the 09-16 note in
+     * docs/feasibility-results.
+     *
+     * The physical picture this puts the room in is one source and one reflection: the early
+     * handset is the sound, the late one is the same sound off a wall that much further round. That
+     * is the arrangement the precedence effect exists to decode, which is why the direction stays
+     * with the early handset however far down this takes the late one.
+     *
+     * Only the handset that waits, and only downwards. The room's overall level falls too, by up to
+     * three decibels and no further, because the limit of taking one of two handsets away is being
+     * left with one - which is what the arithmetic here does on its own, provided the attenuation
+     * lands after the room is normalised rather than inside the placement.
+     *
+     * Off at zero, kept nowhere, gone at the next start - the same terms as [skewNanos], whose
+     * experiment it is half of.
+     */
+    val skewRecedes: Boolean = false,
+    /**
      * How far the whole room is pulled back, from 0 at where it stands to 1 at the furthest this
      * allows. Every handset, together, by the same amount.
      *
-     * The second half of [skewNanos] and only useful beside it. On 09-16 a listener walked that
-     * gap out and found its shape: two or three milliseconds is enough to hear which side the
-     * sound is on, ten has it stuck to one handset, and every setting between them sounds much
-     * the same. A time difference answers "which way" and has almost nothing to say about "how
-     * far" - so a listener winding it up hears the answer stop changing and has no way to tell
-     * whether the room ran out of effect or they ran out of ears.
+     * How far away the source itself is, which is a different fact from where it is or what the
+     * room between it and a listener does. Nothing drives this today: it is the mechanism waiting
+     * for the control that asks "how far off is the sound", and it is deliberately not what
+     * [skewRecedes] uses.
      *
-     * This is the other question, asked separately. Turning every handset down together is what a
-     * source moving away does, and distance is a thing people hear well. **Together is the whole
-     * of it**: the moment one handset is turned down further than another, the room is being
-     * panned by loudness, which is the cue this project already had and the one whose presence
-     * makes it impossible to say what the time difference did. Held equal, the two cues are
-     * answering two different questions and a listener can hear which of them moved.
+     * The distinction is the one that took a conversation to get right. Winding the gap up lengthens
+     * the path the late copy takes; it does not move the source. Pushing the far wall of a room back
+     * does not make the record player quieter. So a gap that turns the whole room down is describing
+     * a room nobody is in, and the whole-room fall a gap really does produce is the small one that
+     * falls out of losing part of one copy - at most three decibels - rather than anything this
+     * number would be set to.
      *
      * Applied after the room is normalised rather than inside the placement, which is not a
      * detail: [gainAt] divides by the room's own power so that the room is equally loud whatever
@@ -637,10 +661,13 @@ data class SpatialField(
             // handsets are all the same distance off is the same arithmetic this used to do.
             val reaches = layout.peerIds.associateWith { layout.distanceGainOf(it) }
             val evenScale = sqrt(reaches.values.sumOf { it * it })
-            val even = reaches.getValue(peerId) / evenScale
-            return StereoGain(even * retreatGain(), even * retreatGain())
+            val even = reaches.getValue(peerId) / evenScale * retreatGain() * recedeGain(peerId)
+            return StereoGain(even, even)
         }
-        val scale = 1.0 / sqrt(power) * retreatGain()
+        // Both of these are outside the normalisation on purpose and for the same reason, which is
+        // written out at [recedeGain]: what is divided by the room's own power cannot make the room
+        // quieter.
+        val scale = 1.0 / sqrt(power) * retreatGain() * recedeGain(peerId)
         val mine = raw.getValue(peerId)
         return StereoGain(mine.left * scale, mine.right * scale)
     }
@@ -658,6 +685,61 @@ data class SpatialField(
      */
     private fun retreatGain(): Double =
         if (retreat <= 0.0) 1.0 else 10.0.pow(-RETREAT_DECIBELS * retreat / 20.0)
+
+    /**
+     * What [skewRecedes] multiplies a waiting handset by: the plain inverse distance law.
+     *
+     * A handset standing r away and held back by t is heard from r + ct, and sound pressure falls
+     * as one over distance, so it arrives at r / (r + ct) of the level it had. Nothing is fitted
+     * here and nothing is chosen - the twelve decibels the first attempt at this used were picked
+     * by hand, and this replaces them with a number the delay already implied.
+     *
+     * **Only the handset that waits.** [skewPartNanos] is the wait rather than the head start for
+     * exactly this reason: whichever end of the gap is not the early one is the one that has been
+     * moved back, and the early one is standing where it always was.
+     *
+     * Read at the call site in [gainAt], on the far side of the power normalisation, and that
+     * placement is the whole of whether this is audible: normalising divides by the room's own
+     * power, so an attenuation applied before it is the numerator and the denominator at once and
+     * cancels exactly. Applied after, the room genuinely loses what the far copy stopped
+     * contributing - which tops out at three decibels, one of two handsets being the most there is
+     * to lose.
+     *
+     * No absorption term, although a real reflection loses a few decibels at the wall as well. It
+     * would have to be a step at the first millisecond - there is no wall at a gap of zero - and
+     * the first millisecond either side of zero is the one place a listener reported reading
+     * precisely, so a step is put exactly where it would do the most damage. It can be added as a
+     * fitted constant once the plain law has been heard.
+     */
+    private fun recedeGain(peerId: String): Double {
+        if (!skewRecedes) return 1.0
+        val waitNanos = skewPartNanos(peerId)
+        if (waitNanos <= 0L) return 1.0
+        val standing = metresAway(peerId)
+        val further = waitNanos / 1_000_000_000.0 * AlignmentAnalysis.SPEED_OF_SOUND_M_S
+        return standing / (standing + further)
+    }
+
+    /**
+     * How far [peerId] is from the listener in metres, guessed if the room has never been measured.
+     *
+     * [recedeGain] is the one rule here that cannot work in the drawing's own units: every other
+     * gain is a ratio of two radii and so never needs to know how large the room is, but a ratio
+     * against a distance in metres does. A room with no scale would therefore silently do nothing,
+     * which is the worst of the three possible behaviours - a control that moves and is inaudible
+     * is indistinguishable from one that is broken.
+     *
+     * So an unmeasured room is given a size instead of being given up on, and the size is stated
+     * here rather than buried: [ASSUMED_FURTHEST_METRES] to the furthest handset. Measure the room
+     * and the real number takes over, at which point the same gap does less in a large room than in
+     * a small one - which is true, and worth hearing.
+     */
+    private fun metresAway(peerId: String): Double {
+        val perUnit =
+            if (metresPerUnit > 0.0) metresPerUnit
+            else ASSUMED_FURTHEST_METRES / layout.furthestReach
+        return layout.reachOf(peerId) * perUnit
+    }
 
     /**
      * What the rule asks of [peerId] before the room is normalised, distance included.
@@ -746,6 +828,21 @@ data class SpatialField(
          * setting along the way is still music somebody would listen to.
          */
         const val RETREAT_DECIBELS = 12.0
+
+        /**
+         * How far off the furthest handset is taken to be when nobody has measured: two and a half
+         * metres.
+         *
+         * Only [recedeGain] reads it, and only in a room with no scale. A living room with the
+         * handsets across it and somebody sitting between them is the arrangement every listening
+         * test here has used, and at that size a ten millisecond gap comes out around ten decibels
+         * down - which matches what a listener reported hearing on 09-16 as the gap where the sound
+         * stuck to one handset.
+         *
+         * A guess, and labelled one. It is better than the alternative: the ratio this feeds needs
+         * a length, and a room with no length would leave the control moving and silent.
+         */
+        const val ASSUMED_FURTHEST_METRES = 2.5
 
         /**
          * How far [shimmerDelayNanos] may be wound: twenty milliseconds.

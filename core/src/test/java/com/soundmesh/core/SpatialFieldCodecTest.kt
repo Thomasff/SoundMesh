@@ -44,6 +44,24 @@ class SpatialFieldCodecTest {
      * the one arrangement whose whole point is that the handsets are equally loud.
      */
     @Test
+    fun whetherTheGapAlsoMovesTheHandsetBackSurvivesTheWire() {
+        val field = SpatialField(
+            mode = SpatialMode.PAN,
+            layout = SpatialLayout(
+                listOf(SpatialPosition("aa", -1.0, 0.0), SpatialPosition("bb", 1.0, 0.0))
+            ),
+            skewNanos = 12_000_000L,
+            skewPeerId = "aa",
+            skewRecedes = true
+        )
+
+        val read = SpatialFieldCodec.decode(SpatialFieldCodec.encode(field))
+
+        assertTrue(read.skewRecedes)
+        assertEquals(field.gainAt("aa", 0L).left, read.gainAt("aa", 0L).left, 1e-12)
+    }
+
+    @Test
     fun theRoomsRetreatSurvivesTheWire() {
         val away = field.copy(retreat = 0.6)
         val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(away))
