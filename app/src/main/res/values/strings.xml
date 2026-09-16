@@ -382,7 +382,11 @@
     <string name="room_skew_side_only">只改早晚</string>
     <string name="room_skew_with_distance">晚的那台跟着变轻</string>
     <string name="room_skew_distance_off">只改早晚差，响度一动不动。这就是之前的样子。</string>
-    <string name="room_skew_distance_on">晚 %1$d 毫秒就是被搬远 %2$.1f 米，那它就该按这个距离变轻。早的那台一动不动，方向还是它说了算。全屋顺带轻一点点，最多三分贝，因为再狠也不过是只剩一台在响。</string>
+    <string name="room_skew_distance_on">晚 %1$d 毫秒就是被搬远 %2$.1f 米，那它就该按这个距离变轻。早的那台一动不动，方向还是它说了算。这一根只管方向，要让声音整个走远，用下面那根。</string>
+    <string name="room_retreat">声源退多远（临时调试）</string>
+    <string name="room_retreat_here">就在原地</string>
+    <string name="room_retreat_away">退到 %1$.1f 倍远（轻 %2$.1f 分贝）</string>
+    <string name="room_retreat_hint">所有手机一起变轻，谁也不比谁轻——远近是两台共同的那部分，方向是两台不同的那部分，所以这根不会动方向。想要上一版那个感觉，就把它和上面那根拖到差不多的位置。</string>
     <string name="room_shimmer">各机轻微游移</string>
     <string name="room_shimmer_off">关着。每台手机一直待在原地。</string>
     <string name="room_shimmer_speed">游移快慢</string>

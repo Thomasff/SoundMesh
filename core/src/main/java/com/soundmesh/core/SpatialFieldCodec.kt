@@ -64,8 +64,14 @@ object SpatialFieldCodec {
      * [SpatialField.skewRecedes]. A receiver that dropped it would be the handset that waits and
      * stays loud, which is the one combination the setting exists to rule out, and the listener
      * comparing the two settings would be told the comparison had been made when it had not.
+     *
+     * Fourteen although nothing was added, for the same reason as nine: [SpatialField.RECEDE_ROLLOFF]
+     * changed how far down a given head start takes a handset, and every handset works that out
+     * locally from its own build. Two builds in one room would apply two different laws to the same
+     * message and neither would say so - which is the failure this project has met before and the
+     * one it is least able to see, because both rooms sound like rooms.
      */
-    const val VERSION = 13
+    const val VERSION = 14
 
     private const val HEADER_FIELDS = 21
     private const val POSITION_FIELDS = 4

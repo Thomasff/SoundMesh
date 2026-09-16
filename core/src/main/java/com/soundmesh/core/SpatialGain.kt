@@ -690,9 +690,19 @@ data class SpatialField(
      * What [skewRecedes] multiplies a waiting handset by: the plain inverse distance law.
      *
      * A handset standing r away and held back by t is heard from r + ct, and sound pressure falls
-     * as one over distance, so it arrives at r / (r + ct) of the level it had. Nothing is fitted
-     * here and nothing is chosen - the twelve decibels the first attempt at this used were picked
-     * by hand, and this replaces them with a number the delay already implied.
+     * as one over distance, so it arrives at r / (r + ct) of the level it had - raised to
+     * [RECEDE_ROLLOFF], because a room is not open air. The exponent is the one fitted number here;
+     * everything else the delay already implied.
+     *
+     * **Why the exponent is needed at all, and it is not a fudge.** One over r is the direct sound.
+     * A real source that moves away loses its direct sound at that rate and keeps very nearly all
+     * of the reverberation, so the level a listener in a room actually loses is well under six
+     * decibels a doubling - three to four is the usual figure. What a gain here multiplies is the
+     * handset's direct sound **and its reverberation together**, because both of them are already in
+     * what the handset emits. Turning it down removes the floor that a real room would have left
+     * standing, and the move sounds bigger than the same move made by somebody walking. On 09-16 a
+     * listener said exactly that: ten milliseconds read as more than a person stepping three and a
+     * half metres back. This is that report, priced in.
      *
      * **Only the handset that waits.** [skewPartNanos] is the wait rather than the head start for
      * exactly this reason: whichever end of the gap is not the early one is the one that has been
@@ -717,7 +727,7 @@ data class SpatialField(
         if (waitNanos <= 0L) return 1.0
         val standing = metresAway(peerId)
         val further = waitNanos / 1_000_000_000.0 * AlignmentAnalysis.SPEED_OF_SOUND_M_S
-        return standing / (standing + further)
+        return (standing / (standing + further)).pow(RECEDE_ROLLOFF)
     }
 
     /**
@@ -843,6 +853,25 @@ data class SpatialField(
          * a length, and a room with no length would leave the control moving and silent.
          */
         const val ASSUMED_FURTHEST_METRES = 2.5
+
+        /**
+         * How much of the open-air distance law a room is allowed to have: three fifths of it.
+         *
+         * Free field is one, and gives six decibels a doubling. Real rooms give three to four,
+         * because past a metre or two the reflections carry most of what is heard and the level
+         * stops falling the way the direct sound does. Three fifths puts a doubling at about 3.6
+         * decibels, which is the middle of what rooms measure.
+         *
+         * A single exponent rather than a reverberation model, and that is a deliberate stop: a
+         * proper direct-to-reverberant term wants the room's volume and its reverberation time,
+         * neither of which anything here measures. Every 3D audio engine offers this same exponent
+         * for the same reason, and every one of them ships defaulted to free field and gets turned
+         * down by whoever uses it.
+         *
+         * Fitted by ear, and the only number here that is. If a receding handset still reads as
+         * bigger than somebody walking the same distance, this is the number to lower.
+         */
+        const val RECEDE_ROLLOFF = 0.6
 
         /**
          * How far [shimmerDelayNanos] may be wound: twenty milliseconds.

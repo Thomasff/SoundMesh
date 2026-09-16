@@ -603,7 +603,31 @@ class SpatialGainTest {
         val moved = standing.copy(skewRecedes = true)
 
         val ratio = moved.gainAt("left", 0L).left / standing.gainAt("left", 0L).left
-        assertEquals(2.5 / (2.5 + 0.010 * 343.0), ratio, 1e-9)
+        assertEquals(Math.pow(2.5 / (2.5 + 0.010 * 343.0), 0.6), ratio, 1e-9)
+    }
+
+    /**
+     * A room keeps most of its reverberation when a source moves off, so it loses less level than
+     * open air does. What a gain here multiplies is a handset's direct sound and its reverberation
+     * at once, so without this the move is bigger than the same move made by somebody walking -
+     * which is what a listener reported on 09-16.
+     *
+     * Pinned as an inequality against the open-air law rather than against a number, because the
+     * exponent is fitted by ear and will move. What must not move is which side of free field it
+     * is on.
+     */
+    @Test
+    fun aRoomLosesLessToDistanceThanOpenAirDoes() {
+        val standing = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0,
+            skewNanos = 10_000_000L, skewPeerId = "left"
+        )
+        val moved = standing.copy(skewRecedes = true)
+
+        val ratio = moved.gainAt("left", 0L).left / standing.gainAt("left", 0L).left
+        val openAir = 2.5 / (2.5 + 0.010 * 343.0)
+        assertTrue("a room took as much as open air: $ratio", ratio > openAir)
+        assertTrue("nothing was lost at all: $ratio", ratio < 1.0)
     }
 
     /**
@@ -646,7 +670,10 @@ class SpatialGainTest {
             deepest = maxOf(deepest, down)
         }
         assertTrue("the room fell $deepest dB, past what one of two handsets is", deepest < 3.011)
-        assertTrue("the room barely moved: $deepest dB", deepest > 2.9)
+        // Loose on purpose: the exponent in RECEDE_ROLLOFF is fitted by ear and will move, and
+        // what this half is for is catching an attenuation that got normalised away, which reads
+        // as exactly zero rather than as a little too little.
+        assertTrue("the room did not move at all: $deepest dB", deepest > 1.0)
     }
 
     /** The comparison has two arms, and this is the one that has to be the old room exactly. */

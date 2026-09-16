@@ -52,6 +52,7 @@ import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.AlignmentAnalysis
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import com.soundmesh.core.SplitAxis
 import com.soundmesh.core.SpatialMode
@@ -293,6 +294,19 @@ data class RoomState(
      * drawing, back off tomorrow.
      */
     val skewCarriesDistance: Boolean = false,
+    /**
+     * How far off the source itself is, from 0 where it stands to 1 at the furthest this allows.
+     * Every handset together - see [com.soundmesh.core.SpatialField.retreat].
+     *
+     * A separate control from [skew] and deliberately so. Which side a sound is on is the
+     * difference between the handsets; how far off it is, is what they have in common. A gap that
+     * also turned the room down would be describing a source that moves sideways and outwards at
+     * once, which is a path somebody might want but not one a slider should pick for them.
+     *
+     * Temporary on the same terms as [skew]: behind the diagnostic switch, absent from the saved
+     * drawing, back at zero tomorrow.
+     */
+    val retreat: Float = 0f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -331,6 +345,7 @@ class RoomActions(
     /** The hand set gap, -1 for this handset earliest to +1 for the rest of the room earliest. */
     val setSkew: (Float) -> Unit,
     val setSkewCarriesDistance: (Boolean) -> Unit,
+    val setRetreat: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -1045,6 +1060,35 @@ private fun SkewSlider(state: RoomState, actions: RoomActions) {
 }
 
 /**
+ * How far off the source itself has been put, which is the room's level and nothing else.
+ *
+ * Under [SkewSlider] because the two are read together and separate because they answer different
+ * questions. The gap says which side; this says how far. A listener can hear which of the two
+ * moved only while each of them moves one thing.
+ *
+ * Read out as a multiple of where the room stands rather than in decibels alone, because "four
+ * times as far away" is a thing somebody can picture and check against the room they are sitting
+ * in, and "twelve decibels" is not.
+ */
+@Composable
+private fun RetreatSlider(state: RoomState, actions: RoomActions) {
+    val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
+    Column {
+        Knob(
+            title = stringResource(R.string.room_retreat),
+            value = state.retreat,
+            readout =
+                if (state.retreat <= 0f) stringResource(R.string.room_retreat_here)
+                else stringResource(
+                    R.string.room_retreat_away, 10f.pow(decibels / 20f), decibels
+                ),
+            onChange = actions.setRetreat
+        )
+        Note(stringResource(R.string.room_retreat_hint))
+    }
+}
+
+/**
  * How far back the gap stands for, in metres, which is the one part of this a screen can state on
  * its own.
  *
@@ -1127,6 +1171,7 @@ private fun EffectSection(
     // there is a source being moved around it.
     if (showDetails) {
         SkewSlider(state, actions)
+        RetreatSlider(state, actions)
         if (state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     }
     if (state.separation > 0f) PartPicker(state, actions)

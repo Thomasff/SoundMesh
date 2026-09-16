@@ -541,6 +541,7 @@ class HomeActivity : ComponentActivity() {
             setShimmerSpeed = { speed -> updateRoom { it.copy(shimmerSpeed = speed) } },
             setSkew = { gap -> updateRoom { it.copy(skew = gap) } },
             setSkewCarriesDistance = { on -> updateRoom { it.copy(skewCarriesDistance = on) } },
+            setRetreat = { back -> updateRoom { it.copy(retreat = back) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
@@ -638,7 +639,10 @@ class HomeActivity : ComponentActivity() {
             skewPeerId = self,
             // Reads the same gap rather than carrying a number of its own, because it is not a
             // second setting: it is whether the gap is allowed to mean the distance it already is.
-            skewRecedes = room.skewCarriesDistance
+            skewRecedes = room.skewCarriesDistance,
+            // Unlike the gap above it, this one needs nobody named: it is the same number for
+            // every handset, which is the whole of what makes it a distance rather than a pan.
+            retreat = room.retreat.toDouble().coerceIn(0.0, 1.0)
         )
     }
 
