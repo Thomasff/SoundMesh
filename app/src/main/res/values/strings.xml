@@ -372,7 +372,7 @@
     <string name="room_live">实时读数：哪台的数字大，声音就该在哪台那边</string>
     <string name="room_live_row">响 %1$d</string>
     <!-- The other half of the manual gap: distance instead of side. See RetreatSlider. -->
-    <string name="room_source_hint">房间图上那个带光圈的点就是声源，拖它：左右决定声音偏哪边，离你远近决定声音有多远。手机那一圈是最近的位置，因为声音本来就是从手机里出来的。</string>
+    <string name="room_source_hint">房间图上那个带光圈的点就是声源，拖它：拖到哪个方向声音就从哪个方向来，可以绕到身后；离你远近决定声音有多远。手机那一圈是最近的位置，因为声音本来就是从手机里出来的。</string>
     <string name="room_source_here">声源就在手机那一圈上，全屋原样。</string>
     <string name="room_source_away">声源退到 %1$.1f 倍远：所有手机一起轻 %2$.1f 分贝。方向不受影响。</string>
     <string name="room_source_dry">但现在房间回声是零，所以拖远只是变轻。光靠响度说不清远近——耳边的耳语和远处的喊叫可以一样响。把下面那根「房间回声」拧上来：回声不跟着声源走远，一个变轻一个不变，耳朵才读得出距离。</string>

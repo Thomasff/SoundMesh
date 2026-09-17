@@ -19,11 +19,17 @@ import org.junit.Test
  * allowed near, which is the part that can quietly break a measurement rather than a listen.
  */
 class SpatialShapedTest {
-    /** Hard over to the right, so anything actually shaped for "left" comes back silent. */
+    /**
+     * Hard over to the right, so anything actually shaped for "left" comes back silent.
+     *
+     * Half rather than one: the pan spans the whole circle since 2026-09-18, so hard right is a
+     * quarter turn and a one would put the source behind the listener - where both handsets of a
+     * facing pair are equally turned away and nothing comes back silent at all.
+     */
     private val hardRight = SpatialField(
         SpatialMode.PAN,
         SpatialLayout(listOf(SpatialPosition("left", -1.0, 0.0), SpatialPosition("right", 1.0, 0.0))),
-        pan = 1.0
+        pan = 0.5
     )
 
     private fun steady(level: Int = 12_000, frames: Int = SyncRenderer.FRAMES_PER_CHUNK): ByteArray {

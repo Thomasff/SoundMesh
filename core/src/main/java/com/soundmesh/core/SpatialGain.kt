@@ -52,7 +52,7 @@ enum class SpatialMode {
     /** A source that circles the listener on its own, once per period. */
     ROTATE,
 
-    /** A source the listener drags along the arc in front of them. */
+    /** A source the listener drags anywhere on the drawing, the whole way round them. */
     PAN,
 
     /** No moving source: each handset carries the side of the stereo image it stands on. */
@@ -101,7 +101,10 @@ data class SpatialField(
     val layout: SpatialLayout,
     /** How long one circuit takes. Only read by [SpatialMode.ROTATE]. */
     val periodNanos: Long = DEFAULT_PERIOD_NANOS,
-    /** Where the listener has dragged the source: -1 hard left, +1 hard right. Only read by [SpatialMode.PAN]. */
+    /**
+     * Where the listener has dragged the source, as a share of half a turn: 0 straight ahead,
+     * +1/2 hard right, -1/2 hard left, and +-1 directly behind. Only read by [SpatialMode.PAN].
+     */
     val pan: Double = 0.0,
     /** The instant the circuit is measured from, so every handset starts the sweep at the same angle. */
     val epochHostNanos: Long = 0L,
@@ -295,9 +298,16 @@ data class SpatialField(
             val elapsed = Math.floorMod(hostNanos - epochHostNanos, periodNanos)
             2.0 * PI * elapsed / periodNanos
         }
-        // The slider covers the frontal half circle only. Behind the listener is reachable by
-        // rotation but not by dragging: a control whose two ends meet has no ends.
-        SpatialMode.PAN -> pan * PI / 2.0
+        // The whole circle, since 2026-09-18. It used to be the frontal half, and the reason
+        // written here was that a control whose two ends meet has no ends - which was true of
+        // the slider this was driven by and stopped being true when the slider was replaced by
+        // a dot on a drawing. A place on a map has no ends to run out at.
+        //
+        // What the half circle cost is a room of three or more: the handsets themselves can be
+        // standing behind the listener, and a source that cannot be put where a phone is
+        // standing is a source with nowhere to go. Nothing in the law below ever needed the
+        // restriction - the raised cosine in rawGain is defined at every angle.
+        SpatialMode.PAN -> pan * PI
         SpatialMode.SPLIT, SpatialMode.UNISON -> 0.0
     }
 

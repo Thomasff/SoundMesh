@@ -212,12 +212,12 @@ object SpatialRoom {
     /**
      * Where to draw the source, given the two numbers that decide where it is.
      *
-     * [pan] is which side, in the same -1..1 SpatialField reads, and it spans the half circle in
-     * front because that is the half the pan law covers. [retreat] is how far off, 0 among the
-     * handsets and 1 at the furthest the rule holds.
+     * [pan] is which way round, in the same -1..1 SpatialField reads, and it spans the whole
+     * circle: a half turn each way, so +-1 is directly behind the listener. [retreat] is how far
+     * off, 0 among the handsets and 1 at the furthest the rule holds.
      */
     fun spotOf(pan: Float, retreat: Float): SourceSpot {
-        val azimuth = pan.coerceIn(-1f, 1f) * PI / 2.0
+        val azimuth = pan.coerceIn(-1f, 1f) * PI
         val radius = SOURCE_HOME_RADIUS +
             retreat.coerceIn(0f, 1f) * (SOURCE_MAX_RADIUS - SOURCE_HOME_RADIUS)
         return SourceSpot(
@@ -228,19 +228,21 @@ object SpatialRoom {
     }
 
     /**
-     * Which side a source dropped at [spot] is on, as the -1..1 the rule reads.
+     * Which way round a source dropped at [spot] lies, as the -1..1 the rule reads.
      *
-     * Clamped rather than wrapped. Behind the listener is a direction the pan law has no way to
-     * render, so a finger taken round the back stops at the side - and it stops in the numbers,
-     * which is what makes the dot redrawn from them stop there too. Drawing a source somewhere the
-     * room cannot put one would be the drawing contradicting what is playing, with nothing on
-     * screen to say which of the two is right.
+     * Every direction on the drawing is one the room can render, since 2026-09-18. A finger taken
+     * round the back used to stop at the side, because the rule spanned the frontal half only;
+     * with three phones in a room the handsets themselves stand back there, and a source that
+     * could not go where a phone is standing was the drawing refusing a place it had drawn.
+     *
+     * The clamp that is left is arithmetic rather than policy: atan2 already answers within half
+     * a turn either way, and this keeps the division landing exactly on the ends.
      */
     fun panOf(spot: SourceSpot): Float {
         val across = (spot.x - CENTRE).toDouble()
         val ahead = (CENTRE - spot.y).toDouble()
         if (across == 0.0 && ahead == 0.0) return 0f
-        return (atan2(across, ahead) / (PI / 2.0)).toFloat().coerceIn(-1f, 1f)
+        return (atan2(across, ahead) / PI).toFloat().coerceIn(-1f, 1f)
     }
 
     /**

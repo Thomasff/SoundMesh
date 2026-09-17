@@ -49,7 +49,9 @@ class SpatialShaperTest {
 
     @Test
     fun aHandsetTheSourceHasLeftBehindGoesQuiet() {
-        val field = SpatialField(SpatialMode.PAN, facingPair(), pan = 1.0)
+        // A quarter turn, which is hard right for a facing pair. The pan spans the whole circle
+        // since 2026-09-18, so a one here would be the source directly behind the listener.
+        val field = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.5)
 
         val shaped = SpatialShaper.shape(steady(12_000), field, "left", 0L, sampleRate)
 

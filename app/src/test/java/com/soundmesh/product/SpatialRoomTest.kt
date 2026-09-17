@@ -286,8 +286,13 @@ class SpatialRoomTest {
                 val pan = tenth / 10f
                 val retreat = step / 10f
                 val spot = SpatialRoom.spotOf(pan, retreat)
+                val readBack = SpatialRoom.panOf(spot)
 
-                assertEquals("pan at $pan/$retreat", pan, SpatialRoom.panOf(spot), 1e-4f)
+                // Straight back is one place with two names, +1 and -1, which is what covering
+                // a whole circle with a number that has two ends costs. Everywhere else the two
+                // numbers come back exactly as they went in.
+                if (abs(pan) == 1f) assertEquals("wrapped at $pan", 1f, abs(readBack), 1e-4f)
+                else assertEquals("pan at $pan/$retreat", pan, readBack, 1e-4f)
                 assertEquals("retreat at $pan/$retreat", retreat, SpatialRoom.retreatOf(spot), 1e-4f)
             }
         }
@@ -303,14 +308,27 @@ class SpatialRoomTest {
     }
 
     /**
-     * Behind the listener is a direction the pan law cannot render - it spans the half circle in
-     * front and no further - so a finger taken round the back stops at the side. Drawing a source
-     * where the room has no way to put one is the drawing lying, and it lies convincingly.
+     * A finger taken round the back stays round the back.
+     *
+     * This used to assert the opposite - a source dragged behind the listener stopped at the
+     * side - because the rule spanned the frontal half circle only. With three phones in a room
+     * one of them is behind the chair, and a source that could not be dragged onto it was the
+     * drawing refusing a place it had itself drawn a handset in. Reported 2026-09-18.
+     *
+     * Half a turn is the far end either way, and the two spots below are a little to each side of
+     * straight back - so the sign is what is being checked as much as the size. A pan that lost
+     * its sign behind the listener would put every source at the back on the same side, which is
+     * mirror image trouble and the one fault an ear cannot diagnose.
      */
     @Test
-    fun aSourceTakenBehindTheListenerStopsAtTheSide() {
-        assertEquals(1f, SpatialRoom.panOf(SourceSpot(0.7f, 0.9f)), 1e-4f)
-        assertEquals(-1f, SpatialRoom.panOf(SourceSpot(0.3f, 0.9f)), 1e-4f)
+    fun aSourceTakenBehindTheListenerStaysBehindIt() {
+        val right = SpatialRoom.panOf(SourceSpot(0.7f, 0.9f))
+        val left = SpatialRoom.panOf(SourceSpot(0.3f, 0.9f))
+
+        assertTrue("$right is not behind and to the right", right > 0.5f && right < 1f)
+        assertEquals(-right, left, 1e-4f)
+        // Straight back is the end of the travel, and it is reachable rather than asymptotic.
+        assertEquals(1f, SpatialRoom.panOf(SourceSpot(SpatialRoom.CENTRE, 0.9f)), 1e-4f)
     }
 
     /** The far end of the travel, which is the corner a finger reaches first. */

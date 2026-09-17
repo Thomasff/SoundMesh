@@ -37,10 +37,16 @@ class SpatialGainTest {
         assertEquals(0.70710678, centred.gainAt("right", 0L).right, 1e-7)
     }
 
-    /** Dragged all the way over, the far handset is silent rather than merely quieter. */
+    /**
+     * Dragged all the way over, the far handset is silent rather than merely quieter.
+     *
+     * Half rather than one since 2026-09-18: the pan spans the whole circle now, so a quarter
+     * turn - which is what "hard right" means with two handsets facing each other - is halfway
+     * along it. A one here would be the source directly behind the listener.
+     */
     @Test
     fun aSourceDraggedHardOverLeavesTheFarHandsetSilent() {
-        val hardRight = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 1.0)
+        val hardRight = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 0.5)
 
         assertEquals(0.0, hardRight.gainAt("left", 0L).left, 1e-12)
         assertEquals(0.0, hardRight.gainAt("left", 0L).right, 1e-12)
@@ -167,6 +173,32 @@ class SpatialGainTest {
     @Test(expected = IllegalArgumentException::class)
     fun aPanBeyondTheEndsOfTheControlIsRefused() {
         SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 1.5)
+    }
+
+    /**
+     * A source put behind the listener is behind them, and not quietly turned round to the front.
+     *
+     * The room here is a triangle with a handset at the back, which is the arrangement that made
+     * the old frontal-half rule worth changing: three phones on tables around a chair, one of
+     * them behind it, and a listener dragging the sound onto that phone. The assertion is that
+     * the phone standing where the source was put is the loudest one - not that it is loud, which
+     * a normalisation could deliver while facing the wrong way.
+     */
+    @Test
+    fun aSourcePutBehindTheListenerIsLoudestOnTheHandsetStandingBehindThem() {
+        val around = SpatialLayout(
+            listOf(
+                SpatialPosition("front", 0.0, 1.0),
+                SpatialPosition("right", 1.0, 0.0),
+                SpatialPosition("behind", 0.0, -1.0)
+            )
+        )
+        val atTheBack = SpatialField(mode = SpatialMode.PAN, layout = around, pan = 1.0)
+
+        val loudest = listOf("front", "right", "behind")
+            .maxByOrNull { atTheBack.gainAt(it, 0L).left }
+        assertEquals("behind", loudest)
+        assertEquals(0.0, atTheBack.gainAt("front", 0L).left, 1e-12)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -610,7 +642,7 @@ class SpatialGainTest {
     /** The placement is still the placement: a handset the rule silenced plays no room either. */
     @Test
     fun aHandsetTheSourceHasLeftBehindCarriesNoneOfTheRoom() {
-        val hardRight = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 1.0, reverb = 1.0)
+        val hardRight = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 0.5, reverb = 1.0)
 
         assertEquals(0.0, hardRight.roomGainAt("left", 0L).left, 1e-12)
         assertTrue(hardRight.roomGainAt("right", 0L).right > 0.5)

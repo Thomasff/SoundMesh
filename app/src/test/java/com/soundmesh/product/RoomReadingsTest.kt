@@ -49,7 +49,9 @@ class RoomReadingsTest {
     /** Placed by loudness, which since 2026-09-17 is the only way anything here is placed. */
     @Test
     fun `the side the source is on is the louder one`() {
-        val room = SpatialField(SpatialMode.PAN, pair(), pan = 1.0)
+        // Half a turn is the whole of the pan since 2026-09-18, so a quarter of it - hard right
+        // with two handsets facing each other - reads 0.5.
+        val room = SpatialField(SpatialMode.PAN, pair(), pan = 0.5)
         assertEquals(100, readingOf(room, "r").loudness)
         assertEquals(0, readingOf(room, "l").loudness)
     }

@@ -33,17 +33,25 @@ object SpatialFieldCodec {
      * build expecting twenty-two fails on the count, and this is what turns that into "that
      * phone needs the new build" instead of a stack trace about a number nobody can place.
      *
-     * Sixteen also carries a mode that did not exist before it - [SpatialMode.UNISON] - and that
+     * Sixteen also carried a mode that did not exist before it - [SpatialMode.UNISON] - and that
      * half needs no count to catch it: a build that has never heard the name throws out of
      * valueOf. The count is what catches the other half, and between them every handset either
      * plays this rule or says it cannot.
+     *
+     * Seventeen for a change the count cannot see at all: on 2026-09-18 [SpatialField.pan]
+     * stopped meaning a share of the **quarter** turn and started meaning a share of the half,
+     * so that a source can be put behind the listener. Same field, same count, same spelling on
+     * the wire - and a handset on the old build would have played 0.5 as hard right where the
+     * host meant halfway to the right, which is the one kind of disagreement nothing downstream
+     * can notice. A field whose meaning changes needs a number exactly as much as a field that
+     * arrives or leaves, and more urgently, because nothing else will catch it.
      *
      * The numbers before this one are in the git history rather than here. Each was argued for
      * at the time and most of them are about fields that no longer exist, and a list of
      * arguments for things that are gone is something a later reader has to disprove before
      * they can trust the rest of the file.
      */
-    const val VERSION = 16
+    const val VERSION = 17
 
     private const val HEADER_FIELDS = 15
     private const val POSITION_FIELDS = 4
