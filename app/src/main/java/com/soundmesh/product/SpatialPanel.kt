@@ -271,73 +271,15 @@ data class RoomState(
      */
     val envelopment: Float = DEFAULT_ENVELOPMENT,
     /**
-     * How hard the handsets are pushed into playing different waveforms, in the rule's own 0..1.
-     *
-     * Off by default, unlike [envelopment]. Every other knob here rearranges a mix somebody already
-     * likes; this one changes the sound of it, and a room that never asked should get the room it
-     * had. What it is worth is a question only an ear answers, so it starts where it can be
-     * compared against.
-     */
-    val diffusion: Float = 0f,
-    /**
-     * How far the far side of the room is held back, as a fraction of what the rule allows.
-     *
-     * Off, and off on purpose rather than by oversight. This is the one control here whose own
-     * project notes argue against it - see [com.soundmesh.core.SpatialField.travelDelayNanos] and
-     * the 09-14 note it points at - so it is offered rather than chosen, and the only way it gets
-     * turned up is somebody deciding to hear what it does.
-     */
-    val travel: Float = 0f,
-    /**
-     * How far each handset's own output wanders, as a fraction of what the rule allows.
-     *
-     * The other half of the same machinery and the half with nothing against it. Off by default
-     * for the same reason [diffusion] is: it changes the sound of a mix somebody already likes.
-     */
-    val shimmer: Float = 0f,
-    /**
-     * How fast that wander goes, from 0 at the slowest the rule allows to 1 at the fastest.
-     *
-     * Beside the depth rather than fixed behind it because the two are one control in two halves:
-     * depth over period is the transposition a moving delay produces, so deep and fast together is
-     * a tape wobble whether anybody wanted one or not. Somebody who finds the wobble has to be able
-     * to trade it back rather than only to give up the depth.
-     */
-    val shimmerSpeed: Float = DEFAULT_SHIMMER_SPEED,
-    /**
-     * A fixed gap between this handset and every other, as a fraction of what the rule allows,
-     * signed: negative is this one early, positive is the rest of the room early.
-     *
-     * Temporary instrumentation rather than an effect - see
-     * [com.soundmesh.core.SpatialField.skewNanos] - so it is on screen only behind the diagnostic
-     * switch, and it is not among the settings the saved drawing writes down. A control with no
-     * name a listener would recognise should not be waiting for them the next time they open the
-     * app with no memory of having set it.
-     */
-    val skew: Float = 0f,
-    /**
-     * Whether the gap also carries the room away, rather than only saying which side it is on.
-     *
-     * Not a second knob: with this on, [skew] sets the gap and the room's loudness at once - level
-     * in the middle and quieter towards either end - so one drag moves the two cues a listener is
-     * being asked to hear as one thing. Off is the same drag with the loudness left alone, which
-     * makes the pair of settings the comparison rather than a pair of controls.
-     *
-     * Temporary on the same terms as [skew]: behind the diagnostic switch, absent from the saved
-     * drawing, back off tomorrow.
-     */
-    val skewCarriesDistance: Boolean = false,
-    /**
      * How far off the source itself is, from 0 where it stands to 1 at the furthest this allows.
      * Every handset together - see [com.soundmesh.core.SpatialField.retreat].
      *
-     * A separate control from [skew] and deliberately so. Which side a sound is on is the
-     * difference between the handsets; how far off it is, is what they have in common. A gap that
-     * also turned the room down would be describing a source that moves sideways and outwards at
-     * once, which is a path somebody might want but not one a slider should pick for them.
+     * No control of its own since 2026-09-17: the dot on the room drawing is where it comes from,
+     * and it is the half of that gesture the drawing cannot show by itself. Which side a sound is
+     * on is the difference between the handsets; how far off it is, is what they have in common,
+     * and one dot has to be able to say both because a position is two numbers.
      *
-     * Temporary on the same terms as [skew]: behind the diagnostic switch, absent from the saved
-     * drawing, back at zero tomorrow.
+     * Not written to the saved drawing, so a room opens with its source where it stands.
      */
     val retreat: Float = 0f,
     /**
@@ -395,13 +337,6 @@ class RoomActions(
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
     val setEnvelopment: (Float) -> Unit,
-    val setDiffusion: (Float) -> Unit,
-    val setTravel: (Float) -> Unit,
-    val setShimmer: (Float) -> Unit,
-    val setShimmerSpeed: (Float) -> Unit,
-    /** The hand set gap, -1 for this handset earliest to +1 for the rest of the room earliest. */
-    val setSkew: (Float) -> Unit,
-    val setSkewCarriesDistance: (Boolean) -> Unit,
     val setRetreat: (Float) -> Unit,
     val setReverb: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
@@ -1068,191 +1003,8 @@ private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
     }
 }
 
-/**
- * How hard every handset is pushed into playing a different waveform from the others.
- *
- * On screen in every mode, which is the difference between this and the envelopment slider above.
- * The mix being pulled apart is not what makes the room collapse onto the nearest handset - playing
- * the identical waveform is, and the ordinary setting with the separation knob at zero is exactly
- * that.
- *
- * Stops rather than a continuous drag, and the reason is arithmetic rather than taste: this is a
- * chain of allpass sections, and fading one in against the dry signal is a comb filter. Whole
- * sections colour nothing; half of one colours everything. See Decorrelator.
- */
-@Composable
-private fun DiffusionSlider(state: RoomState, actions: RoomActions) {
-    Column {
-        Knob(
-            title = stringResource(R.string.room_diffusion),
-            value = state.diffusion,
-            readout = stringResource(R.string.room_knob_percent, knobPercent(state.diffusion, 0f..1f)),
-            steps = DIFFUSION_STOPS,
-            onChange = actions.setDiffusion
-        )
-        Note(
-            stringResource(
-                if (state.diffusion <= 0f) R.string.room_diffusion_off
-                else R.string.room_diffusion_hint
-            )
-        )
-    }
-}
-
 /** The stops between off and all of it, which is one fewer than the filter has sections. */
 private const val DIFFUSION_STOPS = 3
-
-/**
- * How far the sound really travels, rather than how loudly each handset says it has.
- *
- * On the front of the panel next to the pan slider rather than down in the fine tuning, because
- * for the two modes that move a source it is the thing they are played with - and because it is
- * the one control here whose effect nobody, including this project's own notes, can predict
- * without hearing it. Something to be turned up and listened to has to be somewhere it can be
- * found.
- *
- * The line under it says what to listen for on the way up, which is not "more": past a point the
- * image stops travelling between handsets and starts belonging to one of them and then the next.
- */
-@Composable
-private fun TravelSlider(state: RoomState, actions: RoomActions) {
-    Column {
-        Knob(
-            title = stringResource(R.string.room_travel),
-            value = state.travel,
-            readout = stringResource(R.string.room_knob_percent, knobPercent(state.travel, 0f..1f)),
-            onChange = actions.setTravel
-        )
-        Note(
-            stringResource(
-                if (state.travel <= 0f) R.string.room_travel_off else R.string.room_travel_hint
-            )
-        )
-    }
-}
-
-/**
- * Each handset drifting on its own, which is the one thing the decorrelator cannot do.
- *
- * Two sliders and not one. How far it wanders and how fast it wanders multiply into a pitch shift -
- * see [com.soundmesh.core.SpatialField.MAX_SHIMMER_DELAY_NANOS] - so a single "more" knob would
- * reach a point where the only way to lose the wobble is to give up the depth that caused it. The
- * speed is only on screen once the depth is up, because on its own it does nothing.
- */
-@Composable
-private fun ShimmerSlider(state: RoomState, actions: RoomActions) {
-    Column {
-        Knob(
-            title = stringResource(R.string.room_shimmer),
-            value = state.shimmer,
-            readout = stringResource(R.string.room_knob_percent, knobPercent(state.shimmer, 0f..1f)),
-            onChange = actions.setShimmer
-        )
-        if (state.shimmer > 0f) {
-            Knob(
-                title = stringResource(R.string.room_shimmer_speed),
-                value = state.shimmerSpeed,
-                readout = stringResource(R.string.room_knob_percent, knobPercent(state.shimmerSpeed, 0f..1f)),
-                onChange = actions.setShimmerSpeed
-            )
-        }
-        Note(
-            stringResource(
-                if (state.shimmer <= 0f) R.string.room_shimmer_off else R.string.room_shimmer_hint
-            )
-        )
-    }
-}
-
-/**
- * A gap between this handset and the rest that a person sets to a number and leaves there.
- *
- * Temporary, and behind the diagnostic switch with the readings it is meant to be read beside.
- * What it is for is written at [com.soundmesh.core.SpatialField.skewNanos]: every other delay in
- * this room is a function of something that will not hold still, so a listener asked what a few
- * milliseconds do to a room has been asked to hear an amount that is never twice the same.
- *
- * Free to drag and rounded to whole milliseconds on the way past. Nothing needs the rounding -
- * the field is nanoseconds and the delay line reads fractional samples - but the answer wanted
- * from this is "at what gap does it start, and at what gap does it become an echo", which is a
- * number somebody has to read off, write down, and set again tomorrow. Rounding is what keeps
- * the figure on the screen and the gap in the room the same figure; drawn stops would only have
- * decided in advance how fine the answer is allowed to be.
- *
- * Untouched by the effect list above, unlike every other knob on this screen. Somebody comparing
- * what a fixed gap does across the three modes should not have it silently zeroed by the change
- * of mode they are making the comparison with.
- *
- * Carries the room's distance with it when [RoomState.skewCarriesDistance] is set: see
- * [RoomState.retreat] for why that rides here rather than on a knob of its own.
- */
-@Composable
-private fun SkewSlider(state: RoomState, actions: RoomActions) {
-    val millis = (state.skew * SKEW_MILLIS).roundToInt()
-    Column {
-        Knob(
-            title = stringResource(R.string.room_skew),
-            value = state.skew,
-            readout = when {
-                millis < 0 -> stringResource(R.string.room_skew_self, -millis)
-                millis > 0 -> stringResource(R.string.room_skew_others, millis)
-                else -> stringResource(R.string.room_skew_together)
-            },
-            range = -1f..1f,
-            onChange = { actions.setSkew(wholeMillisOf(it)) }
-        )
-        Note(stringResource(R.string.room_skew_hint))
-        Segmented(
-            listOf(
-                Segment(
-                    stringResource(R.string.room_skew_side_only),
-                    chosen = !state.skewCarriesDistance
-                ) { actions.setSkewCarriesDistance(false) },
-                Segment(
-                    stringResource(R.string.room_skew_with_distance),
-                    chosen = state.skewCarriesDistance
-                ) { actions.setSkewCarriesDistance(true) }
-            ),
-            modifier = Modifier.padding(top = 8.dp)
-        )
-        Note(
-            if (state.skewCarriesDistance) {
-                stringResource(R.string.room_skew_distance_on, abs(millis), state.skewMetres)
-            } else {
-                stringResource(R.string.room_skew_distance_off)
-            }
-        )
-    }
-}
-
-/**
- * How far off the source itself has been put, which is the room's level and nothing else.
- *
- * Under [SkewSlider] because the two are read together and separate because they answer different
- * questions. The gap says which side; this says how far. A listener can hear which of the two
- * moved only while each of them moves one thing.
- *
- * Read out as a multiple of where the room stands rather than in decibels alone, because "four
- * times as far away" is a thing somebody can picture and check against the room they are sitting
- * in, and "twelve decibels" is not.
- */
-@Composable
-private fun RetreatSlider(state: RoomState, actions: RoomActions) {
-    val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
-    Column {
-        Knob(
-            title = stringResource(R.string.room_retreat),
-            value = state.retreat,
-            readout =
-                if (state.retreat <= 0f) stringResource(R.string.room_retreat_here)
-                else stringResource(
-                    R.string.room_retreat_away, 10f.pow(decibels / 20f), decibels
-                ),
-            onChange = actions.setRetreat
-        )
-        Note(stringResource(R.string.room_retreat_hint))
-    }
-}
 
 /**
  * How live the room is: how much of what a handset plays came off the walls rather than out of the
@@ -1289,30 +1041,11 @@ private fun ReverbSlider(state: RoomState, actions: RoomActions) {
 }
 
 /**
- * How far back the gap stands for, in metres, which is the one part of this a screen can state on
- * its own.
- *
- * How much quieter that makes the late handset depends on how far off it is standing, which lives
- * in the rule and not here. How far back it has been moved does not: a delay is a distance at 343
- * metres a second and nothing else goes into it.
- */
-internal val RoomState.skewMetres: Float
-    get() = abs(skew) * SKEW_MILLIS / 1000f * AlignmentAnalysis.SPEED_OF_SOUND_M_S.toFloat()
-
-/** How many milliseconds either end of the gap slider is, which is what the readout counts in. */
-private val SKEW_MILLIS = SpatialField.MAX_SKEW_NANOS / 1_000_000L
-
-/** Where the finger is, as the nearest whole millisecond of gap. See [SkewSlider]. */
-private fun wholeMillisOf(value: Float): Float =
-    (value * SKEW_MILLIS).roundToInt() / SKEW_MILLIS.toFloat()
-
-/**
  * The app's own answer to "where is the sound", next to the knob that moves it.
  *
- * Both numbers are bigger where the sound should be, by the room's two different routes: the
- * loudest handset, and the earliest one. Which of the two is moving says which cue the rule is
- * currently steering with - wind the travel knob up and the loudness numbers stop moving while
- * the leads start to, which is that knob's whole content stated as two columns of digits.
+ * One number per handset, bigger where the sound should be. There used to be a second column for
+ * which handset plays first, and it went on 2026-09-17 with the knobs that could move it: every
+ * rule left in this room places a source by loudness, so a lead column would be a row of zeroes.
  *
  * Diagnostic, and shown only with the switch on. It is here because a listener cannot check an
  * effect they can only just hear against a claim nobody has written down - see [roomReadings].
@@ -1323,14 +1056,11 @@ private fun RuleReadings(readings: List<RoomReading>, colours: Map<String, Int>)
     Label(R.string.room_live)
     Readings(
         readings.map {
-            listOf(it.peerId) to stringResource(R.string.room_live_row, it.loudness, it.leadMillis)
+            listOf(it.peerId) to stringResource(R.string.room_live_row, it.loudness)
         },
         colours
     )
 }
-
-/** Where the speed slider sits when nobody has moved it: eight seconds a turn. */
-const val DEFAULT_SHIMMER_SPEED = 0.8f
 
 /** What a room ships at, which is where a listener put the slider rather than where zero is. */
 const val DEFAULT_ENVELOPMENT = 0.25f
@@ -1362,28 +1092,14 @@ private fun EffectSection(
     // with nothing lit up and no explanation reads as the list having broken.
     if (current == null) Note(stringResource(R.string.room_effect_custom))
     if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
-    if (state.mode != SpatialMode.SPLIT) {
-        TravelSlider(state, actions)
-        RuleReadings(readings, state.colours)
-    }
+    if (state.mode != SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     // Out here rather than behind the diagnostic switch, and it is the only one of these that has
     // moved out. The switch is for settings somebody is testing; this one is on by default and is
     // half of what the source dot means - drag the dot outward with no room to keep standing still
     // and all that happens is the music gets quieter. A control that another visible control
     // depends on cannot be the hidden one.
     ReverbSlider(state, actions)
-    // Above the fine tuning rather than inside it, and in every mode including the split, because
-    // the one thing it asks about is a gap between two handsets - which a room has whether or not
-    // there is a source being moved around it.
-    if (showDetails) {
-        SkewSlider(state, actions)
-        // With the pan mode, because that is the mode the source dot is in and this is the same
-        // number written the other way round. Anywhere else it would be a control that survives
-        // leaving the screen it belongs to: a room left quiet by a dot, in a mode with no dot on
-        // it to put back - see HomeActivity, where the rule is given the same condition.
-        if (state.mode == SpatialMode.PAN) RetreatSlider(state, actions)
-        if (state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
-    }
+    if (showDetails && state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     if (state.separation > 0f) PartPicker(state, actions)
     FineTuning(state, actions, readings)
 }
@@ -1435,10 +1151,6 @@ private fun apply(effect: RoomEffect, actions: RoomActions) {
     actions.setSeparation(settings.separation)
     actions.pickAxis(settings.axis)
     actions.setEnvelopment(settings.envelopment)
-    actions.setDiffusion(settings.diffusion)
-    actions.setTravel(settings.travel)
-    actions.setShimmer(settings.shimmer)
-    actions.setShimmerSpeed(settings.shimmerSpeed)
 }
 
 /**
@@ -1464,11 +1176,9 @@ private fun FineTuning(
     ModePicker(state, actions)
     if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
     SeparationControl(state, actions)
-    DiffusionSlider(state, actions)
-    ShimmerSlider(state, actions)
-    // Beside the slider rather than once at the bottom of the screen, and beside the travel
-    // slider too. The reason is that it is read with a finger already on a control: a number
-    // somewhere else on a page that has to be scrolled is a number nobody checks while dragging.
+    // Beside the slider rather than once at the bottom of the screen. The reason is that it is
+    // read with a finger already on a control: a number somewhere else on a page that has to be
+    // scrolled is a number nobody checks while dragging.
     RuleReadings(readings, state.colours)
 }
 

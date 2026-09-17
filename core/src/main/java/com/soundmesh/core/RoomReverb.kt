@@ -9,7 +9,7 @@ import kotlin.math.pow
  * This is the thing two earlier numbers were standing in for, and building it retires both of them.
  * `DistanceShelf` took the top off a receding source because a distant sound is duller - the
  * mechanism for that is reverberation, and the dulling belongs inside the tail rather than across
- * the whole output, which is what [DAMPING_HZ] does here. [SpatialField.RECEDE_ROLLOFF] softened
+ * the whole output, which is what [DAMPING_HZ] does here. A plain output filter softened
  * the distance law from six decibels a doubling to about three and a half, because a real room's
  * reverberation does not fall off the way its direct sound does - with a reverberation present that
  * floor is there in fact, so the law underneath it can go back to being the plain one.
@@ -24,7 +24,7 @@ import kotlin.math.pow
  * is uncorrelated - that is what makes a room enveloping rather than a mono echo with a listener in
  * front of it. So each handset draws its own comb lengths from its own [peerId], nothing is sent
  * between them, and two handsets' tails are two different signals with the same statistics. This is
- * the same argument [Decorrelator] is written on, and it is the one place a roomful of handsets can
+ * the same argument the retired decorrelator was written on, and it is the one place a roomful of handsets can
  * do something a pair of speakers cannot. An earlier note in the on-device queue said every
  * handset's latency through this had to match or synchronisation would be destroyed; that was
  * wrong, and wrong in the direction that makes this look harder than it is.
@@ -35,7 +35,7 @@ import kotlin.math.pow
  * cannot be one; but the delay lengths are copied rather than invented, because there is no perfect
  * criterion for "sounds like a room and not like a pipe" and those mutually-prime sample counts are
  * the hard-won part. That is this project's own rule for when to borrow, applied the other way
- * round from [Decorrelator], where a perfect criterion existed and the algorithm was written here.
+ * round from the decorrelator, whose magnitude was exactly one and so could be checked here.
  *
  * What is not Freeverb is the feedback: each comb gets its own, worked out from [REVERB_SECONDS] and
  * its own length, so that every comb decays over the same time. One feedback for combs of different

@@ -20,75 +20,28 @@ object SpatialFieldCodec {
     const val MAGIC = "soundmesh-spatial"
 
     /**
-     * Seven since a rule carries how hard the handsets are pushed into playing different
-     * waveforms - which is the one knob here that changes what a handset plays rather than
-     * which part of it or how loudly, and so the one a receiver silently dropping it would
-     * leave sounding right and doing nothing.
+     * Both ends refuse anything but their own number rather than reading the parts they
+     * recognise. A build that defaulted a missing part to the middle would render a room the
+     * sender did not draw while believing it agreed with them - and every field here has that
+     * shape, because every one of them is something a listener set and can see on a screen.
      *
-     * Both ends refuse anything else rather than reading what they recognise, which is the whole
-     * point of the number: a build that defaulted a missing part to the middle would render a room
-     * the sender did not draw while believing it agreed with them. The instant is the same case in
-     * its own shape - a receiver that dropped it would pick its own moment to swap halves on, and
-     * picking your own moment is the fault it exists to remove.
+     * Sixteen because seven fields came out on 2026-09-17: the decorrelation knob, the
+     * travelling delay and the wander that shared its machinery, and the hand-set head start
+     * with the handset it was measured from and whether it also receded. Those were the room's
+     * experiments, and the reverberation added the day before answered what they were asking.
+     * Fewer fields needs a number as much as more fields do: a fifteen-field header read by a
+     * build expecting twenty-two fails on the count, and this is what turns that into "that
+     * phone needs the new build" instead of a stack trace about a number nobody can place.
      *
-     * The scale is the same case a third time and the loudest of them. A handset that dropped it
-     * would default to no arrival delay and go on playing exactly as it did before the delay
-     * existed - which is the one failure this whole feature is about, arriving silently, on the
-     * one handset of the room whose owner did not update.
-     *
-     * Eight since a rule carries how far each handset's own output wanders and how far the far
-     * side of the room is held back. Both are times, and a receiver that dropped either would play
-     * on at no delay - which for the wander is the whole feature missing on one handset while the
-     * rest of the room does it, and that is not a room sounding slightly different. It is the two
-     * settings whose entire purpose is that the handsets disagree in a way they agreed on.
-     *
-     * Nine although nothing was added, which is the case this number is least obviously for and is
-     * still for. On 09-16 those two times got wider ranges - the wander to twenty milliseconds, its
-     * period out to twenty seconds - and [SpatialField] refuses what falls outside them. A build
-     * holding the old range and reading a message in the new one would throw somewhere deep in a
-     * constructor about a number it cannot name the origin of. Same fields, different meaning, and
-     * the version is what turns "unreadable rule" into "that phone needs the new build".
-     *
-     * Eleven for a head start somebody set by hand - see [SpatialField.skewNanos]. Two fields
-     * rather than one, because a gap has to say which handset it is measured from, and a receiver
-     * that dropped them would be the one handset in the room playing on time while the listener
-     * looked at a slider saying it was seventy milliseconds early. That is the same failure as the
-     * scale, in the one place where somebody is deliberately trying to hear a small difference.
-     *
-     * Twelve for how far the room has been pulled back - see [SpatialField.retreat]. A receiver
-     * that dropped it would play at full loudness while every other handset played quietly, which
-     * is not the room a little louder: it is one handset placed somewhere nobody put it, in the
-     * one arrangement whose whole point is that the handsets are equally loud.
-     *
-     * Thirteen for whether the head start also makes the waiting handset quieter - see
-     * [SpatialField.skewRecedes]. A receiver that dropped it would be the handset that waits and
-     * stays loud, which is the one combination the setting exists to rule out, and the listener
-     * comparing the two settings would be told the comparison had been made when it had not.
-     *
-     * Fourteen although nothing was added, for the same reason as nine: [SpatialField.RECEDE_ROLLOFF]
-     * changed how far down a given head start takes a handset, and every handset works that out
-     * locally from its own build. Two builds in one room would apply two different laws to the same
-     * message and neither would say so - which is the failure this project has met before and the
-     * one it is least able to see, because both rooms sound like rooms.
-     *
-     * Fifteen for how much room there is - see [SpatialField.reverb]. It carries twice, which is
-     * why it is worth naming both. A receiver that dropped it would play its source dry while the
-     * rest of the room played it in a hall, which is not a handset sounding slightly different but
-     * the one handset a listener can point at. And it also sets how much of the plain distance law
-     * a head start gets, through [SpatialField.RECEDE_ROLLOFF] - so two builds disagreeing about
-     * this field would apply two different laws to the same message, which is the failure fourteen
-     * was cut for and the one this project is least able to see.
+     * The numbers before this one are in the git history rather than here. Each was argued for
+     * at the time and most of them are about fields that no longer exist, and a list of
+     * arguments for things that are gone is something a later reader has to disprove before
+     * they can trust the rest of the file.
      */
-    const val VERSION = 15
+    const val VERSION = 16
 
-    private const val HEADER_FIELDS = 22
+    private const val HEADER_FIELDS = 15
     private const val POSITION_FIELDS = 4
-
-    // What stands in the head start's handset field when nothing is skewed. A handset name is
-    // checked hexadecimal wherever one is read, so this can never be one - and the field has to
-    // hold something, since an empty one would merge with the space beside it and shorten the
-    // header into a message that no longer parses.
-    private const val NO_SKEW = "-"
 
     // Written out rather than taken from an enum because there is no enum: which part a handset
     // carries is a membership of [SpatialField.otherHalfIds], and a two-valued enum beside a set that
@@ -114,18 +67,11 @@ object SpatialFieldCodec {
 
     fun encode(field: SpatialField): String {
         val lines = ArrayList<String>(field.layout.positions.size + 1)
-        val skewName = field.skewPeerId
-        require(skewName == null || (skewName.isNotEmpty() && skewName.none { it.isWhitespace() })) {
-            "a handset name is a wire field: it must be non-empty and carry no whitespace"
-        }
         lines.add(
             "$MAGIC $VERSION ${field.mode.name} ${field.periodNanos} ${field.pan} " +
                 "${field.epochHostNanos} ${field.separation} ${field.splitAxis.name} " +
                 "${field.crossoverHz} ${field.effectiveAtHostNanos} ${field.metresPerUnit} " +
-                "${field.envelopment} ${field.diffusion} ${field.travelDelayNanos} " +
-                "${field.shimmerDelayNanos} ${field.shimmerPeriodNanos} " +
-                "${field.skewNanos} ${skewName ?: NO_SKEW} ${field.retreat} " +
-                "${field.skewRecedes} ${field.reverb} " +
+                "${field.envelopment} ${field.retreat} ${field.reverb} " +
                 "${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
@@ -170,27 +116,11 @@ object SpatialFieldCodec {
             ?: throw IllegalArgumentException("unreadable scale: ${header[10]}")
         val envelopment = header[11].toDoubleOrNull()
             ?: throw IllegalArgumentException("unreadable envelopment: ${header[11]}")
-        val diffusion = header[12].toDoubleOrNull()
-            ?: throw IllegalArgumentException("unreadable diffusion: ${header[12]}")
-        val travelDelayNanos = header[13].toLongOrNull()
-            ?: throw IllegalArgumentException("unreadable travel delay: ${header[13]}")
-        val shimmerDelayNanos = header[14].toLongOrNull()
-            ?: throw IllegalArgumentException("unreadable wander depth: ${header[14]}")
-        val shimmerPeriodNanos = header[15].toLongOrNull()
-            ?: throw IllegalArgumentException("unreadable wander period: ${header[15]}")
-        val skewNanos = header[16].toLongOrNull()
-            ?: throw IllegalArgumentException("unreadable head start: ${header[16]}")
-        val skewPeerId = header[17].takeIf { it != NO_SKEW }
-        val retreat = header[18].toDoubleOrNull()
-            ?: throw IllegalArgumentException("unreadable retreat: ${header[18]}")
-        val skewRecedes = when (header[19]) {
-            "true" -> true
-            "false" -> false
-            else -> throw IllegalArgumentException("unreadable receding gap: ${header[19]}")
-        }
-        val reverb = header[20].toDoubleOrNull()
-            ?: throw IllegalArgumentException("unreadable reverberation: ${header[20]}")
-        val count = header[21].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[21]}")
+        val retreat = header[12].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable retreat: ${header[12]}")
+        val reverb = header[13].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable reverberation: ${header[13]}")
+        val count = header[14].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[14]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -232,14 +162,7 @@ object SpatialFieldCodec {
             effectiveAtHostNanos = effectiveAtHostNanos,
             metresPerUnit = metresPerUnit,
             envelopment = envelopment,
-            diffusion = diffusion,
-            travelDelayNanos = travelDelayNanos,
-            shimmerDelayNanos = shimmerDelayNanos,
-            shimmerPeriodNanos = shimmerPeriodNanos,
-            skewNanos = skewNanos,
-            skewPeerId = skewPeerId,
             retreat = retreat,
-            skewRecedes = skewRecedes,
             reverb = reverb
         )
     }

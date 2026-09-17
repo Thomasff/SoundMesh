@@ -20,10 +20,7 @@ class RoomEffectsTest {
         mode = effect.settings.mode,
         separation = effect.settings.separation,
         splitAxis = effect.settings.axis,
-        envelopment = effect.settings.envelopment,
-        diffusion = effect.settings.diffusion,
-        travel = effect.settings.travel,
-        shimmer = effect.settings.shimmer
+        envelopment = effect.settings.envelopment
     )
 
     @Test

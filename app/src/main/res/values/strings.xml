@@ -358,8 +358,6 @@
     <string name="room_effect_custom">当前是自定的设置，在下面「细调」里改过。</string>
     <string name="room_effect_stereo">双声道</string>
     <string name="room_effect_stereo_line">偏左的手机放左声道，偏右的放右声道。</string>
-    <string name="room_effect_around">包围感</string>
-    <string name="room_effect_around_line">每台放得略有不同，而且一直在慢慢游移，声音把你围起来。</string>
     <string name="room_effect_spin">绕着转</string>
     <string name="room_effect_spin_line">声音绕着你转圈。</string>
     <string name="room_effect_sweep">左右移动</string>
@@ -368,21 +366,9 @@
     <string name="room_effect_voice_line">一部分手机放中间的人声，另一部分放两边的乐器。</string>
     <string name="room_effect_bass">低音和高音分开</string>
     <string name="room_effect_bass_line">一部分手机放低音，另一部分放高音。</string>
-    <string name="room_travel">用早晚代替响度定位</string>
-    <string name="room_travel_off">关着。位置全靠响度，声音多半会粘在离你最近的那台上。</string>
-    <string name="room_travel_hint">越往右，各台响度越接近、早晚差越大。拉到底时每台一样响，位置只由谁先响决定——如果这时还听不出位置在动，就说明这条路对我们没用。再往右会开始听成回声。</string>
     <string name="room_live">实时读数：哪台的数字大，声音就该在哪台那边</string>
-    <string name="room_live_row">响 %1$d · 早 %2$.1f</string>
-    <string name="room_skew">手动早晚差（临时调试）</string>
-    <string name="room_skew_together">两边同时响</string>
-    <string name="room_skew_self">本机早 %1$d 毫秒</string>
-    <string name="room_skew_others">其他手机早 %1$d 毫秒</string>
-    <string name="room_skew_hint">谁早，声音就该偏谁那边。按毫秒调，两头各到 70 毫秒。往大了调会先变成「贴在一台上」，再往大会听成回声，这两条界线就是要找的东西。</string>
+    <string name="room_live_row">响 %1$d</string>
     <!-- The other half of the manual gap: distance instead of side. See RetreatSlider. -->
-    <string name="room_skew_side_only">只改早晚</string>
-    <string name="room_skew_with_distance">晚的那台跟着变轻</string>
-    <string name="room_skew_distance_off">只改早晚差，响度一动不动。这就是之前的样子。</string>
-    <string name="room_skew_distance_on">晚 %1$d 毫秒就是被搬远 %2$.1f 米，那它就该按这个距离变轻。早的那台一动不动，方向还是它说了算。这一根只管方向，要让声音整个走远，用下面那根。</string>
     <string name="room_source_hint">房间图上那个带光圈的点就是声源，拖它：左右决定声音偏哪边，离你远近决定声音有多远。手机那一圈是最近的位置，因为声音本来就是从手机里出来的。</string>
     <string name="room_source_here">声源就在手机那一圈上，全屋原样。</string>
     <string name="room_source_away">声源退到 %1$.1f 倍远：所有手机一起轻 %2$.1f 分贝。方向不受影响。</string>
@@ -391,14 +377,6 @@
     <string name="room_reverb_none">没有回声，声音直接从手机出来，和这个功能做出来之前逐比特一样。</string>
     <string name="room_reverb_some">%1$.0f%% 是回声，尾巴 %2$.1f 秒。声源拖远时回声不跟着变轻，所以远近听得出来，不只是变小。</string>
     <string name="room_reverb_hint">回声每台手机各算各的，故意不一样：真实房间里两个不同位置听到的回声本来就不相关，这也是几台手机能赢过两个音箱的地方。直达声是旁路，一个采样都不动，所以不影响同步。远处的声音变闷也归它管，每在墙上弹一次就少一点高频。</string>
-    <string name="room_retreat">声源退多远（临时调试）</string>
-    <string name="room_retreat_here">就在原地</string>
-    <string name="room_retreat_away">退到 %1$.1f 倍远（轻 %2$.1f 分贝）</string>
-    <string name="room_retreat_hint">和房间图上那个点的远近是同一个数，拖哪个都行。所有手机一起变轻，谁也不比谁轻——远近是两台共同的那部分，方向是两台不同的那部分，所以这根不会动方向。</string>
-    <string name="room_shimmer">各机轻微游移</string>
-    <string name="room_shimmer_off">关着。每台手机一直待在原地。</string>
-    <string name="room_shimmer_speed">游移快慢</string>
-    <string name="room_shimmer_hint">每台各自前后游移，互不同步。又深又快会有音高晃动，想要深就调慢一点。</string>
     <string name="room_parts">每台放哪一部分</string>
     <string name="room_fine">细调</string>
     <string name="room_fine_hide">收起细调</string>
@@ -410,9 +388,6 @@
     <string name="room_mode_split_hint">按摆位分左右声道。另外两种把声音当成一个会动的点，不保留左右。</string>
     <string name="room_envelopment">包裹感：声音转开之后，每台还留多少</string>
     <string name="room_envelopment_off">拉到最左：转开的那台完全没声音，听起来像一部手机在转。</string>
-    <string name="room_diffusion">铺开：让每台手机不放一模一样的波形</string>
-    <string name="room_diffusion_off">关着。每台波形一样，听起来声音都在离你最近的那台上。</string>
-    <string name="room_diffusion_hint">往右拉包围感更强，鼓点会软一点，整体轻约 2 dB，用音量键补回来。</string>
     <string name="room_envelopment_hint">往右拉包裹感更强、方向感更弱。</string>
     <string name="room_pan_title">左右位置</string>
     <string name="room_pan_left">左</string>

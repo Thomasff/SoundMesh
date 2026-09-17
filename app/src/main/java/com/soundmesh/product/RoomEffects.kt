@@ -34,21 +34,6 @@ enum class RoomEffect(
         EffectSettings(SpatialMode.SPLIT)
     ),
 
-    /**
-     * The same, with every handset given a different phase so the room stops collapsing - and now
-     * with that difference moving as well as existing.
-     *
-     * The decorrelator alone is a difference that holds still, and a difference that holds still
-     * is what a room is: heard once, then heard as the room. The wander added 09-15 is the same
-     * idea in time, and between them they are what a listener described a downloaded "surround"
-     * track as sounding like - not a source going anywhere, just a sound that will not sit down.
-     */
-    AROUND(
-        R.string.room_effect_around,
-        R.string.room_effect_around_line,
-        EffectSettings(SpatialMode.SPLIT, diffusion = 0.5f, shimmer = DEFAULT_SHIMMER)
-    ),
-
     SPIN(
         R.string.room_effect_spin,
         R.string.room_effect_spin_line,
@@ -79,22 +64,8 @@ data class EffectSettings(
     val mode: SpatialMode,
     val separation: Float = 0f,
     val axis: SplitAxis = SplitAxis.MIDDLE_SIDES,
-    val envelopment: Float = 0f,
-    val diffusion: Float = 0f,
-    val travel: Float = 0f,
-    val shimmer: Float = 0f,
-    val shimmerSpeed: Float = DEFAULT_SHIMMER_SPEED
+    val envelopment: Float = 0f
 )
-
-/**
- * How far 包围感 winds the wander: most of the way.
- *
- * About four milliseconds, which is a chorus depth, and the number is not a coincidence in either
- * direction - it is also comfortably under what the slew limiter can carry. See
- * [com.soundmesh.core.SpatialField.MAX_SHIMMER_DELAY_NANOS], where the two agreeing is written
- * down as the reason for the cap.
- */
-const val DEFAULT_SHIMMER = 0.65f
 
 /**
  * Which effect the room is set to, or null where it is set to something with no name.
@@ -109,11 +80,7 @@ fun effectOf(state: RoomState): RoomEffect? {
             state.mode,
             state.separation,
             state.splitAxis,
-            state.envelopment,
-            state.diffusion,
-            state.travel,
-            state.shimmer,
-            state.shimmerSpeed
+            state.envelopment
         )
     )
     return RoomEffect.entries.firstOrNull { settled(it.settings) == here }
@@ -131,15 +98,7 @@ private fun settled(settings: EffectSettings): EffectSettings = EffectSettings(
     mode = settings.mode,
     separation = rounded(settings.separation),
     axis = if (settings.separation <= 0f) SplitAxis.MIDDLE_SIDES else settings.axis,
-    envelopment = if (settings.mode == SpatialMode.SPLIT) 0f else rounded(settings.envelopment),
-    diffusion = rounded(settings.diffusion),
-    // Nothing to travel between in a split, exactly as with the envelopment: the two modes that
-    // read this are the two with a source to be moving.
-    travel = if (settings.mode == SpatialMode.SPLIT) 0f else rounded(settings.travel),
-    shimmer = rounded(settings.shimmer),
-    // How fast a wander of nothing goes is nothing, the same case as an axis nothing is split
-    // along: without this, 双声道 would stop recognising itself after anybody touched the speed.
-    shimmerSpeed = if (settings.shimmer <= 0f) DEFAULT_SHIMMER_SPEED else rounded(settings.shimmerSpeed)
+    envelopment = if (settings.mode == SpatialMode.SPLIT) 0f else rounded(settings.envelopment)
 )
 
 /**

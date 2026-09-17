@@ -109,7 +109,6 @@ class StoredRoomDrawing(private val directory: File) {
         lines += "$AXIS ${room.splitAxis.name}"
         lines += "$CROSSOVER ${room.crossoverHz}"
         lines += "$ENVELOPMENT ${room.envelopment}"
-        lines += "$DIFFUSION ${room.diffusion}"
         lines += "$PERIOD ${room.periodSeconds}"
         lines += "$DELAY ${room.delayCompensation}"
         lines += "$SCALE ${room.metresPerUnit}"
@@ -162,8 +161,6 @@ class StoredRoomDrawing(private val directory: File) {
                 room.copy(crossoverHz = said.toFloatOrNull()?.takeIf { it.isFinite() } ?: room.crossoverHz)
             ENVELOPMENT ->
                 room.copy(envelopment = said.toFloatOrNull()?.takeIf { it.isFinite() } ?: room.envelopment)
-            DIFFUSION ->
-                room.copy(diffusion = said.toFloatOrNull()?.takeIf { it.isFinite() } ?: room.diffusion)
             PERIOD -> room.copy(periodSeconds = said.toIntOrNull() ?: room.periodSeconds)
             DELAY -> room.copy(delayCompensation = said.toBooleanStrictOrNull() ?: room.delayCompensation)
             SCALE ->
@@ -191,7 +188,6 @@ class StoredRoomDrawing(private val directory: File) {
         private const val AXIS = "axis"
         private const val CROSSOVER = "crossover-hz"
         private const val ENVELOPMENT = "envelopment"
-        private const val DIFFUSION = "diffusion"
         private const val PERIOD = "period-s"
         private const val DELAY = "delay-compensation"
         private const val SCALE = "metres-per-unit"

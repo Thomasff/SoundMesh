@@ -7,16 +7,15 @@ import kotlin.math.sqrt
 /**
  * What the rule is asking of one handset at one instant, written so a person can read it.
  *
- * Both numbers are **bigger where the sound should be**, on purpose, because that is the one
- * question they exist to answer. They get there by the two different routes the room has: a
- * handset can be where the sound is because it is the loudest, or because it is the earliest.
+ * **Bigger where the sound should be**, on purpose, because that is the one question it exists to
+ * answer. It used to be a pair, the second half being how far ahead of the room this handset
+ * played, and that half went on 2026-09-17 with the knobs that could move it: every rule left in
+ * this room places a source by loudness, so a lead would be zero on every handset of every room.
  */
 data class RoomReading(
     val peerId: String,
     /** This handset's gain as a percentage. 100 is what one handset carrying a sound alone plays. */
-    val loudness: Int,
-    /** How far ahead of the room's latest handset this one is, in milliseconds. */
-    val leadMillis: Double
+    val loudness: Int
 )
 
 /**
@@ -28,21 +27,12 @@ data class RoomReading(
  * well and "which difference" badly, and every effect in this room is a claim about where a sound
  * is - so what was missing was not a better ear but the app's own answer, on screen, moving.
  *
- * With that on screen the vague report becomes a check anybody can run: when the left handset's
- * lead is the larger number, does the sound move left? A yes is the precedence effect working in
- * this room, which is the open question the travel knob was built to ask. A no, while the numbers
- * are plainly moving, is that question answered the other way - and is worth much more than
- * another evening of turning a slider up.
- *
- * The lead is the rule's own moving delay only: [SpatialField.playbackDelayNanosFor], which is the
- * travel knob plus the wander. It does not include distance compensation, which is applied to the
- * clock rather than inside the audio, so in a room whose handsets are at different distances and
- * whose compensation is on, this is not the whole of who plays first. For two handsets the same
- * distance away - which is how this is meant to be read - it is.
+ * With that on screen the vague report becomes a check anybody can run: does the handset the sound
+ * seems to be coming from carry the largest number? A yes is the rule reaching the ear it was
+ * written for; a no, while the numbers are plainly moving, is worth much more than another evening
+ * of turning a slider up.
  */
 internal fun roomReadings(field: SpatialField, hostNanos: Long): List<RoomReading> {
-    val delays = field.layout.peerIds.associateWith { field.playbackDelayNanosFor(it, hostNanos) }
-    val latest = delays.values.maxOrNull() ?: 0L
     return field.layout.peerIds.map { peerId ->
         val gain = field.gainAt(peerId, hostNanos)
         RoomReading(
@@ -52,8 +42,7 @@ internal fun roomReadings(field: SpatialField, hostNanos: Long): List<RoomReadin
             // would report that as half as loud as it sounds - which it is not, because the other
             // channel is carrying the whole of what it was given.
             loudness = (sqrt((gain.left * gain.left + gain.right * gain.right) / 2.0) * 100.0)
-                .roundToInt(),
-            leadMillis = (latest - delays.getValue(peerId)) / 1_000_000.0
+                .roundToInt()
         )
     }
 }

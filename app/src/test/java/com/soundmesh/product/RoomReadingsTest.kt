@@ -43,94 +43,15 @@ class RoomReadingsTest {
         val room = SpatialField(SpatialMode.SPLIT, pair())
         for (peerId in listOf("l", "r")) {
             assertEquals(71, readingOf(room, peerId).loudness)
-            assertEquals(0.0, readingOf(room, peerId).leadMillis, 1e-9)
         }
     }
 
-    /** Placed by loudness: the source's side is louder and nothing is earlier than anything. */
+    /** Placed by loudness, which since 2026-09-17 is the only way anything here is placed. */
     @Test
-    fun `with the travel knob down only the loudness moves`() {
+    fun `the side the source is on is the louder one`() {
         val room = SpatialField(SpatialMode.PAN, pair(), pan = 1.0)
         assertEquals(100, readingOf(room, "r").loudness)
         assertEquals(0, readingOf(room, "l").loudness)
-        assertEquals(0.0, readingOf(room, "r").leadMillis, 1e-9)
-        assertEquals(0.0, readingOf(room, "l").leadMillis, 1e-9)
     }
 
-    /**
-     * Placed by time: the two are equally loud and the source's side is earlier by the whole depth.
-     *
-     * The pair of assertions that makes the strip worth having. Read together with the test above,
-     * they are the travel knob's entire content written as numbers: winding it up stops one column
-     * moving and starts the other, and a listener watching that happen knows which cue their ears
-     * are being asked about.
-     */
-    @Test
-    fun `with the travel knob up only the lead moves`() {
-        val room = SpatialField(
-            SpatialMode.PAN,
-            pair(),
-            pan = 1.0,
-            travelDelayNanos = SpatialField.MAX_TRAVEL_DELAY_NANOS
-        )
-        assertEquals(readingOf(room, "l").loudness, readingOf(room, "r").loudness)
-        assertEquals(
-            SpatialField.MAX_TRAVEL_DELAY_NANOS / 1_000_000.0,
-            readingOf(room, "r").leadMillis,
-            1e-6
-        )
-        assertEquals(0.0, readingOf(room, "l").leadMillis, 1e-9)
-    }
-
-    /**
-     * Under the wander alone, the lead changes hands - which is the claim being listened for.
-     *
-     * The listener reported hearing "a little something" from the wander at about a third of the
-     * slider and had no way to name it. If the wander does anything locatable, this is the
-     * mechanism: the handsets wander independently, so at any instant one of them is the earlier,
-     * and under the precedence effect that is the side the sound should be on. Asserted over a
-     * whole cycle and from both sides, because a wander that never changed hands would be a strip
-     * that always named the same handset - which reads exactly like the feature working.
-     */
-    @Test
-    fun `under the wander the lead changes hands`() {
-        val room = SpatialField(
-            SpatialMode.SPLIT,
-            pair(),
-            shimmerDelayNanos = SpatialField.MAX_SHIMMER_DELAY_NANOS
-        )
-        val step = SpatialField.DEFAULT_SHIMMER_PERIOD_NANOS / 64
-        var leftLed = false
-        var rightLed = false
-        for (tick in 0 until 64) {
-            val at = tick * step
-            if (readingOf(room, "l", at).leadMillis > 0.0) leftLed = true
-            if (readingOf(room, "r", at).leadMillis > 0.0) rightLed = true
-        }
-        assertTrue("the left handset is never the earlier one", leftLed)
-        assertTrue("the right handset is never the earlier one", rightLed)
-    }
-
-    /**
-     * And it is a lead rather than a delay: whoever is latest reads zero, always.
-     *
-     * Stated because the underlying number runs the other way - [SpatialField.playbackDelayNanosFor]
-     * is how long a handset waits, so the handset the sound is nearest is the one with the
-     * smallest. A strip whose numbers grew away from the sound would be read backwards by
-     * everybody, and would be read backwards confidently.
-     */
-    @Test
-    fun `whichever handset is latest reads nothing`() {
-        val room = SpatialField(
-            SpatialMode.SPLIT,
-            pair(),
-            shimmerDelayNanos = SpatialField.MAX_SHIMMER_DELAY_NANOS
-        )
-        val step = SpatialField.DEFAULT_SHIMMER_PERIOD_NANOS / 32
-        for (tick in 0 until 32) {
-            val leads = roomReadings(room, tick * step).map { it.leadMillis }
-            assertEquals("at tick $tick", 0.0, leads.min(), 1e-9)
-            assertTrue("no lead may be negative at tick $tick", leads.all { it >= 0.0 })
-        }
-    }
 }

@@ -46,7 +46,7 @@ class KnobTest {
 
     /**
      * Stops count the ones BETWEEN the ends, the way Material's slider counted them, so the
-     * diffusion knob's three stops still mean five places a finger can land. Half a section of an
+     * three-stop knob still means five places a finger can land. Half a section of an
      * allpass chain is a comb filter - see DiffusionSlider - so landing between them is not a
      * finer setting, it is a different sound.
      */

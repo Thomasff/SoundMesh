@@ -536,12 +536,6 @@ class HomeActivity : ComponentActivity() {
             setPan = { pan -> updateRoom { it.copy(pan = pan) } },
             setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
             setEnvelopment = { keep -> updateRoom { it.copy(envelopment = keep) } },
-            setDiffusion = { apart -> updateRoom { it.copy(diffusion = apart) } },
-            setTravel = { far -> updateRoom { it.copy(travel = far) } },
-            setShimmer = { wander -> updateRoom { it.copy(shimmer = wander) } },
-            setShimmerSpeed = { speed -> updateRoom { it.copy(shimmerSpeed = speed) } },
-            setSkew = { gap -> updateRoom { it.copy(skew = gap) } },
-            setSkewCarriesDistance = { on -> updateRoom { it.copy(skewCarriesDistance = on) } },
             setRetreat = { back -> updateRoom { it.copy(retreat = back) } },
             setReverb = { room -> updateRoom { it.copy(reverb = room) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
@@ -610,40 +604,10 @@ class HomeActivity : ComponentActivity() {
             otherHalfIds = room.otherHalfIds,
             envelopment = room.envelopment.toDouble()
                 .coerceIn(0.0, SpatialField.MAX_ENVELOPMENT),
-            diffusion = room.diffusion.toDouble().coerceIn(0.0, 1.0),
-            // Fractions on the screen, times on the wire. The screen has no business knowing how
-            // many milliseconds the rule allows, and the rule has no business carrying a number
-            // whose meaning is "how far along a slider": a delay is a delay everywhere else in
-            // this project, and a handset reading one out of a log should see one.
-            travelDelayNanos = nanosOf(room.travel, SpatialField.MAX_TRAVEL_DELAY_NANOS),
-            shimmerDelayNanos = nanosOf(room.shimmer, SpatialField.MAX_SHIMMER_DELAY_NANOS),
-            // A slider that runs the way a listener reads it - right is faster - against a period
-            // that runs the other way. Slowest at nothing, fastest at one.
-            shimmerPeriodNanos = SpatialField.LONGEST_SHIMMER_PERIOD_NANOS +
-                (
-                    room.shimmerSpeed.toDouble().coerceIn(0.0, 1.0) *
-                        (SpatialField.SHORTEST_SHIMMER_PERIOD_NANOS -
-                            SpatialField.LONGEST_SHIMMER_PERIOD_NANOS)
-                    ).toLong(),
             // Zeroed rather than carried with a flag beside it: no scale is exactly what a room
             // that never measured its listener sends, so the switch off and the feature absent
             // are the same message on the wire and the same code on every handset.
             metresPerUnit = if (room.delayCompensation) room.metresPerUnit else 0.0,
-            // Signed on the screen and signed on the wire, because which end of the gap is early
-            // is what the control is: the rule turns it into a wait on whichever end is not.
-            // Rounded rather than truncated, unlike the two fractions above it: this one is a
-            // whole number of milliseconds on the screen, and a float a hair under it cut down
-            // would publish a rule one nanosecond off the number the listener is writing down.
-            skewNanos = if (self == null) 0L
-            else (
-                room.skew.toDouble().coerceIn(-1.0, 1.0) * SpatialField.MAX_SKEW_NANOS
-                ).roundToLong(),
-            skewPeerId = self,
-            // Reads the same gap rather than carrying a number of its own, because it is not a
-            // second setting: it is whether the gap is allowed to mean the distance it already is.
-            skewRecedes = room.skewCarriesDistance,
-            // Unlike the gap above it, this one needs nobody named: it is the same number for
-            // every handset, which is the whole of what makes it a distance rather than a pan.
             retreat =
                 if (room.mode == SpatialMode.PAN) room.retreat.toDouble().coerceIn(0.0, 1.0)
                 else 0.0,

@@ -5,7 +5,6 @@ import android.media.AudioFormat
 import android.media.AudioTimestamp
 import android.media.AudioTrack
 import com.soundmesh.core.Crossover
-import com.soundmesh.core.Decorrelator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
@@ -18,7 +17,6 @@ import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
 import com.soundmesh.core.SpectrumMix
 import com.soundmesh.core.StereoGain
-import com.soundmesh.core.TravellingDelay
 import com.soundmesh.core.acquiringTotalNanos
 import com.soundmesh.core.driftIntervalNanos
 import com.soundmesh.core.extrapolatedPlaybackFrames
@@ -108,9 +106,7 @@ internal fun spatialShaped(
     peerId: String?,
     wasUnder: SpatialField? = null,
     crossover: Crossover,
-    reverb: RoomReverb? = null,
-    diffuse: Decorrelator? = null,
-    travel: TravellingDelay? = null
+    reverb: RoomReverb? = null
 ): ByteArray {
     if (field == null || peerId == null) return payload
     if (sequence >= SyncRenderer.CHIRP_SEQUENCE_BASE) return payload
@@ -127,9 +123,7 @@ internal fun spatialShaped(
         fromRoom = roomCameFrom(wasUnder, field, peerId, playAtHostNanos),
         fromReverb = reverbCameFrom(wasUnder, field, peerId),
         crossover = crossover,
-        reverb = reverb,
-        diffuse = diffuse,
-        travel = travel
+        reverb = reverb
     )
 }
 
@@ -339,30 +333,14 @@ class SyncRenderer(
     // this is the one thing in the path that is a function of the past.
     private val crossover = Crossover()
 
-    // This handset's own room, and the second thing in the path that is meant to disagree with
-    // every other handset's - see RoomReverb. Built on first use like the diffuser and never let go
-    // of again, like the delay: half a second of tail means a room dropped and rebuilt when a knob
-    // passes through zero has to fill up again from silence.
+    // This handset's own room, and the one thing in the path that is meant to disagree with
+    // every other handset's - see RoomReverb. Built on first use rather than eagerly, and never
+    // let go of again: half a second of tail means a room dropped and rebuilt when a knob passes
+    // through zero has to fill up again from silence.
     private val reverberation by lazy { spatialPeerId?.let { RoomReverb(it, SAMPLE_RATE) } }
 
-    // This handset's own, and the one thing in the path that is meant to disagree with every other
-    // handset's - see Decorrelator. Built on first use rather than eagerly: a room with the knob at
-    // zero should not be carrying thirty milliseconds of delay lines it never reads.
-    private val diffuser by lazy { spatialPeerId?.let { Decorrelator(it, SAMPLE_RATE) } }
-
-    // Where this handset's own output waits when the rule asks it to arrive later than it was
-    // made - see TravellingDelay. Built on first use like the diffuser and, unlike it, never let
-    // go of again: a delay line is the last few milliseconds of the song, so one that is dropped
-    // and rebuilt when a knob passes through zero plays a gap and then plays a fragment of
-    // whatever was in the old one. Once built it is stepped on every chunk, at a delay of zero
-    // when nothing is asking, which hands every frame straight back.
-    private val travelling by lazy { TravellingDelay(SAMPLE_RATE) }
-
-    // Whether anything has ever asked, so a session that never turns either of them on carries no
-    // delay line at all. Latched rather than read off the current rule for the reason above.
-    @Volatile private var everTravelled = false
-
-    // The same latch for the room, and the same reason - see [everTravelled].
+    // Whether anything has ever asked for it, so a session that never turns it on builds no room
+    // at all. Latched rather than read off the current rule, for the reason above.
     @Volatile private var everReverberated = false
 
     @Volatile private var driftSamples = 0
@@ -739,9 +717,7 @@ class SyncRenderer(
                             spatialPeerId,
                             wasUnder = shapedUnder,
                             crossover = crossover,
-                            reverb = if (everReverberated) reverberation else null,
-                            diffuse = diffuser,
-                            travel = if (everTravelled) travelling else null
+                            reverb = if (everReverberated) reverberation else null
                         )
                         shapedUnder = if (payload !== adjusted) rule else null
                         // Against the adjusted array, not against the chunk: applyPendingAdjust returns a
@@ -1087,9 +1063,8 @@ class SyncRenderer(
             if (field == null || spatialPeerId == null || !field.layout.contains(spatialPeerId)) 0L
             else field.arrivalDelayNanosFor(spatialPeerId)
         // Latched here rather than when a chunk needs it, because a chunk that needs it and does
-        // not have it is refused by the shaper. Arriving early costs an array write per frame and
-        // no sound at all; arriving late is a rule this handset cannot play.
-        if (field != null && field.movesInTime) everTravelled = true
+        // not have it is refused by the shaper. Arriving early costs an empty set of delay lines;
+        // arriving late is a rule this handset cannot play.
         if (field != null && field.reverb > 0.0) everReverberated = true
     }
 

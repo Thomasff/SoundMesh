@@ -47,61 +47,6 @@ class SpatialShaperTest {
         return pcm
     }
 
-    /**
-     * A knob at off has to be off - not nearly off. Every room drawn before this field existed
-     * decodes with it at zero, and every one of those has to play the bytes it played yesterday.
-     */
-    @Test
-    fun theDiffusionKnobAtZeroLeavesTheChunkByteForByteWhereItWas() {
-        val field = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0, diffusion = 0.0)
-
-        val withFilter = SpatialShaper.shape(
-            noise(), field, "left", 0L, sampleRate, diffuse = Decorrelator("left", sampleRate)
-        )
-        val without = SpatialShaper.shape(noise(), field, "left", 0L, sampleRate)
-
-        assertArrayEquals(without, withFilter)
-    }
-
-    /**
-     * Refused rather than ignored, on the same terms as the crossover: a rule asking for the
-     * handsets to be pulled apart and a handset quietly not doing it sound exactly alike from here,
-     * and the one that is wrong is the one nobody would look for.
-     */
-    @Test(expected = IllegalArgumentException::class)
-    fun aRuleThatPullsTheHandsetsApartIsRefusedWithoutAFilterToDoItWith() {
-        val field = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0, diffusion = 1.0)
-
-        SpatialShaper.shape(noise(), field, "left", 0L, sampleRate)
-    }
-
-    /**
-     * What it is for, and what it costs, in one measurement: the waveform is a different waveform,
-     * and the level it comes out at is the headroom an allpass needs and nothing else.
-     */
-    @Test
-    fun diffusionChangesTheWaveformAndTakesOnlyItsHeadroom() {
-        val loud = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0)
-        val apart = SpatialField(SpatialMode.PAN, facingPair(), pan = -1.0, diffusion = 1.0)
-
-        // A second, not one chunk: the chain's delay lines add up to about twenty milliseconds,
-        // which is a whole chunk, so a chunk-long measurement reads a filter that is still filling
-        // and reports energy the filter has not let go of yet as energy it lost.
-        val plain = leftChannel(SpatialShaper.shape(noise(sampleRate), loud, "left", 0L, sampleRate))
-        val diffused = leftChannel(
-            SpatialShaper.shape(noise(sampleRate), apart, "left", 0L, sampleRate, diffuse = Decorrelator("left", sampleRate))
-        )
-
-        assertTrue("the waveform came back unchanged", plain.toList() != diffused.toList())
-        // Compared over the second half, so the filter's delay lines are full and the level
-        // being read is the steady one rather than the fade-in.
-        val from = plain.size / 2
-        val was = Math.sqrt((from until plain.size).sumOf { plain[it].toDouble() * plain[it] } / (plain.size - from))
-        val now = Math.sqrt((from until plain.size).sumOf { diffused[it].toDouble() * diffused[it] } / (plain.size - from))
-        assertTrue("no headroom was taken, so a loud master will clip: ${now / was}", now / was < 0.9)
-        assertTrue("far more than headroom was taken: ${now / was}", now / was > 0.7)
-    }
-
     @Test
     fun aHandsetTheSourceHasLeftBehindGoesQuiet() {
         val field = SpatialField(SpatialMode.PAN, facingPair(), pan = 1.0)
@@ -453,42 +398,6 @@ class SpatialShaperTest {
         assertEquals(0, leftChannel(cold).first().toLong().toInt())
         assertTrue("a ringing filter is not a cold one: ${leftChannel(after).first()}",
             leftChannel(after).first() > 5_000)
-    }
-
-    /**
-     * A rule whose delay moves, handed to a shaper with nowhere to hold the frames, is refused.
-     *
-     * Refused rather than ignored, on the same terms as a missing crossover and for a sharper
-     * reason: a handset silently rendering no wander while the rest of the room renders one is the
-     * room disagreeing about what it is playing, which is the one failure this project's whole
-     * clock stack exists to prevent, arriving through the one path that never touches a clock.
-     */
-    @Test(expected = IllegalArgumentException::class)
-    fun aRuleThatMovesInTimeNeedsSomewhereToHoldFrames() {
-        val room = SpatialField(
-            SpatialMode.SPLIT, facingPair(), shimmerDelayNanos = 4_000_000L
-        )
-        SpatialShaper.shape(noise(), room, "left", 0L, sampleRate)
-    }
-
-    /**
-     * And a line that is present while both knobs are down changes not one sample.
-     *
-     * The case every session lands in the moment somebody turns either feature off again - the
-     * line is kept and fed rather than dropped, so "off" has to be the identity through it rather
-     * than merely close to it. Asserted on the bytes, because a delay line that was very slightly
-     * lossy would pass every listening test and quietly colour every room that had ever tried the
-     * feature once.
-     */
-    @Test
-    fun aDelayLineAtRestPassesTheChunkThroughUntouched() {
-        val room = SpatialField(SpatialMode.SPLIT, facingPair())
-        val pcm = noise()
-        val plain = SpatialShaper.shape(pcm, room, "left", 0L, sampleRate)
-        val through = SpatialShaper.shape(
-            pcm, room, "left", 0L, sampleRate, travel = TravellingDelay(sampleRate)
-        )
-        assertArrayEquals(plain, through)
     }
 
     /**

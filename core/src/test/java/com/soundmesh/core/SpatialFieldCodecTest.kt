@@ -37,44 +37,13 @@ class SpatialFieldCodecTest {
     }
 
     /**
-     * How far the room has been pulled back.
-     *
-     * A receiver that dropped it plays at full loudness while every other handset plays quietly,
-     * which is not a room slightly louder: it is one handset placed somewhere nobody put it, in
-     * the one arrangement whose whole point is that the handsets are equally loud.
+     * How much of what a handset plays is the room. A receiver that dropped it would play its
+     * source dry while the rest of the room played it in a hall, which is not a handset sounding
+     * slightly different but the one handset a listener can point at.
      */
     @Test
-    fun whetherTheGapAlsoMovesTheHandsetBackSurvivesTheWire() {
-        val field = SpatialField(
-            mode = SpatialMode.PAN,
-            layout = SpatialLayout(
-                listOf(SpatialPosition("aa", -1.0, 0.0), SpatialPosition("bb", 1.0, 0.0))
-            ),
-            skewNanos = 12_000_000L,
-            skewPeerId = "aa",
-            skewRecedes = true
-        )
-
-        val read = SpatialFieldCodec.decode(SpatialFieldCodec.encode(field))
-
-        assertTrue(read.skewRecedes)
-        assertEquals(field.gainAt("aa", 0L).left, read.gainAt("aa", 0L).left, 1e-12)
-    }
-
-    /**
-     * This one carries twice, so it is checked twice. It decides how much of what a handset plays
-     * is the room - a receiver that dropped it would play dry while everybody else played in a hall
-     * - and it also decides how much of the plain distance law a head start gets, which is a gain
-     * every handset works out locally. The second is the one that would go unnoticed.
-     */
-    @Test
-    fun theRoomsReverberationSurvivesTheWireAndSoDoesTheLawItSets() {
-        val live = field.copy(
-            reverb = 0.7,
-            skewRecedes = true,
-            skewNanos = 20_000_000L,
-            skewPeerId = field.layout.peerIds.first()
-        )
+    fun theRoomsReverberationSurvivesTheWire() {
+        val live = field.copy(reverb = 0.7)
         val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(live))
 
         assertEquals(0.7, back.reverb, 0.0)
@@ -95,70 +64,6 @@ class SpatialFieldCodecTest {
             val at = 3_300_000_000L
             assertEquals(away.gainAt(peerId, at).left, back.gainAt(peerId, at).left, 0.0)
         }
-    }
-
-    /**
-     * The head start somebody set by hand, and the handset the sign of it is about.
-     *
-     * The one setting on this wire whose entire purpose is that two handsets do not play together,
-     * so a receiver that dropped it plays on time, looks perfectly healthy, and answers the
-     * question the listener is in the room asking with the wrong answer.
-     */
-    @Test
-    fun theHandSetHeadStartSurvivesTheWire() {
-        val skewed = field.copy(skewNanos = -31_000_000L, skewPeerId = "a1b2c3d4e5f60718")
-        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(skewed))
-
-        assertEquals(-31_000_000L, back.skewNanos)
-        assertEquals("a1b2c3d4e5f60718", back.skewPeerId)
-        for (peerId in skewed.layout.peerIds) {
-            assertEquals(
-                skewed.playbackDelayNanosFor(peerId, 0L),
-                back.playbackDelayNanosFor(peerId, 0L)
-            )
-        }
-    }
-
-    /** And a room with nobody skewed names nobody, rather than a handset called by the placeholder. */
-    @Test
-    fun aRoomWithNoHeadStartNamesNobody() {
-        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(field))
-
-        assertEquals(0L, back.skewNanos)
-        assertNull(back.skewPeerId)
-    }
-
-    /**
-     * The knob that decides what a handset plays rather than which part of it, so a receiver that
-     * dropped it would sound right and do nothing - which is the failure this whole version number
-     * exists to prevent.
-     */
-    @Test
-    fun howFarApartTheWaveformsArePushedSurvivesTheRoundTrip() {
-        val apart = field.copy(diffusion = 0.75)
-
-        assertEquals(0.75, SpatialFieldCodec.decode(SpatialFieldCodec.encode(apart)).diffusion, 0.0)
-        assertEquals(0.0, SpatialFieldCodec.decode(SpatialFieldCodec.encode(field)).diffusion, 0.0)
-    }
-
-    /**
-     * And so do the two times, which are the settings whose whole purpose is that the handsets
-     * disagree in a way they agreed on. A receiver dropping either plays on at no delay, which
-     * looks from the outside exactly like a handset that is simply not very enveloping.
-     */
-    @Test
-    fun theTwoDelaysSurviveTheWire() {
-        val moving = field.copy(
-            travelDelayNanos = 9_000_000L,
-            shimmerDelayNanos = 4_000_000L,
-            shimmerPeriodNanos = 7_000_000_000L
-        )
-        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(moving))
-        assertEquals(9_000_000L, back.travelDelayNanos)
-        assertEquals(4_000_000L, back.shimmerDelayNanos)
-        assertEquals(7_000_000_000L, back.shimmerPeriodNanos)
-        assertEquals(0L, SpatialFieldCodec.decode(SpatialFieldCodec.encode(field)).travelDelayNanos)
-        assertEquals(0L, SpatialFieldCodec.decode(SpatialFieldCodec.encode(field)).shimmerDelayNanos)
     }
 
     /** Windows line endings reach this from a file as readily as from a socket. */

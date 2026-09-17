@@ -77,31 +77,10 @@ object SpatialShaper {
      * the three above. Its no-rule value is none of it.
      *
      * [reverb] is where the room keeps what it has heard, on the same terms as [crossover] and
-     * refused the same way. Like [diffuse] and unlike [crossover] it is this handset's own, drawn
-     * from its name, and like [diffuse] it must not agree across the room - see [RoomReverb]. What
+     * refused the same way. Unlike [crossover] it is this handset's own, drawn from its name,
+     * and it must not agree across the room - see [RoomReverb]. What
      * it returns is added to this handset's dry output, which is never delayed or filtered by it:
      * the direct sound is what the handsets have to agree about and it comes through untouched.
-     *
-     * [diffuse] is the second of those and is refused on the same terms. Unlike the crossover it is
-     * this handset's own, drawn from its name, and it is the one thing here that must not agree
-     * across the room - see [Decorrelator]. It is applied after the mix has been divided up and
-     * before the gain, so that a source travelling round the room keeps its envelope crisp while
-     * what travels is already diffuse.
-     *
-     * Neither the sections nor the headroom ramp across the chunk, and neither needs an argument
-     * saying where it came from. A whole number of allpass sections is not a value being
-     * interpolated towards; what a chunk edge carries when this moves is a phase pattern changing,
-     * which a ramp between two of them would not smooth but smear. It moves when a finger moves a
-     * slider, once.
-     *
-     * [travel] is the third, and the one that is refused on a different test from the other two.
-     * A crossover and a decorrelator are needed exactly when the knob that drives them is up; this
-     * one is needed whenever the **rule** moves in time, which is not the same as whenever the
-     * delay it asks for is non-zero - see [SpatialField.movesInTime]. It is also the one that is
-     * fed even when it is doing nothing: a delay line holds the last few milliseconds of the song,
-     * so one that stops being stepped while a knob is at zero is holding whatever was playing when
-     * the knob got there, and would play that back on the way up. Stepping it at a delay of zero
-     * hands every frame straight through and costs one array write.
      */
     fun shape(
         pcm: ByteArray,
@@ -115,9 +94,7 @@ object SpatialShaper {
         fromSpectrum: SpectrumMix? = null,
         fromReverb: Double? = null,
         crossover: Crossover? = null,
-        reverb: RoomReverb? = null,
-        diffuse: Decorrelator? = null,
-        travel: TravellingDelay? = null
+        reverb: RoomReverb? = null
     ): ByteArray {
         require(sampleRate > 0) { "frames need a rate to become instants: $sampleRate" }
         require(pcm.size % BYTES_PER_FRAME == 0) {
@@ -157,25 +134,6 @@ object SpatialShaper {
             if (reverb == null) SILENT else fromRoom ?: field.roomGainAt(peerId, startHostNanos)
         val endRoom =
             if (reverb == null) SILENT else field.roomGainAt(peerId, startHostNanos + spanNanos)
-        val stages = Decorrelator.stagesFor(field.diffusion)
-        // Null at zero rather than a filter asked for no sections: the arithmetic below then has no
-        // per-frame call at all, instead of a call that gives the sample straight back. A knob at
-        // off has to cost nothing, which is what 3e2c018 was written to fix elsewhere.
-        val diffuser = if (stages > 0) {
-            requireNotNull(diffuse) { "a rule that pulls the handsets apart needs this one's own filter" }
-        } else null
-        val headroom = Decorrelator.headroomFor(stages)
-        require(travel != null || !field.movesInTime) {
-            "a rule whose delay moves needs somewhere to hold the frames it is moving"
-        }
-        // Ramped across the chunk exactly as the gain is, and for the same reason plus one. The
-        // reason it shares: the law is a function of the instant, and evaluating it twice instead
-        // of per frame costs a straight line through an arc of about a degree. The one of its own:
-        // a step in a delay is a step in the waveform, which the ear hears as a click rather than
-        // as an error - so this is the one ramp here that is not an economy but a requirement.
-        val beginDelay = delaySamplesAt(travel, field, peerId, startHostNanos, sampleRate)
-        val endDelay = delaySamplesAt(travel, field, peerId, startHostNanos + spanNanos, sampleRate)
-
         val out = ByteArray(pcm.size)
         for (frame in 0 until frames) {
             // frame / frames, not frame / (frames - 1): the last frame stops just short of `end`,
@@ -201,13 +159,8 @@ object SpatialShaper {
             // them apart, and this keeps it that way if that ever changes.
             val mixLeft = whole * (own * sentLeft + fold * sentRight) + lowShare * lowLeft
             val mixRight = whole * (fold * sentLeft + own * sentRight) + lowShare * lowRight
-            // Turned down before it is placed, not after: an allpass keeps the energy and moves the
-            // peak, so the headroom belongs with the filter that needs it rather than with the gain
-            // law, which already reaches past unity on its own.
-            val heardLeft = if (diffuser == null) mixLeft else diffuser.left(mixLeft, stages) * headroom
-            val heardRight = if (diffuser == null) mixRight else diffuser.right(mixRight, stages) * headroom
-            val placedLeft = heardLeft * left
-            val placedRight = heardRight * right
+            val placedLeft = mixLeft * left
+            val placedRight = mixRight * right
             // The room, added to what this handset made and never in front of it. The dry above is
             // a bypass: not filtered, not delayed, not touched, so the instant a sound leaves this
             // handset is the instant every other handset agrees it leaves theirs. That is the whole
@@ -234,32 +187,11 @@ object SpatialShaper {
                 sentOutLeft = placedLeft * (1.0 - wet) + reverb.left(sentLeft) * roomLeft * wet
                 sentOutRight = placedRight * (1.0 - wet) + reverb.right(sentRight) * roomRight * wet
             }
-            // Last of all, on what this handset has finished making. Anywhere earlier would delay
-            // the gain envelope along with the audio, which for a source going round the room
-            // means the placement and the arrival time disagree about where it is by however far
-            // this handset is held back.
-            if (travel == null) {
-                writeSample(out, at, sentOutLeft)
-                writeSample(out, at + BYTES_PER_SAMPLE, sentOutRight)
-            } else {
-                travel.step(sentOutLeft, sentOutRight, beginDelay + (endDelay - beginDelay) * across)
-                writeSample(out, at, travel.left)
-                writeSample(out, at + BYTES_PER_SAMPLE, travel.right)
-            }
+            writeSample(out, at, sentOutLeft)
+            writeSample(out, at + BYTES_PER_SAMPLE, sentOutRight)
         }
         return out
     }
-
-    /** Nothing at all when nothing is holding frames, so the rule is not even asked. */
-    private fun delaySamplesAt(
-        travel: TravellingDelay?,
-        field: SpatialField,
-        peerId: String,
-        hostNanos: Long,
-        sampleRate: Int
-    ): Double =
-        if (travel == null) 0.0
-        else TravellingDelay.samplesFor(field.playbackDelayNanosFor(peerId, hostNanos), sampleRate)
 
     /** One little-endian 16-bit sample, sign extended. */
     private fun sampleAt(pcm: ByteArray, at: Int): Int =
