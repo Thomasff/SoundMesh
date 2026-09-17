@@ -33,6 +33,11 @@ object SpatialFieldCodec {
      * build expecting twenty-two fails on the count, and this is what turns that into "that
      * phone needs the new build" instead of a stack trace about a number nobody can place.
      *
+     * Sixteen also carries a mode that did not exist before it - [SpatialMode.UNISON] - and that
+     * half needs no count to catch it: a build that has never heard the name throws out of
+     * valueOf. The count is what catches the other half, and between them every handset either
+     * plays this rule or says it cannot.
+     *
      * The numbers before this one are in the git history rather than here. Each was argued for
      * at the time and most of them are about fields that no longer exist, and a list of
      * arguments for things that are gone is something a later reader has to disprove before

@@ -295,21 +295,26 @@ class SpatialPanelTest {
     }
 
     /**
-     * The one default in this file chosen by listening rather than by being neutral, and so the one
-     * a refactor could quietly put back to zero with nothing else noticing - every other test here
-     * builds the state it wants. A listener picked it on 2026-09-17, on the first build that had a
+     * The one number in this screen chosen by listening rather than by being neutral, and so the
+     * one a refactor could quietly move with nothing else noticing - every other test here builds
+     * the state it wants. A listener picked it on 2026-09-17, on the first build that had a
      * reverberation in it.
      *
-     * Asserted as the share the readout names rather than as the knob, because the share is what was
-     * listened to: the knob is an implementation of it, and MOST_WET could be rescaled tomorrow
-     * without anybody changing their mind about how much room they wanted.
+     * Asserted as the share the readout names rather than as the knob, because the share is what
+     * was listened to: the knob is an implementation of it, and MOST_WET could be rescaled
+     * tomorrow without anybody changing their mind about how much room they wanted.
+     *
+     * Not read off a fresh RoomState any more. A fresh room is 同步齐奏, which is the control the
+     * other effects are heard against and therefore has no room in it at all; the two effects that
+     * move a source around are the ones that carry this - see RoomEffectsTest.
      */
     @Test
-    fun aFreshRoomStartsWithTheReverberationSomebodyChose() {
-        val share = com.soundmesh.core.RoomReverb.wetFor(RoomState().reverb.toDouble())
+    fun theReverberationSomebodyChoseIsStillTheOneTheMovingEffectsUse() {
+        val share = com.soundmesh.core.RoomReverb.wetFor(DEFAULT_REVERB.toDouble())
 
         // Loose by the width of a float and no looser: the knob is stored as one, so eight tenths
         // of it widened to a double is 0.800000011920929 and the share inherits that.
         assertEquals(0.40, share, 1e-6)
+        assertEquals(0.0, com.soundmesh.core.RoomReverb.wetFor(RoomState().reverb.toDouble()), 0.0)
     }
 }

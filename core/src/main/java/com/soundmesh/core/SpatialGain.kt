@@ -11,7 +11,7 @@ import kotlin.math.sqrt
 data class StereoGain(val left: Double, val right: Double)
 
 /**
- * The three things a room full of handsets can be made to do.
+ * The four things a room full of handsets can be made to do.
  *
  * All three place a source by loudness, and for a long time this paragraph said that was the only
  * kind of rule the system could carry: a listener locates a sound mainly by the time difference
@@ -30,6 +30,25 @@ data class StereoGain(val left: Double, val right: Double)
  * left in this file is an amplitude rule, now by decision rather than by default.
  */
 enum class SpatialMode {
+    /**
+     * Every handset plays the same thing: the whole mix, equally loud, wherever it is standing.
+     *
+     * The plainest thing this project does and the last of the four to be written, on 2026-09-17,
+     * which is the wrong way round and worth saying why. The room started with the arrangements
+     * and never had the absence of one, so until now there was no setting a listener could put a
+     * room into and hear what it sounds like with nothing added. Every other mode is a claim about
+     * where a sound is; this is the control they are all measured against, and an effect nobody
+     * can A/B is an effect nobody can judge.
+     *
+     * Not the same as [SPLIT] with nothing turned up. That one places the two channels by where
+     * the handsets stand, which is already a claim - and one that goes wrong when the drawing does
+     * not match the room. This one has no claim in it to be wrong.
+     *
+     * Still distance corrected, like every other mode: playing the same thing is about what each
+     * handset is sent, not about it reaching the listener at a level nobody chose.
+     */
+    UNISON,
+
     /** A source that circles the listener on its own, once per period. */
     ROTATE,
 
@@ -279,7 +298,7 @@ data class SpatialField(
         // The slider covers the frontal half circle only. Behind the listener is reachable by
         // rotation but not by dragging: a control whose two ends meet has no ends.
         SpatialMode.PAN -> pan * PI / 2.0
-        SpatialMode.SPLIT -> 0.0
+        SpatialMode.SPLIT, SpatialMode.UNISON -> 0.0
     }
 
     /**
@@ -458,6 +477,10 @@ data class SpatialField(
         val azimuth = layout.azimuthOf(peerId)
         val reach = layout.distanceGainOf(peerId)
         val placed = when (mode) {
+            // No direction at all, which is what makes this the one every other mode is heard
+            // against. The distance correction below still applies: equally loud at the listener,
+            // not equally loud at the handsets.
+            SpatialMode.UNISON -> StereoGain(1.0, 1.0)
             SpatialMode.ROTATE, SpatialMode.PAN -> {
                 // Raised cosine of the angular gap: full facing the source, nothing facing away.
                 // For the two-handset case this is exactly constant-power panning; for more it is

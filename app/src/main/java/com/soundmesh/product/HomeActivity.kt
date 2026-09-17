@@ -536,6 +536,7 @@ class HomeActivity : ComponentActivity() {
             setPan = { pan -> updateRoom { it.copy(pan = pan) } },
             setSeparation = { apart -> updateRoom { it.copy(separation = apart) } },
             setEnvelopment = { keep -> updateRoom { it.copy(envelopment = keep) } },
+            setPeriodSeconds = { seconds -> updateRoom { it.copy(periodSeconds = seconds) } },
             setRetreat = { back -> updateRoom { it.copy(retreat = back) } },
             setReverb = { room -> updateRoom { it.copy(reverb = room) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
@@ -596,8 +597,15 @@ class HomeActivity : ComponentActivity() {
         return SpatialField(
             room.mode,
             layout,
+            periodNanos = room.periodSeconds.toLong().coerceAtLeast(1L) * 1_000_000_000L,
             pan = room.pan.toDouble().coerceIn(-1.0, 1.0),
-            separation = room.separation.toDouble().coerceIn(0.0, 1.0),
+            // Dropped from the rule while a source is being moved around, and only from the rule:
+            // the screen goes on remembering which handset carries which half, so trying the
+            // rotation for a minute does not cost an assignment somebody made by hand. A source
+            // going one place is one thing going one place, and there is nothing to hand out.
+            separation =
+                if (room.mode == SpatialMode.ROTATE || room.mode == SpatialMode.PAN) 0.0
+                else room.separation.toDouble().coerceIn(0.0, 1.0),
             splitAxis = room.splitAxis,
             crossoverHz = room.crossoverHz.toDouble()
                 .coerceIn(SpatialField.LOWEST_CROSSOVER_HZ, SpatialField.HIGHEST_CROSSOVER_HZ),

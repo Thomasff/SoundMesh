@@ -89,7 +89,7 @@ fun SpatialPanel(
         Note(stringResource(R.string.room_hint))
         MeasuredRoom(state, actions.onTheMap(), blockedPeerNames, ripple)
         ArrivalDelays(state, actions, showDetails)
-        EffectSection(state, actions, showDetails, readings)
+        EffectSection(state, actions, readings)
     }
 }
 
@@ -192,7 +192,11 @@ class RoomMapActions(
 /** What the screen draws about the room, and nothing it decides. */
 data class RoomState(
     val icons: List<RoomIcon> = emptyList(),
-    val mode: SpatialMode = SpatialMode.SPLIT,
+    /**
+     * Unison, which is what a room that nobody has touched should be doing: several phones playing
+     * one song in step, with no claim about where the sound is that could be wrong.
+     */
+    val mode: SpatialMode = SpatialMode.UNISON,
     /** Where the pan slider is, in the same -1..1 the rule uses. Ignored outside [SpatialMode.PAN]. */
     val pan: Float = 0f,
     /** Which icon is this phone, so a listener can tell which one is in their hand. */
@@ -291,21 +295,22 @@ data class RoomState(
      * straight from the source and what arrives off the walls that a listener reads as distance.
      * Tie them together and there is no ratio left to change.
      *
-     * In every mode, unlike [retreat]. A room is a room whether or not there is a source being
-     * moved around it, so this one has nowhere to be stranded.
+     * Zero here, and not zero in practice: the two effects that move a source around set it to
+     * [DEFAULT_REVERB] when they are chosen, and the two that do not leave it alone. This default
+     * is what the room plays before anybody has chosen anything, which is 同步齐奏 - and that one
+     * is the control the others are heard against, so it has to be the arrangement with nothing
+     * added rather than the arrangement with one thing added.
      *
-     * **On by default, and this number is the one a listener picked**, on 2026-09-17, on the first
-     * build that had a reverberation in it: four tenths of what a handset plays being the room.
-     * Nothing else in this file was chosen that way - every other default is a neutral, meaning
-     * "nobody has touched this yet". This one means "somebody listened to several and said this
-     * one". If a later room disagrees, this is the number to move, and it should be moved by
-     * somebody listening rather than by an argument.
+     * [DEFAULT_REVERB] itself is the one number in this screen a listener picked rather than a
+     * neutral somebody defaulted to: 2026-09-17, on the first build that had a reverberation in
+     * it, four tenths of what a handset plays being the room. If a later room disagrees, that is
+     * the number to move, and it should be moved by somebody listening rather than by an argument.
      *
      * Stated as the knob rather than as the share, because the knob is what is stored: the share
-     * the readout names is this times [RoomReverb.MOST_WET], so eight tenths here is the four
-     * tenths that was chosen.
+     * the readout names is this times [RoomReverb.MOST_WET], so eight tenths there is four tenths
+     * heard.
      */
-    val reverb: Float = 0.8f,
+    val reverb: Float = 0f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -337,6 +342,8 @@ class RoomActions(
     val setPan: (Float) -> Unit,
     val setSeparation: (Float) -> Unit,
     val setEnvelopment: (Float) -> Unit,
+    /** How long one circuit takes, in whole seconds. Only read by the rotation. */
+    val setPeriodSeconds: (Int) -> Unit,
     val setRetreat: (Float) -> Unit,
     val setReverb: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
@@ -1003,8 +1010,6 @@ private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
     }
 }
 
-/** The stops between off and all of it, which is one fewer than the filter has sections. */
-private const val DIFFUSION_STOPS = 3
 
 /**
  * How live the room is: how much of what a handset plays came off the walls rather than out of the
@@ -1066,53 +1071,66 @@ private fun RuleReadings(readings: List<RoomReading>, colours: Map<String, Int>)
 const val DEFAULT_ENVELOPMENT = 0.25f
 
 /**
- * What the room can be asked to sound like, and the way to the knobs underneath.
+ * The list of named results, and under whichever one is chosen, what it is played with.
  *
- * A list of named results rather than the five knobs that produce them - see [RoomEffect] for
- * what was wrong with the knobs as the front page. Under the list is exactly one control: the one
- * the chosen effect is actually played with, which is the pan slider for a source somebody drags
- * and the part assignment for anything split between handsets. Everything else is behind 细调,
- * unchanged, because a knob somebody has learnt to use is not a knob to take away.
+ * Four rows, and every row is an answer to one question - where is the sound. A row that is not
+ * chosen is its name and nothing else; the chosen one carries its own description and its own
+ * controls, inside the same card. That shape is the whole of why the page stays legible: what
+ * belongs to what is said by where it sits rather than by a sentence somebody has to read, and
+ * switching rows moves a block of at most three lines from one card to another instead of
+ * rearranging the screen.
+ *
+ * What is deliberately **not** in the list: how the song is divided up. That is not a fourth
+ * place for a sound to be, it is a different question, and it lives inside the two rows that can
+ * answer it. The other two move a source around, and a source is one thing going one place.
  */
 @Composable
 private fun EffectSection(
     state: RoomState,
     actions: RoomActions,
-    showDetails: Boolean = false,
     readings: List<RoomReading> = emptyList()
 ) {
     val current = effectOf(state)
     Label(R.string.room_effect_title)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (effect in RoomEffect.entries) {
-            EffectRow(effect, chosen = current == effect) { apply(effect, actions) }
+            EffectRow(effect, chosen = current == effect, state = state, actions = actions) {
+                apply(effect, actions)
+            }
         }
     }
-    // Said rather than hidden: somebody who moved a slider is between two of these, and a list
-    // with nothing lit up and no explanation reads as the list having broken.
+    // Said rather than hidden: somebody who moved the reverberation in the fine tuning is between
+    // two of these, and a list with nothing lit up and no explanation reads as the list broken.
     if (current == null) Note(stringResource(R.string.room_effect_custom))
-    if (state.mode == SpatialMode.PAN) PanSlider(state, actions)
-    if (state.mode != SpatialMode.SPLIT) RuleReadings(readings, state.colours)
-    // Out here rather than behind the diagnostic switch, and it is the only one of these that has
-    // moved out. The switch is for settings somebody is testing; this one is on by default and is
-    // half of what the source dot means - drag the dot outward with no room to keep standing still
-    // and all that happens is the music gets quieter. A control that another visible control
-    // depends on cannot be the hidden one.
-    ReverbSlider(state, actions)
-    if (showDetails && state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
-    if (state.separation > 0f) PartPicker(state, actions)
-    FineTuning(state, actions, readings)
+    // Empty unless the diagnostic switch is on - see HomeActivity, which is where they are worked
+    // out. Under the list rather than inside a card, because they are about the room and not
+    // about any one row of it.
+    RuleReadings(readings, state.colours)
+    FineTuning(state, actions)
 }
 
-/** One named result: what it is called, what it does in a line, and whether it is the one on. */
+/**
+ * One named result: its name, and when it is the chosen one, what it does and what moves it.
+ *
+ * Only clickable while it is **not** chosen. A chosen card holds sliders and segmented buttons,
+ * and a card that is also a button would take the finger that was aiming at one of them.
+ */
 @Composable
-private fun EffectRow(effect: RoomEffect, chosen: Boolean, onClick: () -> Unit) {
+private fun EffectRow(
+    effect: RoomEffect,
+    chosen: Boolean,
+    state: RoomState,
+    actions: RoomActions,
+    onClick: () -> Unit
+) {
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().then(
+            if (chosen) Modifier else Modifier.clickable(onClick = onClick)
+        ),
         shape = RoundedCornerShape(10.dp),
-        color = if (chosen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+        color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(
-            1.dp,
+            if (chosen) 2.dp else 1.dp,
             if (chosen) MaterialTheme.colorScheme.onSurface
             else MaterialTheme.colorScheme.surfaceVariant
         )
@@ -1121,22 +1139,93 @@ private fun EffectRow(effect: RoomEffect, chosen: Boolean, onClick: () -> Unit) 
             Text(
                 stringResource(effect.title),
                 style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = if (chosen) MaterialTheme.colorScheme.surface
-                else MaterialTheme.colorScheme.onSurface
+                fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurface
             )
+            if (!chosen) return@Column
             Text(
                 stringResource(effect.line),
                 style = MaterialTheme.typography.bodySmall,
-                color = if (chosen) MaterialTheme.colorScheme.surface.copy(alpha = CHOSEN_LINE_ALPHA)
-                else MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            EffectOwn(effect, state, actions)
         }
     }
 }
 
-/** How much quieter the line under a chosen effect's name is than the name. */
-private const val CHOSEN_LINE_ALPHA = 0.78f
+/**
+ * The controls that belong to one effect and to no other.
+ *
+ * 自定义声音位置 has none, and that is not an omission: its control is the dot on the drawing
+ * further up this page, which is already on screen and which appears the moment this row is
+ * chosen. A second control here saying the same thing would be a second place for the answer to
+ * be - see the line this row carries, which points at the dot instead.
+ */
+@Composable
+private fun EffectOwn(effect: RoomEffect, state: RoomState, actions: RoomActions) {
+    when (effect) {
+        RoomEffect.UNISON, RoomEffect.STEREO -> ContentSplit(state, actions)
+        RoomEffect.SPIN -> SpinSpeed(state, actions)
+        RoomEffect.PLACE -> Unit
+    }
+}
+
+/**
+ * Whether the song comes apart between the handsets, and along which axis.
+ *
+ * Three buttons rather than a knob and a picker, because the question a person has is "分不分",
+ * not "分多少". How far it goes is still there in the fine tuning, and it is still the way this
+ * degrades - see [SeparationControl] - but it is not the first thing anybody is asked.
+ *
+ * Only under the two rows that stand still. A source being moved around the room is one thing
+ * going one place, so there is nothing to hand out; the rule drops the split for those two modes
+ * while this screen goes on remembering it - see HomeActivity.
+ */
+@Composable
+private fun ContentSplit(state: RoomState, actions: RoomActions) {
+    val split = state.separation > 0f
+    Note(stringResource(R.string.room_split_label))
+    Segmented(
+        listOf(
+            Segment(stringResource(R.string.room_split_none), chosen = !split) {
+                actions.setSeparation(0f)
+            },
+            Segment(
+                stringResource(R.string.room_split_voice),
+                chosen = split && state.splitAxis == SplitAxis.MIDDLE_SIDES
+            ) {
+                actions.pickAxis(SplitAxis.MIDDLE_SIDES)
+                actions.setSeparation(1f)
+            },
+            Segment(
+                stringResource(R.string.room_split_bass),
+                chosen = split && state.splitAxis == SplitAxis.LOW_HIGH
+            ) {
+                actions.pickAxis(SplitAxis.LOW_HIGH)
+                actions.setSeparation(1f)
+            }
+        )
+    )
+    if (!split) return
+    if (state.splitAxis == SplitAxis.LOW_HIGH) CrossoverSlider(state, actions)
+    PartPicker(state, actions)
+}
+
+/** How long one circuit takes. Whole seconds, because that is how anybody would say it. */
+@Composable
+private fun SpinSpeed(state: RoomState, actions: RoomActions) {
+    Knob(
+        title = stringResource(R.string.room_spin_period),
+        value = state.periodSeconds.toFloat(),
+        readout = stringResource(R.string.room_spin_seconds, state.periodSeconds),
+        range = SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(),
+        onChange = { actions.setPeriodSeconds(it.roundToInt()) }
+    )
+}
+
+/** Fast enough to be a circuit rather than a stutter, slow enough to be a walk rather than a wait. */
+const val SHORTEST_SPIN_SECONDS = 2
+const val LONGEST_SPIN_SECONDS = 20
 
 /**
  * Sets a room to one named result.
@@ -1144,28 +1233,28 @@ private const val CHOSEN_LINE_ALPHA = 0.78f
  * Every knob the effect names is sent, including the ones it leaves at zero: an effect chosen
  * after another one has to undo that one, and a room carrying half of each is the state nobody
  * asked for and nothing on screen can name.
+ *
+ * The content split is **not** among them, deliberately - see [EffectSettings]. Somebody who has
+ * told four phones which of them carry the voice and then tries the rotation for a minute has to
+ * find that assignment where they left it.
  */
 private fun apply(effect: RoomEffect, actions: RoomActions) {
     val settings = effect.settings
     actions.pickMode(settings.mode)
-    actions.setSeparation(settings.separation)
-    actions.pickAxis(settings.axis)
     actions.setEnvelopment(settings.envelopment)
+    actions.setReverb(settings.reverb)
 }
 
 /**
  * The knobs, folded away.
  *
- * Nothing here is new and nothing here has been taken out. What changed is that it is no longer
- * the first thing on the screen: five controls with a paragraph each, above the list of things
- * they are for.
+ * Three of them now, and each is a taste rather than a thing to understand: how live the room is,
+ * how much a handset keeps when the source turns away from it, and how far the split goes. Every
+ * one of them has a default somebody listened to, so this is a fold for people who disagree with
+ * a listener rather than a fold for people who have not read far enough.
  */
 @Composable
-private fun FineTuning(
-    state: RoomState,
-    actions: RoomActions,
-    readings: List<RoomReading> = emptyList()
-) {
+private fun FineTuning(state: RoomState, actions: RoomActions) {
     var open by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(top = 4.dp)) {
         Ghost(stringResource(if (open) R.string.room_fine_hide else R.string.room_fine)) {
@@ -1173,100 +1262,44 @@ private fun FineTuning(
         }
     }
     if (!open) return
-    ModePicker(state, actions)
-    if (state.mode != SpatialMode.SPLIT) EnvelopmentSlider(state, actions)
-    SeparationControl(state, actions)
-    // Beside the slider rather than once at the bottom of the screen. The reason is that it is
-    // read with a finger already on a control: a number somewhere else on a page that has to be
-    // scrolled is a number nobody checks while dragging.
-    RuleReadings(readings, state.colours)
-}
-
-@Composable
-private fun ModePicker(state: RoomState, actions: RoomActions) {
-    Column(modifier = Modifier.padding(top = 8.dp)) {
-        Segmented(
-            SpatialMode.entries.map { mode ->
-                Segment(
-                    stringResource(
-                        when (mode) {
-                            SpatialMode.ROTATE -> R.string.room_mode_rotate
-                            SpatialMode.PAN -> R.string.room_mode_pan
-                            SpatialMode.SPLIT -> R.string.room_mode_split
-                        }
-                    ),
-                    chosen = mode == state.mode
-                ) { actions.pickMode(mode) }
-            }
-        )
-        Note(
-            when (state.mode) {
-                SpatialMode.ROTATE -> stringResource(R.string.room_mode_rotate_hint, state.periodSeconds)
-                SpatialMode.PAN -> stringResource(R.string.room_mode_pan_hint)
-                SpatialMode.SPLIT -> stringResource(R.string.room_mode_split_hint)
-            }
-        )
+    // First, because it is the one of the three that every effect reads and the only one an
+    // effect sets for you. Somebody who came here came here for this.
+    ReverbSlider(state, actions)
+    if (state.mode == SpatialMode.ROTATE || state.mode == SpatialMode.PAN) {
+        EnvelopmentSlider(state, actions)
     }
-}
-
-@Composable
-private fun PanSlider(state: RoomState, actions: RoomActions) {
-    Column {
-        Knob(
-            title = stringResource(R.string.room_pan_title),
-            value = state.pan,
-            range = -1f..1f,
-            onChange = actions.setPan
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Note(stringResource(R.string.room_pan_left))
-            Note(stringResource(R.string.room_pan_right))
-        }
-    }
+    if (state.separation > 0f) SeparationControl(state, actions)
 }
 
 /**
- * The knob that pulls the mix apart, and who gets which half of it.
- *
- * Beside the mode rather than inside it, because it answers a different question: the mode says
- * where a handset stands in the room, this says which part of the song it carries there. Either
- * is useful without the other, and the two compose - a room can rotate what it has separated.
+ * How far the mix is pulled apart, once somebody has said that it is.
  *
  * A knob rather than a switch, and the reason is on screen as much as in the rule: the further it
  * goes the more the handsets depend on being in step with each other, so the way this degrades is
  * for the listener to wind it back until the room sounds right rather than for the app to decide.
+ * The buttons that turn it on set it to all of it; this is where somebody who hears the seams
+ * takes it back.
  */
 @Composable
 private fun SeparationControl(state: RoomState, actions: RoomActions) {
-    Column {
-        Knob(
-            title = stringResource(R.string.room_split_content),
-            value = state.separation,
-            readout = stringResource(R.string.room_knob_percent, knobPercent(state.separation, 0f..1f)),
-            onChange = actions.setSeparation
-        )
-        if (state.separation <= 0f) {
-            Note(stringResource(R.string.room_split_content_off))
-            return@Column
-        }
-        AxisPicker(state, actions)
-        if (state.splitAxis == SplitAxis.LOW_HIGH) CrossoverSlider(state, actions)
-    }
+    Knob(
+        title = stringResource(R.string.room_split_content),
+        value = state.separation,
+        readout = stringResource(R.string.room_knob_percent, knobPercent(state.separation, 0f..1f)),
+        onChange = actions.setSeparation
+    )
 }
 
 /**
  * Which handset carries which half, for whichever axis the room is split along.
  *
- * On the front of the panel rather than down among the knobs, because it is the one control a
- * split effect is played with: the effect decides that the song comes apart, and this decides
- * which phone gets which piece of it. Every handset in the room has a row, this one included.
+ * Inside the effect that asked for it, because it is the one control a split is played with: the
+ * buttons above decide that the song comes apart, and this decides which phone gets which piece.
+ * Every handset in the room has a row, this one included.
  */
 @Composable
 private fun PartPicker(state: RoomState, actions: RoomActions) {
-    Label(R.string.room_parts)
+    Note(stringResource(R.string.room_parts_label))
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (icon in state.icons) {
             Row(
@@ -1309,30 +1342,6 @@ private val PART_BADGE = 19.dp
 private fun partLabelOf(axis: SplitAxis, farHalf: Boolean): Int = when (axis) {
     SplitAxis.MIDDLE_SIDES -> if (farHalf) R.string.room_part_sides else R.string.room_part_middle
     SplitAxis.LOW_HIGH -> if (farHalf) R.string.room_part_high else R.string.room_part_low
-}
-
-/**
- * Which way the mix is pulled apart - by where a sound sits in the image, or by how fast it moves.
- *
- * One at a time, and below the knob rather than beside the mode, because the knob is the thing
- * that decides whether any of this is happening: with it at zero there is no axis to choose.
- */
-@Composable
-private fun AxisPicker(state: RoomState, actions: RoomActions) {
-    Segmented(
-        SplitAxis.entries.map { axis ->
-            Segment(
-                stringResource(
-                    when (axis) {
-                        SplitAxis.MIDDLE_SIDES -> R.string.room_axis_middle_sides
-                        SplitAxis.LOW_HIGH -> R.string.room_axis_low_high
-                    }
-                ),
-                chosen = axis == state.splitAxis
-            ) { actions.pickAxis(axis) }
-        },
-        modifier = Modifier.padding(top = 8.dp)
-    )
 }
 
 /** Where the low half stops. Read out in hertz because a slider with no number on it is a guess. */

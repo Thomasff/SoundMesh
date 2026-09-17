@@ -18,9 +18,8 @@ class RoomEffectsTest {
     /** The state an effect leaves behind, the way [SpatialPanel]'s apply leaves it. */
     private fun roomOn(effect: RoomEffect): RoomState = RoomState(
         mode = effect.settings.mode,
-        separation = effect.settings.separation,
-        splitAxis = effect.settings.axis,
-        envelopment = effect.settings.envelopment
+        envelopment = effect.settings.envelopment,
+        reverb = effect.settings.reverb
     )
 
     @Test
@@ -41,25 +40,62 @@ class RoomEffectsTest {
         assertEquals(RoomEffect.entries.size, rooms.toSet().size)
     }
 
+    /** A room nobody has touched is the one the list opens on, not a room with no name. */
+    @Test
+    fun `a fresh room is playing the plainest thing on the list`() {
+        assertEquals(RoomEffect.UNISON, effectOf(RoomState()))
+    }
+
+    /**
+     * The two that stand still get no reverberation and the two that move a source get the number
+     * a listener picked. That split is the 09-17 decision and it is the whole reason the knob left
+     * the front of the panel: a room is worth having when there is somewhere to move in it.
+     */
+    @Test
+    fun `only the effects that move a source bring a room with them`() {
+        assertEquals(0f, RoomEffect.UNISON.settings.reverb)
+        assertEquals(0f, RoomEffect.STEREO.settings.reverb)
+        assertEquals(DEFAULT_REVERB, RoomEffect.SPIN.settings.reverb)
+        assertEquals(DEFAULT_REVERB, RoomEffect.PLACE.settings.reverb)
+    }
+
     /**
      * A room somebody tuned by hand has no name, and is told so. Highlighting the nearest entry
-     * would say their change did not take.
+     * would say their change did not take - and the reverberation is exactly the knob somebody
+     * goes into the fine tuning to move, so it has to be one of the things that counts.
      */
     @Test
     fun `a room tuned by hand matches nothing`() {
-        assertNull(
+        assertNull(effectOf(RoomState(mode = SpatialMode.SPLIT, reverb = 0.5f)))
+        assertNull(effectOf(RoomState(mode = SpatialMode.ROTATE, reverb = 0f)))
+    }
+
+    /**
+     * The content split is not one of the things that counts, and that is the point of leaving it
+     * out of [EffectSettings]: somebody who has told four phones which of them carry the voice,
+     * and then taps 同步齐奏, has to see 同步齐奏 light up rather than 自定的设置.
+     */
+    @Test
+    fun `how the song is divided up is not part of which effect this is`() {
+        assertEquals(
+            RoomEffect.STEREO,
             effectOf(
                 RoomState(
                     mode = SpatialMode.SPLIT,
-                    separation = 0.4f,
-                    splitAxis = SplitAxis.MIDDLE_SIDES
+                    separation = 1f,
+                    splitAxis = SplitAxis.LOW_HIGH,
+                    otherHalfIds = setOf("aa")
                 )
             )
+        )
+        assertEquals(
+            RoomEffect.UNISON,
+            effectOf(RoomState(mode = SpatialMode.UNISON, separation = 0.4f))
         )
     }
 
     /**
-     * The settings nobody can hear do not count. An envelopment left over from 绕着转 is still in
+     * The settings nobody can hear do not count. An envelopment left over from 旋转 is still in
      * the state after a switch to a split, where no source ever turns away from anything - and if
      * it counted, the list would light up nothing at all after that switch.
      */
@@ -70,8 +106,8 @@ class RoomEffectsTest {
             effectOf(RoomState(mode = SpatialMode.SPLIT, envelopment = DEFAULT_ENVELOPMENT))
         )
         assertEquals(
-            RoomEffect.STEREO,
-            effectOf(RoomState(mode = SpatialMode.SPLIT, splitAxis = SplitAxis.LOW_HIGH))
+            RoomEffect.UNISON,
+            effectOf(RoomState(mode = SpatialMode.UNISON, envelopment = DEFAULT_ENVELOPMENT))
         )
     }
 }

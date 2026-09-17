@@ -616,6 +616,73 @@ class SpatialGainTest {
         assertTrue(hardRight.roomGainAt("right", 0L).right > 0.5)
     }
 
+    /**
+     * Unison asks every handset for the same thing, both channels alike.
+     *
+     * Which is what makes it the control the other three are heard against: any difference a
+     * listener hears between two handsets under this rule came from the handsets or the room, not
+     * from anything here. Three handsets rather than two, because a rule that happened to be even
+     * across a facing pair could still be uneven across a triangle.
+     */
+    @Test
+    fun unisonAsksTheSameOfEveryHandset() {
+        val together = SpatialField(mode = SpatialMode.UNISON, layout = triangle)
+        val first = together.gainAt("left", 0L)
+
+        for (peerId in triangle.peerIds) {
+            val gain = together.gainAt(peerId, 3_300_000_000L)
+            assertEquals(first.left, gain.left, 1e-12)
+            assertEquals(first.left, gain.right, 1e-12)
+        }
+    }
+
+    /** And it does not move with the clock, unlike the two modes that have a source in them. */
+    @Test
+    fun unisonIsTheSameAtEveryInstant() {
+        val together = SpatialField(mode = SpatialMode.UNISON, layout = triangle)
+
+        assertEquals(
+            together.gainAt("front", 0L).left,
+            together.gainAt("front", 7_777_000_000L).left,
+            1e-12
+        )
+    }
+
+    /**
+     * It is not the split with nothing turned up, and that is the whole reason it exists.
+     *
+     * The split places the two channels by where a handset stands, which is already a claim about
+     * the room - and one that is wrong whenever the drawing is. A handset off to one side plays
+     * two different channel gains under the split and two equal ones under this.
+     */
+    @Test
+    fun unisonIsNotASplitWithNothingTurnedUp() {
+        val split = SpatialField(mode = SpatialMode.SPLIT, layout = pair)
+        val together = SpatialField(mode = SpatialMode.UNISON, layout = pair)
+
+        assertTrue(abs(split.gainAt("left", 0L).left - split.gainAt("left", 0L).right) > 0.5)
+        assertEquals(
+            together.gainAt("left", 0L).left,
+            together.gainAt("left", 0L).right,
+            1e-12
+        )
+    }
+
+    /**
+     * Still distance corrected. Playing the same thing is about what each handset is sent, not
+     * about it reaching the listener at a level nobody chose - so the one standing further off is
+     * asked for more, exactly as it is under every other mode.
+     */
+    @Test
+    fun unisonStillAsksMoreOfTheHandsetStandingFurtherOff() {
+        val uneven = SpatialLayout(
+            listOf(SpatialPosition("near", -0.4, 0.0), SpatialPosition("far", 1.0, 0.0))
+        )
+        val together = SpatialField(mode = SpatialMode.UNISON, layout = uneven)
+
+        assertTrue(together.gainAt("far", 0L).left > together.gainAt("near", 0L).left)
+    }
+
     private fun roomPower(field: SpatialField): Double = field.layout.peerIds.sumOf {
         val gain = field.gainAt(it, 0L)
         (gain.left * gain.left + gain.right * gain.right) / 2.0
