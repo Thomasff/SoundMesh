@@ -132,9 +132,28 @@ fun MeasuredRoom(
             color = MaterialTheme.colorScheme.error
         )
     }
+    if (sourceSpotOf(state, actions) != null) SourceReadout(state)
     ListenerDistances(state, actions)
     MeasuredDistances(state)
     FitOffer(state, actions)
+}
+
+/**
+ * What the source dot is, and where it has been put.
+ *
+ * Said in words beside the drawing rather than left to the picture, because half of what the dot
+ * means is not to scale and so cannot be read off it - see [SpatialRoom.SOURCE_MAX_RADIUS]. The
+ * multiple is the part a person can check against the room they are sitting in; the decibels are
+ * there for whoever wants to know what was actually done.
+ */
+@Composable
+private fun SourceReadout(state: RoomState) {
+    Note(stringResource(R.string.room_source_hint))
+    val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
+    Note(
+        if (state.retreat <= 0f) stringResource(R.string.room_source_here)
+        else stringResource(R.string.room_source_away, 10f.pow(decibels / 20f), decibels)
+    )
 }
 
 /**
@@ -153,7 +172,15 @@ class RoomMapActions(
      * Null rather than a lambda that does nothing: offering to go and measure, on the screen the
      * measuring happens on, is a button whose own words are false.
      */
-    val measureListener: (() -> Unit)?
+    val measureListener: (() -> Unit)?,
+    /**
+     * Puts the source somewhere, or null on a screen with no source to put.
+     *
+     * Null on the calibration screen for the same reason [measureListener] is: that screen draws
+     * the same room and has no rule behind it, so a dot a finger could drag would be a control
+     * wired to nothing - which is worse than an absent one, because it moves.
+     */
+    val moveSource: ((SourceSpot) -> Unit)? = null
 )
 
 /** What the screen draws about the room, and nothing it decides. */
@@ -350,7 +377,18 @@ class RoomActions(
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
 ) {
-    fun onTheMap() = RoomMapActions(moveIcon, fitToMeasured, measureListener)
+    fun onTheMap() = RoomMapActions(
+        moveIcon,
+        fitToMeasured,
+        measureListener,
+        // Two setters from one gesture, which is the whole of what the dot is. Where a source is
+        // in a room is two numbers and a slider is one, so a slider can only travel a path chosen
+        // for it in advance; this hands both numbers over at once and lets the finger pick.
+        moveSource = { spot ->
+            setPan(SpatialRoom.panOf(spot))
+            setRetreat(SpatialRoom.retreatOf(spot))
+        }
+    )
 }
 
 /**
@@ -625,6 +663,7 @@ private fun RoomDrawing(
     val outline = MaterialTheme.colorScheme.outlineVariant
     val handset = MaterialTheme.colorScheme.primary
     val self = MaterialTheme.colorScheme.tertiary
+    val source = MaterialTheme.colorScheme.secondary
     val label = MaterialTheme.colorScheme.onPrimary
     val danger = MaterialTheme.colorScheme.error
     // One of four states per icon rather than one hollow circle - see StandbyLook. Worked out here,
@@ -659,15 +698,19 @@ private fun RoomDrawing(
             // underneath would stop agreeing with the picture.
             .border(1.dp, frame, RoundedCornerShape(10.dp))
             .pointerInput(state.icons.map { it.peerId }) {
-                fun put(held: String, at: Offset) = onRoom.moveIcon(
-                    SpatialRoom.clamped(
-                        RoomIcon(
-                            held,
-                            (at.x / size.width).coerceIn(0.02f, 0.98f),
-                            (at.y / size.height).coerceIn(0.02f, 0.98f)
-                        )
-                    )
-                )
+                fun put(held: Grabbed, at: Offset) {
+                    val x = (at.x / size.width).coerceIn(0.02f, 0.98f)
+                    val y = (at.y / size.height).coerceIn(0.02f, 0.98f)
+                    when (held) {
+                        // Unclamped on purpose: what the source may not do is said once, in
+                        // SpatialRoom.panOf and retreatOf, and the dot is redrawn from what they
+                        // answered. A second clamp here would be a second opinion about the same
+                        // edge, and the two would drift.
+                        is Grabbed.Source -> onRoom.moveSource?.invoke(SourceSpot(x, y))
+                        is Grabbed.Handset ->
+                            onRoom.moveIcon(SpatialRoom.clamped(RoomIcon(held.peerId, x, y)))
+                    }
+                }
                 awaitEachGesture {
                     // Nothing here is consumed until an icon has actually been picked up, which
                     // is the whole point of writing the gesture out rather than using
@@ -680,8 +723,9 @@ private fun RoomDrawing(
                     // Chosen once and held for the whole gesture. Re-choosing the nearest icon
                     // on every event would let a fast drag hand itself to whichever one it
                     // passed over.
-                    val held = nearestPeerId(
+                    val held = grabbedAt(
                         room.icons,
+                        sourceSpotOf(room, onRoom),
                         down.position.x / size.width,
                         down.position.y / size.height
                     ) ?: return@awaitEachGesture
@@ -715,6 +759,7 @@ private fun RoomDrawing(
                 measurer
             )
         }
+        sourceSpotOf(state, actions)?.let { drawSource(it, source) }
         // The ring that spreads from this handset's own icon the moment play is pressed - see
         // PlayingScreen's LaunchedEffect(state.running). Nothing to draw before this handset has
         // an icon of its own, which is every drawing with no room yet.
@@ -743,6 +788,60 @@ private fun rememberKilledPulse(look: StandbyLook): Float {
 /** How many 150ms red pulses a fresh kill gets, and how long each half of one takes. */
 private const val KILLED_PULSE_REPEATS = 2
 private const val KILLED_PULSE_MILLIS = 150
+
+/**
+ * Where the source is on the drawing just now, or null when this room has none to show.
+ *
+ * Worked out from the rule's own two numbers rather than stored beside them. A stored position
+ * would be a third account of where the source is, and this project has met what happens when two
+ * places hold the same fact: they agree until something writes one of them, and then the screen
+ * and the sound disagree with nothing on either to say which is stale.
+ *
+ * Only the pan mode has a source a person puts anywhere. The rotation drives the same law from the
+ * clock, so a dot there would be a control fighting the thing it is drawing; the split has no
+ * source at all.
+ */
+private fun sourceSpotOf(state: RoomState, actions: RoomMapActions): SourceSpot? {
+    if (actions.moveSource == null || state.mode != SpatialMode.PAN) return null
+    return SpatialRoom.spotOf(state.pan, state.retreat)
+}
+
+/**
+ * The source: where the sound is coming from, as against where the handsets are.
+ *
+ * The line back to the listener is not decoration. Which side a source is on is legible from the
+ * dot alone, and how far off it is is not - the radius is even in decibels rather than to scale,
+ * so the eye has nothing to measure it against except the listener it is drawn from.
+ */
+private fun DrawScope.drawSource(spot: SourceSpot, colour: Color) {
+    val centre = Offset(spot.x * size.width, spot.y * size.height)
+    val middle = Offset(size.width / 2f, size.height / 2f)
+    drawLine(colour.copy(alpha = SOURCE_LINE_ALPHA), middle, centre, strokeWidth = 2f)
+    val radius = size.minDimension * 0.032f
+    val halo = radius * 3f
+    drawCircle(
+        Brush.radialGradient(
+            colors = listOf(colour.copy(alpha = 0.5f), colour.copy(alpha = 0f)),
+            center = centre,
+            radius = halo
+        ),
+        radius = halo,
+        center = centre
+    )
+    drawCircle(colour, radius = radius, center = centre)
+    // A ring outside the disc, so that the mark reads as something sounding rather than as one
+    // more handset. The handsets are discs with numbers in them; this is the only ringed thing
+    // on the drawing that is not a listener.
+    drawCircle(
+        colour.copy(alpha = 0.55f),
+        radius = radius * 1.7f,
+        center = centre,
+        style = Stroke(width = 2f)
+    )
+}
+
+/** How plainly the line from the listener to the source is drawn. A reach, not a wire. */
+private const val SOURCE_LINE_ALPHA = 0.35f
 
 /**
  * The listener, and which way they are facing.
@@ -871,6 +970,42 @@ internal fun nearestPeerId(icons: List<RoomIcon>, x: Float, y: Float): String? =
     .minByOrNull { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) }
     ?.takeIf { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) <= GRAB_RADIUS }
     ?.peerId
+
+/** What a finger landing on the drawing meant. */
+internal sealed interface Grabbed {
+    /** The source, which is the one thing here that is not a handset. */
+    data object Source : Grabbed
+
+    data class Handset(val peerId: String) : Grabbed
+}
+
+/**
+ * Which of the things on the drawing a finger landing here meant, or null for none of them.
+ *
+ * The source wins a tie, and that is the only interesting line in it. The dot is drawn over the
+ * handsets and a person reaches for what they can see; handing a drag to the icon underneath
+ * instead would move a phone across the room in answer to a touch aimed at the sound. That failure
+ * has been reported on this screen once already, from the other cause - see the rememberUpdatedState
+ * note in RoomDrawing - and it reads to a listener as the drawing ignoring them.
+ *
+ * [source] is null wherever there is no source to grab, which makes this exactly [nearestPeerId].
+ */
+internal fun grabbedAt(
+    icons: List<RoomIcon>,
+    source: SourceSpot?,
+    x: Float,
+    y: Float
+): Grabbed? {
+    val handset = nearestPeerId(icons, x, y)
+    val toSource = source
+        ?.let { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) }
+        ?.takeIf { it <= GRAB_RADIUS }
+        ?: return handset?.let { Grabbed.Handset(it) }
+    val nearest = handset ?: return Grabbed.Source
+    val toHandset = icons.first { it.peerId == nearest }
+        .let { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) }
+    return if (toSource <= toHandset) Grabbed.Source else Grabbed.Handset(nearest)
+}
 
 /** How far from an icon a finger may land and still mean it. A fingertip on a phone screen. */
 internal const val GRAB_RADIUS = 0.12
@@ -1171,7 +1306,11 @@ private fun EffectSection(
     // there is a source being moved around it.
     if (showDetails) {
         SkewSlider(state, actions)
-        RetreatSlider(state, actions)
+        // With the pan mode, because that is the mode the source dot is in and this is the same
+        // number written the other way round. Anywhere else it would be a control that survives
+        // leaving the screen it belongs to: a room left quiet by a dot, in a mode with no dot on
+        // it to put back - see HomeActivity, where the rule is given the same condition.
+        if (state.mode == SpatialMode.PAN) RetreatSlider(state, actions)
         if (state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     }
     if (state.separation > 0f) PartPicker(state, actions)

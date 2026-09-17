@@ -3,6 +3,7 @@ package com.soundmesh.product
 import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialPosition
 import kotlin.math.PI
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
@@ -16,6 +17,21 @@ import kotlin.math.sin
  * defect a listener cannot diagnose by ear because it sounds exactly like a working one.
  */
 data class RoomIcon(val peerId: String, val x: Float, val y: Float)
+
+/**
+ * Where the sound is coming from, on the same drawing and in the same fractions as [RoomIcon].
+ *
+ * Not state. Nothing stores one of these: a spot is worked out from the two numbers the rule
+ * already holds - which side the source is on and how far off it is - and a finger that moves it
+ * writes those same two numbers back. See [SpatialRoom.spotOf], [SpatialRoom.panOf] and
+ * [SpatialRoom.retreatOf].
+ *
+ * That is the whole of why the dot exists. Where a source is in a room is two numbers, and a
+ * slider is one, so a slider can only ever travel one path that somebody chose in advance. Two
+ * sliders can reach every position and ask a listener to operate both at once to do it. A place
+ * on a drawing is two numbers in one gesture, which is what the question was.
+ */
+data class SourceSpot(val x: Float, val y: Float)
 
 /**
  * The drawing, and the two things the screen cannot work out for itself.
@@ -39,6 +55,29 @@ object SpatialRoom {
      * finger is down.
      */
     const val MIN_RADIUS = 0.06f
+
+    /**
+     * How far out the source is drawn when nothing has pushed it back: exactly where the handsets
+     * start.
+     *
+     * The handsets are as close as a source gets, and that is not a simplification to be undone
+     * later - the sound is coming out of them. Nearer than that would be a gain above one, and the
+     * cost of those is written down: see the gains-multiply note on SpatialGain.highTrim, where a
+     * lift of four decibels crackled on real music within minutes of reaching a listener.
+     */
+    const val SOURCE_HOME_RADIUS = DEFAULT_RADIUS
+
+    /**
+     * How far out the source can be dragged. Inside the edge, so the mark is drawn whole.
+     *
+     * Between here and [SOURCE_HOME_RADIUS] the drawing is not to scale, and it cannot be: the far
+     * end of this travel is the source at four times the distance, and a picture that showed that
+     * to scale would have the handsets in a huddle one pixel across. The radius is even in
+     * decibels instead, so half way out is twice as far and the whole way is four times - which is
+     * what the readout under the map says, and what SpatialRoomTest.halfWayOutIsTwiceAsFarAway
+     * checks against the rule rather than against this comment.
+     */
+    const val SOURCE_MAX_RADIUS = 0.44f
 
     /** The arc the icons start spread across, centred on straight ahead. */
     private const val DEFAULT_ARC_RADIANS = 2.0 * PI / 3.0
@@ -168,6 +207,53 @@ object SpatialRoom {
         if (radius == 0.0) return RoomIcon(icon.peerId, CENTRE, CENTRE - MIN_RADIUS)
         val scale = MIN_RADIUS / radius
         return RoomIcon(icon.peerId, CENTRE + (dx * scale).toFloat(), CENTRE + (dy * scale).toFloat())
+    }
+
+    /**
+     * Where to draw the source, given the two numbers that decide where it is.
+     *
+     * [pan] is which side, in the same -1..1 SpatialField reads, and it spans the half circle in
+     * front because that is the half the pan law covers. [retreat] is how far off, 0 among the
+     * handsets and 1 at the furthest the rule holds.
+     */
+    fun spotOf(pan: Float, retreat: Float): SourceSpot {
+        val azimuth = pan.coerceIn(-1f, 1f) * PI / 2.0
+        val radius = SOURCE_HOME_RADIUS +
+            retreat.coerceIn(0f, 1f) * (SOURCE_MAX_RADIUS - SOURCE_HOME_RADIUS)
+        return SourceSpot(
+            CENTRE + (radius * sin(azimuth)).toFloat(),
+            // The same flip as layoutOf, and for the same reason: ahead is up the screen.
+            CENTRE - (radius * cos(azimuth)).toFloat()
+        )
+    }
+
+    /**
+     * Which side a source dropped at [spot] is on, as the -1..1 the rule reads.
+     *
+     * Clamped rather than wrapped. Behind the listener is a direction the pan law has no way to
+     * render, so a finger taken round the back stops at the side - and it stops in the numbers,
+     * which is what makes the dot redrawn from them stop there too. Drawing a source somewhere the
+     * room cannot put one would be the drawing contradicting what is playing, with nothing on
+     * screen to say which of the two is right.
+     */
+    fun panOf(spot: SourceSpot): Float {
+        val across = (spot.x - CENTRE).toDouble()
+        val ahead = (CENTRE - spot.y).toDouble()
+        if (across == 0.0 && ahead == 0.0) return 0f
+        return (atan2(across, ahead) / (PI / 2.0)).toFloat().coerceIn(-1f, 1f)
+    }
+
+    /**
+     * How far off a source dropped at [spot] is, as the 0..1 the rule reads.
+     *
+     * Both ends clamp, and the near end is the interesting one: inside the ring of handsets there
+     * is nowhere nearer for a source to be, so everything in there reads as zero. See
+     * [SOURCE_HOME_RADIUS].
+     */
+    fun retreatOf(spot: SourceSpot): Float {
+        val radius = hypot((spot.x - CENTRE).toDouble(), (CENTRE - spot.y).toDouble()).toFloat()
+        return ((radius - SOURCE_HOME_RADIUS) / (SOURCE_MAX_RADIUS - SOURCE_HOME_RADIUS))
+            .coerceIn(0f, 1f)
     }
 
     /**

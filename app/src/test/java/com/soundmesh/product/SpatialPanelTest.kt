@@ -245,4 +245,52 @@ class SpatialPanelTest {
         // somebody standing still.
         assertEquals(0.5, measured.copy(delayCompensation = false).metresPerUnit, 0.0)
     }
+
+    /**
+     * A screen with no source on it decides exactly what it always decided. The calibration screen
+     * draws this same room and has no rule behind it, so nothing there may start answering
+     * differently because a dot exists somewhere else.
+     */
+    @Test
+    fun withNoSourceOnTheDrawingAFingerMeansWhatItAlwaysMeant() {
+        val room = SpatialRoom.defaultIcons(listOf(a, b))
+
+        assertEquals(Grabbed.Handset(a), grabbedAt(room, null, 0.31f, 0.29f))
+        assertNull(grabbedAt(room, null, 0.5f, 0.95f))
+    }
+
+    /**
+     * The tie, which is the whole reason this is a function rather than two ifs at the touch site.
+     *
+     * The dot is drawn over the handsets, and a person reaches for what they can see. Handing the
+     * drag to the icon underneath would send a phone across the room in answer to a touch aimed at
+     * the sound - and the room would then be wrong in the one way a listener cannot diagnose by
+     * ear, because a moved icon sounds like a working room playing a different drawing.
+     */
+    @Test
+    fun aSourceSittingOnAHandsetTakesTheTouch() {
+        val icon = RoomIcon(a, 0.4f, 0.3f)
+        val onTopOfIt = SourceSpot(0.4f, 0.3f)
+
+        assertEquals(Grabbed.Source, grabbedAt(listOf(icon), onTopOfIt, 0.4f, 0.3f))
+    }
+
+    /** And the other way: a handset plainly nearer than the source keeps its own touch. */
+    @Test
+    fun aHandsetNearerThanTheSourceKeepsTheTouch() {
+        val icon = RoomIcon(a, 0.4f, 0.3f)
+        val wellAway = SourceSpot(0.5f, 0.15f)
+
+        assertEquals(Grabbed.Handset(a), grabbedAt(listOf(icon), wellAway, 0.4f, 0.3f))
+    }
+
+    /** The source is grabbable on an empty patch of drawing, where no handset is in reach at all. */
+    @Test
+    fun aSourceStandingAloneIsStillGrabbable() {
+        val far = SourceSpot(0.5f, 0.1f)
+
+        assertEquals(Grabbed.Source, grabbedAt(emptyList(), far, 0.5f, 0.1f))
+        // ... and only within a fingertip of it, on the same terms as a handset.
+        assertNull(grabbedAt(emptyList(), far, 0.5f, (0.1 + GRAB_RADIUS * 1.01).toFloat()))
+    }
 }

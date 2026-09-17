@@ -1,5 +1,7 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.SpatialField
+import com.soundmesh.core.SpatialMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -270,5 +272,83 @@ class SpatialRoomTest {
         val room = SpatialRoom.reconciled(listOf(now), listOf(a), remembered = mapOf(a to then))
 
         assertEquals(now, room.single())
+    }
+
+    /**
+     * The whole of what makes the dot a control rather than a picture of one: a source drawn from
+     * a pair of numbers reads back as that same pair. Without this the finger and the rule drift
+     * apart, and the drawing becomes the most confident wrong thing on the screen.
+     */
+    @Test
+    fun aSourceDrawnFromTwoNumbersReadsBackAsThoseTwoNumbers() {
+        for (tenth in -10..10) {
+            for (step in 0..10) {
+                val pan = tenth / 10f
+                val retreat = step / 10f
+                val spot = SpatialRoom.spotOf(pan, retreat)
+
+                assertEquals("pan at $pan/$retreat", pan, SpatialRoom.panOf(spot), 1e-4f)
+                assertEquals("retreat at $pan/$retreat", retreat, SpatialRoom.retreatOf(spot), 1e-4f)
+            }
+        }
+    }
+
+    /** Nothing asked for is nothing moved: the source starts straight ahead, among the handsets. */
+    @Test
+    fun aSourceNobodyHasDraggedSitsAheadAmongTheHandsets() {
+        val spot = SpatialRoom.spotOf(0f, 0f)
+
+        assertEquals(SpatialRoom.CENTRE, spot.x, 1e-6f)
+        assertEquals(SpatialRoom.CENTRE - SpatialRoom.DEFAULT_RADIUS, spot.y, 1e-6f)
+    }
+
+    /**
+     * Behind the listener is a direction the pan law cannot render - it spans the half circle in
+     * front and no further - so a finger taken round the back stops at the side. Drawing a source
+     * where the room has no way to put one is the drawing lying, and it lies convincingly.
+     */
+    @Test
+    fun aSourceTakenBehindTheListenerStopsAtTheSide() {
+        assertEquals(1f, SpatialRoom.panOf(SourceSpot(0.7f, 0.9f)), 1e-4f)
+        assertEquals(-1f, SpatialRoom.panOf(SourceSpot(0.3f, 0.9f)), 1e-4f)
+    }
+
+    /** The far end of the travel, which is the corner a finger reaches first. */
+    @Test
+    fun aSourceDraggedOffTheEdgeStopsAtTheFurthestTheRuleHolds() {
+        assertEquals(1f, SpatialRoom.retreatOf(SourceSpot(0.5f, 0.0f)), 1e-4f)
+    }
+
+    /**
+     * Inside the ring of handsets there is nowhere nearer for a source to be, because the sound is
+     * coming out of the handsets. Clamped rather than turned into a lift: a gain above one is the
+     * one thing this may never hand downstream - see the gains-multiply note in SpatialGain.
+     */
+    @Test
+    fun aSourceInsideTheHandsetsIsAsCloseAsItGets() {
+        assertEquals(0f, SpatialRoom.retreatOf(SourceSpot(0.5f, 0.47f)), 1e-4f)
+    }
+
+    /**
+     * What the drawing means, checked against the rule rather than against itself.
+     *
+     * The readout under the map says "退到 x 倍远", so half way out has to be twice as far - which
+     * in a law that is one over distance is half the amplitude. If the picture and the physics stop
+     * agreeing here, a listener is being shown one story and played another, and only the picture
+     * is checkable by eye.
+     */
+    @Test
+    fun halfWayOutIsTwiceAsFarAway() {
+        val middle = (SpatialRoom.DEFAULT_RADIUS + SpatialRoom.SOURCE_MAX_RADIUS) / 2f
+        val halfway = SourceSpot(SpatialRoom.CENTRE, SpatialRoom.CENTRE - middle)
+        val layout = SpatialRoom.layoutOf(SpatialRoom.defaultIcons(listOf(a, b)))!!
+        val here = SpatialField(SpatialMode.PAN, layout)
+        val there = here.copy(retreat = SpatialRoom.retreatOf(halfway).toDouble())
+
+        val ratio = there.gainAt(a, 0L).left / here.gainAt(a, 0L).left
+
+        // One over the amplitude ratio is how many times further off the source is. Two, from the
+        // drawing's own midpoint - and the expected side is arithmetic, never the rule's own call.
+        assertEquals(2.0, 1.0 / ratio, 1e-2)
     }
 }

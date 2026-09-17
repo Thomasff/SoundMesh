@@ -67,6 +67,7 @@ import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
 import com.soundmesh.core.SpatialField
+import com.soundmesh.core.SpatialMode
 import com.soundmesh.session.CAPTURING_HOST_USAGE
 import com.soundmesh.session.HostSession
 import com.soundmesh.session.SessionService
@@ -642,7 +643,9 @@ class HomeActivity : ComponentActivity() {
             skewRecedes = room.skewCarriesDistance,
             // Unlike the gap above it, this one needs nobody named: it is the same number for
             // every handset, which is the whole of what makes it a distance rather than a pan.
-            retreat = room.retreat.toDouble().coerceIn(0.0, 1.0)
+            retreat =
+                if (room.mode == SpatialMode.PAN) room.retreat.toDouble().coerceIn(0.0, 1.0)
+                else 0.0
         )
     }
 
