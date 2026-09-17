@@ -6,13 +6,13 @@ import android.media.AudioTimestamp
 import android.media.AudioTrack
 import com.soundmesh.core.Crossover
 import com.soundmesh.core.Decorrelator
-import com.soundmesh.core.DistanceShelf
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.REACQUIRE_THRESHOLD_FRAMES
 import com.soundmesh.core.RendererPhase
+import com.soundmesh.core.RoomReverb
 import com.soundmesh.core.SchedulerStats
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialShaper
@@ -108,7 +108,7 @@ internal fun spatialShaped(
     peerId: String?,
     wasUnder: SpatialField? = null,
     crossover: Crossover,
-    shelf: DistanceShelf,
+    reverb: RoomReverb? = null,
     diffuse: Decorrelator? = null,
     travel: TravellingDelay? = null
 ): ByteArray {
@@ -124,9 +124,10 @@ internal fun spatialShaped(
         from = cameFrom(wasUnder, field, peerId, playAtHostNanos),
         fromFold = foldCameFrom(wasUnder, field, peerId),
         fromSpectrum = spectrumCameFrom(wasUnder, field, peerId),
-        fromRetreat = retreatCameFrom(wasUnder, field, peerId),
+        fromRoom = roomCameFrom(wasUnder, field, peerId, playAtHostNanos),
+        fromReverb = reverbCameFrom(wasUnder, field, peerId),
         crossover = crossover,
-        shelf = shelf,
+        reverb = reverb,
         diffuse = diffuse,
         travel = travel
     )
@@ -179,21 +180,37 @@ private fun foldCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: Str
 }
 
 /**
- * How far off the room had put the source a moment ago, when that is not where this rule puts it.
+ * What share of the room's own reverberation this handset was carrying a moment ago.
  *
- * The fourth of these and the only one that does not ask the rule about a handset - the retreat is
- * one number for the whole room. It is here rather than folded into [cameFrom] for the same reason
- * the fold is: the gain it drives is already carried there, and what this is for is the **shelf**,
- * which no gain can ramp. Dragging the source outward moves both, and a step in the depth while
- * the level ramps smoothly would be the treble arriving before the loudness.
- *
- * Zero for a handset that was playing under no rule at all, because a source nobody has moved is
- * exactly where it stands. A handset the old rule did not name is the same case.
+ * [cameFrom] for the wet, and it needs its own because the wet's placement is not the dry's: the
+ * distance is left out of it, which is the whole of how a reverberation reads as a source moving
+ * away. Silence for a handset that was playing under no rule, because a handset playing unshaped is
+ * playing no room at all.
  */
-private fun retreatCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: String): Double? {
+private fun roomCameFrom(
+    wasUnder: SpatialField?,
+    now: SpatialField,
+    peerId: String,
+    playAtHostNanos: Long
+): StereoGain? {
+    if (wasUnder === now) return null
+    if (wasUnder == null || !wasUnder.layout.contains(peerId)) return StereoGain(0.0, 0.0)
+    return wasUnder.roomGainAt(peerId, playAtHostNanos)
+}
+
+/**
+ * How much room the previous chunk was heard ending in, when that is not what this rule asks for.
+ *
+ * The one of these that needs nobody named - how live the room is is one number for all of it. It
+ * is separate from [roomCameFrom] for the same reason the fold is separate from [cameFrom]: turning
+ * the room up moves this and leaves the placement where it was, and dragging an icon does the
+ * reverse. Zero for a handset that was playing under no rule, because a room nobody asked for is no
+ * room.
+ */
+private fun reverbCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: String): Double? {
     if (wasUnder === now) return null
     if (wasUnder == null || !wasUnder.layout.contains(peerId)) return 0.0
-    return wasUnder.retreat
+    return wasUnder.reverb
 }
 
 /**
@@ -322,11 +339,11 @@ class SyncRenderer(
     // this is the one thing in the path that is a function of the past.
     private val crossover = Crossover()
 
-    // Beside the crossover and never built lazily like the two below it: this one is fed on every
-    // frame whether or not it is taking anything off, so that a source dragged outward finds it
-    // already holding the right few hundred microseconds instead of clicking its way up from cold.
-    // At a depth of nothing it is two arithmetic operations and hands the sample straight back.
-    private val shelf = DistanceShelf()
+    // This handset's own room, and the second thing in the path that is meant to disagree with
+    // every other handset's - see RoomReverb. Built on first use like the diffuser and never let go
+    // of again, like the delay: half a second of tail means a room dropped and rebuilt when a knob
+    // passes through zero has to fill up again from silence.
+    private val reverberation by lazy { spatialPeerId?.let { RoomReverb(it, SAMPLE_RATE) } }
 
     // This handset's own, and the one thing in the path that is meant to disagree with every other
     // handset's - see Decorrelator. Built on first use rather than eagerly: a room with the knob at
@@ -344,6 +361,9 @@ class SyncRenderer(
     // Whether anything has ever asked, so a session that never turns either of them on carries no
     // delay line at all. Latched rather than read off the current rule for the reason above.
     @Volatile private var everTravelled = false
+
+    // The same latch for the room, and the same reason - see [everTravelled].
+    @Volatile private var everReverberated = false
 
     @Volatile private var driftSamples = 0
     @Volatile private var lastFilteredError = 0
@@ -719,7 +739,7 @@ class SyncRenderer(
                             spatialPeerId,
                             wasUnder = shapedUnder,
                             crossover = crossover,
-                            shelf = shelf,
+                            reverb = if (everReverberated) reverberation else null,
                             diffuse = diffuser,
                             travel = if (everTravelled) travelling else null
                         )
@@ -1070,6 +1090,7 @@ class SyncRenderer(
         // not have it is refused by the shaper. Arriving early costs an array write per frame and
         // no sound at all; arriving late is a rule this handset cannot play.
         if (field != null && field.movesInTime) everTravelled = true
+        if (field != null && field.reverb > 0.0) everReverberated = true
     }
 
     /** How long this handset is waiting for the furthest one, in nanoseconds. */

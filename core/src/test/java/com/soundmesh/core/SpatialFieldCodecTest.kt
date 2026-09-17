@@ -61,6 +61,30 @@ class SpatialFieldCodecTest {
         assertEquals(field.gainAt("aa", 0L).left, read.gainAt("aa", 0L).left, 1e-12)
     }
 
+    /**
+     * This one carries twice, so it is checked twice. It decides how much of what a handset plays
+     * is the room - a receiver that dropped it would play dry while everybody else played in a hall
+     * - and it also decides how much of the plain distance law a head start gets, which is a gain
+     * every handset works out locally. The second is the one that would go unnoticed.
+     */
+    @Test
+    fun theRoomsReverberationSurvivesTheWireAndSoDoesTheLawItSets() {
+        val live = field.copy(
+            reverb = 0.7,
+            skewRecedes = true,
+            skewNanos = 20_000_000L,
+            skewPeerId = field.layout.peerIds.first()
+        )
+        val back = SpatialFieldCodec.decode(SpatialFieldCodec.encode(live))
+
+        assertEquals(0.7, back.reverb, 0.0)
+        for (peerId in live.layout.peerIds) {
+            val at = 3_300_000_000L
+            assertEquals(live.gainAt(peerId, at).left, back.gainAt(peerId, at).left, 0.0)
+            assertEquals(live.roomGainAt(peerId, at).left, back.roomGainAt(peerId, at).left, 0.0)
+        }
+    }
+
     @Test
     fun theRoomsRetreatSurvivesTheWire() {
         val away = field.copy(retreat = 0.6)

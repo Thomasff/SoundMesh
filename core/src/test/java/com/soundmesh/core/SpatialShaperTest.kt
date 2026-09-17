@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.log10
 import kotlin.math.pow
 
 class SpatialShaperTest {
@@ -491,84 +492,99 @@ class SpatialShaperTest {
     }
 
     /**
-     * The commonest case in the whole file, and the one a filter is most likely to spoil quietly.
-     * A source nobody has moved has to come out byte for byte what it came in as, or every chunk of
-     * every song is being filtered slightly for ever with nothing on any screen saying so.
+     * The commonest case in the whole file, and the one an effect is most likely to spoil quietly.
+     * A room nobody has asked for has to come out byte for byte what it came in as, even with a
+     * reverberation sitting there ready, or every chunk of every song is being altered slightly for
+     * ever with nothing on any screen saying so.
      */
     @Test
-    fun aRoomWithItsSourceWhereItStandsPlaysExactlyWhatItAlwaysPlayed() {
+    fun aRoomWithNoReverberationInItPlaysExactlyWhatItAlwaysPlayed() {
         val room = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0)
         val pcm = noise()
 
         val plain = SpatialShaper.shape(pcm, room, "left", 0L, sampleRate)
-        val shelved = SpatialShaper.shape(pcm, room, "left", 0L, sampleRate, shelf = DistanceShelf())
+        val ready = SpatialShaper.shape(
+            pcm, room, "left", 0L, sampleRate, reverb = RoomReverb("left", sampleRate)
+        )
 
-        assertArrayEquals(plain, shelved)
+        assertArrayEquals(plain, ready)
     }
 
     /**
-     * And the point of it. A source dragged away loses more of its top than of its bottom, because
-     * what reaches a listener from across a room has mostly been off a wall and walls keep the
-     * bottom - see [DistanceShelf].
+     * **And the point of the whole thing.** A source dragged to the far end of its travel loses
+     * exactly the level the readout promises when the room is dry - and less than that when the
+     * room is live, because the part of what a handset plays that came off the walls did not move
+     * when the source did.
      *
-     * Measured as a ratio of ratios so that the level the retreat already takes off divides out:
-     * what is being asked is whether the **top** went further down than the whole did, which is the
-     * only part of this the shelf is responsible for.
+     * That difference is the direct-to-reverberant ratio changing, which is the only cue for
+     * distance that cannot be mistaken for something else. A level on its own can always be a
+     * quieter source rather than a further one; a level that falls while the room's own share
+     * stays put cannot.
+     *
+     * The dry arm is asserted exactly rather than loosely, so that a reverberation which secretly
+     * followed the retreat could not pass by making both arms agree.
      */
     @Test
-    fun aSourceDraggedAwayLosesMoreOfItsTopThanOfItsWhole() {
-        val here = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0)
-        val away = here.copy(retreat = 1.0)
-        // Alternating samples are the top of what this rate can carry; a steady level is the bottom.
-        val treble = steadyAlternating(8000)
-        val bass = steady(8000)
+    fun aSourceDraggedAwayKeepsItsRoomWhileItsDirectSoundGoesQuiet() {
+        val dryHere = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0)
+        val liveHere = dryHere.copy(reverb = 1.0)
+        // A second, not a chunk: see fallOf.
+        val pcm = noise(sampleRate)
 
-        val trebleRatio = energyOf(
-            SpatialShaper.shape(treble, away, "left", 0L, sampleRate, shelf = DistanceShelf())
-        ) / energyOf(SpatialShaper.shape(treble, here, "left", 0L, sampleRate, shelf = DistanceShelf()))
-        val bassRatio = energyOf(
-            SpatialShaper.shape(bass, away, "left", 0L, sampleRate, shelf = DistanceShelf())
-        ) / energyOf(SpatialShaper.shape(bass, here, "left", 0L, sampleRate, shelf = DistanceShelf()))
+        val dryFall = fallOf(pcm, dryHere)
+        val liveFall = fallOf(pcm, liveHere)
 
-        assertTrue("the top did not go further down: $trebleRatio against $bassRatio", trebleRatio < bassRatio)
-        // The bottom is the retreat's business alone: down by exactly the level the readout
-        // claims and not one decibel more. Written out here rather than asked of the rule, so a
-        // shelf leaning on the bottom could not hide behind the thing it was leaning on.
-        val levelOnly = 10.0.pow(-SpatialField.RETREAT_DECIBELS / 20.0).let { it * it }
-        // Loose by the width of a sixteen bit sample and no looser: the shaper writes shorts,
-        // so the ratio of two rounded chunks cannot land on the real number exactly.
-        assertEquals(levelOnly, bassRatio, 1e-5)
+        // Loose by the width of a sixteen bit sample and no looser: the shaper writes shorts, so
+        // the ratio of two rounded chunks cannot land on the real number exactly.
+        assertEquals(SpatialField.RETREAT_DECIBELS, dryFall, 0.05)
+        assertTrue(
+            "the room fell with the source: $liveFall against $dryFall dry",
+            dryFall - liveFall > 1.5
+        )
     }
 
     /**
-     * A rule that moves the source needs somewhere for the filter to keep what it has heard, and
-     * says so rather than playing an undulled room. A missing filter and a source that has not
-     * moved sound exactly alike, which is the pair this refusal exists to tell apart - the same
-     * argument the crossover's own requirement is written on.
+     * How many decibels a [room] loses between its source at home and at the far end, as heard.
+     *
+     * Measured over the second half of a whole second, and that is not caution. The shortest comb
+     * in the reverberation is about twenty-five milliseconds, which is **longer than a chunk** - so
+     * over one chunk the room returns exactly nothing and a reverberation that worked perfectly
+     * would measure as one that was not there. That is also why the reverberation is held by the
+     * renderer across chunks rather than built per chunk: a fresh one every twenty milliseconds
+     * would never reach its own first reflection.
+     */
+    private fun fallOf(pcm: ByteArray, room: SpatialField): Double {
+        val live = room.reverb > 0.0
+        val here = SpatialShaper.shape(
+            pcm, room, "left", 0L, sampleRate,
+            reverb = if (live) RoomReverb("left", sampleRate) else null
+        )
+        val away = SpatialShaper.shape(
+            pcm, room.copy(retreat = 1.0), "left", 0L, sampleRate,
+            reverb = if (live) RoomReverb("left", sampleRate) else null
+        )
+        val settled = pcm.size / 4 / 2
+        return -10.0 * log10(energyOf(away, settled) / energyOf(here, settled))
+    }
+
+    /**
+     * A rule with a reverberation in it needs somewhere for the walls to keep what they have heard,
+     * and says so rather than playing the room dry. A missing reverberation and a knob at zero
+     * sound exactly alike, which is the pair this refusal exists to tell apart - the same argument
+     * the crossover's own requirement is written on.
      */
     @Test
-    fun aRoomThatHasMovedItsSourceRefusesToPlayWithoutSomewhereToFilter() {
-        val away = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0, retreat = 1.0)
+    fun aRoomWithAReverberationRefusesToPlayWithNowhereToKeepIt() {
+        val live = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0, reverb = 1.0)
 
         val thrown = runCatching {
-            SpatialShaper.shape(steady(8000), away, "left", 0L, sampleRate)
+            SpatialShaper.shape(steady(8000), live, "left", 0L, sampleRate)
         }.exceptionOrNull()
 
         assertTrue("played anyway: $thrown", thrown is IllegalArgumentException)
     }
 
-    /** The top of what this rate can carry, as a chunk. */
-    private fun steadyAlternating(level: Int, frames: Int = framesPerChunk): ByteArray {
-        val pcm = ByteArray(frames * 4)
-        for (index in 0 until frames * 2) {
-            val value = if ((index / 2) % 2 == 0) level else -level
-            pcm[index * 2] = (value and 0xFF).toByte()
-            pcm[index * 2 + 1] = (value shr 8).toByte()
-        }
-        return pcm
-    }
-
-    /** Sum of squares on the left channel, skipping the first frames while the filter settles. */
-    private fun energyOf(pcm: ByteArray): Double =
-        leftChannel(pcm).drop(200).sumOf { it.toDouble() * it.toDouble() }
+    /** Sum of squares on the left channel, from [settled] on, once the filters have filled. */
+    private fun energyOf(pcm: ByteArray, settled: Int): Double =
+        leftChannel(pcm).drop(settled).sumOf { it.toDouble() * it.toDouble() }
 }

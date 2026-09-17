@@ -42,13 +42,13 @@ class Decorrelator(val peerId: String, sampleRate: Int) {
 
     init {
         require(sampleRate > 0) { "milliseconds need a rate to become samples: $sampleRate" }
-        val seed = seedOf(peerId)
+        val seed = NameSeed.of(peerId)
         val picks = IntArray(DELAYS_MS.size)
         var parity = 0
         for (stage in 0 until DELAYS_MS.size - 1) {
             // One independent draw per stage rather than one draw spread across stages, so that
             // two names agreeing about an early stage says nothing about the later ones.
-            picks[stage] = ((mix(seed + stage) ushr 1) % DELAYS_MS[stage].size).toInt()
+            picks[stage] = NameSeed.pick(seed, stage, DELAYS_MS[stage].size)
             parity += picks[stage]
         }
         // The last stage is not drawn, it is the check digit - see [DELAYS_MS] for why.
@@ -171,28 +171,5 @@ class Decorrelator(val peerId: String, sampleRate: Int) {
          */
         val STAGES = DELAYS_MS.size
 
-        /**
-         * FNV-1a over the name's bytes, then a bit mixer.
-         *
-         * Hand rolled rather than String.hashCode() because that is thirty-two bits of a weak
-         * function over names that share long prefixes, and the two handsets most likely to collide
-         * are the two most likely to be in the same room.
-         */
-        private fun seedOf(peerId: String): Long {
-            var hash = -3750763034362895579L
-            for (byte in peerId.toByteArray(Charsets.UTF_8)) {
-                hash = hash xor (byte.toLong() and 0xFF)
-                hash *= 1099511628211L
-            }
-            return hash
-        }
-
-        /** splitmix64's finaliser: avalanches the low bits, which is the half a modulo reads. */
-        private fun mix(state: Long): Long {
-            var z = state + -7046029254386353131L
-            z = (z xor (z ushr 30)) * -4658895280553007687L
-            z = (z xor (z ushr 27)) * -7723592293110705685L
-            return z xor (z ushr 31)
-        }
     }
 }

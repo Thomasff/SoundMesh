@@ -385,7 +385,12 @@
     <string name="room_skew_distance_on">晚 %1$d 毫秒就是被搬远 %2$.1f 米，那它就该按这个距离变轻。早的那台一动不动，方向还是它说了算。这一根只管方向，要让声音整个走远，用下面那根。</string>
     <string name="room_source_hint">房间图上那个带光圈的点就是声源，拖它：左右决定声音偏哪边，离你远近决定声音有多远。手机那一圈是最近的位置，因为声音本来就是从手机里出来的。</string>
     <string name="room_source_here">声源就在手机那一圈上，全屋原样。</string>
-    <string name="room_source_away">声源退到 %1$.1f 倍远：所有手机一起轻 %2$.1f 分贝，高频再少 %3$.1f 分贝（远处的声音本来就闷，因为你听到的多半是在墙上弹过的那一份）。方向不受影响。</string>
+    <string name="room_source_away">声源退到 %1$.1f 倍远：所有手机一起轻 %2$.1f 分贝。方向不受影响。</string>
+    <string name="room_source_dry">但现在房间回声是零，所以拖远只是变轻。光靠响度说不清远近——耳边的耳语和远处的喊叫可以一样响。把下面那根「房间回声」拧上来：回声不跟着声源走远，一个变轻一个不变，耳朵才读得出距离。</string>
+    <string name="room_reverb">房间回声</string>
+    <string name="room_reverb_none">没有回声，声音直接从手机出来，和这个功能做出来之前逐比特一样。</string>
+    <string name="room_reverb_some">%1$.0f%% 是回声，尾巴 %2$.1f 秒。声源拖远时回声不跟着变轻，所以远近听得出来，不只是变小。</string>
+    <string name="room_reverb_hint">回声每台手机各算各的，故意不一样：真实房间里两个不同位置听到的回声本来就不相关，这也是几台手机能赢过两个音箱的地方。直达声是旁路，一个采样都不动，所以不影响同步。远处的声音变闷也归它管，每在墙上弹一次就少一点高频。</string>
     <string name="room_retreat">声源退多远（临时调试）</string>
     <string name="room_retreat_here">就在原地</string>
     <string name="room_retreat_away">退到 %1$.1f 倍远（轻 %2$.1f 分贝）</string>

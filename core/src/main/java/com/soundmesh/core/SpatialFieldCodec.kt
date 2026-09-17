@@ -70,10 +70,18 @@ object SpatialFieldCodec {
      * locally from its own build. Two builds in one room would apply two different laws to the same
      * message and neither would say so - which is the failure this project has met before and the
      * one it is least able to see, because both rooms sound like rooms.
+     *
+     * Fifteen for how much room there is - see [SpatialField.reverb]. It carries twice, which is
+     * why it is worth naming both. A receiver that dropped it would play its source dry while the
+     * rest of the room played it in a hall, which is not a handset sounding slightly different but
+     * the one handset a listener can point at. And it also sets how much of the plain distance law
+     * a head start gets, through [SpatialField.RECEDE_ROLLOFF] - so two builds disagreeing about
+     * this field would apply two different laws to the same message, which is the failure fourteen
+     * was cut for and the one this project is least able to see.
      */
-    const val VERSION = 14
+    const val VERSION = 15
 
-    private const val HEADER_FIELDS = 21
+    private const val HEADER_FIELDS = 22
     private const val POSITION_FIELDS = 4
 
     // What stands in the head start's handset field when nothing is skewed. A handset name is
@@ -117,7 +125,7 @@ object SpatialFieldCodec {
                 "${field.envelopment} ${field.diffusion} ${field.travelDelayNanos} " +
                 "${field.shimmerDelayNanos} ${field.shimmerPeriodNanos} " +
                 "${field.skewNanos} ${skewName ?: NO_SKEW} ${field.retreat} " +
-                "${field.skewRecedes} " +
+                "${field.skewRecedes} ${field.reverb} " +
                 "${field.layout.positions.size}"
         )
         for (position in field.layout.positions) {
@@ -180,7 +188,9 @@ object SpatialFieldCodec {
             "false" -> false
             else -> throw IllegalArgumentException("unreadable receding gap: ${header[19]}")
         }
-        val count = header[20].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[20]}")
+        val reverb = header[20].toDoubleOrNull()
+            ?: throw IllegalArgumentException("unreadable reverberation: ${header[20]}")
+        val count = header[21].toIntOrNull() ?: throw IllegalArgumentException("unreadable count: ${header[21]}")
         require(count >= 0) { "negative count: $count" }
         require(lines.size == count + 1) {
             "spatial field promised $count handsets and carried ${lines.size - 1}"
@@ -229,7 +239,8 @@ object SpatialFieldCodec {
             skewNanos = skewNanos,
             skewPeerId = skewPeerId,
             retreat = retreat,
-            skewRecedes = skewRecedes
+            skewRecedes = skewRecedes,
+            reverb = reverb
         )
     }
 }

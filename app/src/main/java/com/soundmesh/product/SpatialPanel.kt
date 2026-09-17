@@ -51,7 +51,7 @@ import androidx.compose.ui.unit.sp
 import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.AlignmentAnalysis
-import com.soundmesh.core.DistanceShelf
+import com.soundmesh.core.RoomReverb
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -153,13 +153,13 @@ private fun SourceReadout(state: RoomState) {
     val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
     Note(
         if (state.retreat <= 0f) stringResource(R.string.room_source_here)
-        else stringResource(
-            R.string.room_source_away,
-            10f.pow(decibels / 20f),
-            decibels,
-            state.retreat * DistanceShelf.FULL_SHELF_DECIBELS.toFloat()
-        )
+        else stringResource(R.string.room_source_away, 10f.pow(decibels / 20f), decibels)
     )
+    // The one combination worth a line of its own, because it is the one where the control is
+    // working exactly as built and still does not do what it is for. A level on its own is an
+    // ambiguous distance cue - it is the ratio against the reverberation that is not - so a source
+    // dragged away in a room with no reverberation in it can only sound like the volume going down.
+    if (state.retreat > 0f && state.reverb <= 0f) Note(stringResource(R.string.room_source_dry))
 }
 
 /**
@@ -340,6 +340,22 @@ data class RoomState(
      * drawing, back at zero tomorrow.
      */
     val retreat: Float = 0f,
+    /**
+     * How live the room is, from 0 for none of it to 1 for as much as this allows - see
+     * [com.soundmesh.core.SpatialField.reverb].
+     *
+     * Not something [retreat] drives, and that separation is the point. How far off the source is
+     * and how much room there is are two facts, and it is the **ratio** between what arrives
+     * straight from the source and what arrives off the walls that a listener reads as distance.
+     * Tie them together and there is no ratio left to change.
+     *
+     * In every mode, unlike [retreat]. A room is a room whether or not there is a source being
+     * moved around it, so this one has nowhere to be stranded.
+     *
+     * Temporary on the same terms as [skew]: behind the diagnostic switch, absent from the saved
+     * drawing, back at zero tomorrow.
+     */
+    val reverb: Float = 0f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -379,6 +395,7 @@ class RoomActions(
     val setSkew: (Float) -> Unit,
     val setSkewCarriesDistance: (Boolean) -> Unit,
     val setRetreat: (Float) -> Unit,
+    val setReverb: (Float) -> Unit,
     val pickAxis: (SplitAxis) -> Unit,
     val setCrossoverHz: (Float) -> Unit,
     val togglePart: (String) -> Unit
@@ -1230,6 +1247,40 @@ private fun RetreatSlider(state: RoomState, actions: RoomActions) {
 }
 
 /**
+ * How live the room is: how much of what a handset plays came off the walls rather than out of the
+ * source.
+ *
+ * Beside the retreat above it because the two are read together, and separate because a level on
+ * its own cannot say how far away anything is - a whisper close by and a shout across the room
+ * reach an ear at the same loudness. The ratio between the two is what does, so both have to be
+ * reachable or there is no ratio.
+ *
+ * Read out as a share of the output rather than in decibels, because "a third of what you hear is
+ * the room" is a thing a person can check by listening, and because the reverberation time is the
+ * other half of what they would want and is not a slider - it is stated instead.
+ *
+ * In every mode, unlike the retreat: see [RoomState.reverb].
+ */
+@Composable
+private fun ReverbSlider(state: RoomState, actions: RoomActions) {
+    Column {
+        Knob(
+            title = stringResource(R.string.room_reverb),
+            value = state.reverb,
+            readout =
+                if (state.reverb <= 0f) stringResource(R.string.room_reverb_none)
+                else stringResource(
+                    R.string.room_reverb_some,
+                    state.reverb * RoomReverb.MOST_WET.toFloat() * 100f,
+                    RoomReverb.REVERB_SECONDS.toFloat()
+                ),
+            onChange = actions.setReverb
+        )
+        Note(stringResource(R.string.room_reverb_hint))
+    }
+}
+
+/**
  * How far back the gap stands for, in metres, which is the one part of this a screen can state on
  * its own.
  *
@@ -1317,6 +1368,9 @@ private fun EffectSection(
         // leaving the screen it belongs to: a room left quiet by a dot, in a mode with no dot on
         // it to put back - see HomeActivity, where the rule is given the same condition.
         if (state.mode == SpatialMode.PAN) RetreatSlider(state, actions)
+        // In every mode, and so with no condition on it: the retreat above has to leave when the
+        // dot it belongs to leaves, and this one belongs to the room rather than to a source.
+        ReverbSlider(state, actions)
         if (state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     }
     if (state.separation > 0f) PartPicker(state, actions)

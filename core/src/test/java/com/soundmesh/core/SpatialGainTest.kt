@@ -712,6 +712,70 @@ class SpatialGainTest {
         assertTrue(small.gainAt("left", 0L).left < large.gainAt("left", 0L).left)
     }
 
+    /**
+     * **Why a reverberation reads as distance and a level does not.** Dragging the source to the
+     * far end of its travel takes the direct sound down by the whole of the retreat and leaves the
+     * room's own share exactly where it was - the walls did not move, and what comes off them does
+     * not care that the source is further from the listener.
+     *
+     * Scale both by the same gain and the ratio between them never changes, which is the failure
+     * the plain retreat has on its own: everything gets quieter together and a listener hears
+     * somebody turning a volume knob.
+     */
+    @Test
+    fun theRoomStaysWhereItIsWhenTheSourceMovesAway() {
+        val here = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 0.0, reverb = 1.0)
+        val away = here.copy(retreat = 1.0)
+
+        assertEquals(here.roomGainAt("left", 0L).left, away.roomGainAt("left", 0L).left, 1e-12)
+        val direct = away.gainAt("left", 0L).left / here.gainAt("left", 0L).left
+        assertEquals(
+            Math.pow(10.0, -SpatialField.RETREAT_DECIBELS / 20.0), direct, 1e-12
+        )
+    }
+
+    /** The placement is still the placement: a handset the rule silenced plays no room either. */
+    @Test
+    fun aHandsetTheSourceHasLeftBehindCarriesNoneOfTheRoom() {
+        val hardRight = SpatialField(mode = SpatialMode.PAN, layout = pair, pan = 1.0, reverb = 1.0)
+
+        assertEquals(0.0, hardRight.roomGainAt("left", 0L).left, 1e-12)
+        assertTrue(hardRight.roomGainAt("right", 0L).right > 0.5)
+    }
+
+    /**
+     * The fitted exponent was standing in for a reverberation that did not exist, so it hands the
+     * law back as the reverberation arrives. At a room of nothing it is exactly what it always was
+     * - which is what stops this change putting back the 09-16 complaint on the build that ships
+     * with the knob at zero - and at a full room it is the plain inverse distance law.
+     *
+     * Both ends written out as arithmetic rather than asked of the field, so that a rule returning
+     * whatever it likes cannot satisfy them.
+     */
+    @Test
+    fun theDistanceLawWalksToThePlainOneAsTheRoomComesUp() {
+        val standing = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0,
+            skewNanos = 10_000_000L, skewPeerId = "left", skewRecedes = true
+        )
+        val reference = SpatialField(
+            mode = SpatialMode.PAN, layout = pair, pan = 0.0,
+            skewNanos = 10_000_000L, skewPeerId = "left"
+        )
+        val shortfall = 2.5 / (2.5 + 0.010 * 343.0)
+
+        val dry = standing.gainAt("left", 0L).left / reference.gainAt("left", 0L).left
+        val live = standing.copy(reverb = 1.0).gainAt("left", 0L).left /
+            reference.copy(reverb = 1.0).gainAt("left", 0L).left
+
+        assertEquals(Math.pow(shortfall, SpatialField.RECEDE_ROLLOFF), dry, 1e-9)
+        assertEquals(shortfall, live, 1e-9)
+        // Half a room is half way there, so nothing can satisfy the two ends by being a step.
+        val half = standing.copy(reverb = 0.5).gainAt("left", 0L).left /
+            reference.copy(reverb = 0.5).gainAt("left", 0L).left
+        assertEquals(Math.pow(shortfall, (SpatialField.RECEDE_ROLLOFF + 1.0) / 2.0), half, 1e-9)
+    }
+
     private fun roomPower(field: SpatialField): Double = field.layout.peerIds.sumOf {
         val gain = field.gainAt(it, 0L)
         (gain.left * gain.left + gain.right * gain.right) / 2.0

@@ -543,6 +543,7 @@ class HomeActivity : ComponentActivity() {
             setSkew = { gap -> updateRoom { it.copy(skew = gap) } },
             setSkewCarriesDistance = { on -> updateRoom { it.copy(skewCarriesDistance = on) } },
             setRetreat = { back -> updateRoom { it.copy(retreat = back) } },
+            setReverb = { room -> updateRoom { it.copy(reverb = room) } },
             pickAxis = { axis -> updateRoom { it.copy(splitAxis = axis) } },
             setCrossoverHz = { hz -> updateRoom { it.copy(crossoverHz = hz) } },
             togglePart = { peerId ->
@@ -645,7 +646,11 @@ class HomeActivity : ComponentActivity() {
             // every handset, which is the whole of what makes it a distance rather than a pan.
             retreat =
                 if (room.mode == SpatialMode.PAN) room.retreat.toDouble().coerceIn(0.0, 1.0)
-                else 0.0
+                else 0.0,
+            // In every mode, unlike the retreat above it. That one is the dot's own number written
+            // the other way round and has to leave when the dot does; a room is a room whatever
+            // the handsets are being asked to play.
+            reverb = room.reverb.toDouble().coerceIn(0.0, 1.0)
         )
     }
 

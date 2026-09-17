@@ -45,6 +45,9 @@ object SpatialShaper {
     private const val BYTES_PER_SAMPLE = 2
     private const val BYTES_PER_FRAME = CHANNELS * BYTES_PER_SAMPLE
 
+    /** Stands where the room's own placement would be in a room that has no reverberation. */
+    private val SILENT = StereoGain(0.0, 0.0)
+
     /**
      * [from] is the gain the previous chunk was heard ending at, when that is not the gain this
      * rule gives this instant - a rule arriving, a rule being replaced, an icon being dragged. The
@@ -66,14 +69,18 @@ object SpatialShaper {
      * asks for any of the low half and refused when it is missing, because a filter that is not
      * there and a knob at zero sound exactly alike.
      *
-     * [fromRetreat] is the fourth, and the only one of them that needs nobody named: how far off
-     * the source is is one number for the whole room, which is what makes it a distance rather
-     * than a pan. Its no-rule value is zero - a handset playing unshaped is a handset playing a
-     * source that has not been moved anywhere.
+     * [fromRoom] is [from] for the wet, and it needs its own because the two are not the same
+     * number: the room's share is the placement without the distance in it, which is the whole of
+     * how a reverberation reads as a source moving away. See [SpatialField.roomGainAt].
      *
-     * [shelf] is where the dulling keeps what it has heard, on the same terms as [crossover] and
-     * refused the same way. See [DistanceShelf] for why a receding source is duller and why that
-     * is a reverberation effect rather than anything the air does over a living room.
+     * [fromReverb] is how much room the previous chunk was heard ending in, on the same terms as
+     * the three above. Its no-rule value is none of it.
+     *
+     * [reverb] is where the room keeps what it has heard, on the same terms as [crossover] and
+     * refused the same way. Like [diffuse] and unlike [crossover] it is this handset's own, drawn
+     * from its name, and like [diffuse] it must not agree across the room - see [RoomReverb]. What
+     * it returns is added to this handset's dry output, which is never delayed or filtered by it:
+     * the direct sound is what the handsets have to agree about and it comes through untouched.
      *
      * [diffuse] is the second of those and is refused on the same terms. Unlike the crossover it is
      * this handset's own, drawn from its name, and it is the one thing here that must not agree
@@ -103,11 +110,12 @@ object SpatialShaper {
         startHostNanos: Long,
         sampleRate: Int,
         from: StereoGain? = null,
+        fromRoom: StereoGain? = null,
         fromFold: Double? = null,
         fromSpectrum: SpectrumMix? = null,
-        fromRetreat: Double? = null,
+        fromReverb: Double? = null,
         crossover: Crossover? = null,
-        shelf: DistanceShelf? = null,
+        reverb: RoomReverb? = null,
         diffuse: Decorrelator? = null,
         travel: TravellingDelay? = null
     ): ByteArray {
@@ -135,15 +143,20 @@ object SpatialShaper {
         // rule cannot change inside a chunk. It is not ramped, because moving where a filter divides
         // leaves the signal already inside it alone - the output stays continuous through a drag.
         val coefficient = crossover?.let { Crossover.coefficientFor(field.crossoverHz, sampleRate) } ?: 0.0
-        require(shelf != null || (field.retreat <= 0.0 && (fromRetreat ?: 0.0) <= 0.0)) {
-            "a source that has been moved away needs somewhere to keep what the filter has heard"
+        val endWet = RoomReverb.wetFor(field.reverb)
+        val beginWet = fromReverb?.let { RoomReverb.wetFor(it) } ?: endWet
+        require(reverb != null || (endWet <= 0.0 && beginWet <= 0.0)) {
+            "a room with a reverberation in it needs somewhere to keep what the walls have heard"
         }
-        // Once per chunk, like the crossover's, and for the same reason: the corner does not move
-        // with distance - see DistanceShelf.CORNER_HZ. What moves is the depth, and that is a
-        // crossfade rather than the filter's own shape, so it can be ramped below.
-        val shelfCoefficient = if (shelf == null) 0.0 else DistanceShelf.coefficientFor(sampleRate)
-        val endDepth = DistanceShelf.depthFor(field.retreat)
-        val beginDepth = fromRetreat?.let { DistanceShelf.depthFor(it) } ?: endDepth
+        // The wet's own placement, ramped like everything else here. It is the same arithmetic as
+        // the gain above with the distance left out, so the two ramp together and the ratio between
+        // them - which is the cue - moves smoothly through a drag. Not worked out at all when there
+        // is no reverberation, because it is a pass over every handset in the room and a knob at
+        // off has to cost nothing.
+        val beginRoom =
+            if (reverb == null) SILENT else fromRoom ?: field.roomGainAt(peerId, startHostNanos)
+        val endRoom =
+            if (reverb == null) SILENT else field.roomGainAt(peerId, startHostNanos + spanNanos)
         val stages = Decorrelator.stagesFor(field.diffusion)
         // Null at zero rather than a filter asked for no sections: the arithmetic below then has no
         // per-frame call at all, instead of a call that gives the sample straight back. A knob at
@@ -195,21 +208,32 @@ object SpatialShaper {
             val heardRight = if (diffuser == null) mixRight else diffuser.right(mixRight, stages) * headroom
             val placedLeft = heardLeft * left
             val placedRight = heardRight * right
-            // After the placement and before the delay, which is where the propagation belongs:
-            // this is what the room did to the sound on its way over, and the delay below is the
-            // sound still on its way. Filtering commutes with the gain, so the order is chosen for
-            // what it means rather than for what it computes.
+            // The room, added to what this handset made and never in front of it. The dry above is
+            // a bypass: not filtered, not delayed, not touched, so the instant a sound leaves this
+            // handset is the instant every other handset agrees it leaves theirs. That is the whole
+            // of why a reverberation is safe here, and the note in the queue saying every handset's
+            // latency through this had to match was wrong - what has to match is the direct sound.
             //
-            // One shelf for the whole handset and never one per handset, although the physics
-            // would allow it - a filter is a group delay, and a group delay that differs between
-            // handsets is the one quantity this entire project is built on getting right. The
-            // depth is the room's own number, identical everywhere, so every handset carries the
-            // same eighty microseconds and the difference between them stays exactly zero.
-            val depth = beginDepth + (endDepth - beginDepth) * across
-            val sentOutLeft =
-                if (shelf == null) placedLeft else shelf.left(placedLeft, shelfCoefficient, depth)
-            val sentOutRight =
-                if (shelf == null) placedRight else shelf.right(placedRight, shelfCoefficient, depth)
+            // Fed what the stream sent rather than what this handset plays of it, on the same terms
+            // as the crossover above: a room is excited by the music, not by one handset's share of
+            // it, and the share is applied to what comes back out.
+            //
+            // A crossfade rather than a sum. The dry comes down by exactly what the wet goes up by,
+            // so turning the room up cannot make a sample bigger than the same arrangement made
+            // without it - which is the failure this project has actually shipped, and the reason
+            // every gain added here since has been a subtraction.
+            val sentOutLeft: Double
+            val sentOutRight: Double
+            if (reverb == null) {
+                sentOutLeft = placedLeft
+                sentOutRight = placedRight
+            } else {
+                val wet = beginWet + (endWet - beginWet) * across
+                val roomLeft = beginRoom.left + (endRoom.left - beginRoom.left) * across
+                val roomRight = beginRoom.right + (endRoom.right - beginRoom.right) * across
+                sentOutLeft = placedLeft * (1.0 - wet) + reverb.left(sentLeft) * roomLeft * wet
+                sentOutRight = placedRight * (1.0 - wet) + reverb.right(sentRight) * roomRight * wet
+            }
             // Last of all, on what this handset has finished making. Anywhere earlier would delay
             // the gain envelope along with the audio, which for a source going round the room
             // means the placement and the arrival time disagree about where it is by however far

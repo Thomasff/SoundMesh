@@ -308,7 +308,28 @@ data class SpatialField(
      * Off at zero, kept nowhere, gone at the next start - on the same terms and for the same
      * reasons as [skewNanos].
      */
-    val retreat: Double = 0.0
+    val retreat: Double = 0.0,
+    /**
+     * How much of what a handset plays is the room rather than the source, from none to all of it.
+     *
+     * The reverberation is the one cue for distance that is not ambiguous. A level on its own never
+     * is - a whisper close by and a shout across the room can reach an ear at the same loudness, and
+     * that is why [retreat] on its own reads as the volume going down. What a listener actually uses
+     * is the ratio between what came straight from the source and what came off the walls: the
+     * direct sound falls with distance and the reverberation very nearly does not, so the ratio
+     * says how far off the source is and nothing else can be mistaken for it.
+     *
+     * Which is why this is a setting of its own rather than something [retreat] drives. How far the
+     * source is and how live the room is are two different facts about a room, and one slider
+     * cannot carry both - the same argument that put the source on the drawing as a point instead
+     * of on a slider, one dimension up.
+     *
+     * Zero by default, and zero is exactly nothing rather than nearly nothing: no reverberation is
+     * built, no filter runs, and the handset plays what it played before this existed, sample for
+     * sample. See [RoomReverb] for what is built when it is not zero, and why every handset builds
+     * a different one.
+     */
+    val reverb: Double = 0.0
 ) {
     init {
         require(periodNanos > 0L) { "a circuit takes time: $periodNanos" }
@@ -346,6 +367,7 @@ data class SpatialField(
             "these handsets carry the sides but are not in the drawing: ${otherHalfIds.filterNot { layout.contains(it) }}"
         }
         require(retreat in 0.0..1.0) { "a room retreats from 0 to 1: $retreat" }
+        require(reverb in 0.0..1.0) { "how much room there is runs from 0 to 1: $reverb" }
         require(skewNanos in -MAX_SKEW_NANOS..MAX_SKEW_NANOS) {
             "a hand set head start runs either way to $MAX_SKEW_NANOS ns: $skewNanos"
         }
@@ -649,8 +671,31 @@ data class SpatialField(
      * source crossing the gap between two handsets would sound like the volume dipping rather than
      * like the source moving, and switching modes would change how loud the music is.
      */
-    fun gainAt(peerId: String, hostNanos: Long): StereoGain {
+    fun gainAt(peerId: String, hostNanos: Long): StereoGain = gainAt(peerId, hostNanos, true)
+
+    /**
+     * What [peerId] plays its share of the **room** at, at [hostNanos] - the reverberation, not the
+     * source. The same placement as [gainAt] with the distance taken out of it.
+     *
+     * This is the whole of how a reverberation reads as distance, and it is one line. A source that
+     * moves away loses its direct sound and keeps its reverberation: the walls are where they were,
+     * they are being hit by the same music, and what comes off them does not care that the source
+     * is further from the listener than it was. So the wet skips the two gains that mean distance -
+     * [retreatGain], which is the source moving away, and [recedeGain], which is a handset being
+     * made consistent with a head start that says it is standing further off - and keeps everything
+     * else, so a handset the rule has turned down is turned down in its reverberation too.
+     *
+     * Scale the wet by the same gain as the dry and the ratio between them never changes, which is
+     * exactly the failure the plain [retreat] has: the reverberation comes down with the source and
+     * the whole thing reads as somebody turning the volume knob. This is the 09-16 note about
+     * software gain multiplying the reverberation away, written as arithmetic instead of as a
+     * fitted exponent.
+     */
+    fun roomGainAt(peerId: String, hostNanos: Long): StereoGain = gainAt(peerId, hostNanos, false)
+
+    private fun gainAt(peerId: String, hostNanos: Long, distance: Boolean): StereoGain {
         require(layout.contains(peerId)) { "no handset named $peerId in this layout" }
+        val away = if (distance) retreatGain() * recedeGain(peerId) else 1.0
         val raw = layout.peerIds.associateWith { rawGain(it, hostNanos) }
         val power = raw.values.sumOf { (it.left * it.left + it.right * it.right) / 2.0 }
         // A source diametrically opposite every handset in the room is a direction this layout
@@ -661,13 +706,13 @@ data class SpatialField(
             // handsets are all the same distance off is the same arithmetic this used to do.
             val reaches = layout.peerIds.associateWith { layout.distanceGainOf(it) }
             val evenScale = sqrt(reaches.values.sumOf { it * it })
-            val even = reaches.getValue(peerId) / evenScale * retreatGain() * recedeGain(peerId)
+            val even = reaches.getValue(peerId) / evenScale * away
             return StereoGain(even, even)
         }
         // Both of these are outside the normalisation on purpose and for the same reason, which is
         // written out at [recedeGain]: what is divided by the room's own power cannot make the room
         // quieter.
-        val scale = 1.0 / sqrt(power) * retreatGain() * recedeGain(peerId)
+        val scale = 1.0 / sqrt(power) * away
         val mine = raw.getValue(peerId)
         return StereoGain(mine.left * scale, mine.right * scale)
     }
@@ -702,7 +747,9 @@ data class SpatialField(
      * what the handset emits. Turning it down removes the floor that a real room would have left
      * standing, and the move sounds bigger than the same move made by somebody walking. On 09-16 a
      * listener said exactly that: ten milliseconds read as more than a person stepping three and a
-     * half metres back. This is that report, priced in.
+     * half metres back. This is that report, priced in - and priced out again by [rolloff] once the
+     * room has a reverberation of its own, because then the floor is really there and the gain does
+     * not have to pretend it is.
      *
      * **Only the handset that waits.** [skewPartNanos] is the wait rather than the head start for
      * exactly this reason: whichever end of the gap is not the early one is the one that has been
@@ -727,8 +774,28 @@ data class SpatialField(
         if (waitNanos <= 0L) return 1.0
         val standing = metresAway(peerId)
         val further = waitNanos / 1_000_000_000.0 * AlignmentAnalysis.SPEED_OF_SOUND_M_S
-        return (standing / (standing + further)).pow(RECEDE_ROLLOFF)
+        return (standing / (standing + further)).pow(rolloff())
     }
+
+    /**
+     * How much of the open-air distance law this room gets, which is as much of it as the room's
+     * own reverberation can pay for.
+     *
+     * [RECEDE_ROLLOFF] is a floor with a reason: it exists because a real room leaves a
+     * reverberant floor standing that a plain gain would take away with everything else. When
+     * [reverb] builds that floor for real, the gain no longer has to fake it, and the law
+     * underneath can be the plain one - so the exponent walks from the fitted number to one as the
+     * room is turned up.
+     *
+     * Deliberately not a flat one. Flipping it would have been right only in a room whose
+     * reverberation is switched on, and this one ships with it at zero: a build that applied the
+     * free-field law with nothing filling it back in would put back exactly the complaint the
+     * fitted number was written for on 09-16, where ten milliseconds read as more than a person
+     * stepping back three and a half metres. The correction has to arrive with the thing that
+     * justifies it, and it does, sample for sample: at a reverberation of nothing this returns
+     * [RECEDE_ROLLOFF] and every gain in the room is the one it was.
+     */
+    private fun rolloff(): Double = RECEDE_ROLLOFF + (1.0 - RECEDE_ROLLOFF) * reverb.coerceIn(0.0, 1.0)
 
     /**
      * How far [peerId] is from the listener in metres, guessed if the room has never been measured.
@@ -855,21 +922,24 @@ data class SpatialField(
         const val ASSUMED_FURTHEST_METRES = 2.5
 
         /**
-         * How much of the open-air distance law a room is allowed to have: three fifths of it.
+         * How much of the open-air distance law a room with no reverberation of its own gets:
+         * three fifths of it.
          *
          * Free field is one, and gives six decibels a doubling. Real rooms give three to four,
          * because past a metre or two the reflections carry most of what is heard and the level
          * stops falling the way the direct sound does. Three fifths puts a doubling at about 3.6
          * decibels, which is the middle of what rooms measure.
          *
-         * A single exponent rather than a reverberation model, and that is a deliberate stop: a
-         * proper direct-to-reverberant term wants the room's volume and its reverberation time,
-         * neither of which anything here measures. Every 3D audio engine offers this same exponent
-         * for the same reason, and every one of them ships defaulted to free field and gets turned
-         * down by whoever uses it.
+         * **A floor rather than the law**, since [RoomReverb] was built. This number was a single
+         * exponent standing in for a reverberation model - the comment here used to say so and
+         * call it a deliberate stop - and a stand-in is only needed while the thing it stands in
+         * for is missing. [rolloff] walks it to one as the reverberation is turned up, so the room
+         * is never told twice that its reflections are holding the level up. What is left at this
+         * value is the case it was fitted for: a room playing dry, where the reflections are in the
+         * listener's actual living room and not in the signal.
          *
-         * Fitted by ear, and the only number here that is. If a receding handset still reads as
-         * bigger than somebody walking the same distance, this is the number to lower.
+         * Fitted by ear, and the only number here that is. If a receding handset playing dry still
+         * reads as bigger than somebody walking the same distance, this is the number to lower.
          */
         const val RECEDE_ROLLOFF = 0.6
 
