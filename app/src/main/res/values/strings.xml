@@ -352,7 +352,6 @@
     <string name="room_title">房间摆位</string>
     <string name="room_hint">如果大幅移动了手机，可以拖动图标，改变位置，这会影响听感。如果想让效果更精确，建议重新校准。中间那个点是你，不用拖。</string>
     <string name="room_you">你</string>
-    <string name="room_this_phone">本机</string>
     <string name="room_effect_title">音效</string>
     <string name="room_effect_unison">同步齐奏</string>
     <string name="room_effect_unison_line">同步放相同的声音</string>
@@ -368,7 +367,7 @@
     <string name="room_split_none">不分开</string>
     <string name="room_split_voice">人声和伴奏</string>
     <string name="room_split_bass">低音和高音</string>
-    <string name="room_parts_label">每台放哪一部分</string>
+    <string name="room_parts_tap">点位置图上的手机图标，选它放哪一部分。图上每台手机下面写着它现在放的是哪一部分。</string>
     <string name="room_live">实时读数：哪台的数字大，声音就该在哪台那边</string>
     <string name="room_live_row">响 %1$d</string>
     <!-- The other half of the manual gap: distance instead of side. See RetreatSlider. -->
@@ -389,8 +388,8 @@
     <string name="room_part_low">低音</string>
     <string name="room_part_high">高音</string>
     <string name="room_crossover">分界点：%1$d Hz 以下设置为低音</string>
-    <string name="room_part_middle">中间</string>
-    <string name="room_part_sides">两边</string>
+    <string name="room_part_middle">人声</string>
+    <string name="room_part_sides">伴奏</string>
     <string name="room_alone">还没有别的手机连上来。一台手机也能摆，但听不出方向。</string>
     <string name="room_fit">吸附到实测位置</string>
     <string name="room_fit_done">图标已按测量摆正。拖动任意一台可以再来一次。</string>

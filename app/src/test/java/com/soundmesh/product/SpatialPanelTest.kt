@@ -1,11 +1,13 @@
 package com.soundmesh.product
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.soundmesh.core.SpatialMode
 
 /**
  * Which phone a finger meant.
@@ -317,4 +319,49 @@ class SpatialPanelTest {
         assertEquals(0.40, share, 1e-6)
         assertEquals(0.0, com.soundmesh.core.RoomReverb.wetFor(RoomState().reverb.toDouble()), 0.0)
     }
+
+    /**
+     * Tapping a handset on the drawing offers its two halves only where all three of those halves
+     * actually exist.
+     *
+     * The third case is the one worth a test rather than a glance. A room set to 旋转 or to 自定义
+     * 声音位置 goes on remembering which phone carries which half - deliberately, so that trying an
+     * effect for a minute costs nobody their assignment - but [ruleOf] drops the split from the
+     * rule while a source is moving. Buttons there would be worse than dead: they would light up,
+     * and change nothing anybody could hear.
+     */
+    @Test
+    fun `a handset offers its halves only where the room is actually splitting the song`() {
+        val split = RoomState(mode = SpatialMode.SPLIT, separation = 1f)
+
+        assertTrue(partsAreSwitchable(split, mapWithParts()))
+        assertFalse(
+            "a screen that cannot hand out parts",
+            partsAreSwitchable(split, mapWithoutParts())
+        )
+        assertFalse(
+            "a room that is not splitting the song",
+            partsAreSwitchable(split.copy(separation = 0f), mapWithParts())
+        )
+        for (moving in listOf(SpatialMode.ROTATE, SpatialMode.PAN)) {
+            assertFalse(
+                "$moving drops the split from the rule",
+                partsAreSwitchable(split.copy(mode = moving), mapWithParts())
+            )
+        }
+    }
+
+    private fun mapWithParts() = RoomMapActions(
+        moveIcon = {},
+        fitToMeasured = {},
+        measureListener = null,
+        togglePart = {}
+    )
+
+    /** What the calibration screen hands the same drawing: a map with no rule behind it. */
+    private fun mapWithoutParts() = RoomMapActions(
+        moveIcon = {},
+        fitToMeasured = {},
+        measureListener = null
+    )
 }

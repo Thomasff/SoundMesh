@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -11,11 +12,15 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -46,6 +52,7 @@ import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soundmesh.core.PeerBadge
@@ -113,7 +120,7 @@ fun MeasuredRoom(
     blockedPeerNames: List<String> = emptyList(),
     ripple: Float? = null
 ) {
-    RoomDrawing(state, actions, blockedPeerNames, ripple)
+    RoomMap(state, actions, blockedPeerNames, ripple)
     if (state.icons.size < 2) {
         Text(stringResource(R.string.room_alone), style = MaterialTheme.typography.bodySmall)
     }
@@ -186,7 +193,16 @@ class RoomMapActions(
      * the same room and has no rule behind it, so a dot a finger could drag would be a control
      * wired to nothing - which is worse than an absent one, because it moves.
      */
-    val moveSource: ((SourceSpot) -> Unit)? = null
+    val moveSource: ((SourceSpot) -> Unit)? = null,
+    /**
+     * Hands a handset the other half of whatever the song is split along, or null on a screen
+     * where nothing is being split.
+     *
+     * Null for the same reason [moveSource] is, and it has one more consequence than the others:
+     * it is what decides whether tapping an icon does anything at all, so the calibration screen
+     * keeps a map whose icons are only ever dragged. See [partsAreSwitchable].
+     */
+    val togglePart: ((String) -> Unit)? = null
 )
 
 /** What the screen draws about the room, and nothing it decides. */
@@ -360,7 +376,8 @@ class RoomActions(
         moveSource = { spot ->
             setPan(SpatialRoom.panOf(spot))
             setRetreat(SpatialRoom.retreatOf(spot))
-        }
+        },
+        togglePart = togglePart
     )
 }
 
@@ -612,12 +629,74 @@ private fun FitOffer(state: RoomState, actions: RoomMapActions) {
     )
 }
 
+/**
+ * The drawing, with one handset's own buttons over the top of it where a finger has opened them.
+ *
+ * Which half of a split song a phone carries is a fact about that phone, so it is asked for by
+ * pointing at the phone. It used to be a list underneath the panel - a row per handset, a badge
+ * and a button - which meant reading a number off a coloured dot on the map, finding the row with
+ * that number, and pressing a button nowhere near either. The map already knows which phone is
+ * which and where it is standing; the list was a second, worse copy of the room.
+ *
+ * The buttons live out here rather than inside the Canvas because they are buttons: a shape drawn
+ * into a canvas has no press state, no ripple and nothing an accessibility service can find.
+ */
+@Composable
+private fun RoomMap(
+    state: RoomState,
+    actions: RoomMapActions,
+    blockedPeerNames: List<String>,
+    ripple: Float?
+) {
+    var chosenPeerId by remember { mutableStateOf<String?>(null) }
+    val switchable = partsAreSwitchable(state, actions)
+    // A room that stops splitting the song has no halves to hand out, and buttons left open over
+    // it would offer a choice that no longer reaches the rule.
+    LaunchedEffect(switchable) { if (!switchable) chosenPeerId = null }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val side = maxWidth
+        RoomDrawing(
+            state,
+            actions,
+            blockedPeerNames,
+            ripple,
+            switchable,
+            chosenPeerId
+        ) { chosenPeerId = it }
+        // Looked up again rather than held: a handset that left the room while its buttons were
+        // open would otherwise be drawn a set of controls for a phone that is not there.
+        val open = chosenPeerId?.let { id -> state.icons.firstOrNull { it.peerId == id } }
+        val toggle = actions.togglePart
+        if (switchable && open != null && toggle != null) {
+            PartButtons(open, state, toggle, side) { chosenPeerId = null }
+        }
+    }
+}
+
+/**
+ * Whether tapping a handset on the drawing has anything to offer.
+ *
+ * Three conditions and each rules out a different kind of dead control: a screen with no way to
+ * hand out parts at all (the calibration screen draws this same room and has no rule behind it),
+ * a room that is not splitting the song, and a room whose effect moves a single source - where
+ * the split is dropped from the rule even though the screen goes on remembering it, see
+ * [ruleOf]. Buttons in that last case would be the worst of the three: they would answer.
+ */
+internal fun partsAreSwitchable(state: RoomState, actions: RoomMapActions): Boolean =
+    actions.togglePart != null && state.separation > 0f && !state.mode.movesASource
+
 @Composable
 private fun RoomDrawing(
     state: RoomState,
     actions: RoomMapActions,
     blockedPeerNames: List<String>,
-    ripple: Float?
+    ripple: Float?,
+    /** Whether a tap on a handset opens its own buttons. See [partsAreSwitchable]. */
+    switchable: Boolean,
+    /** Whose buttons are open just now, or null with none of them. */
+    openPeerId: String?,
+    /** Called with whose buttons should be open after this gesture. */
+    onChoose: (String?) -> Unit
 ) {
     // The gesture below is a coroutine keyed on who is in the room, so it outlives every
     // recomposition that only moved somebody - and it closes over the room as it was when that
@@ -631,6 +710,11 @@ private fun RoomDrawing(
     // that moves would cancel the drag that is moving it.
     val room by rememberUpdatedState(state)
     val onRoom by rememberUpdatedState(actions)
+    // Read through here for the reason above: the gesture outlives the recompositions that move
+    // these, so a tap would decide against whatever was true when it was first started.
+    val canSwitch by rememberUpdatedState(switchable)
+    val alreadyOpen by rememberUpdatedState(openPeerId)
+    val choose by rememberUpdatedState(onChoose)
     val measurer = rememberTextMeasurer()
     val listener = MaterialTheme.colorScheme.onSurfaceVariant
     val outline = MaterialTheme.colorScheme.outlineVariant
@@ -661,6 +745,10 @@ private fun RoomDrawing(
         killedPulses[icon.peerId] = key(icon.peerId) { rememberKilledPulse(look) }
     }
     val frame = MaterialTheme.colorScheme.surfaceVariant
+    // Resolved out here because a DrawScope cannot read resources, and unconditionally because a
+    // stringResource behind an if is a composable whose presence changes with the state.
+    val nearWord = stringResource(partLabelOf(state.splitAxis, false))
+    val farWord = stringResource(partLabelOf(state.splitAxis, true))
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
@@ -701,13 +789,33 @@ private fun RoomDrawing(
                         sourceSpotOf(room, onRoom),
                         down.position.x / size.width,
                         down.position.y / size.height
-                    ) ?: return@awaitEachGesture
+                    )
+                    if (held == null) {
+                        // Landing on bare canvas puts away whatever was open. Somewhere to press
+                        // that means "never mind" has to exist, and on a drawing it is the part
+                        // of the drawing with nothing on it.
+                        choose(null)
+                        return@awaitEachGesture
+                    }
                     // Touch slop, so that a tap on an icon is still a tap: without it every
                     // stray pixel of a press moves a handset, and the room drifts under anybody
                     // who rests a finger on it.
                     val began = awaitTouchSlopOrCancellation(down.id) { change, _ ->
                         change.consume()
-                    } ?: return@awaitEachGesture
+                    }
+                    if (began == null) {
+                        // Down and up again without travelling: a tap. This is the gesture that
+                        // used to mean nothing at all on this map, which is what makes it free -
+                        // a drag is the branch below, and it passed the slop to get there.
+                        choose(
+                            if (canSwitch && held is Grabbed.Handset && held.peerId != alreadyOpen)
+                                held.peerId
+                            else null
+                        )
+                        return@awaitEachGesture
+                    }
+                    // A drag puts the buttons away: the icon is moving out from under them.
+                    choose(null)
                     put(held, began.position)
                     drag(down.id) { change ->
                         change.consume()
@@ -731,6 +839,17 @@ private fun RoomDrawing(
                 killedPulses[icon.peerId] ?: 0f,
                 measurer
             )
+            // Only while there is a split to see. Without it every icon would carry the word 人声
+            // for a room that is not dividing anything, which is a label that is not false so
+            // much as about nothing.
+            if (switchable) {
+                drawPartWord(
+                    icon,
+                    if (icon.peerId in state.otherHalfIds) farWord else nearWord,
+                    listener,
+                    measurer
+                )
+            }
         }
         sourceSpotOf(state, actions)?.let { drawSource(it, source) }
         // The ring that spreads from this handset's own icon the moment play is pressed - see
@@ -904,6 +1023,37 @@ private fun DrawScope.drawHandset(
         topLeft = Offset(centre.x - text.size.width / 2f, centre.y - text.size.height / 2f)
     )
 }
+
+/**
+ * Which half of the split this handset is carrying, written under its icon.
+ *
+ * The buttons say it too, but only for the one handset whose buttons are open - and the question
+ * somebody actually has is about the room, not about one phone: which of these is on the voice.
+ * Four taps to read four answers is not reading, so the answers are all on the map at once and
+ * the buttons are only for changing one.
+ */
+private fun DrawScope.drawPartWord(
+    icon: RoomIcon,
+    word: String,
+    colour: Color,
+    measurer: TextMeasurer
+) {
+    val centre = Offset(icon.x * size.width, icon.y * size.height)
+    val text = measurer.measure(word, TextStyle(fontSize = 9.sp, color = colour))
+    drawText(
+        text,
+        topLeft = Offset(
+            centre.x - text.size.width / 2f,
+            centre.y + size.minDimension * HANDSET_RADIUS + PART_WORD_GAP_PX
+        )
+    )
+}
+
+/** The icon's own radius as a share of the drawing's side. What drawHandset draws. */
+private const val HANDSET_RADIUS = 0.06f
+
+/** Clear of the icon without floating away from it. */
+private const val PART_WORD_GAP_PX = 4f
 
 /** How dim [StandbyLook.ASLEEP] draws: still following, only its screen has gone dark. */
 private const val ASLEEP_ALPHA = 0.45f
@@ -1196,7 +1346,15 @@ private fun ContentSplit(state: RoomState, actions: RoomActions) {
     )
     if (!split) return
     if (state.splitAxis == SplitAxis.LOW_HIGH) CrossoverSlider(state, actions)
-    PartPicker(state, actions)
+    // Where the assignment is, rather than the assignment itself: it moved onto the map on
+    // 2026-09-18 and a feature nothing points at is a feature nobody finds.
+    Note(stringResource(R.string.room_parts_tap))
+    // Said before it is heard rather than after: this sounds like a fault to somebody who was
+    // told it separates instruments, and it is not one. One line for both axes, because what
+    // goes wrong is the same on either - the split is by where a sound sits in the mix or by how
+    // high it is, never by which instrument it is, and either way some songs come apart cleanly
+    // and some do not.
+    Note(stringResource(R.string.room_split_limits))
 }
 
 /** How long one circuit takes. Whole seconds, because that is how anybody would say it. */
@@ -1279,48 +1437,77 @@ private fun SeparationControl(state: RoomState, actions: RoomActions) {
 }
 
 /**
- * Which handset carries which half, for whichever axis the room is split along.
+ * One handset's two halves, put beside its icon on the drawing.
  *
- * Inside the effect that asked for it, because it is the one control a split is played with: the
- * buttons above decide that the song comes apart, and this decides which phone gets which piece.
- * Every handset in the room has a row, this one included.
+ * Opened by tapping the icon and closed by either button or by a tap on bare canvas - see
+ * [RoomMap]. Two named buttons rather than one that toggles, because a toggle only says what it
+ * will become and a listener looking at a room wants to see what each phone is on.
  */
 @Composable
-private fun PartPicker(state: RoomState, actions: RoomActions) {
-    Note(stringResource(R.string.room_parts_label))
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (icon in state.icons) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+private fun PartButtons(
+    icon: RoomIcon,
+    state: RoomState,
+    togglePart: (String) -> Unit,
+    side: Dp,
+    onDone: () -> Unit
+) {
+    val carriesFarHalf = icon.peerId in state.otherHalfIds
+    // Beside the icon rather than on it, and on whichever side there is room for: an icon near
+    // the right edge would otherwise get buttons half off the drawing, and the edge is exactly
+    // where the handsets in a real room end up.
+    val clearance = side * (HANDSET_RADIUS + 0.03f)
+    val wanted =
+        if (icon.x < 0.55f) side * icon.x + clearance
+        else side * icon.x - clearance - PART_ROW_WIDTH
+    val limitX = (side - PART_ROW_WIDTH).coerceAtLeast(0.dp)
+    val limitY = (side - PART_ROW_HEIGHT).coerceAtLeast(0.dp)
+    Row(
+        modifier = Modifier
+            .offset(
+                x = wanted.coerceIn(0.dp, limitX),
+                y = (side * icon.y - PART_ROW_HEIGHT / 2).coerceIn(0.dp, limitY)
+            )
+            .width(PART_ROW_WIDTH)
+            .height(PART_ROW_HEIGHT)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(8.dp))
+    ) {
+        for (farHalf in listOf(false, true)) {
+            val chosen = farHalf == carriesFarHalf
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(
+                        if (chosen) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.surface
+                    )
+                    .clickable {
+                        // The action underneath is a toggle and these are two named halves, so
+                        // the one already in force does nothing rather than turning itself off.
+                        // Pressing what a button already says has to be a no-op; anything else
+                        // is a control that disagrees with its own label.
+                        if (!chosen) togglePart(icon.peerId)
+                        onDone()
+                    },
+                contentAlignment = Alignment.Center
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    BadgeChip(icon.peerId, state.colours[icon.peerId], diameter = PART_BADGE)
-                    if (icon.peerId == state.selfId) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            stringResource(R.string.room_this_phone),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-                Chip(stringResource(partLabelOf(state.splitAxis, icon.peerId in state.otherHalfIds))) {
-                    actions.togglePart(icon.peerId)
-                }
+                Text(
+                    stringResource(partLabelOf(state.splitAxis, farHalf)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color =
+                        if (chosen) MaterialTheme.colorScheme.surface
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
-    // Said before it is heard rather than after: this sounds like a fault to somebody who was
-    // told it separates instruments, and it is not one. One line for both axes, because what
-    // goes wrong is the same thing on either - the split is by where a sound sits in the mix or
-    // by how high it is, never by which instrument it is, and either way some songs come apart
-    // and some do not.
-    Note(stringResource(R.string.room_split_limits))
 }
 
-/** Big enough to read a number on beside a line of text, small enough not to be a button. */
-private val PART_BADGE = 19.dp
+/** Two words of two characters each, and the same on both axes. */
+private val PART_ROW_WIDTH = 96.dp
+private val PART_ROW_HEIGHT = 30.dp
 
 /** Which name a handset button carries, since the two halves are named by the axis they divide. */
 private fun partLabelOf(axis: SplitAxis, farHalf: Boolean): Int = when (axis) {
