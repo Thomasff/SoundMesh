@@ -352,10 +352,18 @@ data class RoomState(
      * In every mode, unlike [retreat]. A room is a room whether or not there is a source being
      * moved around it, so this one has nowhere to be stranded.
      *
-     * Temporary on the same terms as [skew]: behind the diagnostic switch, absent from the saved
-     * drawing, back at zero tomorrow.
+     * **On by default, and this number is the one a listener picked**, on 2026-09-17, on the first
+     * build that had a reverberation in it: four tenths of what a handset plays being the room.
+     * Nothing else in this file was chosen that way - every other default is a neutral, meaning
+     * "nobody has touched this yet". This one means "somebody listened to several and said this
+     * one". If a later room disagrees, this is the number to move, and it should be moved by
+     * somebody listening rather than by an argument.
+     *
+     * Stated as the knob rather than as the share, because the knob is what is stored: the share
+     * the readout names is this times [RoomReverb.MOST_WET], so eight tenths here is the four
+     * tenths that was chosen.
      */
-    val reverb: Float = 0f,
+    val reverb: Float = 0.8f,
     val periodSeconds: Int = (SpatialField.DEFAULT_PERIOD_NANOS / 1_000_000_000L).toInt(),
     /** How far apart the mix is pulled, in the same 0..1 the rule uses. Zero is every handset playing all of it. */
     val separation: Float = 0f,
@@ -1358,6 +1366,12 @@ private fun EffectSection(
         TravelSlider(state, actions)
         RuleReadings(readings, state.colours)
     }
+    // Out here rather than behind the diagnostic switch, and it is the only one of these that has
+    // moved out. The switch is for settings somebody is testing; this one is on by default and is
+    // half of what the source dot means - drag the dot outward with no room to keep standing still
+    // and all that happens is the music gets quieter. A control that another visible control
+    // depends on cannot be the hidden one.
+    ReverbSlider(state, actions)
     // Above the fine tuning rather than inside it, and in every mode including the split, because
     // the one thing it asks about is a gap between two handsets - which a room has whether or not
     // there is a source being moved around it.
@@ -1368,9 +1382,6 @@ private fun EffectSection(
         // leaving the screen it belongs to: a room left quiet by a dot, in a mode with no dot on
         // it to put back - see HomeActivity, where the rule is given the same condition.
         if (state.mode == SpatialMode.PAN) RetreatSlider(state, actions)
-        // In every mode, and so with no condition on it: the retreat above has to leave when the
-        // dot it belongs to leaves, and this one belongs to the room rather than to a source.
-        ReverbSlider(state, actions)
         if (state.mode == SpatialMode.SPLIT) RuleReadings(readings, state.colours)
     }
     if (state.separation > 0f) PartPicker(state, actions)

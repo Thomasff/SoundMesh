@@ -187,9 +187,17 @@ class RoomReverb(val peerId: String, sampleRate: Int) {
          * sum. Between them, the one failure mode this project has actually shipped cannot happen
          * here.
          *
-         * Half, which is a long way past what any of this will be listened to at. A knob is allowed
-         * a range nobody uses at the top; what it is not allowed is to run out before the effect
-         * arrives.
+         * Half. **The "nobody will go near the top" this was written with turned out to be wrong**,
+         * and it is worth leaving the correction here rather than quietly restating it: a listener
+         * on 2026-09-17 picked four tenths, which is four fifths of the way up. The top is a
+         * quarter above the one setting anybody has ever chosen, not the generous margin this
+         * comment first claimed.
+         *
+         * Left where it is anyway. Widening it would move what every stored setting means for the
+         * sake of where a finger sits on a slider, and the one number that has been listened to is
+         * comfortably inside it. But nothing here should be read as saying there is room to spare
+         * - if a later room wants more of itself than this, the constant, not the listener, is what
+         * is wrong.
          */
         const val MOST_WET = 0.5
 
