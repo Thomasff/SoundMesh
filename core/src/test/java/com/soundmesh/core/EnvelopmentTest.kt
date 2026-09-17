@@ -83,12 +83,47 @@ class EnvelopmentTest {
         }
     }
 
-    /** Wound all the way up it is still a direction and not a room playing flat. */
+    /**
+     * At the far end of the **slider** there is still a direction to hear.
+     *
+     * Half, written out rather than read from the rule, because the rule stopped stopping here on
+     * 2026-09-18 - the dot on the map goes further. Half is where MOST_ENVELOPMENT_ON_A_SLIDER
+     * holds the 包裹感 knob, and the reason is this assertion: the rotation is a source going
+     * round a room, so a knob whose far end leaves no direction at all is a knob with the effect
+     * switched off at the end of it.
+     */
     @Test
-    fun `even at its widest the facing handset is louder than the one facing away`() {
-        val field = room(SpatialField.MAX_ENVELOPMENT)
+    fun `at the far end of the slider the facing handset is still the louder one`() {
+        val field = room(0.5)
 
         assertTrue(field.gainAt(front, facingFront).left > field.gainAt(behind, facingFront).left)
+    }
+
+    /**
+     * At the far end of the **rule** there is no direction left, and that is what it is for.
+     *
+     * Only reachable by dragging the source dot onto the listener - a source in the same place as
+     * the ear hearing it, which has no direction to be in. A listener asked for this on 09-18 and
+     * described it better than the code did: 相当于在他脑子里放歌.
+     *
+     * Asserted as "the same as every other handset" rather than as a number, because the number is
+     * whatever the room power normalisation lands on and the claim is about the difference.
+     */
+    @Test
+    fun `wound all the way up there is no direction left at all`() {
+        val field = room(SpatialField.MAX_ENVELOPMENT)
+
+        assertEquals(
+            field.gainAt(front, facingFront).left,
+            field.gainAt(behind, facingFront).left,
+            1e-12
+        )
+        // And it stays that way as the source goes round, which is what makes it a place rather
+        // than an instant: a room that was flat only while the source pointed somewhere in
+        // particular would still be a rotation, heard once per turn.
+        for (at in 0L until 4_000_000_000L step 173_000_000L) {
+            assertEquals(field.gainAt(front, at).left, field.gainAt(behind, at).left, 1e-12)
+        }
     }
 
     /** The split has no source, so nothing here touches it. */

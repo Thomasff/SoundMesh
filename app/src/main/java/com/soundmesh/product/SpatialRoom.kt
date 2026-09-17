@@ -1,5 +1,6 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialPosition
 import kotlin.math.PI
@@ -213,13 +214,32 @@ object SpatialRoom {
      * Where to draw the source, given the two numbers that decide where it is.
      *
      * [pan] is which way round, in the same -1..1 SpatialField reads, and it spans the whole
-     * circle: a half turn each way, so +-1 is directly behind the listener. [retreat] is how far
-     * off, 0 among the handsets and 1 at the furthest the rule holds.
+     * circle: a half turn each way, so +-1 is directly behind the listener.
+     *
+     * The radius is one thing read off two numbers, because the two halves of the travel are
+     * rendered by different arithmetic. Outside the handsets it is [retreat]: 0 on the ring and
+     * 1 at the furthest the rule holds, heard as quieter and duller. Inside the handsets it is
+     * [envelopment]: 0 on the ring and all of it at the listener, heard as the direction going
+     * out of the sound.
+     *
+     * Inside is not louder, and cannot be. The sound comes out of the handsets, so a source
+     * nearer than they are can only be asked for as a gain above one - the one thing this
+     * project may never hand downstream, see the gains-multiply note on SpatialGain.highTrim.
+     * What a source arriving from everywhere at once actually sounds like is a source with no
+     * direction, and that is a thing the room can do exactly: every handset playing all of it.
+     * A listener put it better than the code did - "相当于在他脑子里放歌".
      */
-    fun spotOf(pan: Float, retreat: Float): SourceSpot {
+    fun spotOf(pan: Float, retreat: Float, envelopment: Float): SourceSpot {
         val azimuth = pan.coerceIn(-1f, 1f) * PI
-        val radius = SOURCE_HOME_RADIUS +
-            retreat.coerceIn(0f, 1f) * (SOURCE_MAX_RADIUS - SOURCE_HOME_RADIUS)
+        val inside = envelopmentFor(retreat, envelopment)
+        val radius =
+            if (inside > 0f) {
+                SOURCE_HOME_RADIUS *
+                    (1f - (inside / SpatialField.MAX_ENVELOPMENT.toFloat()).coerceIn(0f, 1f))
+            } else {
+                SOURCE_HOME_RADIUS +
+                    retreat.coerceIn(0f, 1f) * (SOURCE_MAX_RADIUS - SOURCE_HOME_RADIUS)
+            }
         return SourceSpot(
             CENTRE + (radius * sin(azimuth)).toFloat(),
             // The same flip as layoutOf, and for the same reason: ahead is up the screen.
@@ -248,15 +268,47 @@ object SpatialRoom {
     /**
      * How far off a source dropped at [spot] is, as the 0..1 the rule reads.
      *
-     * Both ends clamp, and the near end is the interesting one: inside the ring of handsets there
-     * is nowhere nearer for a source to be, so everything in there reads as zero. See
-     * [SOURCE_HOME_RADIUS].
+     * Both ends clamp. Inside the ring of handsets this is zero and [envelopmentOf] is what the
+     * radius means instead - the source is not retreating in there, it is arriving from more and
+     * more directions at once.
      */
     fun retreatOf(spot: SourceSpot): Float {
         val radius = hypot((spot.x - CENTRE).toDouble(), (CENTRE - spot.y).toDouble()).toFloat()
         return ((radius - SOURCE_HOME_RADIUS) / (SOURCE_MAX_RADIUS - SOURCE_HOME_RADIUS))
             .coerceIn(0f, 1f)
     }
+
+    /**
+     * How little direction a source dropped at [spot] has, as the 0..MAX_ENVELOPMENT the rule
+     * reads: nothing on the ring of handsets, all of it at the listener.
+     *
+     * Zero everywhere outside the ring, so this and [retreatOf] are never both answering at once -
+     * see [envelopmentFor], which is the same statement said where the rule can read it.
+     */
+    fun envelopmentOf(spot: SourceSpot): Float {
+        val radius = hypot((spot.x - CENTRE).toDouble(), (CENTRE - spot.y).toDouble()).toFloat()
+        if (radius >= SOURCE_HOME_RADIUS) return 0f
+        val inwards = 1f - radius / SOURCE_HOME_RADIUS
+        return (inwards * SpatialField.MAX_ENVELOPMENT.toFloat())
+            .coerceIn(0f, SpatialField.MAX_ENVELOPMENT.toFloat())
+    }
+
+    /**
+     * The envelopment a dot at [retreat] and [envelopment] actually has, which is none of it once
+     * the dot is outside the handsets.
+     *
+     * A dot is one place, and one place is one radius - but the radius is carried as two numbers
+     * because the rule needs them separately, and nothing stops both being set at once. Choosing
+     * an effect is where that happens: 旋转 sets an envelopment, and switching from it to 自定义
+     * 声音位置 lands in a room that has both. Whichever way that is resolved, the picture and the
+     * sound have to resolve it the same way or the drawing is describing a room nobody is hearing.
+     * So it is written once, here, and read by [spotOf] and by ruleOf.
+     *
+     * Retreat wins because retreat is the half a finger can see it has asked for: it is the only
+     * one of the two with a readout under the map.
+     */
+    fun envelopmentFor(retreat: Float, envelopment: Float): Float =
+        if (retreat > 0f) 0f else envelopment
 
     /**
      * The room these icons draw, or null when there is nothing to draw.

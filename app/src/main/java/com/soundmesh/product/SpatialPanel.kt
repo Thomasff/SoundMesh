@@ -158,9 +158,19 @@ fun MeasuredRoom(
 private fun SourceReadout(state: RoomState) {
     Note(stringResource(R.string.room_source_hint))
     val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
+    val inside = SpatialRoom.envelopmentFor(state.retreat, state.envelopment)
     Note(
-        if (state.retreat <= 0f) stringResource(R.string.room_source_here)
-        else stringResource(R.string.room_source_away, 10f.pow(decibels / 20f), decibels)
+        when {
+            state.retreat > 0f ->
+                stringResource(R.string.room_source_away, 10f.pow(decibels / 20f), decibels)
+            // The inside half of the travel, which reads as a share rather than as a distance:
+            // there is no "x times nearer" to quote, because nothing is getting louder.
+            inside > 0f -> stringResource(
+                R.string.room_source_inside,
+                (inside / SpatialField.MAX_ENVELOPMENT.toFloat() * 100f).roundToInt()
+            )
+            else -> stringResource(R.string.room_source_here)
+        }
     )
     // The one combination worth a line of its own, because it is the one where the control is
     // working exactly as built and still does not do what it is for. A level on its own is an
@@ -373,9 +383,12 @@ class RoomActions(
         // Two setters from one gesture, which is the whole of what the dot is. Where a source is
         // in a room is two numbers and a slider is one, so a slider can only travel a path chosen
         // for it in advance; this hands both numbers over at once and lets the finger pick.
+        // Three setters from one gesture now. The third is the half of the travel that is inside
+        // the handsets, where a source cannot get louder and so gets less directional instead.
         moveSource = { spot ->
             setPan(SpatialRoom.panOf(spot))
             setRetreat(SpatialRoom.retreatOf(spot))
+            setEnvelopment(SpatialRoom.envelopmentOf(spot))
         },
         togglePart = togglePart
     )
@@ -895,7 +908,7 @@ private const val KILLED_PULSE_MILLIS = 150
  */
 private fun sourceSpotOf(state: RoomState, actions: RoomMapActions): SourceSpot? {
     if (actions.moveSource == null || state.mode != SpatialMode.PAN) return null
-    return SpatialRoom.spotOf(state.pan, state.retreat)
+    return SpatialRoom.spotOf(state.pan, state.retreat, state.envelopment)
 }
 
 /**
@@ -1138,11 +1151,13 @@ internal const val GRAB_RADIUS = 0.12
  *
  * A slider rather than a number somebody picked, because what it is for is a thing only an ear
  * can judge and an ear judges "better" far more reliably than "how much". Only on screen for the
- * two modes that move a source - the split has no source to face away from.
+ * rotation: the split has no source to face away from, and 自定义声音位置 has this on the map,
+ * where it is how far in from the handsets the dot has been dragged. Two controls for one number
+ * is two controls that disagree, and the one to keep is the one somebody can point at.
  */
 @Composable
 private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
-    val range = 0f..SpatialField.MAX_ENVELOPMENT.toFloat()
+    val range = 0f..MOST_ENVELOPMENT_ON_A_SLIDER
     Column {
         Knob(
             title = stringResource(R.string.room_envelopment),
@@ -1210,6 +1225,16 @@ private fun RuleReadings(readings: List<RoomReading>, colours: Map<String, Int>)
 
 /** What a room ships at, which is where a listener put the slider rather than where zero is. */
 const val DEFAULT_ENVELOPMENT = 0.25f
+
+/**
+ * How far the 包裹感 slider goes: half, where the rule itself goes all the way to one.
+ *
+ * At one every handset plays everything whatever the source is doing, which for the rotation is
+ * the effect switched off - and a control whose far end switches off the thing it controls has a
+ * trap at the end of it. The dot on the map may reach one because there it means something a
+ * person can see: the source standing where the listener is.
+ */
+const val MOST_ENVELOPMENT_ON_A_SLIDER = 0.5f
 
 /**
  * The list of named results, and under whichever one is chosen, what it is played with.
@@ -1387,7 +1412,9 @@ const val LONGEST_SPIN_SECONDS = 20
 internal fun apply(effect: RoomEffect, actions: RoomActions) {
     val settings = effect.settings
     actions.pickMode(settings.mode)
-    actions.setEnvelopment(settings.envelopment)
+    // Only where the effect names one. Under 自定义声音位置 this number is where the dot is, and
+    // an effect that wrote it would put the dot back every time its row was tapped.
+    settings.envelopment?.let(actions.setEnvelopment)
     actions.setReverb(settings.reverb)
 }
 
@@ -1411,9 +1438,9 @@ private fun FineTuning(state: RoomState, actions: RoomActions) {
     // First, because it is the one of the three that every effect reads and the only one an
     // effect sets for you. Somebody who came here came here for this.
     ReverbSlider(state, actions)
-    if (state.mode == SpatialMode.ROTATE || state.mode == SpatialMode.PAN) {
-        EnvelopmentSlider(state, actions)
-    }
+    // The rotation only. Under 自定义声音位置 the same number is how far in the dot has been
+    // dragged, and a slider beside a map that both write one number is two controls that disagree.
+    if (state.mode == SpatialMode.ROTATE) EnvelopmentSlider(state, actions)
     if (state.separation > 0f) SeparationControl(state, actions)
 }
 

@@ -66,7 +66,7 @@ enum class RoomEffect(
     PLACE(
         R.string.room_effect_place,
         R.string.room_effect_place_line,
-        EffectSettings(SpatialMode.PAN, envelopment = DEFAULT_ENVELOPMENT, reverb = DEFAULT_REVERB)
+        EffectSettings(SpatialMode.PAN, reverb = DEFAULT_REVERB)
     )
 }
 
@@ -81,7 +81,16 @@ enum class RoomEffect(
  */
 data class EffectSettings(
     val mode: SpatialMode,
-    val envelopment: Float = 0f,
+    /**
+     * What to set the envelopment to, or null to leave whatever is there.
+     *
+     * Null for three of the four, and each for its own reason. 同步齐奏 and 双声道 never read it,
+     * so writing it would be a setter with no sound behind it. 自定义声音位置 reads it as **where
+     * the dot is** - how far in from the handsets it has been dragged - so an effect that set it
+     * would move the dot every time somebody chose that row, which is the assignment problem
+     * [EffectSettings] exists to avoid, in a second place.
+     */
+    val envelopment: Float? = null,
     val reverb: Float = 0f
 )
 

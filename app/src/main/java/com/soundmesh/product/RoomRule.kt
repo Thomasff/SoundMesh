@@ -32,8 +32,16 @@ internal fun ruleOf(room: RoomState): SpatialField? {
         crossoverHz = room.crossoverHz.toDouble()
             .coerceIn(SpatialField.LOWEST_CROSSOVER_HZ, SpatialField.HIGHEST_CROSSOVER_HZ),
         otherHalfIds = room.otherHalfIds,
-        envelopment = room.envelopment.toDouble()
-            .coerceIn(0.0, SpatialField.MAX_ENVELOPMENT),
+        // Taken through the same resolution the drawing uses, so that a room carrying both a
+        // retreat and an envelopment - which is every room somebody reached by choosing 旋转 and
+        // then 自定义声音位置 - sounds like the one dot it is showing. See SpatialRoom.
+        envelopment =
+            if (room.mode == SpatialMode.PAN) {
+                SpatialRoom.envelopmentFor(room.retreat, room.envelopment).toDouble()
+                    .coerceIn(0.0, SpatialField.MAX_ENVELOPMENT)
+            } else {
+                room.envelopment.toDouble().coerceIn(0.0, SpatialField.MAX_ENVELOPMENT)
+            },
         // Zeroed rather than carried with a flag beside it: no scale is exactly what a room that
         // never measured its listener sends, so the switch off and the feature absent are the same
         // message on the wire and the same code on every handset.

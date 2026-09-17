@@ -561,13 +561,22 @@ data class SpatialField(
         const val MAX_LOW_TILT = 4.0
 
         /**
-         * How far [envelopment] may be wound up: half, which is 6 dB between facing and facing away.
+         * How far [envelopment] may be wound up: all the way, where every handset plays everything
+         * at the same level whatever the source is doing.
          *
-         * Not one. At one every handset plays everything at the same level whatever the source is
-         * doing, and the two modes that read it are modes for moving a source about - a control
-         * whose far end switches the feature off is a control with a trap at the end of it.
+         * This was half until 2026-09-18, and the argument for the half was about a **slider**: at
+         * one the feature is off, and a control whose far end switches off the thing it controls
+         * has a trap at the end of it. That argument is still right and the slider still stops at
+         * half - see MOST_ENVELOPMENT_ON_A_SLIDER in SpatialPanel.
+         *
+         * What changed is that the second reader of this is no longer a slider. Under
+         * [SpatialMode.PAN] the number comes from how far in from the handsets the dot has been
+         * dragged, and one is the dot sitting on the listener - a source in the same place as the
+         * ear it is heard by, which has no direction to be in. That is not the feature switching
+         * off, it is the feature's own far end, and it is somewhere a finger has to go past the
+         * whole rest of the drawing to reach.
          */
-        const val MAX_ENVELOPMENT = 0.5
+        const val MAX_ENVELOPMENT = 1.0
 
         /**
          * The longest wait [arrivalDelayNanosFor] will ask any handset for: fifty milliseconds.

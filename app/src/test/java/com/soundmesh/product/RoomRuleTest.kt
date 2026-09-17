@@ -1,5 +1,6 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
 import org.junit.Assert.assertEquals
@@ -105,5 +106,45 @@ class RoomRuleTest {
 
         assertEquals(1.4, ruleOf(measured)!!.metresPerUnit, 0.0)
         assertEquals(0.0, ruleOf(measured.copy(delayCompensation = false))!!.metresPerUnit, 0.0)
+    }
+
+    /**
+     * A room carrying both a retreat and an envelopment plays the dot it is showing.
+     *
+     * The two numbers are one radius - outside the handsets it is the retreat, inside it is the
+     * envelopment - and nothing stops a room holding both at once. Choosing 旋转, which sets an
+     * envelopment, and then 自定义声音位置, which leaves it alone, is a room with both and it is
+     * two taps away. The drawing resolves that in favour of the retreat, so the rule has to as
+     * well: a dot drawn outside the handsets while the sound has the direction taken out of it is
+     * the picture and the room disagreeing, with nothing on screen to say which one is right.
+     */
+    @Test
+    fun `a source outside the handsets is played with no envelopment whatever the state holds`() {
+        val most = SpatialField.MAX_ENVELOPMENT.toFloat()
+        val both = stateOn(SpatialMode.PAN).copy(retreat = 0.4f, envelopment = most)
+
+        assertEquals(0.0, ruleOf(both)!!.envelopment, 1e-9)
+        // And inside the handsets it reaches the rule untouched, or the dot would move a number
+        // nothing plays.
+        assertEquals(
+            most.toDouble(),
+            ruleOf(both.copy(retreat = 0f))!!.envelopment,
+            1e-6
+        )
+    }
+
+    /**
+     * The rotation is not the dot and keeps what it was given, retreat or no retreat. Resolving
+     * this one the same way would silently undo the 包裹感 knob for every room that had ever had
+     * a source dragged away from it.
+     */
+    @Test
+    fun `the rotation keeps its envelopment even in a room that once retreated`() {
+        val spun = stateOn(SpatialMode.ROTATE).copy(
+            retreat = 0.4f,
+            envelopment = DEFAULT_ENVELOPMENT
+        )
+
+        assertEquals(DEFAULT_ENVELOPMENT.toDouble(), ruleOf(spun)!!.envelopment, 1e-6)
     }
 }

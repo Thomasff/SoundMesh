@@ -285,7 +285,7 @@ class SpatialRoomTest {
             for (step in 0..10) {
                 val pan = tenth / 10f
                 val retreat = step / 10f
-                val spot = SpatialRoom.spotOf(pan, retreat)
+                val spot = SpatialRoom.spotOf(pan, retreat, 0f)
                 val readBack = SpatialRoom.panOf(spot)
 
                 // Straight back is one place with two names, +1 and -1, which is what covering
@@ -301,7 +301,7 @@ class SpatialRoomTest {
     /** Nothing asked for is nothing moved: the source starts straight ahead, among the handsets. */
     @Test
     fun aSourceNobodyHasDraggedSitsAheadAmongTheHandsets() {
-        val spot = SpatialRoom.spotOf(0f, 0f)
+        val spot = SpatialRoom.spotOf(0f, 0f, 0f)
 
         assertEquals(SpatialRoom.CENTRE, spot.x, 1e-6f)
         assertEquals(SpatialRoom.CENTRE - SpatialRoom.DEFAULT_RADIUS, spot.y, 1e-6f)
@@ -329,6 +329,82 @@ class SpatialRoomTest {
         assertEquals(-right, left, 1e-4f)
         // Straight back is the end of the travel, and it is reachable rather than asymptotic.
         assertEquals(1f, SpatialRoom.panOf(SourceSpot(SpatialRoom.CENTRE, 0.9f)), 1e-4f)
+    }
+
+    /**
+     * The inside half of the travel reads back as the number it was drawn from, the same way the
+     * outside half does.
+     *
+     * Two numbers describing one radius is the arrangement that lets the picture and the sound
+     * disagree, so both directions are pinned: what a dot drawn from an envelopment reads back as,
+     * and that it reads back as no retreat at all. A dot inside the handsets that also claimed a
+     * retreat would be a source both nearer and further than the phones.
+     */
+    @Test
+    fun `a source drawn inside the handsets reads back as the envelopment it was drawn from`() {
+        val most = com.soundmesh.core.SpatialField.MAX_ENVELOPMENT.toFloat()
+        for (step in 0..10) {
+            val envelopment = most * step / 10f
+            val spot = SpatialRoom.spotOf(0.3f, 0f, envelopment)
+
+            assertEquals("at $envelopment", envelopment, SpatialRoom.envelopmentOf(spot), 1e-4f)
+            assertEquals("at $envelopment", 0f, SpatialRoom.retreatOf(spot), 1e-4f)
+            // Except at the very last stop, where the dot is on the listener and there is no
+            // direction left to read back - which is not a rounding loss but the whole point of
+            // that position. A pan that survived to there would be the drawing claiming a side
+            // for a sound that is coming from all of them.
+            if (envelopment < most) {
+                assertEquals("at $envelopment", 0.3f, SpatialRoom.panOf(spot), 1e-4f)
+            } else {
+                assertEquals(0f, SpatialRoom.panOf(spot), 1e-6f)
+            }
+        }
+    }
+
+    /**
+     * All the way in is the listener's own place, and there the source has no direction left.
+     *
+     * The one position on this drawing that is not a direction. Checked against the rule's own
+     * maximum rather than against 1.0, because what the drawing owes the rule is its far end,
+     * whatever number that is.
+     */
+    @Test
+    fun `a source dragged onto the listener has all of the envelopment and none of the retreat`() {
+        val onTheListener = SourceSpot(SpatialRoom.CENTRE, SpatialRoom.CENTRE)
+
+        assertEquals(
+            com.soundmesh.core.SpatialField.MAX_ENVELOPMENT.toFloat(),
+            SpatialRoom.envelopmentOf(onTheListener),
+            1e-4f
+        )
+        assertEquals(0f, SpatialRoom.retreatOf(onTheListener), 1e-4f)
+    }
+
+    /**
+     * On the ring of handsets both halves read zero, which is the seam between them. A ring that
+     * answered a little of each would make the sound jump as a finger crossed it.
+     */
+    @Test
+    fun `the ring of handsets is where both halves of the travel read nothing`() {
+        val onTheRing = SourceSpot(SpatialRoom.CENTRE, SpatialRoom.CENTRE - SpatialRoom.SOURCE_HOME_RADIUS)
+
+        assertEquals(0f, SpatialRoom.envelopmentOf(onTheRing), 1e-4f)
+        assertEquals(0f, SpatialRoom.retreatOf(onTheRing), 1e-4f)
+    }
+
+    /**
+     * Outside the handsets there is no envelopment to be had, whatever the state happens to be
+     * carrying. This is the resolution [SpatialRoom.envelopmentFor] exists for, checked from the
+     * drawing's side; RoomRuleTest checks that the rule resolves it the same way.
+     */
+    @Test
+    fun `a retreated source has no envelopment however the state got one`() {
+        val most = com.soundmesh.core.SpatialField.MAX_ENVELOPMENT.toFloat()
+
+        assertEquals(0f, SpatialRoom.envelopmentFor(0.4f, most), 1e-6f)
+        assertEquals(most, SpatialRoom.envelopmentFor(0f, most), 1e-6f)
+        // And the dot drawn from that pair is outside the ring, not inside it.
+        assertEquals(0.4f, SpatialRoom.retreatOf(SpatialRoom.spotOf(0f, 0.4f, most)), 1e-4f)
     }
 
     /** The far end of the travel, which is the corner a finger reaches first. */
