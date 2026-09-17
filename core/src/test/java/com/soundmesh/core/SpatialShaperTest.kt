@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.pow
 
 class SpatialShaperTest {
     private val sampleRate = 48000
@@ -488,4 +489,86 @@ class SpatialShaperTest {
         )
         assertArrayEquals(plain, through)
     }
+
+    /**
+     * The commonest case in the whole file, and the one a filter is most likely to spoil quietly.
+     * A source nobody has moved has to come out byte for byte what it came in as, or every chunk of
+     * every song is being filtered slightly for ever with nothing on any screen saying so.
+     */
+    @Test
+    fun aRoomWithItsSourceWhereItStandsPlaysExactlyWhatItAlwaysPlayed() {
+        val room = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0)
+        val pcm = noise()
+
+        val plain = SpatialShaper.shape(pcm, room, "left", 0L, sampleRate)
+        val shelved = SpatialShaper.shape(pcm, room, "left", 0L, sampleRate, shelf = DistanceShelf())
+
+        assertArrayEquals(plain, shelved)
+    }
+
+    /**
+     * And the point of it. A source dragged away loses more of its top than of its bottom, because
+     * what reaches a listener from across a room has mostly been off a wall and walls keep the
+     * bottom - see [DistanceShelf].
+     *
+     * Measured as a ratio of ratios so that the level the retreat already takes off divides out:
+     * what is being asked is whether the **top** went further down than the whole did, which is the
+     * only part of this the shelf is responsible for.
+     */
+    @Test
+    fun aSourceDraggedAwayLosesMoreOfItsTopThanOfItsWhole() {
+        val here = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0)
+        val away = here.copy(retreat = 1.0)
+        // Alternating samples are the top of what this rate can carry; a steady level is the bottom.
+        val treble = steadyAlternating(8000)
+        val bass = steady(8000)
+
+        val trebleRatio = energyOf(
+            SpatialShaper.shape(treble, away, "left", 0L, sampleRate, shelf = DistanceShelf())
+        ) / energyOf(SpatialShaper.shape(treble, here, "left", 0L, sampleRate, shelf = DistanceShelf()))
+        val bassRatio = energyOf(
+            SpatialShaper.shape(bass, away, "left", 0L, sampleRate, shelf = DistanceShelf())
+        ) / energyOf(SpatialShaper.shape(bass, here, "left", 0L, sampleRate, shelf = DistanceShelf()))
+
+        assertTrue("the top did not go further down: $trebleRatio against $bassRatio", trebleRatio < bassRatio)
+        // The bottom is the retreat's business alone: down by exactly the level the readout
+        // claims and not one decibel more. Written out here rather than asked of the rule, so a
+        // shelf leaning on the bottom could not hide behind the thing it was leaning on.
+        val levelOnly = 10.0.pow(-SpatialField.RETREAT_DECIBELS / 20.0).let { it * it }
+        // Loose by the width of a sixteen bit sample and no looser: the shaper writes shorts,
+        // so the ratio of two rounded chunks cannot land on the real number exactly.
+        assertEquals(levelOnly, bassRatio, 1e-5)
+    }
+
+    /**
+     * A rule that moves the source needs somewhere for the filter to keep what it has heard, and
+     * says so rather than playing an undulled room. A missing filter and a source that has not
+     * moved sound exactly alike, which is the pair this refusal exists to tell apart - the same
+     * argument the crossover's own requirement is written on.
+     */
+    @Test
+    fun aRoomThatHasMovedItsSourceRefusesToPlayWithoutSomewhereToFilter() {
+        val away = SpatialField(SpatialMode.PAN, facingPair(), pan = 0.0, retreat = 1.0)
+
+        val thrown = runCatching {
+            SpatialShaper.shape(steady(8000), away, "left", 0L, sampleRate)
+        }.exceptionOrNull()
+
+        assertTrue("played anyway: $thrown", thrown is IllegalArgumentException)
+    }
+
+    /** The top of what this rate can carry, as a chunk. */
+    private fun steadyAlternating(level: Int, frames: Int = framesPerChunk): ByteArray {
+        val pcm = ByteArray(frames * 4)
+        for (index in 0 until frames * 2) {
+            val value = if ((index / 2) % 2 == 0) level else -level
+            pcm[index * 2] = (value and 0xFF).toByte()
+            pcm[index * 2 + 1] = (value shr 8).toByte()
+        }
+        return pcm
+    }
+
+    /** Sum of squares on the left channel, skipping the first frames while the filter settles. */
+    private fun energyOf(pcm: ByteArray): Double =
+        leftChannel(pcm).drop(200).sumOf { it.toDouble() * it.toDouble() }
 }

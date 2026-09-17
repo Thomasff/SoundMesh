@@ -66,6 +66,15 @@ object SpatialShaper {
      * asks for any of the low half and refused when it is missing, because a filter that is not
      * there and a knob at zero sound exactly alike.
      *
+     * [fromRetreat] is the fourth, and the only one of them that needs nobody named: how far off
+     * the source is is one number for the whole room, which is what makes it a distance rather
+     * than a pan. Its no-rule value is zero - a handset playing unshaped is a handset playing a
+     * source that has not been moved anywhere.
+     *
+     * [shelf] is where the dulling keeps what it has heard, on the same terms as [crossover] and
+     * refused the same way. See [DistanceShelf] for why a receding source is duller and why that
+     * is a reverberation effect rather than anything the air does over a living room.
+     *
      * [diffuse] is the second of those and is refused on the same terms. Unlike the crossover it is
      * this handset's own, drawn from its name, and it is the one thing here that must not agree
      * across the room - see [Decorrelator]. It is applied after the mix has been divided up and
@@ -96,7 +105,9 @@ object SpatialShaper {
         from: StereoGain? = null,
         fromFold: Double? = null,
         fromSpectrum: SpectrumMix? = null,
+        fromRetreat: Double? = null,
         crossover: Crossover? = null,
+        shelf: DistanceShelf? = null,
         diffuse: Decorrelator? = null,
         travel: TravellingDelay? = null
     ): ByteArray {
@@ -124,6 +135,15 @@ object SpatialShaper {
         // rule cannot change inside a chunk. It is not ramped, because moving where a filter divides
         // leaves the signal already inside it alone - the output stays continuous through a drag.
         val coefficient = crossover?.let { Crossover.coefficientFor(field.crossoverHz, sampleRate) } ?: 0.0
+        require(shelf != null || (field.retreat <= 0.0 && (fromRetreat ?: 0.0) <= 0.0)) {
+            "a source that has been moved away needs somewhere to keep what the filter has heard"
+        }
+        // Once per chunk, like the crossover's, and for the same reason: the corner does not move
+        // with distance - see DistanceShelf.CORNER_HZ. What moves is the depth, and that is a
+        // crossfade rather than the filter's own shape, so it can be ramped below.
+        val shelfCoefficient = if (shelf == null) 0.0 else DistanceShelf.coefficientFor(sampleRate)
+        val endDepth = DistanceShelf.depthFor(field.retreat)
+        val beginDepth = fromRetreat?.let { DistanceShelf.depthFor(it) } ?: endDepth
         val stages = Decorrelator.stagesFor(field.diffusion)
         // Null at zero rather than a filter asked for no sections: the arithmetic below then has no
         // per-frame call at all, instead of a call that gives the sample straight back. A knob at
@@ -175,15 +195,30 @@ object SpatialShaper {
             val heardRight = if (diffuser == null) mixRight else diffuser.right(mixRight, stages) * headroom
             val placedLeft = heardLeft * left
             val placedRight = heardRight * right
+            // After the placement and before the delay, which is where the propagation belongs:
+            // this is what the room did to the sound on its way over, and the delay below is the
+            // sound still on its way. Filtering commutes with the gain, so the order is chosen for
+            // what it means rather than for what it computes.
+            //
+            // One shelf for the whole handset and never one per handset, although the physics
+            // would allow it - a filter is a group delay, and a group delay that differs between
+            // handsets is the one quantity this entire project is built on getting right. The
+            // depth is the room's own number, identical everywhere, so every handset carries the
+            // same eighty microseconds and the difference between them stays exactly zero.
+            val depth = beginDepth + (endDepth - beginDepth) * across
+            val sentOutLeft =
+                if (shelf == null) placedLeft else shelf.left(placedLeft, shelfCoefficient, depth)
+            val sentOutRight =
+                if (shelf == null) placedRight else shelf.right(placedRight, shelfCoefficient, depth)
             // Last of all, on what this handset has finished making. Anywhere earlier would delay
             // the gain envelope along with the audio, which for a source going round the room
             // means the placement and the arrival time disagree about where it is by however far
             // this handset is held back.
             if (travel == null) {
-                writeSample(out, at, placedLeft)
-                writeSample(out, at + BYTES_PER_SAMPLE, placedRight)
+                writeSample(out, at, sentOutLeft)
+                writeSample(out, at + BYTES_PER_SAMPLE, sentOutRight)
             } else {
-                travel.step(placedLeft, placedRight, beginDelay + (endDelay - beginDelay) * across)
+                travel.step(sentOutLeft, sentOutRight, beginDelay + (endDelay - beginDelay) * across)
                 writeSample(out, at, travel.left)
                 writeSample(out, at + BYTES_PER_SAMPLE, travel.right)
             }

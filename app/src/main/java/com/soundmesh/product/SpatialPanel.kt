@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.AlignmentAnalysis
+import com.soundmesh.core.DistanceShelf
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -152,7 +153,12 @@ private fun SourceReadout(state: RoomState) {
     val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
     Note(
         if (state.retreat <= 0f) stringResource(R.string.room_source_here)
-        else stringResource(R.string.room_source_away, 10f.pow(decibels / 20f), decibels)
+        else stringResource(
+            R.string.room_source_away,
+            10f.pow(decibels / 20f),
+            decibels,
+            state.retreat * DistanceShelf.FULL_SHELF_DECIBELS.toFloat()
+        )
     )
 }
 

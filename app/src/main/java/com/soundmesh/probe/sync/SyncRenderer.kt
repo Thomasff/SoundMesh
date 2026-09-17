@@ -6,6 +6,7 @@ import android.media.AudioTimestamp
 import android.media.AudioTrack
 import com.soundmesh.core.Crossover
 import com.soundmesh.core.Decorrelator
+import com.soundmesh.core.DistanceShelf
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
@@ -107,6 +108,7 @@ internal fun spatialShaped(
     peerId: String?,
     wasUnder: SpatialField? = null,
     crossover: Crossover,
+    shelf: DistanceShelf,
     diffuse: Decorrelator? = null,
     travel: TravellingDelay? = null
 ): ByteArray {
@@ -122,7 +124,9 @@ internal fun spatialShaped(
         from = cameFrom(wasUnder, field, peerId, playAtHostNanos),
         fromFold = foldCameFrom(wasUnder, field, peerId),
         fromSpectrum = spectrumCameFrom(wasUnder, field, peerId),
+        fromRetreat = retreatCameFrom(wasUnder, field, peerId),
         crossover = crossover,
+        shelf = shelf,
         diffuse = diffuse,
         travel = travel
     )
@@ -172,6 +176,24 @@ private fun foldCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: Str
     if (wasUnder === now) return null
     if (wasUnder == null || !wasUnder.layout.contains(peerId)) return 0.0
     return wasUnder.foldFor(peerId)
+}
+
+/**
+ * How far off the room had put the source a moment ago, when that is not where this rule puts it.
+ *
+ * The fourth of these and the only one that does not ask the rule about a handset - the retreat is
+ * one number for the whole room. It is here rather than folded into [cameFrom] for the same reason
+ * the fold is: the gain it drives is already carried there, and what this is for is the **shelf**,
+ * which no gain can ramp. Dragging the source outward moves both, and a step in the depth while
+ * the level ramps smoothly would be the treble arriving before the loudness.
+ *
+ * Zero for a handset that was playing under no rule at all, because a source nobody has moved is
+ * exactly where it stands. A handset the old rule did not name is the same case.
+ */
+private fun retreatCameFrom(wasUnder: SpatialField?, now: SpatialField, peerId: String): Double? {
+    if (wasUnder === now) return null
+    if (wasUnder == null || !wasUnder.layout.contains(peerId)) return 0.0
+    return wasUnder.retreat
 }
 
 /**
@@ -299,6 +321,12 @@ class SyncRenderer(
     // Held here rather than inside the shaper because the shaper is a function of the instant and
     // this is the one thing in the path that is a function of the past.
     private val crossover = Crossover()
+
+    // Beside the crossover and never built lazily like the two below it: this one is fed on every
+    // frame whether or not it is taking anything off, so that a source dragged outward finds it
+    // already holding the right few hundred microseconds instead of clicking its way up from cold.
+    // At a depth of nothing it is two arithmetic operations and hands the sample straight back.
+    private val shelf = DistanceShelf()
 
     // This handset's own, and the one thing in the path that is meant to disagree with every other
     // handset's - see Decorrelator. Built on first use rather than eagerly: a room with the knob at
@@ -691,6 +719,7 @@ class SyncRenderer(
                             spatialPeerId,
                             wasUnder = shapedUnder,
                             crossover = crossover,
+                            shelf = shelf,
                             diffuse = diffuser,
                             travel = if (everTravelled) travelling else null
                         )

@@ -385,7 +385,7 @@
     <string name="room_skew_distance_on">晚 %1$d 毫秒就是被搬远 %2$.1f 米，那它就该按这个距离变轻。早的那台一动不动，方向还是它说了算。这一根只管方向，要让声音整个走远，用下面那根。</string>
     <string name="room_source_hint">房间图上那个带光圈的点就是声源，拖它：左右决定声音偏哪边，离你远近决定声音有多远。手机那一圈是最近的位置，因为声音本来就是从手机里出来的。</string>
     <string name="room_source_here">声源就在手机那一圈上，全屋原样。</string>
-    <string name="room_source_away">声源退到 %1$.1f 倍远，所有手机一起轻 %2$.1f 分贝。方向不受影响。</string>
+    <string name="room_source_away">声源退到 %1$.1f 倍远：所有手机一起轻 %2$.1f 分贝，高频再少 %3$.1f 分贝（远处的声音本来就闷，因为你听到的多半是在墙上弹过的那一份）。方向不受影响。</string>
     <string name="room_retreat">声源退多远（临时调试）</string>
     <string name="room_retreat_here">就在原地</string>
     <string name="room_retreat_away">退到 %1$.1f 倍远（轻 %2$.1f 分贝）</string>
