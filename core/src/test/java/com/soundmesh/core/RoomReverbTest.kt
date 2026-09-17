@@ -52,7 +52,38 @@ class RoomReverbTest {
         val closing = rmsOf(tail, tail.size - window, tail.size)
 
         val fallen = 20.0 * log10(opening / closing)
-        assertTrue("fell $fallen dB over a reverberation time", fallen in 40.0..80.0)
+        assertTrue("fell $fallen dB over a reverberation time", fallen in 52.0..72.0)
+    }
+
+    /**
+     * **Each comb gets its feedback from its own length**, so all eight fall at the same rate in
+     * time rather than at the same rate per bounce. One feedback shared between combs of different
+     * lengths - which is what Freeverb itself does - leaves the short ones gone while the long ones
+     * are still going, and a tail that is eight decays laid over each other instead of one is a
+     * good part of what makes a reverberation ring.
+     *
+     * Measured as a decay that is **straight**: three windows evenly spaced down the tail should
+     * fall by the same number of decibels between the first pair as between the second. A tail made
+     * of decays of different lengths bends, because the slow ones take it over as the fast ones go.
+     *
+     * Written after the fact, and worth saying why: the first version of this file checked
+     * [RoomReverb.feedbackFor] on its own and nothing checked that the bank called it with each
+     * comb's own length. Replacing that argument with a constant passed the whole suite - a
+     * function tested in isolation says nothing about whether anything calls it correctly.
+     */
+    @Test
+    fun theEightCombsDieTogetherRatherThanOneAfterAnother() {
+        val tail = tailOf("aa11", 1.0)
+        val window = rate / 25
+        fun levelAt(seconds: Double): Double {
+            val from = (rate * seconds).toInt()
+            return rmsOf(tail, from, from + window)
+        }
+
+        val early = 20.0 * log10(levelAt(0.05) / levelAt(0.25))
+        val late = 20.0 * log10(levelAt(0.25) / levelAt(0.45))
+
+        assertEquals("the decay bends: $early dB then $late dB", early, late, 6.0)
     }
 
     /**
