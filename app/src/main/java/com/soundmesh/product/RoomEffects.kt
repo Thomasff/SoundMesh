@@ -111,10 +111,7 @@ fun effectOf(state: RoomState): RoomEffect? {
  */
 private fun settled(settings: EffectSettings): EffectSettings = EffectSettings(
     mode = settings.mode,
-    envelopment =
-        if (settings.mode == SpatialMode.ROTATE || settings.mode == SpatialMode.PAN) {
-            rounded(settings.envelopment)
-        } else 0f,
+    envelopment = if (settings.mode.movesASource) rounded(settings.envelopment) else 0f,
     reverb = rounded(settings.reverb)
 )
 

@@ -1238,7 +1238,7 @@ const val LONGEST_SPIN_SECONDS = 20
  * told four phones which of them carry the voice and then tries the rotation for a minute has to
  * find that assignment where they left it.
  */
-private fun apply(effect: RoomEffect, actions: RoomActions) {
+internal fun apply(effect: RoomEffect, actions: RoomActions) {
     val settings = effect.settings
     actions.pickMode(settings.mode)
     actions.setEnvelopment(settings.envelopment)

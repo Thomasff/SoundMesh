@@ -582,53 +582,8 @@ class HomeActivity : ComponentActivity() {
         host.publishSpatialField(field)
     }
 
-    /**
-     * Null while there is nothing to draw; throws for a room that could not exist.
-     *
-     * Split out so the net above covers the whole rule rather than only the drawing. It used to
-     * cover the drawing alone, which was enough while the drawing held everything that could be
-     * refused - and stopped being enough the moment the rule started naming handsets too.
-     */
-    private fun fieldOf(room: RoomState): SpatialField? {
-        val layout = SpatialRoom.layoutOf(room.icons) ?: return null
-        // Which handset the hand set gap is measured against: this one. Null when this phone is
-        // somehow not in its own drawing, and a gap with nothing at one end of it is no gap.
-        val self = room.selfId?.takeIf(layout::contains)
-        return SpatialField(
-            room.mode,
-            layout,
-            periodNanos = room.periodSeconds.toLong().coerceAtLeast(1L) * 1_000_000_000L,
-            pan = room.pan.toDouble().coerceIn(-1.0, 1.0),
-            // Dropped from the rule while a source is being moved around, and only from the rule:
-            // the screen goes on remembering which handset carries which half, so trying the
-            // rotation for a minute does not cost an assignment somebody made by hand. A source
-            // going one place is one thing going one place, and there is nothing to hand out.
-            separation =
-                if (room.mode == SpatialMode.ROTATE || room.mode == SpatialMode.PAN) 0.0
-                else room.separation.toDouble().coerceIn(0.0, 1.0),
-            splitAxis = room.splitAxis,
-            crossoverHz = room.crossoverHz.toDouble()
-                .coerceIn(SpatialField.LOWEST_CROSSOVER_HZ, SpatialField.HIGHEST_CROSSOVER_HZ),
-            otherHalfIds = room.otherHalfIds,
-            envelopment = room.envelopment.toDouble()
-                .coerceIn(0.0, SpatialField.MAX_ENVELOPMENT),
-            // Zeroed rather than carried with a flag beside it: no scale is exactly what a room
-            // that never measured its listener sends, so the switch off and the feature absent
-            // are the same message on the wire and the same code on every handset.
-            metresPerUnit = if (room.delayCompensation) room.metresPerUnit else 0.0,
-            retreat =
-                if (room.mode == SpatialMode.PAN) room.retreat.toDouble().coerceIn(0.0, 1.0)
-                else 0.0,
-            // In every mode, unlike the retreat above it. That one is the dot's own number written
-            // the other way round and has to leave when the dot does; a room is a room whatever
-            // the handsets are being asked to play.
-            reverb = room.reverb.toDouble().coerceIn(0.0, 1.0)
-        )
-    }
-
-    /** A slider's 0..1 as a time, clamped at both ends so a stray value cannot refuse a rule. */
-    private fun nanosOf(fraction: Float, longest: Long): Long =
-        (fraction.toDouble().coerceIn(0.0, 1.0) * longest).toLong()
+    /** Null while there is nothing to draw; throws for a room that could not exist. */
+    private fun fieldOf(room: RoomState): SpatialField? = ruleOf(room)
 
     /**
      * Points this screen's volume keys at whichever output the host is being heard on.

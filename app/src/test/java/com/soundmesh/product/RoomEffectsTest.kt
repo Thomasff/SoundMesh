@@ -15,12 +15,38 @@ import org.junit.Test
  * a list that does not respond to being tapped.
  */
 class RoomEffectsTest {
-    /** The state an effect leaves behind, the way [SpatialPanel]'s apply leaves it. */
-    private fun roomOn(effect: RoomEffect): RoomState = RoomState(
-        mode = effect.settings.mode,
-        envelopment = effect.settings.envelopment,
-        reverb = effect.settings.reverb
-    )
+    /**
+     * The state an effect leaves behind, driven through the real apply.
+     *
+     * Not rebuilt from [EffectSettings] by hand, which is what this helper used to do and which
+     * proves nothing about whether anything calls it correctly: an apply that forgot to send the
+     * reverberation would leave every test here green while the screen lit up 自定的设置 on every
+     * tap. So this is a RoomActions that writes into a room, and what comes out is what a finger
+     * would have produced.
+     */
+    private fun roomOn(effect: RoomEffect): RoomState {
+        var room = RoomState()
+        apply(
+            effect,
+            RoomActions(
+                moveIcon = {},
+                fitToMeasured = {},
+                measureListener = {},
+                setDelayCompensation = {},
+                pickMode = { room = room.copy(mode = it) },
+                setPan = { room = room.copy(pan = it) },
+                setSeparation = { room = room.copy(separation = it) },
+                setEnvelopment = { room = room.copy(envelopment = it) },
+                setPeriodSeconds = { room = room.copy(periodSeconds = it) },
+                setRetreat = { room = room.copy(retreat = it) },
+                setReverb = { room = room.copy(reverb = it) },
+                pickAxis = { room = room.copy(splitAxis = it) },
+                setCrossoverHz = { room = room.copy(crossoverHz = it) },
+                togglePart = {}
+            )
+        )
+        return room
+    }
 
     @Test
     fun `every effect is recognised in the room it makes`() {
