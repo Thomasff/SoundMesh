@@ -3,7 +3,6 @@ package com.soundmesh.product
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -86,14 +85,39 @@ class RoomEffectsTest {
     }
 
     /**
-     * A room somebody tuned by hand has no name, and is told so. Highlighting the nearest entry
-     * would say their change did not take - and the reverberation is exactly the knob somebody
-     * goes into the fine tuning to move, so it has to be one of the things that counts.
+     * Moving a knob in the fine tuning leaves the chosen row exactly where it was.
+     *
+     * This used to be the opposite assertion, and the opposite assertion is what shipped: the
+     * reverberation counted towards which row lit up, so dragging 回声强度 away from 40% put the
+     * list out and dragging it back lit the row again. Reported 2026-09-18 as "不知道这只是显示
+     * bug 还是会同时取消功能" - and the honest answer, which is what makes it a bug worth having a
+     * test for, is that nothing about the sound changed either time.
      */
     @Test
-    fun `a room tuned by hand matches nothing`() {
-        assertNull(effectOf(RoomState(mode = SpatialMode.SPLIT, reverb = 0.5f)))
-        assertNull(effectOf(RoomState(mode = SpatialMode.ROTATE, reverb = 0f)))
+    fun `a knob moved in the fine tuning does not put the list out`() {
+        assertEquals(RoomEffect.SPIN, effectOf(RoomState(mode = SpatialMode.ROTATE, reverb = 0f)))
+        assertEquals(
+            RoomEffect.PLACE,
+            effectOf(RoomState(mode = SpatialMode.PAN, reverb = 1f, envelopment = 0f))
+        )
+        assertEquals(
+            RoomEffect.STEREO,
+            effectOf(RoomState(mode = SpatialMode.SPLIT, reverb = 0.5f))
+        )
+    }
+
+    /**
+     * Every mode has a row, which is what lets [effectOf] promise an answer rather than a null.
+     * A mode added without a row would not fail to compile - it would throw on the screen that
+     * draws the list, five times a second.
+     */
+    @Test
+    fun `every mode the rule has is a row on the list`() {
+        assertEquals(
+            SpatialMode.entries.toSet(),
+            RoomEffect.entries.map { it.settings.mode }.toSet()
+        )
+        assertEquals(SpatialMode.entries.size, RoomEffect.entries.size)
     }
 
     /**

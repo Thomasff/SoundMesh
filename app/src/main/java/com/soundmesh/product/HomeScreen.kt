@@ -795,25 +795,24 @@ internal fun CaptureSilenceLine(state: HomeState) {
 }
 
 /**
- * Whether this handset can be started from the host, said in one line.
+ * Whether this handset can be started from the host, said in one line, and what is in the way.
  *
- * The whole feature is invisible when it works - somebody presses one button and three phones do
- * something - so the only thing a person can check beforehand is this. A host that says two and a
- * room of three is the one case worth catching, and it is caught by looking rather than by having
- * the third phone sit there silently while the other two play.
+ * Only the sink says it now. The host used to carry a paragraph here explaining what standby is
+ * for, under its volume sliders, and it was removed on 2026-09-18: the count it opened with is
+ * already on the state screen beside the roster, and the rest of it was read once. What stays on
+ * the host is the part that is about something being wrong - a permission not granted, a handset
+ * not calibrated - which is why this is a skipped line rather than an early return.
  */
 @Composable
 internal fun StandbyLine(state: HomeState, actions: HomeActions) {
-    Text(
-        when (state.role) {
-            Role.HOST -> stringResource(R.string.standby_host, state.standingBy)
-            Role.SINK ->
-                if (state.onStandby) stringResource(R.string.standby_sink)
-                else stringResource(R.string.standby_sink_alone)
-            Role.NONE -> return
-        },
-        style = MaterialTheme.typography.bodySmall
-    )
+    if (state.role == Role.NONE) return
+    if (state.role == Role.SINK) {
+        Text(
+            if (state.onStandby) stringResource(R.string.standby_sink)
+            else stringResource(R.string.standby_sink_alone),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
     if (warnsAboutBackground(state)) {
         Text(
             stringResource(R.string.background_blocked),

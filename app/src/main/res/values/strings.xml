@@ -262,7 +262,6 @@
     <string name="scan_done">扫到了，已经记住这台主机</string>
     <string name="scan_no_permission">没有相机权限。去设置里打开，再回到这一页。</string>
     <string name="scan_no_camera">打不开相机</string>
-    <string name="standby_host">待命中的手机：%1$d 台。主机这边开始播放、或者开始量距离的时候，它们会自己跟着做，不用一台台去按。</string>
     <string name="standby_approximate">其中 %1$d 台用的是「测量房间」顺带算出来的估算值，还没正经对过时。差大概一两毫秒，听不出来，但有空该各测一次。</string>
     <string name="standby_uncalibrated">其中 %1$d 台还没和本机对过时。没对过就按零来补，它们会差几十毫秒，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>
     <string name="standby_sink">已待命：主机一按，本机自己开始。留在这一页别退出。</string>
@@ -355,15 +354,14 @@
     <string name="room_you">你</string>
     <string name="room_this_phone">本机</string>
     <string name="room_effect_title">音效</string>
-    <string name="room_effect_custom">当前是自定的设置，在下面「细调」里改过。</string>
     <string name="room_effect_unison">同步齐奏</string>
-    <string name="room_effect_unison_line">每台手机放一模一样的，只是对得齐。没有任何位置效果——别的音效好不好，都是跟它比出来的。</string>
+    <string name="room_effect_unison_line">同步放相同的声音</string>
     <string name="room_effect_stereo">双声道</string>
     <string name="room_effect_stereo_line">偏左的手机放左声道，偏右的放右声道，按上面图里的摆位分。</string>
     <string name="room_effect_spin">旋转</string>
-    <string name="room_effect_spin_line">声音绕着你转圈，自带房间回声。</string>
+    <string name="room_effect_spin_line">声源环绕转动，≥3台手机时效果更好</string>
     <string name="room_effect_place">自定义声音位置</string>
-    <string name="room_effect_place_line">在上面那张图里拖那个白点。左右决定偏哪边，往外拖会变轻、变闷，像退远了。</string>
+    <string name="room_effect_place_line">在上方的位置图中拖动白点，改变声源位置</string>
     <string name="room_spin_period">转一圈</string>
     <string name="room_spin_seconds">%1$d 秒</string>
     <string name="room_split_label">分开放</string>
@@ -378,10 +376,7 @@
     <string name="room_source_here">声源就在手机那一圈上，全屋原样。</string>
     <string name="room_source_away">声源退到 %1$.1f 倍远：所有手机一起轻 %2$.1f 分贝。方向不受影响。</string>
     <string name="room_source_dry">但现在房间回声是零，所以拖远只是变轻。光靠响度说不清远近——耳边的耳语和远处的喊叫可以一样响。把下面那根「房间回声」拧上来：回声不跟着声源走远，一个变轻一个不变，耳朵才读得出距离。</string>
-    <string name="room_reverb">房间回声</string>
-    <string name="room_reverb_none">没有回声，声音直接从手机出来，和这个功能做出来之前逐比特一样。</string>
-    <string name="room_reverb_some">%1$.0f%% 是回声，尾巴 %2$.1f 秒。声源拖远时回声不跟着变轻，所以远近听得出来，不只是变小。</string>
-    <string name="room_reverb_hint">回声每台手机各算各的，故意不一样：真实房间里两个不同位置听到的回声本来就不相关，这也是几台手机能赢过两个音箱的地方。直达声是旁路，一个采样都不动，所以不影响同步。远处的声音变闷也归它管，每在墙上弹一次就少一点高频。</string>
+    <string name="room_reverb">回声强度：%1$.0f%%</string>
     <string name="room_fine">细调</string>
     <string name="room_fine_hide">收起细调</string>
     <string name="room_envelopment">包裹感：声音转开之后，每台还留多少</string>
@@ -390,12 +385,10 @@
     <!-- Every knob's readout that is just "how far along". See Knob in ThinSlider.kt. -->
     <string name="room_knob_percent">%1$d%%</string>
     <string name="room_split_content">分得多彻底</string>
-    <string name="room_split_content_limits">按声音摆在哪儿分，不是按乐器分：底鼓贝斯也在中间，会跟人声一起走。单声道的歌分不出两边。</string>
+    <string name="room_split_limits">此功能仅对部分音乐效果好，取决于音频</string>
     <string name="room_part_low">低音</string>
     <string name="room_part_high">高音</string>
-    <string name="room_crossover">分界点：这以下算低音</string>
-    <string name="room_crossover_hz">%1$d Hz</string>
-    <string name="room_split_low_high_limits">按频率分，不是按乐器分：人声和吉他两边都有。手机喇叭放不出很低的声音，低音那台本来就会轻。</string>
+    <string name="room_crossover">分界点：%1$d Hz 以下设置为低音</string>
     <string name="room_part_middle">中间</string>
     <string name="room_part_sides">两边</string>
     <string name="room_alone">还没有别的手机连上来。一台手机也能摆，但听不出方向。</string>

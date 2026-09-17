@@ -1015,34 +1015,25 @@ private fun EnvelopmentSlider(state: RoomState, actions: RoomActions) {
  * How live the room is: how much of what a handset plays came off the walls rather than out of the
  * source.
  *
- * Beside the retreat above it because the two are read together, and separate because a level on
- * its own cannot say how far away anything is - a whisper close by and a shout across the room
- * reach an ear at the same loudness. The ratio between the two is what does, so both have to be
- * reachable or there is no ratio.
- *
  * Read out as a share of the output rather than in decibels, because "a third of what you hear is
- * the room" is a thing a person can check by listening, and because the reverberation time is the
- * other half of what they would want and is not a slider - it is stated instead.
+ * the room" is a thing a person can check by listening.
+ *
+ * The share is in the title rather than off to the right, and there is nothing under it. What was
+ * under it was three sentences about how the reverberation is computed, which belong in the
+ * feasibility notes: somebody who has opened the fine tuning wants to move a knob.
  *
  * In every mode, unlike the retreat: see [RoomState.reverb].
  */
 @Composable
 private fun ReverbSlider(state: RoomState, actions: RoomActions) {
-    Column {
-        Knob(
-            title = stringResource(R.string.room_reverb),
-            value = state.reverb,
-            readout =
-                if (state.reverb <= 0f) stringResource(R.string.room_reverb_none)
-                else stringResource(
-                    R.string.room_reverb_some,
-                    state.reverb * RoomReverb.MOST_WET.toFloat() * 100f,
-                    RoomReverb.REVERB_SECONDS.toFloat()
-                ),
-            onChange = actions.setReverb
-        )
-        Note(stringResource(R.string.room_reverb_hint))
-    }
+    Knob(
+        title = stringResource(
+            R.string.room_reverb,
+            state.reverb * RoomReverb.MOST_WET.toFloat() * 100f
+        ),
+        value = state.reverb,
+        onChange = actions.setReverb
+    )
 }
 
 /**
@@ -1099,9 +1090,6 @@ private fun EffectSection(
             }
         }
     }
-    // Said rather than hidden: somebody who moved the reverberation in the fine tuning is between
-    // two of these, and a list with nothing lit up and no explanation reads as the list broken.
-    if (current == null) Note(stringResource(R.string.room_effect_custom))
     // Empty unless the diagnostic switch is on - see HomeActivity, which is where they are worked
     // out. Under the list rather than inside a card, because they are about the room and not
     // about any one row of it.
@@ -1324,15 +1312,11 @@ private fun PartPicker(state: RoomState, actions: RoomActions) {
         }
     }
     // Said before it is heard rather than after: this sounds like a fault to somebody who was
-    // told it separates instruments, and it is not one.
-    Note(
-        stringResource(
-            when (state.splitAxis) {
-                SplitAxis.MIDDLE_SIDES -> R.string.room_split_content_limits
-                SplitAxis.LOW_HIGH -> R.string.room_split_low_high_limits
-            }
-        )
-    )
+    // told it separates instruments, and it is not one. One line for both axes, because what
+    // goes wrong is the same thing on either - the split is by where a sound sits in the mix or
+    // by how high it is, never by which instrument it is, and either way some songs come apart
+    // and some do not.
+    Note(stringResource(R.string.room_split_limits))
 }
 
 /** Big enough to read a number on beside a line of text, small enough not to be a button. */
@@ -1348,9 +1332,10 @@ private fun partLabelOf(axis: SplitAxis, farHalf: Boolean): Int = when (axis) {
 @Composable
 private fun CrossoverSlider(state: RoomState, actions: RoomActions) {
     Knob(
-        title = stringResource(R.string.room_crossover),
+        // The number reads inside the sentence rather than off to the right, because on its own
+        // "800 Hz" does not say which side of it is the low half.
+        title = stringResource(R.string.room_crossover, state.crossoverHz.roundToInt()),
         value = state.crossoverHz,
-        readout = stringResource(R.string.room_crossover_hz, state.crossoverHz.roundToInt()),
         range = SpatialField.LOWEST_CROSSOVER_HZ.toFloat()..SpatialField.HIGHEST_CROSSOVER_HZ.toFloat(),
         onChange = actions.setCrossoverHz
     )

@@ -19,8 +19,7 @@ import com.soundmesh.probe.R
  * the list is four lines high whichever row is open.
  *
  * Deliberately not stored anywhere. The settings are the state and this is a reading of them:
- * [effectOf] answers "which of these is the room currently set to", and a room that matches none
- * of them says so rather than pretending to be the nearest one.
+ * [effectOf] answers "which of these is the room currently set to", off the mode alone.
  */
 enum class RoomEffect(
     @StringRes val title: Int,
@@ -90,35 +89,17 @@ data class EffectSettings(
 const val DEFAULT_REVERB = 0.8f
 
 /**
- * Which effect the room is set to, or null where it is set to something with no name.
+ * Which effect the room is set to. Always one of them.
  *
- * Null is a real answer and is shown as one. Anybody who has moved the reverberation in the fine
- * tuning is between two of these, and a list that highlighted the nearest one would be telling
- * them their change did not take.
- */
-fun effectOf(state: RoomState): RoomEffect? {
-    val here = settled(EffectSettings(state.mode, state.envelopment, state.reverb))
-    return RoomEffect.entries.firstOrNull { settled(it.settings) == here }
-}
-
-/**
- * The settings with the parts nobody can hear taken out of them.
+ * Read off the mode and nothing else, because the four rows are the four modes. It used to
+ * compare the whole of [EffectSettings], which meant the reverberation counted towards which row
+ * lit up - so moving the 房间回声 knob in the fine tuning put the list out, with nothing chosen,
+ * and moving it back lit the row again. Reported 2026-09-18.
  *
- * An envelopment for a source that never turns away is carried in the state and changes nothing
- * about the room, so two rooms differing only there are one effect and not two. Without this,
- * choosing 旋转 and then 同步齐奏 would leave an envelopment behind and the list would show
- * nothing as chosen.
+ * Nothing about the sound changed while that was happening, which is what made it worth fixing
+ * rather than explaining: a knob that is on screen to be moved may not un-name the thing it is
+ * tuning. The row says which effect is playing, the knobs say how it is set, and those are two
+ * questions.
  */
-private fun settled(settings: EffectSettings): EffectSettings = EffectSettings(
-    mode = settings.mode,
-    envelopment = if (settings.mode.movesASource) rounded(settings.envelopment) else 0f,
-    reverb = rounded(settings.reverb)
-)
-
-/**
- * Sliders report floats and a preset is written as one, and the two only ever have to agree to
- * about a stop's width - which for every knob here is a twentieth of its range.
- */
-private fun rounded(value: Float): Float = (value * SETTLE_STEPS).toInt() / SETTLE_STEPS
-
-private const val SETTLE_STEPS = 20f
+fun effectOf(state: RoomState): RoomEffect =
+    RoomEffect.entries.first { it.settings.mode == state.mode }
