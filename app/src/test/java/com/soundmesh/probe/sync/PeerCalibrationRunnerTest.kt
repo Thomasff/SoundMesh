@@ -21,12 +21,15 @@ class PeerCalibrationRunnerTest {
      * A recording that would not open has to stop the run before it plays a chirp. Without the
      * guard the handset spends most of a minute making noise in somebody's quiet room, and nothing
      * will ever read a note of it.
+     *
+     * Two reasons now rather than one, and the same answer to both: a round somebody called off is
+     * a round nothing will read either. See [CallOffMidRoundTest].
      */
     @Test
     fun aRunWithNoRecordingStopsInsteadOfPlayingOutItsChirps() {
         assertTrue(
             "the chirps are submitted without checking that the recording opened",
-            source.contains("if (recordingFailure != null) return")
+            source.contains("if (recordingFailure != null || calledOff()) return")
         )
     }
 

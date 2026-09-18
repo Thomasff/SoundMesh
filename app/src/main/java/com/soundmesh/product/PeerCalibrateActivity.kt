@@ -909,8 +909,9 @@ private const val BRIEF_POLL_MILLIS = 50L
  * What the stop button can mean for the arm about to run. See [StopOffer].
  *
  * Either job begins at [StopOffer.BEFORE_SOUND] and moves to [StopOffer.UNDER_WAY] the moment the
- * schedule is handed out - the instant after which nothing this host does reaches the other
- * handsets, because obeying meant leaving the standing channel.
+ * schedule is handed out. What changes there is what the press costs, not whether it works: before
+ * it, the round is called off by refusing to answer for it; after it, by saying so over the
+ * standing channel and discarding what has been measured so far.
  *
  * Which job is running used to change the answer, while the pair host served a queue and had a
  * next handset to stop waiting for. It does not any more, so it is not asked about.
@@ -995,11 +996,16 @@ class PeerCalibrateActivity : ComponentActivity() {
     @Volatile private var running = false
 
     /**
-     * Set by the stop button, read between rounds.
+     * Set by the stop button, and read everywhere a round waits.
      *
-     * Between rather than inside: a round is fifty seconds of chirps whose answer only exists once
-     * both halves are in, so ending one partway would throw away the measurement it was most of
-     * the way through, for no gain over waiting out the minute.
+     * It used to be read only between rounds, on the argument that a round part-way through is a
+     * measurement part-way through and there is no gain in throwing one away. That argument was
+     * about the measurement and the button is not: somebody presses it because two phones are
+     * chirping in a room where that has become the wrong thing to be doing - the handsets are
+     * placed wrong, or somebody has started talking - and waiting out the minute buys a number
+     * that is going to be discarded anyway. So a press now ends the round rather than the
+     * session: see [PeerCalibrationRunner] for the instants that read it here, and
+     * [RoomCommand.CALL_OFF] for how the other handset is told.
      */
     @Volatile private var stopping = false
 
@@ -1316,6 +1322,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         // finished cannot end the next session before it has served anybody.
         stopping = false
         roundCalledOff = false
+        MeasuringNow.calledOff = false
         state = state.copy(
             running = true,
             stopOffer = stopOfferFor(role()),
@@ -1660,10 +1667,9 @@ class PeerCalibrateActivity : ComponentActivity() {
                     getString(R.string.pair_calibrate_failed, planServer.failureCode ?: "ROOM_LOST")
                 }
             )
-            // The last instant anything here could have called the round off. Every handset now
-            // holds the schedule and is about to chirp on it, and none of them is listening to
-            // this host any more - obeying meant leaving the standing channel. A button that
-            // stayed lit from here would be a button that lies, which is what was reported.
+            // The plan is out. Up to here calling the round off meant refusing to answer it; from
+            // here it means telling everybody who holds it to stop, which is a different sentence
+            // beside the same button - see [StopOffer].
             handler.post { state = state.copy(stopOffer = StopOffer.UNDER_WAY) }
             val ownSlot = plan.slotIds.indexOf(hostId)
             val runner = PeerCalibrationRunner(
@@ -1674,13 +1680,22 @@ class PeerCalibrateActivity : ComponentActivity() {
                 ownSlot = ownSlot,
                 hostNanosNow = { System.nanoTime() },
                 audioSource = audioSource(),
-                edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
+                edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES,
+                calledOff = { stopping }
             )
             show(
                 getString(R.string.pair_calibrate_running),
                 whenItReaches(runner.timing().recordUntilHostNanos) { System.nanoTime() }
             )
             val run = runner.run()
+            // A called-off round leaves nothing behind. Not even the half of it this handset
+            // heard: a recording that stops in the middle of a schedule still correlates, and a
+            // file that looks like every other run but holds a room that was never finished is
+            // worse than no file at all. What it does leave is a line in the timeline.
+            if (stopping) {
+                events.write("room-cancelled while chirping; nothing of this round is kept")
+                return
+            }
             // Written before anything is combined, so a room that loses everybody still leaves
             // this handset's own hearing of it on disk.
             File(RunStore(filesDir).prepareRun(plan.caseId), hostArtifact(hostId)).writeText(run.json)
@@ -1872,9 +1887,10 @@ class PeerCalibrateActivity : ComponentActivity() {
             show(getString(R.string.pair_calibrate_failed, "PLAN_UNSIGNED"))
             return RoundResult.FAILED
         }
-        // From here on nothing this host says reaches the handset it is measuring with: the plan
-        // is out, and both sides act on their own clocks until the round is over. The stop button
-        // goes grey at this instant rather than sitting there looking live - see [StopOffer].
+        // The plan is out, and from here both sides act on their own clocks. The stop button
+        // stays live and changes meaning rather than going grey: before this it refuses to hand
+        // the schedule out, after it it says so over the standing channel the other handset never
+        // left - see [StopOffer] and [RoomCommand.CALL_OFF].
         handler.post { state = state.copy(stopOffer = StopOffer.UNDER_WAY) }
         val runner = PeerCalibrationRunner(
             runStore = RunStore(filesDir),
@@ -1883,13 +1899,22 @@ class PeerCalibrateActivity : ComponentActivity() {
             plan = plan,
             hostNanosNow = { System.nanoTime() },
             audioSource = audioSource(),
-            edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
+            edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES,
+            calledOff = { stopping }
         )
         show(
             getString(R.string.pair_calibrate_running),
             whenItReaches(runner.timing().recordUntilHostNanos) { System.nanoTime() }
         )
         val run = runner.run()
+        // Nothing of a called-off round is kept, on the same terms as the room's: no file, no
+        // delivery, and above all no stored constant. The wait for the sink's half is skipped
+        // with it - the sink stopped too, so waiting would be a minute spent on a socket nobody
+        // is going to open.
+        if (stopping) {
+            events.write("pair-cancelled while chirping; nothing of this round is kept")
+            return RoundResult.FAILED
+        }
         // Written before anything is answered, so a refused run still leaves its evidence.
         // Named with the peer, not just the case: a case id names a directory this only ever
         // mkdirs, so a second sink measured on this host landed on the first one's file and
@@ -1994,6 +2019,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                 timingFor = ::timingFor
             ),
             radioHeld = { radioHeld },
+            calledOff = { MeasuringNow.calledOff },
             report = object : SinkRoundReport {
                 override fun say(text: String, untilElapsedMillis: Long?) =
                     show(text, untilElapsedMillis)
@@ -2026,10 +2052,13 @@ class PeerCalibrateActivity : ComponentActivity() {
      * run in flight into a first run - adopted whether or not it passed.
      */
     /**
-     * Ends a host session after the round in flight, rather than in the middle of one.
+     * Ends the round in flight, on every handset in it.
      *
      * Only a host has anything to stop: a sink's run is one round with nothing after it, so the
-     * button is not offered there. See [stopping] for why the round in flight is left to finish.
+     * button is not offered there. Two places have to hear the press, because a round has two
+     * halves and neither one can speak for the other: handsets still waiting for a schedule are
+     * turned away by the plan server, and handsets already chirping are told over the standing
+     * channel, which nothing about a round ever made them leave.
      */
     private fun stopServing() {
         if (!running) return
@@ -2049,6 +2078,11 @@ class PeerCalibrateActivity : ComponentActivity() {
         // the pair used to close the socket alone, which left the one handset on the other end
         // of it reading a connection failure for a button somebody pressed on purpose.
         runCatching { hostPlanServer?.callOffRoom() }
+        // And to everybody already chirping, who are past asking this host for anything. Said to
+        // the whole standing room rather than to one named handset: a handset that is not in a
+        // round has nothing to call off and does nothing with it, and a pair round started from
+        // this screen's own button does not learn the other handset's name until it asks.
+        runCatching { RoomCommands.send(RoomCommand.CALL_OFF) }
     }
 
     private fun forget() {
@@ -2368,4 +2402,15 @@ internal object MeasuringNow {
 
     /** What the standing line asks: is this handset already being told what to do by a round. */
     val busy: Boolean get() = onScreen || inBackground
+
+    /**
+     * The host has called off the round this handset is in. See [RoomCommand.CALL_OFF].
+     *
+     * Here rather than on whichever thing is running the round, because either of them can be:
+     * a round joined from the standing line has no screen at all, and the screen's own sink arm
+     * is still what the diagnostic arms use. Cleared when a round starts rather than when one
+     * ends - a press landing as one round finishes must not end the next one before it begins.
+     */
+    @Volatile
+    var calledOff = false
 }

@@ -684,7 +684,7 @@ class PeerCalibrateActivityTest {
         // deadline reads the same at zero as it does at sixteen seconds.
         assertTrue(
             "the fill wait must stay a deadline loop, not a single sleep",
-            source.contains("while (System.nanoTime() - clockStartedAt < timing.clockFillNanos)")
+            source.contains("while (System.nanoTime() - clockStartedAt < timing.clockFillNanos &&")
         )
     }
     /**

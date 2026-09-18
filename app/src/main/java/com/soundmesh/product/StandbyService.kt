@@ -329,6 +329,14 @@ class StandbyService : Service() {
             "told to ${order.command}" + (order.value?.let { " $it" } ?: "") +
                 if (away) " with the screen away" else ""
         )
+        // Answered before the guard below, because the guard would swallow exactly the message
+        // this command exists to carry: it is not something else to do, it is about the round
+        // already running. A handset that is not in a round has nothing to call off and says
+        // nothing back - an excuse there would report a fault where there is none.
+        if (order.command == RoomCommand.CALL_OFF) {
+            if (MeasuringNow.busy) MeasuringNow.calledOff = true
+            return
+        }
         // A handset in the middle of a round does nothing else at all, whichever way it is
         // facing. It used to be unreachable then - the line lived on the home screen, which a
         // round leaves - and that accident was doing this job until now.
@@ -346,6 +354,9 @@ class StandbyService : Service() {
             // handset told twice to be at sixty per cent is a handset at sixty per cent.
             RoomCommand.SET_VOLUME -> order.value?.let { applyVolume(it) }
             RoomCommand.RESTORE_VOLUME -> putVolumeBack()
+            // Answered above, ahead of the busy guard. Named here as well so that it is spelled
+            // out rather than defaulted, on the same terms as [canObeyWhileAway].
+            RoomCommand.CALL_OFF -> Unit
         }
     }
 
@@ -382,6 +393,9 @@ class StandbyService : Service() {
         // this handset cannot open a microphone, and the log above says which of the two reasons.
         if (!micTyped) return excuse(RoomExcuse.NO_MICROPHONE)
         MeasuringNow.inBackground = true
+        // Cleared as the round starts rather than when one ends, so a call-off that arrives as
+        // the last round is finishing cannot end this one before it has begun.
+        MeasuringNow.calledOff = false
         events.write("round-joining $called from the standing line")
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and this one would take the standing line down with it.
@@ -394,6 +408,7 @@ class StandbyService : Service() {
                         context = this,
                         request = SinkRoundRequest(room = room),
                         radioHeld = { heldForTheRound },
+                        calledOff = { MeasuringNow.calledOff },
                         report = object : SinkRoundReport {
                             override fun say(text: String, untilElapsedMillis: Long?) {
                                 measuring = text
@@ -874,5 +889,8 @@ internal fun canObeyWhileAway(command: RoomCommand): Boolean = when (command) {
     RoomCommand.MEASURE_OVERHEAD,
     // Same answer and the same reason: what a sink does in any round is hold a socket open, play
     // one chirp and hand back what it heard, none of which is a screen.
-    RoomCommand.MEASURE_PAIR -> true
+    RoomCommand.MEASURE_PAIR,
+    // Obeying is setting a flag a round already under way reads, and a round that needs no screen
+    // to start needs none to stop either.
+    RoomCommand.CALL_OFF -> true
 }

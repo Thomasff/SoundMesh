@@ -208,6 +208,15 @@ internal class SinkRound(
     private val request: SinkRoundRequest,
     /** Whether the radio lock was actually taken, for the run's own report. See [withRadioAwake]. */
     private val radioHeld: () -> Boolean,
+    /**
+     * Whether the host has called this round off since it started. See [MeasuringNow.calledOff].
+     *
+     * Asked at every point this round stands still, and there are three of them worth the line:
+     * the sixteen seconds of silent clock filling, the wait for a plan, and the minute of chirps.
+     * Without it the only one of the three that could be interrupted was the middle one, because
+     * it is the only one where this handset is waiting on the host for something.
+     */
+    private val calledOff: () -> Boolean = { false },
     private val report: SinkRoundReport
 ) {
     private val filesDir: File get() = context.filesDir
@@ -253,9 +262,12 @@ internal class SinkRound(
                 whenItReaches(clockStartedAt + timing.clockFillNanos) { System.nanoTime() }
             )
             val deadline = clockStartedAt + CONVERGENCE_TIMEOUT_NANOS
-            while (clockClient.currentEstimate() == null && System.nanoTime() < deadline) {
+            while (clockClient.currentEstimate() == null && System.nanoTime() < deadline &&
+                !calledOff()
+            ) {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
             }
+            if (calledOff()) return calledOffHere()
             if (clockClient.currentEstimate() == null) {
                 tellHost(RoomExcuse.CLOCK_NOT_CONVERGED)
                 return show(string(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
@@ -269,9 +281,10 @@ internal class SinkRound(
             // The harness never met this because it plays two minutes of audio between converging
             // and chirping, which at its own two second cadence is exactly the window's worth of
             // exchanges. This waits for the same thing directly instead of buying it by accident.
-            while (System.nanoTime() - clockStartedAt < timing.clockFillNanos) {
+            while (System.nanoTime() - clockStartedAt < timing.clockFillNanos && !calledOff()) {
                 Thread.sleep(CONVERGENCE_POLL_MILLIS)
             }
+            if (calledOff()) return calledOffHere()
             val converged = clockClient.currentEstimate() ?: run {
                 tellHost(RoomExcuse.CLOCK_NOT_CONVERGED)
                 return show(string(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
@@ -367,7 +380,8 @@ internal class SinkRound(
                 hostNanosNow = hostNanosNow,
                 offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos },
                 audioSource = audioSource(),
-                edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
+                edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES,
+                calledOff = calledOff
             )
             // Counted to the instant the recording closes rather than to the last chirp: the
             // sound still has to leave the output buffer and cross the room, and somebody who
@@ -377,6 +391,10 @@ internal class SinkRound(
                 whenItReaches(runner.timing().recordUntilHostNanos, hostNanosNow)
             )
             val run = runner.run()
+            // Before anything is filed or delivered. A round that was called off has no answer,
+            // and the one thing that must not happen here is the constant being folded from half
+            // a run - every session afterwards would carry it with nothing to notice it by.
+            if (calledOff()) return calledOffHere()
             // Spliced in rather than passed to the runner: the clock belongs to this round, and
             // the reason to record it is that the constant is only as good as the offset the
             // chirps were scheduled against. Without it, a run whose estimate was still moving
@@ -471,6 +489,19 @@ internal class SinkRound(
     }
 
     private fun show(text: String, until: Long? = null) = report.say(text, until)
+
+    /**
+     * Leaves the round because the host said to, in the one sentence that is true of it.
+     *
+     * The same words whether the press landed during the clock, the wait for a plan or the chirps:
+     * from this handset all three are the host changing its mind, and the person who changed it is
+     * standing at the host rather than here.
+     */
+    private fun calledOffHere() {
+        events.write("round-called-off by the host; nothing of it is kept")
+        report.calledOff()
+        show(string(R.string.pair_calibrate_room_called_off))
+    }
 
     /** The next four stand in for what the screen read off its intent, spelled the same way. */
     private fun distanceOnly(): Boolean = request.distanceOnly

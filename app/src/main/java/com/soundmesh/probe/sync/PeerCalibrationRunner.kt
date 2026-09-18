@@ -70,7 +70,17 @@ class PeerCalibrationRunner(
     private val offsetNanosNow: () -> Long = { 0L },
     private val audioSource: CalibrationAudioSource = CalibrationAudioSource.MIC,
     /** What counts as an arrival on this arm. See [OnDeviceAlignment.readRun]. */
-    private val edgeShares: List<Double> = emptyList()
+    private val edgeShares: List<Double> = emptyList(),
+    /**
+     * Whether the round has been called off since it started.
+     *
+     * A question asked of somebody else rather than a flag this class owns, because what decides
+     * is not here: on a host it is the stop button, on a sink it is a word from the host over the
+     * standing channel. Asked at every instant this class waits for and inside the recording
+     * loop, which is the whole difference between a round that stops and a round that has merely
+     * been told to.
+     */
+    private val calledOff: () -> Boolean = { false }
 ) {
     private val tone = TonePcmSource()
 
@@ -102,12 +112,17 @@ class PeerCalibrationRunner(
         val recording = Thread({
             runCatching {
                 awaitHostInstant(timing.recordFromHostNanos)
-                calibration.record(secondsUntil(timing.recordUntilHostNanos))
+                calibration.record(secondsUntil(timing.recordUntilHostNanos), calledOff)
             }.onFailure { recordingFailure = "${it.javaClass.simpleName}: ${it.message}" }
         }, "SoundMeshPeerRecord")
         recording.start()
         play(timing)
         recording.join()
+        // A called-off round has no answer and must not be made to look as though it has one. The
+        // recording on disk is part of a round, and part of a round correlated against a whole
+        // schedule gives a number rather than a measurement - so nothing is read, nothing is
+        // combined, and what every later reader sees is the refusal.
+        if (calledOff()) return refused(CALLED_OFF)
         return analyse(calibration)
     }
 
@@ -136,6 +151,10 @@ class PeerCalibrationRunner(
         val thread = Thread({ renderer.run() }, "SoundMeshPeerRender").also { it.start() }
         warmUp(scheduler, timing)
         submitChirps(scheduler, timing)
+        // Ends the render loop here rather than at the instant the schedule named. Without it a
+        // called-off handset stands playing silence to the end of a round nobody is measuring any
+        // more, and from the room that is indistinguishable from a button that did nothing.
+        if (calledOff()) renderer.stopNow()
         thread.join()
         rendererReport = renderer.report(null)
     }
@@ -151,6 +170,7 @@ class PeerCalibrationRunner(
         val chunks =
             ((timing.warmUpUntilHostNanos - timing.warmUpFromHostNanos) / SyncRenderer.CHUNK_NANOS).toInt()
         for (sequence in 0 until chunks) {
+            if (calledOff()) return
             val playAt = timing.warmUpFromHostNanos + sequence * SyncRenderer.CHUNK_NANOS
             val frameIndex = sequence.toLong() * SyncRenderer.FRAMES_PER_CHUNK
             scheduler.submit(AudioChunk(sequence, playAt, tone.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)))
@@ -169,7 +189,7 @@ class PeerCalibrationRunner(
         val chunks = ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK)
         timing.ownChirpAtHostNanos.forEachIndexed { repeat, at ->
             awaitHostInstant(at - SUBMIT_LEAD_NANOS)
-            if (recordingFailure != null) return
+            if (recordingFailure != null || calledOff()) return
             val base = SyncRenderer.CHIRP_SEQUENCE_BASE + repeat * SyncRenderer.CHIRP_REPEAT_STRIDE
             chunks.forEachIndexed { index, pcm ->
                 scheduler.submit(AudioChunk(base + index, at + index * SyncRenderer.CHUNK_NANOS, pcm))
@@ -310,9 +330,18 @@ class PeerCalibrationRunner(
     private fun secondsUntil(hostNanos: Long): Int =
         maxOf(1, ((hostNanos - hostNanosNow()) / 1_000_000_000L).toInt() + 1)
 
+    /**
+     * Waits for an instant on the host's clock, in slices short enough to be interrupted.
+     *
+     * Sliced rather than slept through in one go, and that is the only reason this is not two
+     * lines: the longest wait here is the whole warm-up, so a run told to stop during one would
+     * have gone on to play its chirps anyway. The slice is a ceiling and never a floor - a wait
+     * shorter than it is still slept exactly, so nothing about when a chunk is submitted moves.
+     */
     private fun awaitHostInstant(hostNanos: Long) {
         while (true) {
-            val remaining = hostNanos - hostNanosNow()
+            if (calledOff()) return
+            val remaining = minOf(hostNanos - hostNanosNow(), POLL_NANOS)
             if (remaining <= 0) return
             Thread.sleep(remaining / 1_000_000, (remaining % 1_000_000).toInt())
         }
@@ -324,5 +353,11 @@ class PeerCalibrationRunner(
 
         /** How far ahead of a chunk's instant it is handed to the scheduler. */
         const val SUBMIT_LEAD_NANOS = 1_000_000_000L
+
+        /** The longest this run sleeps without asking whether it is still wanted. */
+        const val POLL_NANOS = 100_000_000L
+
+        /** What a run that was stopped reports, in the place a refusal's reason goes. */
+        const val CALLED_OFF = "the round was called off"
     }
 }

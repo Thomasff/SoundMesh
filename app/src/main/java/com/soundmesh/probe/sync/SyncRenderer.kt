@@ -578,6 +578,18 @@ class SyncRenderer(
         untilHostNanos = hostNanos
     }
 
+    /**
+     * Ends [run] now, wherever it has got to.
+     *
+     * Its own name rather than [endAt] with an instant already past, because the two say different
+     * things to whoever reads the call: that one moves a deadline this run is still working
+     * towards, this one says the run is over. Safe from any thread and safe before [run] starts -
+     * the loop reads the same field either way.
+     */
+    fun stopNow() {
+        untilHostNanos = Long.MIN_VALUE
+    }
+
     /** ACQUIRING (fast, per-chunk correction) or TRACKING (the spec's 1Hz cadence). Thread-safe. */
     fun phase(): RendererPhase = phaseState.phase
 

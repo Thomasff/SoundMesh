@@ -77,7 +77,14 @@ class CalibrationRunner(
     var openedSource: CalibrationAudioSource? = null
         private set
 
-    fun record(seconds: Int) {
+    /**
+     * Records for [seconds], or until [stopped] answers true.
+     *
+     * The predicate is what makes a round stoppable. Everything else about a calibration is
+     * scheduled: the recording runs to an instant worked out before anything opened, and until
+     * this existed there was nothing anywhere to ask whether the run was still wanted.
+     */
+    fun record(seconds: Int, stopped: () -> Boolean = { false }) {
         val minimum = AudioRecord.getMinBufferSize(ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufferBytes = maxOf(minimum, 65536)
         val record = open(requestedSource, bufferBytes)
@@ -92,7 +99,7 @@ class CalibrationRunner(
             startedAtHostNanos = hostNanosNow?.let { runCatching(it).getOrNull() }
             val buffer = ByteArray(8192)
             val deadline = System.nanoTime() + seconds * 1_000_000_000L
-            while (System.nanoTime() < deadline) {
+            while (System.nanoTime() < deadline && !stopped()) {
                 val read = record.read(buffer, 0, buffer.size)
                 if (read > 0) writer.writePcm(buffer, read)
             }

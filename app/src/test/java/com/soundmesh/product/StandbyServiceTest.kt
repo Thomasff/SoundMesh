@@ -35,6 +35,7 @@ class StandbyServiceTest {
         assertTrue(canObeyWhileAway(RoomCommand.MEASURE_ROOM))
         assertTrue(canObeyWhileAway(RoomCommand.MEASURE_OVERHEAD))
         assertTrue(canObeyWhileAway(RoomCommand.MEASURE_PAIR))
+        assertTrue(canObeyWhileAway(RoomCommand.CALL_OFF))
     }
 
     /**
@@ -96,6 +97,6 @@ class StandbyServiceTest {
     /** And this is what makes the list above a list of all of them rather than of the ones I recalled. */
     @Test
     fun everyCommandOnTheChannelHasBeenAskedThisQuestion() {
-        assertEquals(7, RoomCommand.entries.size)
+        assertEquals(8, RoomCommand.entries.size)
     }
 }

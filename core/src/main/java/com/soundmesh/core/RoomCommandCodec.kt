@@ -44,7 +44,22 @@ enum class RoomCommand {
     SET_VOLUME,
 
     /** Put back whatever this handset's volume was before anything here first changed it. */
-    RESTORE_VOLUME
+    RESTORE_VOLUME,
+
+    /**
+     * Stop the round you are in, now, and keep nothing of it.
+     *
+     * The one command that is about a round already running rather than about starting one, which
+     * is why the sink end answers it before the guard that turns away everything else said to a
+     * measuring handset - see `StandbyService.obey`. Until this existed the host could only call a
+     * round off while the handsets were still waiting for a plan: once the schedule was out every
+     * one of them was acting on its own clock, and a stop button pressed then reached nobody.
+     *
+     * Additive on the wire in the direction that matters: a handset on an older build has no name
+     * for this and refuses the line whole, which leaves it doing exactly what it did before -
+     * playing the round out.
+     */
+    CALL_OFF
 }
 
 /**

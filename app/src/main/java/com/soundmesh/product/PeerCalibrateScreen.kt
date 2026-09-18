@@ -32,23 +32,22 @@ import com.soundmesh.core.CalibrationRole
 import com.soundmesh.probe.R
 
 /**
- * What the stop button can honestly mean at this moment.
+ * What the stop button means at this moment.
  *
  * The line that matters is not which job is running, it is whether anything has started making a
- * sound yet. Before that, calling it off reaches every handset involved, because they are all still
- * waiting to be told what to do. After it, nothing this host says reaches them - obeying meant
- * leaving the standing channel - so the round runs itself out whatever anybody presses.
+ * sound yet. It is not the line between a button that works and one that does not - both sides
+ * stop the round - it is the line between calling something off and throwing something away.
  *
- * The line is drawn here rather than left for somebody to discover by pressing.
+ * Drawn here rather than left for somebody to discover by pressing.
  */
 enum class StopOffer {
     /** A sink, or nothing running: a button here would sit and do nothing. */
     NONE,
 
-    /** Still gathering. Calling it off reaches everybody, because nobody has started. */
+    /** Still gathering. Nobody has started, so there is nothing yet to lose. */
     BEFORE_SOUND,
 
-    /** Already chirping. Nothing reaches the other handsets; the button says so. */
+    /** Already chirping. Pressing it silences the room and discards the round. */
     UNDER_WAY
 }
 
@@ -458,37 +457,34 @@ private fun Step(
 /**
  * The stop button, and the one sentence that is true of it at this moment.
  *
- * See [StopOffer] for why the sentence changes: what pressing it does depends on whether the room
- * has started chirping, and that line used to be invisible.
+ * See [StopOffer] for why the sentence changes. It used to go grey once the chirps began, because
+ * that was honest: nothing this host said reached the other handsets any more. What it costs is
+ * a person standing in a room that has started making the wrong measurement with no way to end
+ * it, so the channel the handsets never left is used to say so instead, and the button stays live.
  */
 @Composable
 private fun StopControl(state: PeerCalibrateState, job: PeerJob, actions: PeerCalibrateActions) {
     if (state.stopOffer == StopOffer.NONE) return
     Column(modifier = Modifier.padding(top = 10.dp)) {
-        // Greyed rather than hidden: a button that disappears mid-round reads as a screen that
-        // lost its place. Greyed with a sentence beside it is the answer to the question somebody
-        // is about to ask by pressing it.
         Ghost(
             stringResource(
                 if (job == PeerJob.ROOM) R.string.pair_calibrate_room_call_off
                 else R.string.pair_calibrate_stop
             ),
-            enabled = state.stopOffer != StopOffer.UNDER_WAY,
             onClick = actions.stop
         )
-        // One sentence, and only where the button is grey: the pair screen carries no standing
-        // explanation of anything - see [PairBody] - but a control that has gone dead under a
-        // finger owes an answer for that, and this is the only one it has.
-        if (state.stopOffer == StopOffer.UNDER_WAY) {
-            Note(
-                stringResource(
-                    if (job == PeerJob.ROOM) R.string.pair_calibrate_room_under_way_hint
-                    else R.string.pair_calibrate_under_way
-                )
-            )
-        } else if (job == PeerJob.ROOM) {
-            Note(stringResource(R.string.pair_calibrate_room_call_off_hint))
+        // The one sentence the pair screen carries, and only once the chirps are going: pressing
+        // it then throws away a measurement that is most of the way done, which is worth saying
+        // where pressing it during the wait costs nothing. See [PairBody] for why there is
+        // nothing else in small type on this screen.
+        val hint = when {
+            job == PeerJob.ROOM && state.stopOffer == StopOffer.UNDER_WAY ->
+                R.string.pair_calibrate_room_under_way_hint
+            job == PeerJob.ROOM -> R.string.pair_calibrate_room_call_off_hint
+            state.stopOffer == StopOffer.UNDER_WAY -> R.string.pair_calibrate_under_way
+            else -> null
         }
+        hint?.let { Note(stringResource(it)) }
     }
 }
 
