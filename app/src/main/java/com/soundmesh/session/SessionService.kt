@@ -32,9 +32,10 @@ import com.soundmesh.probe.sync.momentOf
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.FileChunkSource
 import com.soundmesh.probe.sync.FolderSongs
+import com.soundmesh.probe.sync.HostBeacon
 import com.soundmesh.probe.sync.HostIdentity
-import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.PeerDiscovery
+import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.StoredOutputLead
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
@@ -58,7 +59,14 @@ import java.util.concurrent.atomic.AtomicReference
 class SessionService : Service() {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var advertisement: AutoCloseable? = null
+    /**
+     * Whether this service is one of the things holding [HostBeacon] open.
+     *
+     * A boolean rather than the record itself, because the record is no longer this service's to
+     * own: a handset is a host from the moment somebody picks the role, which is long before any
+     * of this runs and goes on after it stops. See [HostBeacon] for why both hold it.
+     */
+    private var holdingBeacon = false
     // Built once and kept: a session that is restarted takes the same lock again, and a hold
     // rebuilt per start would leave the old one with nobody to give it back.
     private val awake by lazy { CpuAwake(cpuHoldOf(this)) }
@@ -476,23 +484,26 @@ class SessionService : Service() {
      * not their session - they were handed an address to start with and it still works.
      */
     private fun advertise() {
-        val hostId = HostIdentity(filesDir).current()
-        runCatching { PeerDiscovery(this).register("$SERVICE_NAME_PREFIX-$hostId", SyncActivity.CHUNK_PORT, hostId) }
-            .onSuccess { advertisement = it }
-            .onFailure { Log.e(LOG_TAG, "could not advertise this host", it) }
+        if (holdingBeacon) return
+        holdingBeacon = true
+        HostBeacon.hold(this, HostIdentity(filesDir).current(), HostBeacon.Holder.SESSION)
     }
 
-    /** The record names an address the handset no longer has. Withdraw it and say the new one. */
+    /**
+     * The record names an address the handset no longer has. Withdraw it and say the new one.
+     *
+     * Said for whoever else is holding it too, because what changed is the handset's address and
+     * that is not a fact about any one holder.
+     */
     private fun readvertise() {
-        if (advertisement == null) return
-        withdrawAdvertisement()
-        advertise()
+        if (!holdingBeacon) return
+        HostBeacon.again()
     }
 
     private fun withdrawAdvertisement() {
-        val open = advertisement ?: return
-        advertisement = null
-        runCatching { open.close() }
+        if (!holdingBeacon) return
+        holdingBeacon = false
+        HostBeacon.release(HostBeacon.Holder.SESSION)
     }
 
     private fun openSink(intent: Intent): SyncSession {
@@ -817,7 +828,6 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "soundmesh_session"
 
         /** One instance name per handset, so the record is stable across sessions. */
-        private const val SERVICE_NAME_PREFIX = "SoundMesh"
         private const val NOTIFICATION_ID = 1002
 
         // A bare file name. No path separator matches at all, and the first character must be

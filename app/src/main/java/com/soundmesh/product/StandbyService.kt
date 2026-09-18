@@ -31,6 +31,7 @@ import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.HostIdentity
+import com.soundmesh.probe.sync.HostSearch
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.RoomCommandClient
 import com.soundmesh.probe.sync.StoredApproximateCalibration
@@ -73,6 +74,13 @@ class StandbyService : Service() {
     /** What [line] was dialled with, so a change of any of it is a line worth rebuilding. */
     private var dialled: StandbyAnnounce? = null
 
+    /** Whether a look for a host is out on its own thread right now. See [lookForAHost]. */
+    @Volatile
+    private var searching = false
+
+    /** When the last look started, so they are spaced rather than run back to back. */
+    private var lookedAt = 0L
+
     /** The last volume this handset got up the line, so only a change is worth a frame. */
     private var saidVolume: VolumeReading? = null
 
@@ -93,6 +101,7 @@ class StandbyService : Service() {
             sayVolumeIfMoved()
             sayPowerIfChanged()
             sayHereIfDue()
+            lookForAHost()
             dialIfChanged()
             showTheLineIfItChanged()
             handler.postDelayed(this, TELL_EVERY_MILLIS)
@@ -257,7 +266,10 @@ class StandbyService : Service() {
             heldRadio = radio?.let { runCatching { it.acquire() }.isSuccess } == true
             events.write(if (heldRadio) "standby held the radio" else "standby not holding the radio")
         }
-        if (announcement() == null) return stopSelf()
+        // No longer a reason to stop. A handset with nothing to dial is the ordinary way this
+        // starts now: somebody picks 当从机 on a phone whose host has not been switched on yet,
+        // and finding it is this service's work - see [lookForAHost]. Stopping here left that
+        // phone doing nothing at all until a person picked it up again and scanned something.
         dialIfChanged()
         // Started here rather than inside the dial. The dial is now also reached from inside this
         // very runnable, and posting it from there would leave two copies of it running, then
@@ -298,6 +310,36 @@ class StandbyService : Service() {
             handler.post { obey(order) }
         }.also { it.start() }
         ACTIVE = this
+    }
+
+    /**
+     * Looks for a host to point at, for as long as this handset has none.
+     *
+     * A search rather than one attempt, and that is the point of it living here: the host is very
+     * often switched on minutes after the phone that will follow it was set down, and this service
+     * is the only thing still running by then.
+     *
+     * It stops the moment there is a host on disk and never argues with one. A scanned code, or a
+     * host found on a previous evening, is somebody having said which handset they meant, and no
+     * amount of answering on a network beats that - see [HostSearch].
+     *
+     * Off the ticker's thread, because one look holds still for the whole discovery window and the
+     * ticker is what this handset says it is alive with.
+     */
+    private fun lookForAHost() {
+        if (searching || PairedHost(filesDir).read() != null) return
+        val now = SystemClock.elapsedRealtime()
+        if (lookedAt != 0L && now - lookedAt < HostSearch.GAP_MILLIS) return
+        lookedAt = now
+        searching = true
+        Thread({
+            val found = runCatching { HostSearch.lookOnce(this, filesDir, HostSearch.WINDOW_MILLIS) }
+            searching = false
+            // Written down whichever way it went, and the failures are the half worth keeping:
+            // "nothing answered" and "something answered on an older build" send somebody to two
+            // completely different places, and from this screen both are simply no host.
+            found.onSuccess { events.write("standby looked for a host: ${it.why}") }
+        }, "SoundMeshHostSearch").start()
     }
 
     /** What this handset would say on connecting, read fresh because all of it can change. */

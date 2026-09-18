@@ -41,7 +41,7 @@
     <string name="ready_blocked">%1$s 可能会被省电权限影响</string>
     <string name="ready_blocked_why">一切走它就跟不上了，放行之后再开始</string>
     <string name="ready_paired">已连接主机</string>
-    <string name="ready_paired_none">未连接主机，请扫码</string>
+    <string name="ready_paired_none">正在自动找主机</string>
     <string name="ready_background">本机已经放行后台运行</string>
     <string name="pair_code_title">让其他手机连上</string>
     <string name="pair_code_choose_hotspot">通过热点连接</string>
@@ -54,7 +54,7 @@
     <string name="roster_self">本机</string>
     <string name="roster_role_host">主机</string>
     <string name="roster_role_sink">从机</string>
-    <string name="roster_nobody">还没有手机连上。让别的手机扫上面那个码。</string>
+    <string name="roster_nobody">还没有手机连上。别的手机选「当从机」就会自己连过来；一直连不上就让它扫上面那个码。</string>
     <string name="roster_calibrated">已校准</string>
     <string name="roster_approximate">大致校准</string>
     <string name="roster_uncalibrated">未校准</string>
@@ -94,6 +94,7 @@
          harness string above stays English because it is read by ADB. -->
     <string name="role_pick">本机当什么？</string>
     <string name="role_host">当主机</string>
+    <string name="role_host_taken">这个网络里已经有一台在当主机了，一个网络只能有一台主机。要换主机，先把那台改成从机。</string>
     <string name="role_host_hint">放歌的那台。其他手机跟着它响。</string>
     <string name="role_sink">当从机</string>
     <string name="role_sink_hint">扫一下主机的码，跟着它响。</string>
@@ -258,7 +259,7 @@
     <string name="join_no_wifi">本机没连 WiFi。连上和主机同一个 WiFi，或者连主机开的热点。</string>
     <string name="join_other_network">本机和主机不在同一个网：主机是 %1$s，本机是 %2$s。有的路由器会把 2.4G 和 5G 分成两个网，访客网络也是另一个网。</string>
     <string name="join_cannot_reach">和主机在同一个网，但连不上。可能是主机那台没开着这个应用，也可能是这个网不让设备之间互相通信（校园网、公司网、公共热点常这样）。最稳的办法是让主机开热点，本机连它的热点。</string>
-    <string name="standby_sink_alone">没和主机连上，本机还得自己按开始。先扫码配对，并确认主机也开着这个应用的首页。</string>
+    <string name="standby_sink_alone">还没连上主机，正在同一个网络里自动找。找不到就扫一下主机屏幕上的码——有的网络（校园网、公司网、公共热点）不让设备互相通信，自动找在那种网络上永远找不到。</string>
     <string name="pair_with">已配对 %1$s @ %2$s:%3$d</string>
     <string name="pair_no_address">本机现在没有一个能让对方连上的地址</string>
 
@@ -406,9 +407,6 @@
     <string name="welcome_need_app">每台都装这个应用</string>
     <string name="welcome_need_app_share">让旁边那台也装上</string>
     <string name="welcome_need_wifi">都连同一个 WiFi</string>
-    <string name="welcome_wifi_name">现在连着：%1$s</string>
-    <string name="welcome_wifi_none">现在没连 WiFi。两台手机得在同一个 WiFi 里才能互相通信。</string>
-    <string name="welcome_wifi_connected">现在连着 WiFi，读不到网络名称。</string>
     <string name="welcome_role">本机作为：</string>
     <string name="welcome_role_later">需要时可返回此页更换角色。</string>
     <string name="role_host_other">另一台要选「当从机」</string>

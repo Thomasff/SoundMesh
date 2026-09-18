@@ -25,8 +25,19 @@ data class DiscoveryOutcome(
     val peer: DiscoveredPeer?,
     val failure: DiscoveryFailure?,
     val seen: Int,
-    val compatible: Int
-)
+    /**
+     * Every host this build could talk to, including the one [peer] picked out.
+     *
+     * The list rather than only the count, because one caller wants the answer [peer] refuses to
+     * give: a handset checking whether it may become the host is asking "is there another one",
+     * and [DiscoveryFailure.AMBIGUOUS] - two of them - is the loudest possible yes while [peer] is
+     * null for it. The refusal is right for joining a room and wrong for counting one.
+     */
+    val hosts: List<DiscoveredPeer>
+) {
+    /** How many of [seen] this build could actually talk to. */
+    val compatible: Int get() = hosts.size
+}
 
 /**
  * What a host puts on the wire so a sink can find it without being told an address, and what a
@@ -86,6 +97,22 @@ object PeerAdvertisement {
     fun hostIdOf(peer: DiscoveredPeer): String = peer.attributes.getValue(ID_KEY)!!
 
     /**
+     * A host in [hosts] that is not the handset asking, or null.
+     *
+     * What a handset just told to be the host asks before it accepts, and the whole of the
+     * question is the filter: it is already advertising by the time it looks - it has to be, or
+     * two people pressing 当主机 at once could not see each other - so its own record comes back
+     * in the answer. Without this line every host would find one and stand down, and the app
+     * would have no host at all on a network where discovery works perfectly.
+     *
+     * Taken from the whole list rather than from [choose]'s single pick, which is null for two
+     * hosts. Two of them is the loudest possible yes to this question and the one case where
+     * [choose] has nothing to say.
+     */
+    fun otherThan(hosts: List<DiscoveredPeer>, myId: String): DiscoveredPeer? =
+        hosts.firstOrNull { hostIdOf(it) != myId }
+
+    /**
      * Picks the host to connect to, or names why there isn't one.
      *
      * Two usable hosts is a refusal rather than a tie broken by arrival order. On a shared network
@@ -105,7 +132,7 @@ object PeerAdvertisement {
             peer = if (failure == null) compatible.single() else null,
             failure = failure,
             seen = candidates.size,
-            compatible = compatible.size
+            hosts = compatible
         )
     }
 }

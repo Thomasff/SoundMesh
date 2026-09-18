@@ -9,7 +9,6 @@ import android.media.projection.MediaProjectionManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
-import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -50,7 +49,9 @@ import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
 import com.soundmesh.probe.sync.HandsetVolume
+import com.soundmesh.probe.sync.HostBeacon
 import com.soundmesh.probe.sync.HostIdentity
+import com.soundmesh.probe.sync.HostSearch
 import com.soundmesh.probe.sync.percentOf
 import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.HostPairingCode
@@ -1101,7 +1102,7 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
-     * Whether this handset is on WiFi at all, and its SSID when that name can actually be read.
+     * Whether this handset is on WiFi at all.
      *
      * Re-read on the slow tick as well as on every resume, and the tick is the half that matters:
      * the way somebody turns a hotspot on is by pulling the shade down over this screen, which is
@@ -1113,8 +1114,8 @@ class HomeActivity : ComponentActivity() {
      * able to answer on a real device since Android 10: it needs ACCESS_FINE_LOCATION *and* live
      * location services, neither of which this app asks for just to print a network name. Asked of
      * [ConnectivityManager] instead, which needs no permission at all - see [NetworkCapabilities].
-     * The SSID is still attempted on top of that, and shown only when [readableSsid] says it is
-     * worth showing.
+     * The name itself was shown beside it until 2026-09-18 and is not read at all any more: it was
+     * unreadable on every handset here, so the line it fed said "读不到网络名称" and nothing else.
      */
     private fun readNetwork() {
         val onWifi = runCatching {
@@ -1122,11 +1123,8 @@ class HomeActivity : ComponentActivity() {
             connectivity.getNetworkCapabilities(connectivity.activeNetwork)
                 ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
         }.getOrDefault(false)
-        val ssid = if (!onWifi) null else
-            runCatching { getSystemService(WifiManager::class.java).connectionInfo.ssid }.getOrNull()
         state = state.copy(
             onWifi = onWifi,
-            wifiName = readableSsid(ssid),
             localNet = if (!onWifi) null else
                 localNetOf(getSystemService(ConnectivityManager::class.java)),
             // The code is part of the same answer: which address a peer would have to reach is
@@ -1157,6 +1155,11 @@ class HomeActivity : ComponentActivity() {
             Role.HOST -> {
                 stopStandingBy()
                 RoomCommands.serve()
+                // Said on the network from here rather than from the session, which is the whole
+                // of what makes a sink able to find this handset before anybody presses play -
+                // see HostBeacon. Standing by is where a room spends nearly all of its time.
+                HostBeacon.hold(this, HostIdentity(filesDir).current(), HostBeacon.Holder.ROLE)
+                refuseToBeTheSecondHost()
                 // Said out loud because the count going down has no other trace at all: on
                 // 09-13 a room went from three standing to none and the only evidence was the
                 // number itself, which cannot say whether they left or were dropped.
@@ -1177,16 +1180,54 @@ class HomeActivity : ComponentActivity() {
             // with the line on this screen those handsets were simply not in the room.
             Role.SINK -> {
                 RoomCommands.stop()
-                if (state.paired == null) {
-                    return events.write("standby not started: this handset has not scanned a host")
-                }
+                HostBeacon.release(HostBeacon.Holder.ROLE)
+                // Started with nothing to dial, which it never used to be. Looking for the host is
+                // the service's job now - it is the thing that is still running when the host is
+                // finally switched on, and that is usually minutes after somebody set this handset
+                // down. See StandbyService.lookForAHost.
                 startForegroundService(Intent(this, StandbyService::class.java))
             }
             Role.NONE -> {
                 RoomCommands.stop()
+                HostBeacon.release(HostBeacon.Holder.ROLE)
                 stopStandingBy()
             }
         }
+    }
+
+    /**
+     * Sends this handset back to the role screen if the network already has a host.
+     *
+     * One host is not a preference. Two of them is two timelines, two spatial fields and two sets
+     * of volumes over one set of phones, and every sink in the room silently belongs to whichever
+     * one it happened to find - so this is refused where it is chosen rather than reported later,
+     * when there is nothing left to do about it.
+     *
+     * Only what it can see. A network that does not carry multicast between its clients answers
+     * exactly as an empty one does, so the refusal is true whenever it fires and its silence
+     * promises nothing - which is also why the code on this screen never goes away.
+     *
+     * Not while something is playing: by then this handset has a room, and a handset that took the
+     * role a minute ago is the one that should give way.
+     */
+    private fun refuseToBeTheSecondHost() {
+        val myId = HostIdentity(filesDir).current()
+        Thread({
+            val other = runCatching {
+                HostSearch.anotherHost(this, myId, HostSearch.WINDOW_MILLIS)
+            }.getOrNull() ?: return@Thread
+            runOnUiThread {
+                if (state.role != Role.HOST || state.running) return@runOnUiThread
+                // Nor if this handset already has a room. The check runs again on every resume,
+                // so without this the phone that has been the host all evening steps down the
+                // moment somebody else's handset appears, taking a room full of standing phones
+                // with it - and the one that should give way is the one that just arrived.
+                if (RoomCommands.standingBy() > 0) return@runOnUiThread
+                events.write("stepping down as host: $other is already one")
+                actions.pickRole(Role.NONE)
+                state = state.copy(problem = R.string.role_host_taken)
+            }
+        }, "SoundMeshHostCheck").start()
     }
 
     /**
@@ -1597,19 +1638,6 @@ internal fun measuredDistances(
 internal data class Told(val percent: Int, val at: Long)
 
 /**
- * What WifiManager's raw SSID read is worth showing, or null when it is not a real name.
- *
- * Since Android 10, that read hands back "<unknown ssid>" - or throws - to any app without
- * ACCESS_FINE_LOCATION and live location services, which this app does not hold. Rather than
- * treat that as an error, [readWifiName] asks whether this handset is on WiFi at all somewhere
- * that needs no permission, and this decides only whether the SSID string, if any came back, is
- * one worth printing beside that answer.
- *
- * A real SSID arrives quoted - `"MyNetwork"` - so the quotes are stripped before anything else is
- * checked. A non-UTF-8 SSID arrives as a bare hex string instead, unquoted and starting `0x`,
- * which is exactly as unreadable as the placeholder and is refused the same way.
- */
-/**
  * This handset's own IPv4 address on the active network, with the prefix that names it.
  *
  * Asked of [ConnectivityManager] rather than WifiManager: the same read, no permission, and the
@@ -1627,13 +1655,3 @@ internal fun localNetOf(connectivity: ConnectivityManager): IpSubnet? = runCatch
         ?.firstOrNull { it.address is Inet4Address }
         ?.let { IpSubnet(it.address.hostAddress ?: return@let null, it.prefixLength) }
 }.getOrNull()
-
-internal fun readableSsid(rawSsid: String?): String? {
-    val unquoted = rawSsid?.removeSurrounding("\"") ?: return null
-    if (unquoted.isBlank()) return null
-    if (unquoted == UNKNOWN_SSID) return null
-    if (unquoted.startsWith("0x")) return null
-    return unquoted
-}
-
-private const val UNKNOWN_SSID = "<unknown ssid>"
