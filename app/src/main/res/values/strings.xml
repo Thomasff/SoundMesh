@@ -17,7 +17,7 @@
     <string name="standby_not_exempt">省电没放行</string>
     <string name="standby_trouble">上次断：%1$s</string>
     <string name="standby_no_trouble">没断过</string>
-    <string name="background_blocked">本机会在你切走之后把它停掉，那时它就跟不上播放</string>
+    <string name="background_blocked">切应用后本机可能会将本软件服务停止</string>
     <string name="background_allow">让它一直在后台运行</string>
     <string name="welcome_title">选角色</string>
     <string name="play_title">正在播放</string>
@@ -35,7 +35,7 @@
     <string name="ready_standing_none">还没有手机跟上来，另一台要选「当从机」并扫本机的码</string>
     <string name="ready_uncalibrated">%1$d 台没和本机对过时</string>
     <string name="ready_uncalibrated_why">会差几十毫秒，能听出来</string>
-    <string name="ready_blocked">%1$s 会被省电杀掉</string>
+    <string name="ready_blocked">%1$s 可能会被省电权限影响</string>
     <string name="ready_blocked_why">一切走它就跟不上了，放行之后再开始</string>
     <string name="ready_paired">跟上主机了</string>
     <string name="ready_paired_none">还没扫过主机的码</string>
@@ -81,9 +81,8 @@
     <string name="details_show">细节</string>
     <string name="explain_show">这是为什么</string>
     <string name="look_following">跟着播</string>
-    <string name="look_asleep">屏幕灭着，播放不受影响</string>
     <string name="look_gone">它断开了，正在重拨</string>
-    <string name="look_killed">它被那台手机的省电停掉了</string>
+    <string name="look_killed">这台设备的服务被省电策略停止了</string>
     <string name="vendor_try_exemption">先在那台上放行后台运行</string>
     <string name="vendor_launch_manager">已经放行了它还是被停掉。去那台手机的系统设置，找「应用启动管理」，把这个应用改成手动管理，三个开关全开。这三个开关没有任何接口能读到或者代为打开，只能人手开。</string>
     <string name="home_title">SoundMesh</string>
@@ -265,6 +264,9 @@
     <string name="standby_approximate">其中 %1$d 台用的是「测量房间」顺带算出来的估算值，还没正经对过时。差大概一两毫秒，听不出来，但有空该各测一次。</string>
     <string name="standby_uncalibrated">其中 %1$d 台还没和本机对过时。没对过就按零来补，它们会差几十毫秒，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>
     <string name="standby_sink">已待命：主机一按，本机自己开始。留在这一页别退出。</string>
+    <string name="join_no_wifi">本机没连 WiFi。连上和主机同一个 WiFi，或者连主机开的热点。</string>
+    <string name="join_other_network">本机和主机不在同一个网：主机是 %1$s，本机是 %2$s。有的路由器会把 2.4G 和 5G 分成两个网，访客网络也是另一个网。</string>
+    <string name="join_cannot_reach">和主机在同一个网，但连不上。可能是主机那台没开着这个应用，也可能是这个网不让设备之间互相通信（校园网、公司网、公共热点常这样）。最稳的办法是让主机开热点，本机连它的热点。</string>
     <string name="standby_sink_alone">没和主机连上，本机还得自己按开始。先扫码配对，并确认主机也开着这个应用的首页。</string>
     <string name="pair_with">已配对 %1$s @ %2$s:%3$d</string>
     <string name="pair_no_address">本机现在没有一个能让对方连上的地址</string>
@@ -350,6 +352,7 @@
     <string name="badge_pink">粉</string>
 
     <string name="room_title">房间摆位</string>
+    <string name="room_place_evenly">为了获得更好的听感，建议将设备在你周围均匀地放置</string>
     <string name="room_hint">如果大幅移动了手机，可以拖动图标，改变位置，这会影响听感。如果想让效果更精确，建议重新校准。中间那个点是你，不用拖。</string>
     <string name="room_you">你</string>
     <string name="room_effect_title">音效</string>

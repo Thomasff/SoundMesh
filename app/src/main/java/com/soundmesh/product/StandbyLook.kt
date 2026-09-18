@@ -6,11 +6,19 @@ import com.soundmesh.probe.R
 /**
  * What a handset's icon is saying.
  *
- * Four states rather than one hollow circle. They are four different faults that are checked in
- * four different places, and on the evening of 2026-09-14 an hour went into telling two of them
+ * Three states rather than one hollow circle. They are three different faults that are checked in
+ * three different places, and on the evening of 2026-09-14 an hour went into telling two of them
  * apart because the screen drew them identically.
+ *
+ * There was a fourth, ASLEEP, drawn dim for a handset that was following with its screen off. It
+ * went on 2026-09-18, and the reason is worth keeping: it was added on the night the screen was
+ * still the suspect, and that night ended by clearing the screen entirely - the same fault
+ * reproduced with the screen on and the app merely in the background. A dark screen changes
+ * nothing about playing, so drawing it as a state told a listener their handset was in trouble
+ * when it was not. It was also unreachable in the code that drew it, which is how a state that
+ * says nothing survives: nothing ever showed it to be questioned.
  */
-enum class StandbyLook { FOLLOWING, ASLEEP, GONE, KILLED }
+enum class StandbyLook { FOLLOWING, GONE, KILLED }
 
 /**
  * [saidNotExempt] is what that handset REPORTED about itself, not something this host worked out.
@@ -19,11 +27,9 @@ enum class StandbyLook { FOLLOWING, ASLEEP, GONE, KILLED }
  */
 internal fun standbyLook(
     connected: Boolean,
-    screenOn: Boolean,
     saidNotExempt: Boolean
 ): StandbyLook = when {
-    connected && screenOn -> StandbyLook.FOLLOWING
-    connected -> StandbyLook.ASLEEP
+    connected -> StandbyLook.FOLLOWING
     saidNotExempt -> StandbyLook.KILLED
     else -> StandbyLook.GONE
 }

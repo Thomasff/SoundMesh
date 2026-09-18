@@ -62,6 +62,7 @@ import com.soundmesh.probe.sync.StoredRoomField
 import com.soundmesh.probe.sync.StoredListenerDistance
 import com.soundmesh.probe.sync.StoredOutputLead
 import java.io.File
+import java.net.Inet4Address
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.StoredSeparation
 import com.soundmesh.probe.sync.SyncActivity
@@ -897,6 +898,10 @@ class HomeActivity : ComponentActivity() {
             // button goes quiet rather than looking like it did nothing.
             starting = awaitingSession && SessionService.FAILURE == null,
             counters = SessionReadout.counters(session?.report()),
+            // Only ever what handsets said about themselves - see RoomCommandServer.notExemptNames.
+            // A host cannot read another phone's battery settings, and every screen this feeds
+            // names a phone, so a guess here would send somebody to the wrong handset's settings.
+            blockedPeerNames = RoomCommands.notExemptNames(),
             room = room,
             // Two different places for one reading, because a host holds the whole table and a
             // sink is told only the line about itself. Both read null before a room exists,
@@ -1108,6 +1113,8 @@ class HomeActivity : ComponentActivity() {
         state = state.copy(
             onWifi = onWifi,
             wifiName = readableSsid(ssid),
+            localNet = if (!onWifi) null else
+                localNetOf(getSystemService(ConnectivityManager::class.java)),
             // The code is part of the same answer: which address a peer would have to reach is
             // the network question said a second way, and the two going out of step is how a
             // handset ends up scanning a code for a network nobody is on any more.
@@ -1588,6 +1595,25 @@ internal data class Told(val percent: Int, val at: Long)
  * checked. A non-UTF-8 SSID arrives as a bare hex string instead, unquoted and starting `0x`,
  * which is exactly as unreadable as the placeholder and is refused the same way.
  */
+/**
+ * This handset's own IPv4 address on the active network, with the prefix that names it.
+ *
+ * Asked of [ConnectivityManager] rather than WifiManager: the same read, no permission, and the
+ * one place the prefix length is carried. The prefix is the half that matters - the same pair of
+ * addresses is one network on a /16 and two on a /24, and a campus or office network is where
+ * both of those actually happen.
+ *
+ * IPv4 only, and null rather than an approximation when there is none: everything downstream is a
+ * sentence blaming a network, so having nothing to say is better than saying it about the wrong
+ * one.
+ */
+internal fun localNetOf(connectivity: ConnectivityManager): IpSubnet? = runCatching {
+    connectivity.getLinkProperties(connectivity.activeNetwork)
+        ?.linkAddresses
+        ?.firstOrNull { it.address is Inet4Address }
+        ?.let { IpSubnet(it.address.hostAddress ?: return@let null, it.prefixLength) }
+}.getOrNull()
+
 internal fun readableSsid(rawSsid: String?): String? {
     val unquoted = rawSsid?.removeSurrounding("\"") ?: return null
     if (unquoted.isBlank()) return null

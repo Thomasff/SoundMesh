@@ -36,10 +36,12 @@ class RoomCommandChannelTest {
         approximately: Long? = null,
         called: String? = null,
         volumeNow: (() -> VolumeSaid)? = null,
+        exemptNow: (() -> Boolean)? = null,
         onCommand: (RoomOrder) -> Unit
     ): RoomCommandClient =
         RoomCommandClient(
-            "127.0.0.1", port, selfId, carrying, approximately, called, volumeNow, onCommand
+            "127.0.0.1", port, selfId, carrying, approximately, called, volumeNow, exemptNow,
+            onCommand
         )
             .also { it.start() }
 
@@ -990,6 +992,64 @@ class RoomCommandChannelTest {
             assertTrue(until { server.standingBy() == 1 && server.uncalibrated() == 1 })
         } finally {
             second.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset says whether its own system exempts this app, and the host can name it.
+     *
+     * Names rather than ids, because the host puts this in a sentence somebody acts on: the whole
+     * point of the reading is sending a person to one particular phone's settings.
+     */
+    @Test
+    fun `a handset says whether its system exempts this app, and is named for it`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(
+            port, one, called = "蓝色", exemptNow = { false }, onCommand = onCommand
+        )
+        try {
+            assertTrue(connected(client))
+
+            assertTrue(until { server.notExemptNames() == listOf("蓝色") })
+
+            // And it clears itself. Somebody told to go and allow it does exactly that and comes
+            // back, and a warning that cannot go away is one nobody believes the second time.
+            client.sayPower(true)
+
+            assertTrue(until { server.notExemptNames().isEmpty() })
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset that never says the word is not accused of anything.
+     *
+     * Two different builds in one room is the ordinary case here - the packages are handed round
+     * by hand - and a handset judged on a signal its build does not send would be named on the
+     * host's screen as the phone about to drop out, while it sits there doing everything it is
+     * told. Absent has to read as "nothing said", never as "not exempt".
+     */
+    @Test
+    fun `a handset silent about power saving is not named`() {
+        val port = freePort()
+        val server = RoomCommandServer(port)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, called = "蓝色", exemptNow = null, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(until { server.standingBy() == 1 })
+            Thread.sleep(300)
+
+            assertTrue(server.notExemptNames().isEmpty())
+        } finally {
+            client.close()
             server.stop()
         }
     }

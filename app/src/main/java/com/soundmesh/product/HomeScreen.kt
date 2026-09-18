@@ -283,7 +283,15 @@ data class HomeState(
      * [readableSsid]. Null whenever [onWifi] is false, and also null on WiFi with no readable
      * name.
      */
-    val wifiName: String? = null
+    val wifiName: String? = null,
+    /**
+     * This handset's own address on that WiFi, and how much of it names the network.
+     *
+     * Read for one purpose: telling a sink that cannot reach its host whether the host's address is
+     * even on this network. See [joinTrouble] - it is the half of that answer that needs no packet.
+     * Null when it could not be read, which is not evidence of anything.
+     */
+    val localNet: IpSubnet? = null
 )
 
 /** What the screen can ask for. Held as one object so a preview can hand it empty lambdas. */
@@ -812,6 +820,24 @@ internal fun StandbyLine(state: HomeState, actions: HomeActions) {
             else stringResource(R.string.standby_sink_alone),
             style = MaterialTheme.typography.bodySmall
         )
+        // Underneath the general line rather than instead of it, because the two say different
+        // things: that one is what to do, this one is why. Only while the line is down - a paired
+        // handset that is standing by has nothing to diagnose, and the reading behind this goes on
+        // being true whether or not it matters.
+        val trouble =
+            if (state.onStandby) null
+            else joinTrouble(state.onWifi, state.localNet, state.paired?.address)
+        if (trouble != null) {
+            Text(
+                if (trouble == JoinTrouble.OTHER_NETWORK) stringResource(
+                    joinWording(trouble),
+                    state.paired?.address.orEmpty(),
+                    state.localNet?.address.orEmpty()
+                ) else stringResource(joinWording(trouble)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
     }
     if (warnsAboutBackground(state)) {
         Text(

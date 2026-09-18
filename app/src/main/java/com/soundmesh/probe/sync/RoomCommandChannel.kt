@@ -73,6 +73,30 @@ private const val CARRYING = "carrying "
 private const val NOTHING_CARRIED = "none"
 
 /**
+ * Whether that handset's own system exempts this app from its battery rules.
+ *
+ * Read on the handset and said up the line, because it is the one bit that says whether this room
+ * is about to lose a phone: the evening of 2026-09-14 ended with a handset that was killed the
+ * moment the app left the foreground, and the fix was a switch in that handset's settings. The
+ * host already draws a state for it and already has a line of text for it; what it never had was
+ * anybody saying the word.
+ *
+ * Said again whenever it changes, not only on connecting. Somebody told to go and allow it does
+ * exactly that and comes back, and a warning that cannot clear itself is a warning nobody believes
+ * the second time.
+ */
+private const val POWER = "power "
+private const val EXEMPT = "exempt"
+private const val NOT_EXEMPT = "not-exempt"
+
+/** What a handset says about its own battery exemption. */
+fun sayingPower(exempt: Boolean): String = POWER + if (exempt) EXEMPT else NOT_EXEMPT
+
+/** Reads [sayingPower] back, or null when the phrase is somebody else's. */
+internal fun exemptFrom(said: String): Boolean? =
+    if (!said.startsWith(POWER)) null else said.removePrefix(POWER) == EXEMPT
+
+/**
  * Said by a handset correcting off a room round rather than off a measurement of its own pair.
  *
  * A word rather than a flag beside the number, so a host from before this reads it as a phrase it
@@ -137,6 +161,15 @@ class RoomCommandServer(
 
     /** The last reason each handset gave for not measuring, newest per handset. */
     private val excuses = Collections.synchronizedMap(LinkedHashMap<String, RoomExcuse>())
+
+    /**
+     * Which handsets have said their own system does not exempt this app - see [sayingPower].
+     *
+     * Only the ones that said so, so a handset whose build never learned the word is absent rather
+     * than accused: this reading drives a warning that names a phone, and naming the wrong phone is
+     * worse than naming none.
+     */
+    private val notExempt = Collections.synchronizedSet(LinkedHashSet<String>())
 
     /**
      * What each handset last said its own volume is.
@@ -269,6 +302,9 @@ class RoomCommandServer(
                     if (said.startsWith(CALLED)) {
                         StoredHandsetName.cleaned(said.removePrefix(CALLED))
                             ?.let { names[standing.peerId] = it }
+                    }
+                    exemptFrom(said)?.let {
+                        if (it) notExempt.remove(standing.peerId) else notExempt.add(standing.peerId)
                     }
                     if (said == HERE) standing.heardAt = System.currentTimeMillis()
                     volumeFrom(said)?.let {
@@ -449,6 +485,16 @@ class RoomCommandServer(
         if (shared) "$name (${peerId.takeLast(SHORT_NAME_CHARACTERS)})" else name
     }
 
+    /**
+     * What to call the handsets that have said they are not exempt from power saving.
+     *
+     * Names rather than ids, because this ends up in a sentence somebody reads. A handset that said
+     * the word but has never said what to call it is left out: there is nothing to put in the
+     * sentence, and "3f2a is not exempt" is not a sentence anybody can act on.
+     */
+    fun notExemptNames(): List<String> =
+        synchronized(notExempt) { notExempt.toList() }.mapNotNull { nameOf(it) }
+
     /** What each handset last said about why it is not measuring. */
     fun excuses(): Map<String, RoomExcuse> = synchronized(excuses) { LinkedHashMap(excuses) }
 
@@ -593,6 +639,12 @@ class RoomCommandClient(
      * have moved; null keeps this build silent, which is what an older host reads anyway.
      */
     private val volumeNow: (() -> VolumeSaid)? = null,
+    /**
+     * Whether this handset's own system exempts this app from its battery rules, read at the
+     * moment of connecting. A lambda for the same reason [volumeNow] is one, and null keeps this
+     * build silent - which is what an older host reads anyway.
+     */
+    private val exemptNow: (() -> Boolean)? = null,
     private val onCommand: (RoomOrder) -> Unit
 ) : AutoCloseable {
     @Volatile private var running = false
@@ -657,7 +709,9 @@ class RoomCommandClient(
                             volumeNow?.invoke()?.let {
                                 write(SpatialFrame.encode(sayingVolume(it.index, it.max, it.stream)))
                             }
-                            // And a fifth, which is the first of however many: the host counts a
+                            // A fifth, still on those terms.
+                            exemptNow?.let { write(SpatialFrame.encode(sayingPower(it()))) }
+                            // And a sixth, which is the first of however many: the host counts a
                             // handset that says this and then stops, and leaves alone one that has
                             // never said it at all. Said here rather than waiting for the first
                             // tick so that a handset is never in the second group by accident.
@@ -706,6 +760,9 @@ class RoomCommandClient(
      */
     fun sayVolume(index: Int, max: Int, stream: String): Boolean =
         say(sayingVolume(index, max, stream))
+
+    /** Says whether this handset's own system exempts this app - see [sayingPower]. */
+    fun sayPower(exempt: Boolean): Boolean = say(sayingPower(exempt))
 
     /**
      * Says this handset is still there, and answers whether it went out.
@@ -836,6 +893,9 @@ object RoomCommands {
 
     @Synchronized
     fun nameOf(peerId: String): String? = server?.nameOf(peerId)
+
+    @Synchronized
+    fun notExemptNames(): List<String> = server?.notExemptNames() ?: emptyList()
 
     @Synchronized
     fun volumes(): Map<String, VolumeSaid> = server?.volumes() ?: emptyMap()

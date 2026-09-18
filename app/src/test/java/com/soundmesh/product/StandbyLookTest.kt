@@ -6,33 +6,25 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * Before this, one hollow circle meant four things: it left, it is asleep, the app is not running,
- * the ROM killed it. Four faults you check in four different places, sharing one symbol, is the
- * same as having no symbol.
+ * Before this, one hollow circle meant several things at once: it left, the app is not running,
+ * the ROM killed it. Faults you check in different places, sharing one symbol, is the same as
+ * having no symbol.
+ *
+ * A dark screen used to be one of them. It went on 2026-09-18: a handset with its screen off
+ * plays, obeys and reports exactly as one with its screen on, so drawing it apart said there was
+ * something to worry about where there was not.
  */
 class StandbyLookTest {
     @Test
-    fun `connected and awake is simply following`() {
-        assertEquals(
-            StandbyLook.FOLLOWING,
-            standbyLook(connected = true, screenOn = true, saidNotExempt = false)
-        )
-    }
-
-    // A dark screen is not a fault. Playback and volume need no screen; only measurement does.
-    @Test
-    fun `connected with a dark screen is asleep, not gone`() {
-        assertEquals(
-            StandbyLook.ASLEEP,
-            standbyLook(connected = true, screenOn = false, saidNotExempt = false)
-        )
+    fun `connected is simply following`() {
+        assertEquals(StandbyLook.FOLLOWING, standbyLook(connected = true, saidNotExempt = false))
     }
 
     @Test
     fun `disconnected with nothing else known is gone`() {
         assertEquals(
             StandbyLook.GONE,
-            standbyLook(connected = false, screenOn = true, saidNotExempt = false)
+            standbyLook(connected = false, saidNotExempt = false)
         )
     }
 
@@ -42,7 +34,7 @@ class StandbyLookTest {
     fun `disconnected AND having said it is not exempt is a kill`() {
         assertEquals(
             StandbyLook.KILLED,
-            standbyLook(connected = false, screenOn = true, saidNotExempt = true)
+            standbyLook(connected = false, saidNotExempt = true)
         )
     }
 
@@ -50,7 +42,7 @@ class StandbyLookTest {
     fun `still connected is never a kill, whatever it said about power saving`() {
         assertEquals(
             StandbyLook.FOLLOWING,
-            standbyLook(connected = true, screenOn = true, saidNotExempt = true)
+            standbyLook(connected = true, saidNotExempt = true)
         )
     }
 

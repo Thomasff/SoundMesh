@@ -76,6 +76,9 @@ class StandbyService : Service() {
     /** The last volume this handset got up the line, so only a change is worth a frame. */
     private var saidVolume: VolumeReading? = null
 
+    /** The same for the battery exemption - see sayPowerIfChanged. Null means never said. */
+    private var saidExempt: Boolean? = null
+
     /**
      * The volume keys are what move a stream without anybody asking, and there is no broadcast for
      * it on the versions here. A second is fine: this is a number on somebody else's screen, not a
@@ -88,6 +91,7 @@ class StandbyService : Service() {
             worst.ran(lastGap)
             worst.network(onWiFi(), now)
             sayVolumeIfMoved()
+            sayPowerIfChanged()
             sayHereIfDue()
             showTheLineIfItChanged()
             handler.postDelayed(this, TELL_EVERY_MILLIS)
@@ -264,7 +268,8 @@ class StandbyService : Service() {
             wanted.carrying,
             wanted.approximately,
             wanted.called,
-            { handsetVolume.read(capturing = false).let { VolumeSaid(it.index, it.max, it.stream) } }
+            { handsetVolume.read(capturing = false).let { VolumeSaid(it.index, it.max, it.stream) } },
+            ::exempt
         ) { order ->
             // On to the main thread: this arrives on the socket thread, and everything it leads to
             // is either a service being asked for or an activity being started.
@@ -483,6 +488,20 @@ class StandbyService : Service() {
     }
 
     /**
+     * Tells the host when this handset's battery exemption changes.
+     *
+     * Polled on the same loop as the volume, and for a stronger reason: the only way this reading
+     * ever changes is that somebody was told to go and change it. A warning on the host's screen
+     * that still names this handset after it has been allowed is a warning nobody reads twice, and
+     * there is no callback for this switch - it can only be looked at.
+     */
+    private fun sayPowerIfChanged() {
+        val now = exempt()
+        if (now == saidExempt) return
+        if (line?.sayPower(now) == true) saidExempt = now
+    }
+
+    /**
      * Tells the host this handset is still here, every so often, whether or not anything changed.
      *
      * The only thing this handset says when nothing has happened, and the reason it has to exist:
@@ -647,6 +666,9 @@ class StandbyService : Service() {
         line?.close()
         line = null
         saidVolume = null
+        // Cleared with the socket, not kept: the next connection says it on the way in, and a
+        // remembered value would make that frame look like a repeat and hold it back.
+        saidExempt = null
     }
 
     override fun onDestroy() {

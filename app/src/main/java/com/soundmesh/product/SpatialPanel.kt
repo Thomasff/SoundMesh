@@ -121,6 +121,15 @@ fun MeasuredRoom(
     ripple: Float? = null
 ) {
     RoomMap(state, actions, blockedPeerNames, ripple)
+    // Standing, not conditional on the arrangement, and that is the decision rather than an
+    // omission. What the rule can see is each handset's angle from the listener, and the angles it
+    // does badly at are not the same for every effect: handsets spread very wide blur the middle of
+    // a stereo image and are exactly what a source going round a room wants. So a warning that
+    // fired on an angle would be right about one row of the list and wrong about another, while a
+    // standing sentence about the room is true for all of them - and changing the sound to match
+    // the arrangement would turn "I moved them and nothing happened" into "I moved them and it
+    // undid what I chose", which is worse.
+    Note(stringResource(R.string.room_place_evenly))
     if (state.icons.size < 2) {
         Text(stringResource(R.string.room_alone), style = MaterialTheme.typography.bodySmall)
     }
@@ -736,22 +745,14 @@ private fun RoomDrawing(
     val source = MaterialTheme.colorScheme.secondary
     val label = MaterialTheme.colorScheme.onPrimary
     val danger = MaterialTheme.colorScheme.error
-    // One of four states per icon rather than one hollow circle - see StandbyLook. Worked out here,
-    // in composable scope rather than inside the Canvas below, because the killed pulse needs
+    // One of three states per icon rather than one hollow circle - see StandbyLook. Worked out
+    // here, in composable scope rather than inside the Canvas below, because the killed pulse needs
     // remembered animation state that a DrawScope cannot hold.
-    //
-    // screenOn is always true: nothing on this host's side yet carries a standing handset's own
-    // screen state back to the room drawing (HandsetMoment.screenOn is read on calibration runs,
-    // not sent up this channel), so ASLEEP is unreachable until that wiring exists. True is the
-    // documented fallback for "not known" - see loudnessOf's neighbour in EdgeGlow.kt for the same
-    // convention - which is why this is not a guess so much as the honest default for a signal that
-    // is not there yet.
     val looks = HashMap<String, StandbyLook>(state.icons.size)
     val killedPulses = HashMap<String, Float>(state.icons.size)
     for (icon in state.icons) {
         val look = standbyLook(
             connected = icon.peerId !in state.silentIds,
-            screenOn = true,
             saidNotExempt = RoomCommands.nameOf(icon.peerId)?.let { it in blockedPeerNames } == true
         )
         looks[icon.peerId] = look
@@ -996,16 +997,12 @@ private fun DrawScope.drawHandset(
         radius = halo,
         center = centre
     )
-    // Four states rather than one hollow circle - see StandbyLook. Its colour is the handset's
+    // Three states rather than one hollow circle - see StandbyLook. Its colour is the handset's
     // name, so every one of them keeps the halo above and either fills or outlines in it; only
     // KILLED's ring departs from the handset's own colour, because that ring is not naming the
     // handset, it is naming the fault.
     when (look) {
         StandbyLook.FOLLOWING -> drawCircle(colour, radius = radius, center = centre)
-        // Dimmed rather than hollowed: it is still following, only its screen is dark, and drawing
-        // it exactly like a dropped handset is what cost an hour telling the two apart on
-        // 2026-09-14.
-        StandbyLook.ASLEEP -> drawCircle(colour.copy(alpha = ASLEEP_ALPHA), radius = radius, center = centre)
         StandbyLook.GONE -> drawCircle(colour, radius = radius, center = centre, style = Stroke(width = 4f))
         StandbyLook.KILLED -> drawCircle(dangerColour, radius = radius, center = centre, style = Stroke(width = 4f))
     }
@@ -1067,9 +1064,6 @@ private const val HANDSET_RADIUS = 0.06f
 
 /** Clear of the icon without floating away from it. */
 private const val PART_WORD_GAP_PX = 4f
-
-/** How dim [StandbyLook.ASLEEP] draws: still following, only its screen has gone dark. */
-private const val ASLEEP_ALPHA = 0.45f
 
 /** How far outside the icon's own radius the killed pulse ring sits, in pixels. */
 private const val KILLED_PULSE_RING_PX = 6f
