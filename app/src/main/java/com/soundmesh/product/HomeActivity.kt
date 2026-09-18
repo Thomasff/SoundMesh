@@ -445,6 +445,9 @@ class HomeActivity : ComponentActivity() {
     private val actions = HomeActions(
         pickRole = { role ->
             holdingPlaying = false
+            // Before the role changes, because everything that could stop the room reads the
+            // role - see [leaveTheRoomPlaying].
+            if (role != Role.HOST && state.running) leaveTheRoomPlaying()
             state = state.copy(role = role, problem = null)
             readPairing()
             takeUpTheRoom()
@@ -723,6 +726,25 @@ class HomeActivity : ComponentActivity() {
         // has already been handed back.
         if (state.running) stopSession()
         releaseProjection()
+    }
+
+    /**
+     * Stops what this handset is hosting because it has just stopped being the host.
+     *
+     * Somebody playing to a room and then picking 当从机 used to leave the whole session running:
+     * this handset went on playing, every standing phone went on being fed, and the record saying
+     * a host lives here went on being answered - by a handset that was now a sink. The next phone
+     * to take the role could not command any of it, because none of it had ever been given up.
+     *
+     * The room is told here rather than left to [announceSession], which is the tick that notices
+     * a session has gone. Two things stop it from saying anything by then: the role is no longer
+     * HOST, which is the first line of that method, and [takeUpTheRoom] is about to shut the
+     * command channel the message would have travelled on. The order is the whole fix.
+     */
+    private fun leaveTheRoomPlaying() {
+        RoomCommands.send(RoomCommand.STOP)
+        toldTheRoom = false
+        stopSession()
     }
 
     /** Ends the session, which is also what tells the room to stop - see [announceSession]. */
@@ -1159,6 +1181,13 @@ class HomeActivity : ComponentActivity() {
                 // of what makes a sink able to find this handset before anybody presses play -
                 // see HostBeacon. Standing by is where a room spends nearly all of its time.
                 HostBeacon.hold(this, HostIdentity(filesDir).current(), HostBeacon.Holder.ROLE)
+                // A host points at nobody. Kept until 2026-09-18, which was harmless while a
+                // code had to be scanned and is not now: the standby service skips looking for
+                // a host whenever one is remembered, so this handset going back to being a sink
+                // would dial whoever it was pointed at weeks ago and never see the room it is
+                // standing in. Picking this role is the newest thing a person has said about
+                // where this handset belongs, so it is the one that wins.
+                PairedHost(filesDir).forget()
                 refuseToBeTheSecondHost()
                 // Said out loud because the count going down has no other trace at all: on
                 // 09-13 a room went from three standing to none and the only evidence was the

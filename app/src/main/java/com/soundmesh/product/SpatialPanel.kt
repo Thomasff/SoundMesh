@@ -71,10 +71,11 @@ import kotlin.math.hypot
 /**
  * The drawing, and the three controls that decide what it means.
  *
- * The listener is a fixed dot in the middle and cannot be dragged. That is deliberate rather than
+ * The listener is fixed in the middle and cannot be dragged. That is deliberate rather than
  * unfinished: whether a phone icon is where the phone is can be checked by looking at the room,
  * and whether the app believes the listener is sitting where they are sitting cannot be checked at
- * all - so the one position nobody can verify is the one position nobody is asked for.
+ * all - so the one position nobody can verify is the one position nobody is asked for. The circle
+ * in the middle carries the word for it, which is what a sentence underneath the map used to do.
  *
  * Nothing here knows about gains. The drawing gives directions, the mode says what moves, and the
  * rule the room plays under is assembled by whoever owns the session.
@@ -545,17 +546,18 @@ private fun ArrivalDelays(state: RoomState, actions: RoomActions, showDetails: B
 private fun ListenerDistances(state: RoomState, actions: RoomMapActions) {
     val shown = listenerLines(state.icons, state.listenerMetres)
     if (shown.isEmpty()) {
+        // Nothing at all in a room too small to place the listener, which is the two-phone room
+        // almost everybody starts in. The sentence that used to be here explained why the round
+        // is unavailable - a handset cannot measure its own distance to the ear holding it - and
+        // it was on screen at the one moment nobody can act on it: there is no button under it,
+        // and the answer is to fetch a third phone.
+        if (!overheadRoundCanPlaceTheListener(state.icons)) return
         // Said once and only while it is true, because it is the one thing on this screen a
         // person cannot find out by looking: the drawing shows where the phones are and has
         // never shown where they are sitting, so an unmeasured listener looks exactly like a
         // measured one that happens to be in the middle.
-        Note(
-            stringResource(
-                if (overheadRoundCanPlaceTheListener(state.icons)) R.string.room_listener_unmeasured
-                else R.string.room_listener_needs_three
-            )
-        )
-        actions.measureListener?.takeIf { overheadRoundCanPlaceTheListener(state.icons) }?.let { go ->
+        Note(stringResource(R.string.room_listener_unmeasured))
+        actions.measureListener?.let { go ->
             Ghost(
                 stringResource(R.string.room_measure_listener),
                 modifier = Modifier.padding(top = 8.dp),
@@ -763,6 +765,7 @@ private fun RoomDrawing(
     // stringResource behind an if is a composable whose presence changes with the state.
     val nearWord = stringResource(partLabelOf(state.splitAxis, false))
     val farWord = stringResource(partLabelOf(state.splitAxis, true))
+    val listenerWord = stringResource(R.string.room_listener_word)
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
@@ -839,7 +842,7 @@ private fun RoomDrawing(
             }
     ) {
         drawCircle(outline, radius = size.minDimension / 2f, style = Stroke(width = 2f))
-        drawListener(listener, measurer)
+        drawListener(listener, listenerWord, measurer)
         state.icons.forEach { icon ->
             val place = state.colours[icon.peerId]
             drawHandset(
@@ -952,18 +955,37 @@ private const val SOURCE_LINE_ALPHA = 0.35f
 /**
  * The listener, and which way they are facing.
  *
+ * A named circle rather than the bare dot it was until 2026-09-18, and the size is the point of
+ * it: the ring is drawn at [SpatialRoom.LISTENER_RADIUS], which is also the distance within which
+ * a source counts as being on top of the listener. So the one place on this map where the sound
+ * stops having a direction is a place a finger can actually be put, and it is exactly the shape
+ * that is drawn there. A dot said the same thing and was one pixel wide.
+ *
  * The facing mark is not decoration. Front and back are the one pair of directions a person cannot
  * tell apart by ear on this system - the gain law gives them nothing to distinguish - so the
  * drawing has to say which end of the screen is in front, or half of every arrangement is a
  * coin toss.
  */
-private fun DrawScope.drawListener(colour: Color, measurer: TextMeasurer) {
+private fun DrawScope.drawListener(colour: Color, word: String, measurer: TextMeasurer) {
     val middle = Offset(size.width / 2f, size.height / 2f)
-    drawCircle(colour, radius = size.minDimension * 0.02f, center = middle)
-    val ahead = size.minDimension * 0.055f
-    drawLine(colour, middle, Offset(middle.x, middle.y - ahead), strokeWidth = 3f)
-    val text = measurer.measure("↑", TextStyle(fontSize = 11.sp, color = colour))
-    drawText(text, topLeft = Offset(middle.x + 6f, middle.y - ahead - text.size.height))
+    val radius = size.minDimension * SpatialRoom.LISTENER_RADIUS
+    drawCircle(colour, radius = radius, center = middle, style = Stroke(width = 2f))
+    val name = measurer.measure(word, TextStyle(fontSize = 11.sp, color = colour))
+    drawText(
+        name,
+        topLeft = Offset(middle.x - name.size.width / 2f, middle.y - name.size.height / 2f)
+    )
+    // From the edge of the ring rather than from the middle of it, which a filled dot did not
+    // have to care about: a line starting at the centre now runs through the word.
+    val ahead = radius + size.minDimension * 0.035f
+    drawLine(
+        colour,
+        Offset(middle.x, middle.y - radius),
+        Offset(middle.x, middle.y - ahead),
+        strokeWidth = 3f
+    )
+    val arrow = measurer.measure("↑", TextStyle(fontSize = 11.sp, color = colour))
+    drawText(arrow, topLeft = Offset(middle.x + 6f, middle.y - ahead - arrow.size.height))
 }
 
 private fun DrawScope.drawHandset(

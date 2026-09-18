@@ -26,6 +26,19 @@ class PairedHost(private val directory: File) {
         file().writeText(PairingCodeCodec.encode(code))
     }
 
+    /**
+     * Stops pointing at anybody, which is what becoming the host means.
+     *
+     * Nothing used to remove this file, so a handset that had ever been pointed at a host kept
+     * pointing at it for good - through being the host itself and back again. That was invisible
+     * while a code had to be scanned every time, and it stops the finding working the moment it
+     * does not: a look for a host is skipped entirely while one is remembered, so the phone that
+     * hosted last night quietly refuses to join whoever is hosting tonight.
+     */
+    fun forget() {
+        runCatching { file().delete() }
+    }
+
     private fun file() = File(directory, FILE_NAME)
 
     companion object {

@@ -45,6 +45,21 @@ object SpatialRoom {
     /** The middle of the drawing, where the listener is. */
     const val CENTRE = 0.5f
 
+    /**
+     * The listener's own circle: how near the middle a source counts as being on top of them.
+     *
+     * The middle used to be a single point, and a single point is not a place a finger can reach.
+     * Dragging the source onto the listener is the one position on this map with no direction at
+     * all - see [envelopmentOf] - and it was the hardest position on the map to hit, which is
+     * backwards. Everything inside here is that position, and the dot is redrawn in the exact
+     * middle when it lands there, so the snap is visible rather than something to be guessed at.
+     *
+     * Slightly inside a handset icon's own disc, which is drawn at 0.06 of the map and is the
+     * target size a person is already used to aiming at on this screen. Not the halo around it:
+     * the halo is three times the disc, and a grab zone that big would swallow a real position.
+     */
+    const val LISTENER_RADIUS = 0.05f
+
     /** How far out the icons start. Clear of the listener, clear of the edge. */
     const val DEFAULT_RADIUS = 0.34f
 
@@ -234,8 +249,13 @@ object SpatialRoom {
         val inside = envelopmentFor(retreat, envelopment)
         val radius =
             if (inside > 0f) {
-                SOURCE_HOME_RADIUS *
-                    (1f - (inside / SpatialField.MAX_ENVELOPMENT.toFloat()).coerceIn(0f, 1f))
+                val share = (inside / SpatialField.MAX_ENVELOPMENT.toFloat()).coerceIn(0f, 1f)
+                // All of it is drawn in the exact middle rather than on the edge of the
+                // listener's circle. The two have to stay inverses of each other - this and
+                // [envelopmentOf] are the only two things that know where a dot is - and the
+                // snap is only worth having if the dot is seen to land.
+                if (share >= 1f) 0f
+                else LISTENER_RADIUS + (SOURCE_HOME_RADIUS - LISTENER_RADIUS) * (1f - share)
             } else {
                 SOURCE_HOME_RADIUS +
                     retreat.coerceIn(0f, 1f) * (SOURCE_MAX_RADIUS - SOURCE_HOME_RADIUS)
@@ -288,7 +308,12 @@ object SpatialRoom {
     fun envelopmentOf(spot: SourceSpot): Float {
         val radius = hypot((spot.x - CENTRE).toDouble(), (CENTRE - spot.y).toDouble()).toFloat()
         if (radius >= SOURCE_HOME_RADIUS) return 0f
-        val inwards = 1f - radius / SOURCE_HOME_RADIUS
+        // Anywhere inside the listener's own circle is the listener - see [LISTENER_RADIUS].
+        if (radius <= LISTENER_RADIUS) return SpatialField.MAX_ENVELOPMENT.toFloat()
+        // Measured from the edge of that circle rather than from the middle, so the travel the
+        // snap ate is not also charged to the ramp: a finger between the ring of handsets and
+        // the listener moves the dot exactly as far as it moved, and nothing jumps at the seam.
+        val inwards = 1f - (radius - LISTENER_RADIUS) / (SOURCE_HOME_RADIUS - LISTENER_RADIUS)
         return (inwards * SpatialField.MAX_ENVELOPMENT.toFloat())
             .coerceIn(0f, SpatialField.MAX_ENVELOPMENT.toFloat())
     }

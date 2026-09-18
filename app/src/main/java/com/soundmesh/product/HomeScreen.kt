@@ -883,6 +883,35 @@ internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boole
     // towards, and a slider whose right-hand end is a guess is worse than no slider - see
     // HomeState.playhead.
     state.playhead?.let { PlayheadPanel(it, actions.seek) }
+    // The host's, all three of them, and on a sink there is nothing behind any of them. Pause
+    // reached SinkSession.setPaused, which is `= Unit`; stepping needs a queue, and the queue is
+    // the host's. What made it worth removing rather than leaving quiet is that the middle one
+    // also answered the wrong question: a paused room left every sink drawing a pause button,
+    // because `paused` is this handset's own and a sink's own is always false. So the one
+    // control that looked live was the one telling every phone in the room the opposite of what
+    // the room was doing. Stop is left, and it is real on both ends.
+    if (state.role == Role.HOST) TransportRow(state, actions)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (!state.running) {
+            Button(
+                onClick = actions.play,
+                enabled = canPlay && !state.checking && !state.starting,
+                modifier = Modifier.weight(1f)
+            ) { Text(stringResource(R.string.play_start)) }
+        } else {
+            OutlinedButton(onClick = actions.stop, modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.play_stop))
+            }
+        }
+    }
+}
+
+/** Previous, pause and next: the three that only mean anything where the queue is. */
+@Composable
+private fun TransportRow(state: HomeState, actions: HomeActions) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(28.dp),
@@ -905,22 +934,6 @@ internal fun PlayControls(state: HomeState, actions: HomeActions, canPlay: Boole
         }
         Transport(TransportIcon.NEXT, enabled = stepping) { actions.stepSong(1) }
         Spacer(Modifier.weight(1f))
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (!state.running) {
-            Button(
-                onClick = actions.play,
-                enabled = canPlay && !state.checking && !state.starting,
-                modifier = Modifier.weight(1f)
-            ) { Text(stringResource(R.string.play_start)) }
-        } else {
-            OutlinedButton(onClick = actions.stop, modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.play_stop))
-            }
-        }
     }
 }
 

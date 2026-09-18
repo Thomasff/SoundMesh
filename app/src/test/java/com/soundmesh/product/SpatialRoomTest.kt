@@ -445,4 +445,77 @@ class SpatialRoomTest {
         // drawing's own midpoint - and the expected side is arithmetic, never the rule's own call.
         assertEquals(2.0, 1.0 / ratio, 1e-2)
     }
+
+    /**
+     * The middle of the map is a place a finger can land on, not a point.
+     *
+     * The source on the listener is the one position with no direction at all, and until
+     * 2026-09-18 it was also the only position that had to be hit exactly: one pixel out and the
+     * sound still had a side. Everything inside the circle the drawing puts round the listener is
+     * that position now - and the dot is drawn back in the exact middle, so somebody who has
+     * landed it can see that they have.
+     */
+    @Test
+    fun `a source dropped anywhere in the listener's circle is on the listener`() {
+        val most = SpatialField.MAX_ENVELOPMENT.toFloat()
+        // Just inside the ring, and off to one side of it so that a bug which only answers on the
+        // exact centre line cannot pass.
+        val near = SourceSpot(
+            SpatialRoom.CENTRE + SpatialRoom.LISTENER_RADIUS * 0.7f,
+            SpatialRoom.CENTRE - SpatialRoom.LISTENER_RADIUS * 0.7f
+        )
+
+        assertEquals(most, SpatialRoom.envelopmentOf(near), 1e-4f)
+        assertEquals(0f, SpatialRoom.retreatOf(near), 1e-4f)
+        // And drawn where it now means, rather than where the finger let go.
+        val drawn = SpatialRoom.spotOf(SpatialRoom.panOf(near), 0f, most)
+        assertEquals(SpatialRoom.CENTRE, drawn.x, 1e-4f)
+        assertEquals(SpatialRoom.CENTRE, drawn.y, 1e-4f)
+    }
+
+    /**
+     * The circle swallows itself and nothing else.
+     *
+     * A snap zone is a stretch of the drag that stops meaning anything, so the check that matters
+     * is the one just outside it: a source there still has a direction and still has less than all
+     * of the envelopment, or the middle of the room has quietly grown.
+     */
+    @Test
+    fun `just outside the listener's circle the source still has a direction`() {
+        val most = SpatialField.MAX_ENVELOPMENT.toFloat()
+        val outside = SourceSpot(
+            SpatialRoom.CENTRE,
+            SpatialRoom.CENTRE - SpatialRoom.LISTENER_RADIUS * 1.05f
+        )
+
+        assertTrue(SpatialRoom.envelopmentOf(outside) < most)
+        // Still most of the way in, though: the ramp runs from the edge of the circle, so nothing
+        // jumps as a finger crosses it.
+        assertTrue(SpatialRoom.envelopmentOf(outside) > most * 0.9f)
+    }
+
+    /**
+     * The drawing and the numbers stay inverses of each other across the snap.
+     *
+     * Two numbers describe one radius, and the snap changed what the inner half of the travel is
+     * worth. If only one of the two knew, the dot would stop following the finger - drawn a little
+     * nearer the middle than it was dropped, on every drag inside the ring of handsets.
+     */
+    @Test
+    fun `a source inside the handsets is drawn back exactly where it was dropped`() {
+        for (step in 1..9) {
+            val radius = SpatialRoom.LISTENER_RADIUS +
+                (SpatialRoom.SOURCE_HOME_RADIUS - SpatialRoom.LISTENER_RADIUS) * step / 10f
+            val dropped = SourceSpot(SpatialRoom.CENTRE, SpatialRoom.CENTRE - radius)
+
+            val drawn = SpatialRoom.spotOf(
+                SpatialRoom.panOf(dropped),
+                SpatialRoom.retreatOf(dropped),
+                SpatialRoom.envelopmentOf(dropped)
+            )
+
+            assertEquals("at $radius", dropped.x, drawn.x, 1e-4f)
+            assertEquals("at $radius", dropped.y, drawn.y, 1e-4f)
+        }
+    }
 }
