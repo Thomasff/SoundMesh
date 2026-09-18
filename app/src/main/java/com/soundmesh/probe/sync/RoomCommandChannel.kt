@@ -611,8 +611,10 @@ class RoomCommandClient(
     private val selfId: String,
     /**
      * The correction this handset carries for the host it is dialling, in microseconds, or null
-     * if it carries none. Read once per client rather than per connection: the calibration screen
-     * is the only thing that changes it, and coming back from it builds a new client.
+     * if it carries none. Fixed for the life of this client: what changes it is a calibration
+     * finishing, and the sink end watches for that and dials again - see
+     * `StandbyService.dialIfChanged`. It used to say the same thing and be true only by accident,
+     * because whether a new client was built turned on which screen happened to be resumed next.
      */
     private val carrying: Long?,
     /**

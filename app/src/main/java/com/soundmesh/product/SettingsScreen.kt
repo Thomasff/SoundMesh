@@ -41,7 +41,16 @@ fun SettingsScreen(
     showDetails: Boolean,
     onBack: () -> Unit,
     onThemeChanged: (ThemeChoice) -> Unit,
-    onDetailsChanged: (Boolean) -> Unit
+    onDetailsChanged: (Boolean) -> Unit,
+    /**
+     * This handset's own output lead, measured once and then looked up.
+     *
+     * Here rather than only on the status board, where it used to sit for ever after it had been
+     * answered. A board says what still needs doing; a measurement that is done and kept is a
+     * setting, and this is where settings are.
+     */
+    selfCalibrated: Double? = null,
+    onSelfCalibrate: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -83,6 +92,33 @@ fun SettingsScreen(
                 )
             }
             Text(stringResource(R.string.settings_details_hint), style = MaterialTheme.typography.bodySmall)
+        }
+
+        Section(R.string.settings_calibrate) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.settings_self_calibrate),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                TextButton(onClick = onSelfCalibrate) {
+                    Text(stringResource(if (selfCalibrated != null) R.string.goto_self_again else R.string.goto_self_go))
+                }
+            }
+            // The number itself, because somebody who measured it once comes back here for it.
+            selfCalibrated?.let {
+                Text(
+                    stringResource(
+                        R.string.goto_self_done,
+                        String.format(null as java.util.Locale?, "%.1f", it)
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Text(stringResource(R.string.goto_self_hint), style = MaterialTheme.typography.bodySmall)
         }
 
         Section(R.string.about_title) {

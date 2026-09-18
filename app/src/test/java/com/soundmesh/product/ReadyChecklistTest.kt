@@ -7,11 +7,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The checklist is the whole of the redesign: it is the one place that answers "why can I not
- * press play", and every line on it has to have somewhere to go.
+ * The checklist is the whole of the redesign: it is the one place that says what is still wrong
+ * with this room, and every line on it has to have somewhere to go.
+ *
+ * It stopped being a gate on 2026-09-18 - the way onto the playing stage is open whatever is on
+ * this list - so what [Mark.BLOCK] means now is what it always said: a phone in this room will be
+ * silent and nobody will be told why.
  */
 class ReadyChecklistTest {
     private fun marks(state: HomeState) = readyList(state).associate { it.line to it.mark }
+
+    /** Whether anything on the list says a phone in this room will be silent. See [Mark]. */
+    private fun nothingBlocks(state: HomeState) = readyList(state).none { it.mark == Mark.BLOCK }
 
     // A row's line resource swaps with its state - "选好歌了" becomes "还没选歌" - so a test that
     // looks a row up by one id finds nothing the moment the row is in the state the test is about.
@@ -30,7 +37,7 @@ class ReadyChecklistTest {
 
     @Test
     fun `a host with a song, a calibration and company can start`() {
-        assertTrue(canStart(readyList(readyHost)))
+        assertTrue(nothingBlocks(readyHost))
     }
 
     @Test
@@ -40,14 +47,14 @@ class ReadyChecklistTest {
             Mark.BLOCK,
             markOf(readyHost.copy(songName = null), R.string.ready_song, R.string.ready_song_missing)
         )
-        assertFalse(canStart(items))
+        assertFalse(items.none { it.mark == Mark.BLOCK })
     }
 
     // Capturing another app is a source too - a host that is capturing has something to play
     // even with no file picked, and blocking it would make the capture feature unreachable.
     @Test
     fun `capturing counts as having a song`() {
-        assertTrue(canStart(readyList(readyHost.copy(songName = null, capturing = true))))
+        assertTrue(nothingBlocks(readyHost.copy(songName = null, capturing = true)))
     }
 
     // Warn, do not block: an uncalibrated handset plays, it just plays early. Blocking here
@@ -60,7 +67,7 @@ class ReadyChecklistTest {
             Mark.WARN,
             markOf(state, R.string.ready_self_lead, R.string.ready_self_lead_missing)
         )
-        assertTrue(canStart(readyList(state)))
+        assertTrue(nothingBlocks(state))
     }
 
     @Test
@@ -102,12 +109,12 @@ class ReadyChecklistTest {
         assertEquals(Mark.BLOCK, item.mark)
         assertEquals("蓝色", item.detail)
         assertEquals(ReadyGoto.ALLOW_BACKGROUND, item.goto)
-        assertFalse(canStart(readyList(state)))
+        assertFalse(nothingBlocks(state))
     }
 
     @Test
     fun `nobody standing by blocks a host, because a room of one is not a room`() {
-        assertFalse(canStart(readyList(readyHost.copy(standingBy = 0))))
+        assertFalse(nothingBlocks(readyHost.copy(standingBy = 0)))
     }
 
     // Warn: the pair correction is worth about a millisecond against tens of them without it,
@@ -116,7 +123,7 @@ class ReadyChecklistTest {
     fun `handsets with no pair correction warn`() {
         val state = readyHost.copy(uncalibrated = 2)
         assertEquals(Mark.WARN, marks(state)[R.string.ready_uncalibrated])
-        assertTrue(canStart(readyList(state)))
+        assertTrue(nothingBlocks(state))
     }
 
     @Test
@@ -128,7 +135,7 @@ class ReadyChecklistTest {
 
     @Test
     fun `an unpaired sink blocks`() {
-        assertFalse(canStart(readyList(HomeState(role = Role.SINK))))
+        assertFalse(nothingBlocks(HomeState(role = Role.SINK)))
     }
 
     // Every line is a thing to do something about. A line with nothing to do about it is a

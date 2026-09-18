@@ -3,13 +3,10 @@ package com.soundmesh.product
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -23,8 +20,8 @@ import com.soundmesh.probe.sync.LocalAddress
  * somebody setting a room up needs them in, and the order the drawing of 2026-09-15 put them in.
  * What the room will play is not among them: choosing a source is something people do while the
  * music is on, and it lives on the playing stage where it can be heard taking effect.
- * Everything that is wrong says so on the line it is about; the only sentence repeated at the
- * bottom is the one standing between this room and playing.
+ * Everything that is wrong says so on the line it is about, and says it once. Nothing here refuses
+ * to let anybody through: the board reports, the playing stage decides what it can start.
  *
  * Exactly two things here are drawn solid: the calibration box and the way onto the playing stage.
  * A screen where everything is emphasised has nothing emphasised, and what people were skipping
@@ -33,11 +30,9 @@ import com.soundmesh.probe.sync.LocalAddress
 @Composable
 fun ReadyScreen(state: HomeState, actions: HomeActions) {
     val items = readyList(state)
-    if (state.running) {
-        // With a room already playing, getting back to the controls is the only thing anybody came
-        // here for that the rest of this screen cannot answer, so it goes first.
-        Solid(stringResource(R.string.ready_back_to_play), onClick = actions.backToPlaying)
-    }
+    // The way back to a playing room is not drawn here any more. It is pinned above this whole
+    // screen - see HomeScreen - because it was the one thing on the board that has to be reachable
+    // from wherever somebody has scrolled to, and a scrolling screen carries it away.
     NetworkLines(state)
     when (state.role) {
         Role.HOST -> PairCodeSection(state, actions)
@@ -55,37 +50,50 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
     // says so by having nothing else on it.
     if (state.role == Role.HOST) CalibrateSection(state, actions)
     Problems(items, actions)
-    // Said here as well, because the file is chosen from this screen too - off the blocked line
-    // above, which is the only way onto the playing stage when nothing has been picked yet.
+    // Said here as well, because a file can be chosen from this screen too - off the song line
+    // above - and whatever went wrong with that pick has to land where the pick was made.
     state.problem?.let { Note(stringResource(it), Tone.WRONG) }
     if (!state.running) {
-        Column(modifier = Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Solid(
-                stringResource(R.string.ready_go),
-                enabled = canStart(items) && !state.starting,
-                onClick = actions.play
-            )
-            // Said again under the button somebody is looking at, rather than only on the line
-            // they may already have scrolled past.
-            if (!canStart(items)) {
-                items.firstOrNull { it.mark == Mark.BLOCK }?.let { Note(readyLineText(it), Tone.WRONG) }
-            }
+        Column(modifier = Modifier.padding(top = 16.dp)) {
+            // It goes to the playing stage and starts nothing. Whether a song has been picked used
+            // to decide whether this button worked at all, which put the one screen that can pick
+            // a song behind the one condition that needs picking one - and a room streaming another
+            // app, or a sink, never needs a file at all. What is still wrong is on its own line
+            // above; none of it is a reason to refuse somebody the controls.
+            Solid(stringResource(R.string.ready_go), onClick = actions.enterPlaying)
         }
     }
     Ghost(stringResource(R.string.role_change)) { actions.pickRole(Role.NONE) }
 }
 
 /**
- * Which networks this handset is on, one line each.
+ * Which networks this handset is on - two lines on a host, one on a sink.
  *
- * Both, because on these handsets both can be up at once, and because which of them a peer used is
- * the first question when a phone will not join. The hotspot is known by having an address that is
- * not the joined one - see [LocalAddress] - rather than by a name, which this app has no
- * permission to read.
+ * A host runs both and is asked about both: on these handsets an access point and a joined network
+ * can be up at once, and which of the two a peer used is the first question when a phone will not
+ * join. The hotspot is known by having an address that is not the joined one - see [LocalAddress] -
+ * rather than by a name, which this app has no permission to read.
+ *
+ * A sink has one question, and it is not which of the two: a phone joining its host's hotspot and a
+ * phone joining a router look identical from inside Android, and a sink never opens a hotspot of
+ * its own. So it gets one line that covers both, and no name - the name was never the thing being
+ * asked about, and reading it costs a location permission this app deliberately does not hold.
  */
 @Composable
 private fun NetworkLines(state: HomeState) {
     Label(R.string.network_title)
+    if (state.role == Role.SINK) {
+        Line(first = true) {
+            Dot(null, hollow = !state.onWifi)
+            LineName(
+                stringResource(
+                    if (state.onWifi) R.string.network_joined else R.string.network_not_joined
+                ),
+                quiet = !state.onWifi
+            )
+        }
+        return
+    }
     val hotspot = LocalAddress.ReachedBy.HOTSPOT in state.codeChoices
     Line(first = true) {
         Dot(null, hollow = !hotspot)
@@ -97,11 +105,7 @@ private fun NetworkLines(state: HomeState) {
     Line {
         Dot(null, hollow = !state.onWifi)
         LineName(
-            when {
-                state.wifiName != null -> stringResource(R.string.welcome_wifi_name, state.wifiName)
-                state.onWifi -> stringResource(R.string.welcome_wifi_connected)
-                else -> stringResource(R.string.network_wifi_off)
-            },
+            stringResource(if (state.onWifi) R.string.network_wifi_on else R.string.network_wifi_off),
             quiet = !state.onWifi
         )
     }
@@ -142,33 +146,19 @@ private fun CalibrateSection(state: HomeState, actions: HomeActions) {
                 }
             }
         }
-        Framed {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        // Only until it has been measured. It is measured once per handset and never again, so on
+        // every launch after that this box was an errand nobody has, sitting on the one screen
+        // whose job is to say what still needs doing. The way back to it is the settings screen,
+        // where a thing you do once and then look up belongs - see SettingsScreen.
+        if (state.selfCalibrated == null) {
+            Framed {
                 BoxTitle(stringResource(R.string.goto_self))
-                // Shown even where it is not used, which is most of the time - see selfLead for
-                // where it is. Somebody who measured it once and comes back for the number should
-                // find it rather than an empty place where it was.
-                state.selfCalibrated?.let {
-                    Tag(
-                        stringResource(
-                            R.string.goto_self_done,
-                            String.format(null as java.util.Locale?, "%.1f", it)
-                        ),
-                        Tone.GOOD
-                    )
+                Note(stringResource(R.string.goto_self_hint))
+                Column(modifier = Modifier.padding(top = 7.dp)) {
+                    Ghost(stringResource(R.string.goto_self_go)) {
+                        actions.goto(ReadyGoto.SELF_CALIBRATE, null)
+                    }
                 }
-            }
-            Note(stringResource(R.string.goto_self_hint))
-            Column(modifier = Modifier.padding(top = 7.dp)) {
-                Ghost(
-                    stringResource(
-                        if (state.selfCalibrated != null) R.string.goto_self_again else R.string.goto_self_go
-                    )
-                ) { actions.goto(ReadyGoto.SELF_CALIBRATE, null) }
             }
         }
     }

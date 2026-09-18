@@ -56,7 +56,9 @@ private fun StandingLine(row: StandingRow, actions: HomeActions) {
         LineName(row.name, quiet = row.quiet)
         Tag(stringResource(carryingWord(row.carrying)), carryingTone(row.carrying))
         if (row.carrying != Carried.SOMETHING) {
-            Chip(stringResource(R.string.roster_calibrate)) { actions.calibratePeer(row.peerId) }
+            // Filled rather than outlined. This is the one errand on the line, and beside the grey
+            // word 未校准 an outlined chip read as more of the same grey.
+            FilledChip(stringResource(R.string.roster_calibrate)) { actions.calibratePeer(row.peerId) }
         }
     }
     // Underneath rather than beside: these are sentences, and a sentence sharing a row with a name

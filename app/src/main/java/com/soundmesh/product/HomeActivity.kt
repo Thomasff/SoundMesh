@@ -414,7 +414,13 @@ class HomeActivity : ComponentActivity() {
                                 showDetails = showDetails,
                                 onBack = { showingSettings = false },
                                 onThemeChanged = { choice -> themeChoice = choice },
-                                onDetailsChanged = { on -> showDetails = on }
+                                onDetailsChanged = { on -> showDetails = on },
+                                selfCalibrated = state.selfCalibrated,
+                                onSelfCalibrate = {
+                                    startActivity(
+                                        Intent(this@HomeActivity, CalibrateActivity::class.java)
+                                    )
+                                }
                             )
                         }
                         showingCode -> PairCodeScreen(state.pairingOffer) { showingCode = false }
@@ -474,19 +480,27 @@ class HomeActivity : ComponentActivity() {
             )
         },
         calibratePeer = { peerId ->
-            // auto so the servers come up without a second press here, and the named handset is
-            // told only once they have - see PeerCalibrateActivity.aimedAt.
+            // Opens the screen and starts nothing. It used to carry `auto`, which meant a chip on
+            // a roster line began a minute of chirps in a room nobody had been asked to quieten -
+            // and the instructions for that minute were on the screen it had already started
+            // behind. `serve_many` is gone with it: a round is between this host and the handset
+            // whose line was pressed, and waiting afterwards for a second one to volunteer was a
+            // queue nothing on screen described.
             startActivity(
                 Intent(this, PeerCalibrateActivity::class.java)
                     .putExtra("role", CalibrationRole.HOST.name)
                     .putExtra(PEER_JOB_EXTRA, PeerJob.PAIR.name)
                     .putExtra(PeerCalibrateActivity.AIMED_AT_EXTRA, peerId)
-                    .putExtra("serve_many", true)
-                    .putExtra("auto", true)
             )
         },
         openSettings = { showingSettings = true },
         backToPlaying = { steppedBack = false },
+        // The same stand-in a source pick already uses: nothing is playing, and the person is on
+        // the playing stage anyway. See routeOf's `holding`.
+        enterPlaying = {
+            steppedBack = false
+            holdingPlaying = true
+        },
         showPairCode = { showingCode = true },
         setCodeNetwork = { by ->
             Preferences(filesDir).write(Preferences.CODE_NETWORK, by.name)

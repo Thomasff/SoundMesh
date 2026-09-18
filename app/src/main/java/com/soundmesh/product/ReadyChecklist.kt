@@ -44,9 +44,6 @@ internal fun readyList(state: HomeState): List<ReadyItem> = when (state.role) {
     Role.SINK -> sinkList(state)
 }
 
-/** Whether the start button is live. Only [Mark.BLOCK] stops it - see [Mark]. */
-internal fun canStart(items: List<ReadyItem>): Boolean = items.none { it.mark == Mark.BLOCK }
-
 private fun hostList(state: HomeState): List<ReadyItem> = buildList {
     // Capturing is a source: a host streaming another app has something to play with no file
     // picked, and treating that as "no song" would put the capture feature behind a locked door.

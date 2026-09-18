@@ -908,73 +908,27 @@ private const val BRIEF_POLL_MILLIS = 50L
 /**
  * What the stop button can mean for the arm about to run. See [StopOffer].
  *
- * A room begins at [StopOffer.ROOM_GATHERING] and moves to [StopOffer.ROOM_UNDER_WAY] the moment
- * the schedule is handed out - the instant after which nothing this host does reaches the other
+ * Either job begins at [StopOffer.BEFORE_SOUND] and moves to [StopOffer.UNDER_WAY] the moment the
+ * schedule is handed out - the instant after which nothing this host does reaches the other
  * handsets, because obeying meant leaving the standing channel.
+ *
+ * Which job is running used to change the answer, while the pair host served a queue and had a
+ * next handset to stop waiting for. It does not any more, so it is not asked about.
  */
-internal fun stopOfferFor(role: CalibrationRole?, roomRound: Boolean): StopOffer = when {
-    role != CalibrationRole.HOST -> StopOffer.NONE
-    roomRound -> StopOffer.ROOM_GATHERING
-    else -> StopOffer.QUEUE
-}
+internal fun stopOfferFor(role: CalibrationRole?): StopOffer =
+    if (role != CalibrationRole.HOST) StopOffer.NONE else StopOffer.BEFORE_SOUND
 
-/** What one round of serving one sink came to, as far as the loop running them is concerned. */
+/** What one round of serving one sink came to, for the timeline that records it. */
 internal enum class RoundResult {
     /** A handset was measured. Whatever verdict it got, the round did its job. */
     SERVED,
 
-    /** The wait for somebody to ask ran out. Nobody else is coming, so the session is over. */
+    /** The wait for somebody to ask ran out. */
     NOBODY_ASKED,
 
-    /** This round broke. The next handset is still owed its turn. */
+    /** This round broke. */
     FAILED
 }
-
-/**
- * Serves one sink after another off a single press, and answers how many were measured.
- *
- * Apart from what a round does, because a round is fifty seconds of chirps against a real handset
- * and this is a decision: given how the last one came out, does the next handset still get a turn.
- * Same shape as the other internal functions in this file, and for the same reason - the thing
- * worth guarding is lifted out of the thing that needs a room and two phones.
- *
- * A throw counts as a failure rather than ending the session. That is the whole point of the
- * change this belongs to: a session used to be one round, so one sink's trouble was the end of it
- * by construction, and a host measuring three handsets cannot be built that way.
- *
- * [round] is handed the number served so far, because that is what the screen counts up while
- * somebody walks across the room to the next phone.
- */
-internal fun serveRounds(stopped: () -> Boolean, round: (Int) -> RoundResult): Int {
-    var served = 0
-    var failuresInARow = 0
-    while (!stopped()) {
-        when (runCatching { round(served) }.getOrDefault(RoundResult.FAILED)) {
-            RoundResult.SERVED -> {
-                served++
-                // Consecutive, not cumulative: a room where every other handset has trouble is
-                // still a room worth finishing, and counting them all would stop it partway
-                // through for a reason nobody watching could see.
-                failuresInARow = 0
-            }
-            RoundResult.NOBODY_ASKED -> return served
-            RoundResult.FAILED -> {
-                failuresInARow++
-                if (failuresInARow >= MAX_FAILURES_IN_A_ROW) return served
-            }
-        }
-    }
-    return served
-}
-
-/**
- * How many rounds may break in a row before the session gives up.
- *
- * Bounded rather than open, because a round can fail without waiting - a request this host refuses
- * comes back at once - so an unbounded "carry on" spins one thread for as long as the screen is
- * up, which from outside looks exactly like a session that is working.
- */
-internal const val MAX_FAILURES_IN_A_ROW = 3
 
 /**
  * Measures the fixed offset between this handset and the one it is paired with, and stores it.
@@ -1079,7 +1033,6 @@ class PeerCalibrateActivity : ComponentActivity() {
 
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
-    private var serveManyAfterPermission = false
     private var allowSlowLinkAfterPermission = false
 
     /**
@@ -1091,7 +1044,7 @@ class PeerCalibrateActivity : ComponentActivity() {
     private var timing = defaultTimingFor(null)
 
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) start(verifyingAfterPermission, serveManyAfterPermission, allowSlowLinkAfterPermission)
+        if (granted) start(verifyingAfterPermission, allowSlowLinkAfterPermission)
         else state = state.copy(message = getString(R.string.pair_calibrate_no_permission))
     }
 
@@ -1117,11 +1070,11 @@ class PeerCalibrateActivity : ComponentActivity() {
                         // ADB-driven `am start` of this activity has always meant with no extra.
                         job = peerJobOf(intent.getStringExtra(PEER_JOB_EXTRA)),
                         actions = PeerCalibrateActions(
-                            calibrate = { begin(verifying = false, serveMany = true, allowSlowLink = false) },
+                            calibrate = { begin(verifying = false, allowSlowLink = false) },
                             skipStep = { roomStep = 2 },
                             back = { finish() },
                             setRoomVolume = { percent -> setRoomVolume(percent) },
-                            verify = { begin(verifying = true, serveMany = true, allowSlowLink = false) },
+                            verify = { begin(verifying = true, allowSlowLink = false) },
                             forget = { forget() },
                             stop = { stopServing() },
                             measureRoom = { restartAsRoom(overhead = false) },
@@ -1309,16 +1262,15 @@ class PeerCalibrateActivity : ComponentActivity() {
         CalibrationAudioSource.parse(intent.getStringExtra("audio_source"))
 
     /**
-     * The ADB-driven start, which serves one handset unless asked for more.
+     * The ADB-driven start, which serves one handset - the same one round the screen now runs.
      *
      * One round is what every archived run of this screen did, and it is what a driver expects: a
      * host that went on serving would still be running five minutes later, and the next
      * `am start` would find [running] set and be ignored - which looks from outside like a
-     * command that succeeded and measured nothing. `-e serve_many true` opts back in.
+     * command that succeeded and measured nothing.
      */
     private fun beginFrom(intent: Intent) = begin(
         verifying = intent.getBooleanExtra("verify", false),
-        serveMany = intent.getBooleanExtra("serve_many", false),
         // Deliberately reachable only from a command line. The gate exists because a link this
         // slow cannot be aligned by any estimator, so a listener who got past it by pressing
         // something would be handed a correction measured on a link that cannot carry one - and
@@ -1328,7 +1280,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         allowSlowLink = intent.getBooleanExtra("allow_slow_link", false)
     )
 
-    private fun begin(verifying: Boolean, serveMany: Boolean, allowSlowLink: Boolean) {
+    private fun begin(verifying: Boolean, allowSlowLink: Boolean) {
         if (running) return tellHost(RoomExcuse.BUSY)
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             // Said before the dialog goes up, not after it is answered. The dialog is on this
@@ -1337,12 +1289,11 @@ class PeerCalibrateActivity : ComponentActivity() {
             // for somebody who had no way to know it was waiting.
             tellHost(RoomExcuse.NO_MICROPHONE)
             verifyingAfterPermission = verifying
-            serveManyAfterPermission = serveMany
             allowSlowLinkAfterPermission = allowSlowLink
             askRecordAudio.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        start(verifying, serveMany, allowSlowLink)
+        start(verifying, allowSlowLink)
     }
 
     /**
@@ -1359,7 +1310,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         tellHostWhy(paired.address, COMMAND_PORT, HostIdentity(filesDir).current(), excuse)
     }
 
-    private fun start(verifying: Boolean, serveMany: Boolean, allowSlowLink: Boolean = false) {
+    private fun start(verifying: Boolean, allowSlowLink: Boolean = false) {
         running = true
         // Cleared here rather than when the session ends, so a stop pressed as the last round
         // finished cannot end the next session before it has served anybody.
@@ -1367,7 +1318,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         roundCalledOff = false
         state = state.copy(
             running = true,
-            stopOffer = stopOfferFor(role(), roomAsked()),
+            stopOffer = stopOfferFor(role()),
             message = getString(R.string.pair_calibrate_waiting)
         )
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
@@ -1390,7 +1341,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                         // narrower one: this host gathers everybody and hands out one
                         // schedule naming all of them, where the pair host serves a queue.
                         CalibrationRole.HOST ->
-                            if (roomAsked()) measureAsRoom() else measureAsHost(serveMany)
+                            if (roomAsked()) measureAsRoom() else measureAsHost()
                         CalibrationRole.SINK -> measureAsSink(verifying, allowSlowLink)
                         null -> show(getString(R.string.pair_calibrate_no_role))
                     }
@@ -1530,7 +1481,7 @@ class PeerCalibrateActivity : ComponentActivity() {
      * It stores nothing. The correction belongs to the handset that applies it, and this one does
      * not - what this produces is the answer the sink is waiting for on the socket it delivered on.
      */
-    private fun measureAsHost(serveMany: Boolean) {
+    private fun measureAsHost() {
         val hostId = HostIdentity(filesDir).current()
         val clockServer = ClockSyncServer(SyncActivity.CLOCK_PORT)
         val resultServer = AlignmentResultServer(SyncActivity.RESULT_PORT)
@@ -1557,19 +1508,12 @@ class PeerCalibrateActivity : ComponentActivity() {
                 events.write("pair-told $peerId, reached=$reached")
                 if (!reached) show(getString(R.string.pair_calibrate_aimed_gone))
             }
-            // Opened once and held across every round, which is the whole of what one press
-            // serving several handsets amounts to: they used to be opened and closed around a
-            // single round, so the second sink to press start found nothing listening at all.
-            val served = if (serveMany) {
-                serveRounds({ stopping }) { alreadyServed ->
-                    serveOneSink(hostId, planServer, resultServer, alreadyServed)
-                }
-            } else {
-                // Spelled out rather than expressed as a loop of one, so that the path every
-                // archived measurement was taken on is the same few lines it always was.
-                if (serveOneSink(hostId, planServer, resultServer, 0) == RoundResult.SERVED) 1 else 0
-            }
-            if (served > 0) show(getString(R.string.pair_calibrate_served, served))
+            // One round, one handset. It used to serve a queue - press once, then walk from phone
+            // to phone pressing start on each - which is not what the chip on a roster line means:
+            // that chip names one handset, and it is the handset this round is with. What the
+            // queue cost was a host that never stopped on its own, waiting five minutes for a
+            // second volunteer that nothing on screen had asked for.
+            events.write("pair-round " + serveOneSink(hostId, planServer, resultServer))
         } finally {
             hostPlanServer = null
             planServer.stop()
@@ -1720,7 +1664,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // holds the schedule and is about to chirp on it, and none of them is listening to
             // this host any more - obeying meant leaving the standing channel. A button that
             // stayed lit from here would be a button that lies, which is what was reported.
-            handler.post { state = state.copy(stopOffer = StopOffer.ROOM_UNDER_WAY) }
+            handler.post { state = state.copy(stopOffer = StopOffer.UNDER_WAY) }
             val ownSlot = plan.slotIds.indexOf(hostId)
             val runner = PeerCalibrationRunner(
                 runStore = RunStore(filesDir),
@@ -1865,20 +1809,20 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun serveOneSink(
         hostId: String,
         planServer: CalibrationPlanServer,
-        resultServer: AlignmentResultServer,
-        alreadyServed: Int
+        resultServer: AlignmentResultServer
     ): RoundResult {
-        // Three different waits, and the difference is who has to act. The original sentence
-        // asks for a press on the other handset, which stopped being true the moment a named
-        // handset could be told over the standing line - it is already on its way, and a screen
-        // asking somebody to walk to it is a screen sending them on an errand that undoes itself.
-        // See [a button asserts its own scope]: the words are the assertion, not the button.
+        // Two waits, and the difference is who has to act. The named handset has already been told
+        // over the standing line and is on its way, so asking somebody to walk to it and press
+        // something would be sending them on an errand that undoes itself. See [a button asserts
+        // its own scope]: the words are the assertion, not the button.
+        //
+        // Said at all because this is the sixteen seconds of clock exchange, which makes no sound:
+        // a screen that says nothing here is a screen that looks like it did not hear the press.
         show(
-            when {
-                alreadyServed > 0 -> getString(R.string.pair_calibrate_waiting_next, alreadyServed)
-                aimedAt() != null -> getString(R.string.pair_calibrate_waiting_aimed)
-                else -> getString(R.string.pair_calibrate_waiting)
-            }
+            getString(
+                if (aimedAt() != null) R.string.pair_calibrate_waiting_aimed
+                else R.string.pair_calibrate_waiting
+            )
         )
         // Which handset this round is with. Set on the accept, because that is the only
         // moment it is known, and every file this run writes is named with it.
@@ -1911,16 +1855,11 @@ class PeerCalibrateActivity : ComponentActivity() {
                 intervalNanos = timing.intervalNanos
             )
         } ?: return when {
-            // The stop button closed the socket this was waiting on, so what came back is the
-            // button working rather than anything having gone wrong. The loop is about to end.
+            // The stop button called this off, so what came back is the button working rather than
+            // anything having gone wrong. It has already put its own sentence on the screen.
             stopping -> RoundResult.FAILED
             planServer.failureCode == CalibrationPlanServer.TIMEOUT -> {
-                // Said only when nothing has been measured yet. After a handset or two this is
-                // how a session ends rather than how one fails, and a failure line under two good
-                // answers reads as the answers themselves being in doubt.
-                if (alreadyServed == 0) {
-                    show(getString(R.string.pair_calibrate_failed, CalibrationPlanServer.TIMEOUT))
-                }
+                show(getString(R.string.pair_calibrate_failed, CalibrationPlanServer.TIMEOUT))
                 RoundResult.NOBODY_ASKED
             }
             else -> {
@@ -1933,6 +1872,10 @@ class PeerCalibrateActivity : ComponentActivity() {
             show(getString(R.string.pair_calibrate_failed, "PLAN_UNSIGNED"))
             return RoundResult.FAILED
         }
+        // From here on nothing this host says reaches the handset it is measuring with: the plan
+        // is out, and both sides act on their own clocks until the round is over. The stop button
+        // goes grey at this instant rather than sitting there looking live - see [StopOffer].
+        handler.post { state = state.copy(stopOffer = StopOffer.UNDER_WAY) }
         val runner = PeerCalibrationRunner(
             runStore = RunStore(filesDir),
             caseId = plan.caseId,
@@ -2095,16 +2038,17 @@ class PeerCalibrateActivity : ComponentActivity() {
         // on its own and a round somebody ended could not be told apart afterwards, and the first
         // report of it doing nothing had nothing in the timeline to check it against.
         events.write("stop-pressed while " + state.stopOffer)
-        if (state.stopOffer == StopOffer.ROOM_GATHERING) {
-            show(getString(R.string.pair_calibrate_room_called_off_here))
-            // Says so to the handsets already waiting, instead of closing their sockets under
-            // them - which is the 09-13 message word for word. See [CalibrationPlanServer].
-            runCatching { hostPlanServer?.callOffRoom() }
-        } else {
-            show(getString(R.string.pair_calibrate_stopping))
-            // What makes the button take effect now instead of at the end of the wait.
-            runCatching { hostPlanServer?.stop() }
-        }
+        show(
+            getString(
+                if (roomAsked()) R.string.pair_calibrate_room_called_off_here
+                else R.string.pair_calibrate_stopping
+            )
+        )
+        // Says so to the handsets already waiting, instead of closing their sockets under them -
+        // which is the 09-13 message word for word. See [CalibrationPlanServer]. Both jobs now:
+        // the pair used to close the socket alone, which left the one handset on the other end
+        // of it reading a connection failure for a button somebody pressed on purpose.
+        runCatching { hostPlanServer?.callOffRoom() }
     }
 
     private fun forget() {

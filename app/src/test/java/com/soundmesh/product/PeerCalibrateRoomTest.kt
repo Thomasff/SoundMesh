@@ -534,23 +534,20 @@ class PeerCalibrateRoomTest {
     }
 
     /**
-     * What the stop button is allowed to claim, which is the whole of what was wrong with it.
+     * Only the handset that can stop something is offered a way to.
      *
-     * It was offered whenever a host was running and it said one thing: the handset being
-     * measured will finish, and no more will be waited for. That is a queue's sentence and the
-     * pair host is a queue. A room is one round, so there was no next handset to stop waiting
-     * for - and whether pressing it did anything at all turned on an invisible line, because a
-     * room can be called off while it gathers and cannot be touched once the chirps start.
+     * The button used to be offered whenever a host was running and it said one thing: the handset
+     * being measured will finish, and no more will be waited for. That is a queue's sentence, and
+     * neither job is a queue any more - so what the button means now turns on one thing only,
+     * whether anything has started making a sound, which is not known when a run begins.
      * Reported from the field on 2026-09-13 as a button that was not greyed out and did nothing.
      */
     @Test
     fun offersToStopOnlyWhatCanBeStopped() {
-        assertEquals(StopOffer.QUEUE, stopOfferFor(CalibrationRole.HOST, roomRound = false))
-        assertEquals(StopOffer.ROOM_GATHERING, stopOfferFor(CalibrationRole.HOST, roomRound = true))
-        // A sink's run is one round with nothing after it, on either arm.
-        assertEquals(StopOffer.NONE, stopOfferFor(CalibrationRole.SINK, roomRound = true))
-        assertEquals(StopOffer.NONE, stopOfferFor(CalibrationRole.SINK, roomRound = false))
-        assertEquals(StopOffer.NONE, stopOfferFor(null, roomRound = true))
+        assertEquals(StopOffer.BEFORE_SOUND, stopOfferFor(CalibrationRole.HOST))
+        // A sink is told what to do and does it. There is nothing here for it to call off.
+        assertEquals(StopOffer.NONE, stopOfferFor(CalibrationRole.SINK))
+        assertEquals(StopOffer.NONE, stopOfferFor(null))
     }
 
     /**

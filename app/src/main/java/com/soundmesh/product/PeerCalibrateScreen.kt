@@ -34,28 +34,22 @@ import com.soundmesh.probe.R
 /**
  * What the stop button can honestly mean at this moment.
  *
- * It used to be one button with one sentence - "the handset being measured will finish, and no
- * more will be waited for" - which is a queue's sentence. The pair host is a queue and that is
- * true there. A room is one round, so there is no next handset to stop waiting for, and the
- * sentence pointed at something that was not happening. Worse, whether pressing it did anything
- * at all depended on an invisible line: while the room is gathering it really does call the
- * round off, and once the chirps start nothing this host does reaches the other handsets, because
- * obeying meant leaving the standing channel.
+ * The line that matters is not which job is running, it is whether anything has started making a
+ * sound yet. Before that, calling it off reaches every handset involved, because they are all still
+ * waiting to be told what to do. After it, nothing this host says reaches them - obeying meant
+ * leaving the standing channel - so the round runs itself out whatever anybody presses.
  *
- * So the line is drawn here instead of left for somebody to discover by pressing.
+ * The line is drawn here rather than left for somebody to discover by pressing.
  */
 enum class StopOffer {
     /** A sink, or nothing running: a button here would sit and do nothing. */
     NONE,
 
-    /** A pair host serving handset after handset. Stopping means not waiting for the next. */
-    QUEUE,
+    /** Still gathering. Calling it off reaches everybody, because nobody has started. */
+    BEFORE_SOUND,
 
-    /** A room still gathering. Calling it off reaches everybody, because nobody has started. */
-    ROOM_GATHERING,
-
-    /** A room already chirping. Nothing reaches the other handsets; the button says so. */
-    ROOM_UNDER_WAY
+    /** Already chirping. Nothing reaches the other handsets; the button says so. */
+    UNDER_WAY
 }
 
 /**
@@ -140,10 +134,10 @@ internal fun secondsLeft(now: Long, until: Long): Int {
 /**
  * What one sink's round came to, kept beside the others rather than replacing them.
  *
- * One press now serves handset after handset, so a host has as many answers as there were phones
- * in the room and the last one must not be the only one left. [name] is the short form shown;
- * [sinkId] is the whole one, and the two are kept apart because rows must be told apart by the
- * name that cannot collide.
+ * A pair round measures one handset, but the screen it lands on is not cleared between rounds, so
+ * somebody who measured two in a row still has both answers. [name] is what that handset calls
+ * itself; [sinkId] is the whole one, and the two are kept apart because rows must be told apart by
+ * the name that cannot collide.
  */
 data class SinkOutcome(val sinkId: String, val name: String, val text: String)
 
@@ -354,7 +348,7 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
             Framed { Note(stringResource(R.string.pair_calibrate_no_role), Tone.WATCH) }
         }
     }
-    StopControl(state, actions)
+    StopControl(state, PeerJob.ROOM, actions)
 }
 
 /**
@@ -468,38 +462,48 @@ private fun Step(
  * has started chirping, and that line used to be invisible.
  */
 @Composable
-private fun StopControl(state: PeerCalibrateState, actions: PeerCalibrateActions) {
+private fun StopControl(state: PeerCalibrateState, job: PeerJob, actions: PeerCalibrateActions) {
     if (state.stopOffer == StopOffer.NONE) return
-    val room = state.stopOffer != StopOffer.QUEUE
     Column(modifier = Modifier.padding(top = 10.dp)) {
         // Greyed rather than hidden: a button that disappears mid-round reads as a screen that
         // lost its place. Greyed with a sentence beside it is the answer to the question somebody
         // is about to ask by pressing it.
         Ghost(
             stringResource(
-                if (room) R.string.pair_calibrate_room_call_off else R.string.pair_calibrate_stop
+                if (job == PeerJob.ROOM) R.string.pair_calibrate_room_call_off
+                else R.string.pair_calibrate_stop
             ),
-            enabled = state.stopOffer != StopOffer.ROOM_UNDER_WAY,
+            enabled = state.stopOffer != StopOffer.UNDER_WAY,
             onClick = actions.stop
         )
-        Note(
-            stringResource(
-                when (state.stopOffer) {
-                    StopOffer.ROOM_GATHERING -> R.string.pair_calibrate_room_call_off_hint
-                    StopOffer.ROOM_UNDER_WAY -> R.string.pair_calibrate_room_under_way_hint
-                    else -> R.string.pair_calibrate_stop_hint
-                }
+        // One sentence, and only where the button is grey: the pair screen carries no standing
+        // explanation of anything - see [PairBody] - but a control that has gone dead under a
+        // finger owes an answer for that, and this is the only one it has.
+        if (state.stopOffer == StopOffer.UNDER_WAY) {
+            Note(
+                stringResource(
+                    if (job == PeerJob.ROOM) R.string.pair_calibrate_room_under_way_hint
+                    else R.string.pair_calibrate_under_way
+                )
             )
-        )
+        } else if (job == PeerJob.ROOM) {
+            Note(stringResource(R.string.pair_calibrate_room_call_off_hint))
+        }
     }
 }
 
 /**
  * One measurement between this handset and one named other, reached from that handset's own row.
  *
- * Unchanged in what it offers. It is the one screen here that is about a pair rather than about
- * the room, and the room's walk-through above deliberately does not reach it: a person who wants
- * to redo one handset goes to that handset's line and presses the thing beside its name.
+ * One instruction and one button. It used to open with four paragraphs explaining what a fixed
+ * emission offset is, which side stores the constant, and what the other person has to press -
+ * none of which the person standing here can act on, and all of which sat between them and the one
+ * thing they were sent to do. What is left is the sentence that describes the next minute, the
+ * button that starts it, and what it came to.
+ *
+ * Nothing starts on its own. The chip on the roster line opens this screen and stops there: a
+ * minute of chirps in a room nobody has been asked to quieten is a minute wasted, and the asking
+ * is what this screen is.
  */
 @Composable
 private fun PairBody(
@@ -520,52 +524,36 @@ private fun PairBody(
             HoldStill(it, R.string.room_calibrate_left, MaterialTheme.typography.titleMedium)
         }
     }
-    Label(R.string.pair_calibrate_what)
-    Note(stringResource(R.string.pair_calibrate_intro))
-    Note(
-        when (state.role) {
-            CalibrationRole.HOST -> stringResource(R.string.pair_calibrate_role_host)
-            CalibrationRole.SINK -> stringResource(R.string.pair_calibrate_role_sink)
-            null -> stringResource(R.string.pair_calibrate_no_role)
+    if (state.role == null) {
+        Column(modifier = Modifier.padding(top = 12.dp)) {
+            Framed { Note(stringResource(R.string.pair_calibrate_no_role), Tone.WATCH) }
         }
-    )
-    // Only the sink carries a constant: the correction lives on the handset that applies it,
-    // filed under the one it follows.
-    if (state.role == CalibrationRole.SINK) {
-        Note(
-            state.stored?.let {
-                stringResource(R.string.pair_calibrate_stored, it / 1000.0, state.observations)
-            } ?: state.approximate?.let {
-                stringResource(R.string.pair_calibrate_approximate, it / 1000.0)
-            } ?: stringResource(R.string.pair_calibrate_unmeasured)
-        )
+        return
     }
-    if (state.role == null) return
-    Label(R.string.pair_calibrate_run)
-    Framed {
-        Note(stringResource(R.string.pair_calibrate_quiet))
-        Column(
-            modifier = Modifier.padding(top = 7.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            Solid(
-                stringResource(R.string.pair_calibrate_start),
-                enabled = !state.running,
-                onClick = actions.calibrate
-            )
-            // Only once there is something to check. A verification with nothing stored applies
-            // nothing and measures the whole difference again, which reads like a failed check
-            // rather than like a pair nobody has measured.
-            if (state.role == CalibrationRole.SINK && state.stored != null) {
-                Ghost(stringResource(R.string.pair_calibrate_verify), onClick = actions.verify)
-                Note(stringResource(R.string.pair_calibrate_verify_hint))
-                // The only way back out of a pair that has jammed: a run folds into an existing
-                // constant only when it passed, and the first run is exempt, so a bad first run
-                // is stored whole and every later run then fails against it.
-                Ghost(stringResource(R.string.pair_calibrate_forget), onClick = onForget)
-                Note(stringResource(R.string.pair_calibrate_forget_hint))
+    Column(modifier = Modifier.padding(top = 12.dp)) {
+        Framed {
+            Note(stringResource(R.string.pair_calibrate_quiet))
+            Column(
+                modifier = Modifier.padding(top = 7.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Solid(
+                    stringResource(R.string.pair_calibrate_start),
+                    enabled = !state.running,
+                    onClick = actions.calibrate
+                )
+                // Only once there is something to check. A verification with nothing stored applies
+                // nothing and measures the whole difference again, which reads like a failed check
+                // rather than like a pair nobody has measured.
+                if (state.role == CalibrationRole.SINK && state.stored != null) {
+                    Ghost(stringResource(R.string.pair_calibrate_verify), onClick = actions.verify)
+                    // The only way back out of a pair that has jammed: a run folds into an existing
+                    // constant only when it passed, and the first run is exempt, so a bad first run
+                    // is stored whole and every later run then fails against it.
+                    Ghost(stringResource(R.string.pair_calibrate_forget), onClick = onForget)
+                }
             }
         }
     }
-    StopControl(state, actions)
+    StopControl(state, PeerJob.PAIR, actions)
 }

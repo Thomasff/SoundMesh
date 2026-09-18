@@ -1,24 +1,13 @@
 package com.soundmesh.product
 
-import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * Two properties of the home screen and the words on it, read out of the sources the way
- * [PeerCalibrateActivityTest] reads its own.
- */
+/** The rules behind the home screen: what it warns about, and what a finger on a slider means. */
 class HomeScreenTest {
-    private val strings = File("src/main/res/values/strings.xml").readText(Charsets.UTF_8)
-
-    private fun string(name: String): String =
-        Regex("<string name=\"$name\">(.*?)</string>", RegexOption.DOT_MATCHES_ALL)
-            .find(strings)?.groupValues?.get(1)
-            ?: throw AssertionError("no such string: $name")
-
     /**
      * Whether to say out loud that this handset will be killed the moment it stops being looked at.
      *
@@ -47,21 +36,6 @@ class HomeScreenTest {
         assertFalse(warnsAboutBackground(HomeState(role = Role.NONE, backgroundAllowed = false)))
     }
 
-    /**
-     * The role is what this handset is being right now, chosen on this screen. It is not who
-     * scanned whom: two handsets that have each scanned the other both hold a scanned pairing, and
-     * reading the role off that file made both of them the sink so that no run could start at all.
-     * Wording that explains the role by the pairing code teaches the reader that same wrong model,
-     * and the reader here is also whoever next changes the code.
-     */
-    @Test
-    fun theRoleWordingDoesNotExplainTheRoleByWhoScannedWhom() {
-        for (name in listOf("pair_calibrate_role_host", "pair_calibrate_role_sink")) {
-            val text = string(name)
-            assertFalse("$name explains the role by the pairing code: $text", text.contains("扫过"))
-            assertFalse("$name explains the role by the pairing code: $text", text.contains("出示过"))
-        }
-    }
     /**
      * The gesture a listener did not mean to make. A Material slider reports a touch on the track
      * exactly as it reports a drag, and the touch lands the value wherever the finger was - so a

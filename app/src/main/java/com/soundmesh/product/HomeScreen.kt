@@ -373,6 +373,14 @@ class HomeActions(
      * start a second session over the top of the first.
      */
     val backToPlaying: () -> Unit,
+    /**
+     * Onto the playing stage with nothing playing, which is what the status board's button does.
+     *
+     * Not [play]. The board used to start the room, which meant it had to refuse anybody who had
+     * not picked a song - and the screen that picks one is the playing stage. So the one door was
+     * locked by the one thing on the other side of it.
+     */
+    val enterPlaying: () -> Unit,
     /** The full-screen pairing code, which is the whole screen because it is read from a metre away. */
     val showPairCode: () -> Unit,
     /**
@@ -477,7 +485,17 @@ fun HomeScreen(
         // remembered - see routeOf() - so there is one answer rather than two that can disagree.
         when (route) {
             HomeRoute.WELCOME -> ScrollingStage { WelcomeScreen(state, actions) }
-            HomeRoute.READY -> ScrollingStage { ReadyScreen(state, actions) }
+            HomeRoute.READY -> {
+                // Above the scroll rather than inside it. With a room already playing this is the
+                // only thing on the board that cannot wait for somebody to scroll back up to it -
+                // the music is on and there are no controls for it anywhere else on screen.
+                if (state.running) {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+                        Solid(stringResource(R.string.ready_back_to_play), onClick = actions.backToPlaying)
+                    }
+                }
+                ScrollingStage { ReadyScreen(state, actions) }
+            }
             // PlayingScreen carries its own bottom tab bar, which is why its stage is not wrapped
             // in the same whole-page scroll the other two stages use: a bar pinned to the bottom
             // of the screen cannot sit inside a column that scrolls as a whole, or the tabs would

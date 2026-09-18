@@ -215,6 +215,25 @@ fun Chip(text: String, onClick: () -> Unit) {
 }
 
 /**
+ * The same tap, filled.
+ *
+ * For the one thing on a line that is an errand rather than a detail. An outlined chip beside a
+ * name and a grey tag reads as part of the line's furniture, which is exactly what happened to the
+ * calibration: it sat next to the words 未校准 and nobody saw it as the thing to press.
+ */
+@Composable
+fun FilledChip(text: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.height(30.dp),
+        shape = RoundedCornerShape(20.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+    ) {
+        Text(text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium)
+    }
+}
+
+/**
  * A box with an edge round it, for the things on a screen that are not a list.
  *
  * [strong] is the one this project is for. On the status screen exactly two things are drawn

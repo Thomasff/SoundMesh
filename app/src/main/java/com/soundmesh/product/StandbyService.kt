@@ -93,6 +93,7 @@ class StandbyService : Service() {
             sayVolumeIfMoved()
             sayPowerIfChanged()
             sayHereIfDue()
+            dialIfChanged()
             showTheLineIfItChanged()
             handler.postDelayed(this, TELL_EVERY_MILLIS)
         }
@@ -256,7 +257,28 @@ class StandbyService : Service() {
             heldRadio = radio?.let { runCatching { it.acquire() }.isSuccess } == true
             events.write(if (heldRadio) "standby held the radio" else "standby not holding the radio")
         }
-        val wanted = announcement() ?: return stopSelf()
+        if (announcement() == null) return stopSelf()
+        dialIfChanged()
+        // Started here rather than inside the dial. The dial is now also reached from inside this
+        // very runnable, and posting it from there would leave two copies of it running, then
+        // four.
+        handler.removeCallbacks(tellIfMoved)
+        handler.post(tellIfMoved)
+    }
+
+    /**
+     * Opens the line, or opens it again because what it announces has changed.
+     *
+     * Checked on every tick rather than only when something starts this service. Everything in an
+     * announcement is read off disk, and one of the things on disk is the correction this handset
+     * carries - which is written by a calibration that has just finished. The old comment on
+     * [RoomCommandClient.carrying] said that coming back from the calibration screen builds a new
+     * client, and it was true only because of which screen happened to be resumed next: leave that
+     * screen some other way and the host went on drawing 未校准 beside a handset that had just been
+     * measured, with nothing anywhere to say the number had arrived.
+     */
+    private fun dialIfChanged() {
+        val wanted = announcement() ?: return
         if (line != null && wanted == dialled) return
         close()
         dialled = wanted
@@ -276,8 +298,6 @@ class StandbyService : Service() {
             handler.post { obey(order) }
         }.also { it.start() }
         ACTIVE = this
-        handler.removeCallbacks(tellIfMoved)
-        handler.post(tellIfMoved)
     }
 
     /** What this handset would say on connecting, read fresh because all of it can change. */
