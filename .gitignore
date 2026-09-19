@@ -10,3 +10,10 @@
 
 # Source audio for listening tests - licensed stock music, not ours to redistribute
 *.mp3
+
+# One-off analysis of archived runs. They read artifacts/, which is not published, so a
+# clone cannot run them. Kept locally, out of the tree.
+/tools/analysis/
+
+# Build instructions for the icon set, written for this repository and not for a reader of it.
+/asset/README.md

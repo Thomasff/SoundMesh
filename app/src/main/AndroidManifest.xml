@@ -33,7 +33,9 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.SoundMesh">
         <!-- Still first, and still written with a closing tag: LauncherIntentDeliveryTest reads
              this file and checks the first activity block, which is how it holds MainActivity to

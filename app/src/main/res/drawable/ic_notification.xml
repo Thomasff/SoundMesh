@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The app's own mark, for the status bar and the notification shade.
+
+    The launcher icon is three handsets at 120 degrees whose triple intersection is this rounded
+    play triangle, drawn white over a dark radial ground with the three beams fading out behind
+    it. None of that survives at 24dp in one colour: the beams are already almost invisible at
+    launcher size, the ground is a colour the status bar will not give us, and a small icon is
+    a silhouette - the system paints it white or dark to suit whatever is behind it and throws
+    every colour in here away. So what is left is the part of the mark that reads at any size.
+
+    The geometry is the master's, scaled: equilateral, pointing right, corners rounded. The
+    rounding is the one liberty - the master's radius is about 5% of the circumradius, which at
+    this size is half a pixel and disappears into the antialiasing while leaving three needle
+    tips behind.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M18.95,11.134A1,1 0 0 1 18.95,12.866L6.05,20.314A1,1 0 0 1 4.55,19.448L4.55,4.552A1,1 0 0 1 6.05,3.686Z" />
+</vector>
