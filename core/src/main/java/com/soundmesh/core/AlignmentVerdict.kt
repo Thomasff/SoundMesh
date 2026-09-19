@@ -44,7 +44,7 @@ data class RunVerdict(
  * normal. The jumps are the system genuinely moving, and they are the term that matters to a
  * listener - so they are reported, not swept out.
  *
- * Recorded in docs/feasibility-results/alignment-noise-model.md.
+ * Measured on device rather than reasoned about.
  */
 object AlignmentVerdict {
     /** Iglewicz-Hoaglin. Any threshold from 2.5 to 3.5 gives the same answer on the measured runs. */

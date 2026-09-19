@@ -1,6 +1,7 @@
 package com.soundmesh.session
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -9,6 +10,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.TextView
 import com.soundmesh.probe.sync.PairedHost
+import com.soundmesh.product.inChosenLanguage
 
 /**
  * Starts, stops and shows one product session.
@@ -22,6 +24,12 @@ import com.soundmesh.probe.sync.PairedHost
  * already solved and already persisted; asking again would be a second answer to one question.
  */
 class SessionActivity : Activity() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private lateinit var statusView: TextView
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {

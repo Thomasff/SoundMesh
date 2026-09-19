@@ -60,7 +60,6 @@ import com.soundmesh.core.SpatialField
 import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.RoomReverb
 import kotlin.math.abs
-import kotlin.math.pow
 import kotlin.math.roundToInt
 import com.soundmesh.core.SplitAxis
 import com.soundmesh.core.SpatialMode
@@ -160,28 +159,31 @@ fun MeasuredRoom(
  * What the source dot is, and where it has been put.
  *
  * Said in words beside the drawing rather than left to the picture, because half of what the dot
- * means is not to scale and so cannot be read off it - see [SpatialRoom.SOURCE_MAX_RADIUS]. The
- * multiple is the part a person can check against the room they are sitting in; the decibels are
- * there for whoever wants to know what was actually done.
+ * means is not to scale and so cannot be read off it - see [SpatialRoom.SOURCE_MAX_RADIUS].
+ *
+ * Nothing at all once the dot is outside the ring. That half used to quote what the drag had done -
+ * so many times as far, so many decibels off every handset - and those are two numbers nobody asked
+ * for about a dot they are looking at while they drag it. Removed 2026-09-20. The inside half stays
+ * because it is not a reading of the drawing: how far the sense of direction has been given up is
+ * the one thing the picture does not show. So does [R.string.room_source_dry] below, which is not a
+ * reading either.
  */
 @Composable
 private fun SourceReadout(state: RoomState) {
     Note(stringResource(R.string.room_source_hint))
-    val decibels = state.retreat * SpatialField.RETREAT_DECIBELS.toFloat()
     val inside = SpatialRoom.envelopmentFor(state.retreat, state.envelopment)
-    Note(
-        when {
-            state.retreat > 0f ->
-                stringResource(R.string.room_source_away, 10f.pow(decibels / 20f), decibels)
-            // The inside half of the travel, which reads as a share rather than as a distance:
-            // there is no "x times nearer" to quote, because nothing is getting louder.
-            inside > 0f -> stringResource(
+    when {
+        state.retreat > 0f -> Unit
+        // The inside half of the travel, which reads as a share rather than as a distance:
+        // there is no "x times nearer" to quote, because nothing is getting louder.
+        inside > 0f -> Note(
+            stringResource(
                 R.string.room_source_inside,
                 (inside / SpatialField.MAX_ENVELOPMENT.toFloat() * 100f).roundToInt()
             )
-            else -> stringResource(R.string.room_source_here)
-        }
-    )
+        )
+        else -> Note(stringResource(R.string.room_source_here))
+    }
     // The one combination worth a line of its own, because it is the one where the control is
     // working exactly as built and still does not do what it is for. A level on its own is an
     // ambiguous distance cue - it is the ratio against the reverberation that is not - so a source
@@ -1548,8 +1550,15 @@ private fun PartButtons(
     }
 }
 
-/** Two words of two characters each, and the same on both axes. */
-private val PART_ROW_WIDTH = 96.dp
+/**
+ * Two words side by side, and the same on both axes.
+ *
+ * Sized for the longest of the four in the widest language, which since 2026-09-19 is English
+ * rather than Chinese: the Chinese names are two characters each and fitted in 96dp with room to
+ * spare, and "Backing" at a large font scale did not. Nothing here clips or ellipsises, so a word
+ * that does not fit wraps onto a second line the row is not tall enough for.
+ */
+private val PART_ROW_WIDTH = 112.dp
 private val PART_ROW_HEIGHT = 30.dp
 
 /** Which name a handset button carries, since the two halves are named by the axis they divide. */

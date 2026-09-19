@@ -12,6 +12,7 @@ import com.soundmesh.probe.sync.ChunkServer
 import com.soundmesh.probe.sync.PeerSilence
 import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.ClockSyncServer
+import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.SpatialFieldServer
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncRenderer
@@ -310,7 +311,10 @@ class HostSession(
 
     // Null when this session has no name of its own: an unbound port rather than an idle one, so a
     // build without the feature is not listening on 45126 either.
-    private val spatialServer = spatialId?.let { SpatialFieldServer(SyncActivity.SPATIAL_PORT, it) }
+    // Started from the colours the standing channel already handed this room, so that pressing
+    // play does not recolour handsets somebody has been looking at through a calibration.
+    private val spatialServer =
+        spatialId?.let { SpatialFieldServer(SyncActivity.SPATIAL_PORT, it, RoomCommands.places()) }
     // How long the slowest call to broadcast took, and how many chunks the source produced.
     //
     // Instrumentation rather than a health counter, and it earned its place: it is what measured

@@ -6,9 +6,7 @@ import org.junit.Test
 
 /**
  * The archived run these are taken from is 2026-09-08 18:29, X10 hosting and Magic6 following on
- * a hotspot. Both handsets' recordings of it are in
- * docs/feasibility-results/data/2026-09-08-hotspot-five, and every number below can be read
- * straight out of those two files.
+ * a hotspot. Every number below is read straight out of both handsets' recordings of that run.
  */
 class EmissionDeviationTest {
     private val interval = 5 * 48_000

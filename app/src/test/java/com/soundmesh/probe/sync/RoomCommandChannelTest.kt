@@ -5,6 +5,8 @@ import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.RoomExcuse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -1050,6 +1052,78 @@ class RoomCommandChannelTest {
             assertTrue(server.notExemptNames().isEmpty())
         } finally {
             client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * A handset knows its colour from standing by, without anything being played.
+     *
+     * The colours used to be settled inside a session, so four handsets waiting to be told to play
+     * were four identical grey rectangles on the one screen where telling them apart matters most.
+     * Reported on a room of four, 2026-09-18.
+     *
+     * The assertion is on the sink's copy rather than on the host's table, because the host's
+     * table was never the half that was missing: what a person reads is the colour on the phone in
+     * their hand, and that only exists if it travelled.
+     */
+    @Test
+    fun `a standing handset is told its colour before anything plays`() {
+        val port = freePort()
+        val host = "beefbeefbeefbeef"
+        val server = RoomCommandServer(port, host)
+        server.start()
+        val (_, onCommand) = waiting()
+        val client = standBy(port, one, onCommand = onCommand)
+        try {
+            assertTrue(connected(client))
+            assertTrue(until { client.places.size == 2 })
+
+            // The host is in its own room's table - it is drawn on the same picture as the sinks.
+            assertEquals(server.places(), client.places)
+            assertTrue(host in client.places)
+            assertNotNull(client.places[one])
+            assertNotEquals(
+                "two handsets on one colour is the confusion the colours exist to end",
+                client.places[host],
+                client.places[one]
+            )
+        } finally {
+            client.close()
+            server.stop()
+        }
+    }
+
+    /**
+     * And it keeps it when a second handset arrives.
+     *
+     * The one property [com.soundmesh.core.RoomColours] exists for, checked here rather than only
+     * over there, because this channel is what decides *when* it is asked: reconciling on a poll
+     * instead of on the two roster events would recolour a room every time anybody looked at it,
+     * and every test of a settled room would still pass.
+     */
+    @Test
+    fun `a handset already holding a colour keeps it when another joins`() {
+        val port = freePort()
+        val server = RoomCommandServer(port, "beefbeefbeefbeef")
+        server.start()
+        val (_, onCommand) = waiting()
+        val first = standBy(port, one, onCommand = onCommand)
+        var second: RoomCommandClient? = null
+        try {
+            assertTrue(connected(first))
+            assertTrue(until { first.places.size == 2 })
+            val held = first.places[one]
+
+            second = standBy(port, two, onCommand = onCommand)
+            assertTrue(connected(second))
+            assertTrue(until { first.places.size == 3 })
+
+            assertEquals(held, first.places[one])
+            assertEquals(first.places, second.places)
+        } finally {
+            second?.close()
+            first.close()
             server.stop()
         }
     }

@@ -1,8 +1,10 @@
 package com.soundmesh.product
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -21,6 +23,7 @@ import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.CalibrationAudioSource
 import com.soundmesh.probe.sync.EventLog
+import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.OutputLeadRunner
 import com.soundmesh.probe.sync.StoredOutputLead
 import com.soundmesh.session.CAPTURING_HOST_USAGE
@@ -45,11 +48,41 @@ import java.io.File
  * that disagreed with it would have been wrong rather than new.
  */
 class CalibrateActivity : ComponentActivity() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private var state by mutableStateOf(CalibrateState())
 
     /** One calibration at a time: two would share a microphone and a run directory. */
     @Volatile private var running = false
+
+    /**
+     * Whether the run now going has been called off, by the button or by leaving the screen.
+     *
+     * Read from the running thread, so volatile. Cleared where a run starts rather than where one
+     * ends: a stop that arrives in the last moments of a run would otherwise be cleared by that
+     * run on its way out and be waiting, set, for the next press of start.
+     */
+    @Volatile private var stopping = false
+
+    /**
+     * This handset's own volume on the two outputs this measurement plays on.
+     *
+     * The phone has to hear itself twice - once on the ordinary path, once on the path a
+     * capturing host is heard on - and neither of those is something this screen can work out
+     * from anything it already knows. So it draws what each one reads back and refuses a run that
+     * cannot work. See [tooQuietFor].
+     */
+    private val handsetVolume by lazy {
+        HandsetVolume(getSystemService(AudioManager::class.java), filesDir)
+    }
+
+    /** Whether anything had already moved the volume when this screen opened. See [putVolumeBack]. */
+    private var volumeChangedBefore = false
 
     /** Set by the button that asked for the permission, so the run resumes once it is granted. */
     private var verifyingAfterPermission = false
@@ -66,6 +99,7 @@ class CalibrateActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // The run is a minute and a half of quiet room, and a screen that sleeps takes the CPU too.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        volumeChangedBefore = handsetVolume.changed()
         setContent {
             SoundMeshTheme(themeChoiceOf(Preferences(filesDir).read("theme"))) {
                 Surface(color = MaterialTheme.colorScheme.background) {
@@ -73,6 +107,8 @@ class CalibrateActivity : ComponentActivity() {
                         state = state.copy(stored = storedMicros()),
                         actions = CalibrateActions(
                             calibrate = { begin(verifying = false) },
+                            setVolume = { percent -> setVolume(percent) },
+                            stop = { stop() },
                             replace = { replace() },
                             keep = { state = state.copy(offered = null) },
                             back = { finish() }
@@ -112,11 +148,104 @@ class CalibrateActivity : ComponentActivity() {
         start(verifying)
     }
 
+    /**
+     * What both outputs are at, re-read rather than waited for.
+     *
+     * A poll because the thing that moves these is somebody pressing the volume keys beside this
+     * screen, which this screen has nothing to listen to for. The same interval the room round
+     * uses, off the same reasoning.
+     */
+    private val readVolumes = object : Runnable {
+        override fun run() {
+            state = state.copy(volumes = ownVolumes())
+            handler.postDelayed(this, VOLUME_MILLIS)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        handler.post(readVolumes)
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(readVolumes)
+        super.onPause()
+    }
+
+    /**
+     * Ends the run on the way out as well as on the button.
+     *
+     * Leaving with the back button used to leave the run going: a minute of chirps into a room
+     * whose screen has gone back to the status page, with nothing anywhere to stop it. The
+     * activity is gone by then, so what stops it is the same flag the button sets.
+     */
+    override fun onDestroy() {
+        if (isFinishing) {
+            stopping = true
+            putVolumeBack()
+        }
+        super.onDestroy()
+    }
+
+    /** Both of the outputs this measurement plays on, read back off the handset itself. */
+    private fun ownVolumes(): List<VolumeRow> =
+        listOf(false to R.string.calibrate_volume_media, true to R.string.calibrate_volume_alarm)
+            .map { (capturing, name) ->
+                val reading = handsetVolume.read(capturing)
+                VolumeRow(
+                    reading.stream,
+                    getString(name),
+                    reading.percent,
+                    reading.index,
+                    reading.max,
+                    reading.stream
+                )
+            }
+
+    /** Moves both outputs together: the measurement needs to be heard on each of them. */
+    private fun setVolume(percent: Int) {
+        val now = handsetVolume.setBoth(percent)
+        EventLog(filesDir).write(
+            "output lead volume: asked $percent%, now " +
+                now.joinToString(", ") { "${it.stream} ${it.percent}%" }
+        )
+        state = state.copy(volumes = ownVolumes())
+    }
+
+    /**
+     * Puts the handset back on the way out, but only if this screen is what moved it.
+     *
+     * The volume is set on other screens too, and each of them restores the level from before the
+     * app ever touched the handset - so a screen that restored unconditionally would throw away
+     * the level somebody had just chosen for the music elsewhere.
+     */
+    private fun putVolumeBack() {
+        if (!restoresOnLeaving(volumeChangedBefore, handsetVolume.changed())) return
+        handsetVolume.restore()
+        EventLog(filesDir).write("output lead volume put back on leaving the calibration")
+    }
+
+    /**
+     * Calls the run off: silence as soon as the renderer notices, and nothing stored.
+     *
+     * The sentence is said here rather than waited for, because what unwinds a run is the run
+     * itself reaching its next check - a second or two - and a button that says nothing for a
+     * second or two is a button somebody presses again. The run says the same sentence when it
+     * gets there, so there is nothing to flicker between.
+     */
+    private fun stop() {
+        if (!running) return
+        stopping = true
+        state = state.copy(message = getString(R.string.calibrate_stopping), computing = false)
+    }
+
     private fun start(verifying: Boolean) {
         running = true
+        // Cleared here and nowhere else - see [stopping].
+        stopping = false
         // No sentence saying a run has started: the screen says so, and the message line here is
         // kept for the runs that come to nothing.
-        state = state.copy(running = true, message = null, offered = null)
+        state = state.copy(running = true, message = null, offered = null, computing = false)
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
         Thread({
@@ -125,15 +254,18 @@ class CalibrateActivity : ComponentActivity() {
                 show(getString(R.string.calibrate_failed, it.javaClass.simpleName))
             }
             running = false
-            handler.post { state = state.copy(running = false) }
+            // Cleared beside running, not instead of it: a run that threw on its way to the
+            // analysis never reaches onAnalysing, and one that threw inside it never comes back
+            // out - so this is the only place that is reached either way.
+            handler.post { state = state.copy(running = false, computing = false) }
         }, "SoundMeshCalibrate").start()
     }
 
     private fun measure(verifying: Boolean) {
         // A repeatability run plays the reference path on both passes, so it measures nothing
-        // about the paths and everything about the acquisition between them - roadmap item 7,
-        // section 23. Driven over adb because it is a diagnostic and not a thing to offer on a
-        // screen: `am start -e same_path true -e repeats 20`.
+        // about the paths and everything about the acquisition between them. Driven over adb
+        // because it is a diagnostic and not a thing to offer on a screen:
+        // `am start -e same_path true -e repeats 20`.
         val samePath = intent.getBooleanExtra("same_path", false)
         val subject =
             if (samePath) PlaybackUsage.MEDIA
@@ -152,7 +284,10 @@ class CalibrateActivity : ComponentActivity() {
             audioSource = CalibrationAudioSource.parse(intent.getStringExtra("audio_source")),
             samePath = samePath,
             appliedLeadNanos =
-                if (verifying && !samePath) (StoredOutputLead(filesDir, subject).read() ?: 0L) * 1_000L else 0L
+                if (verifying && !samePath) (StoredOutputLead(filesDir, subject).read() ?: 0L) * 1_000L else 0L,
+            onAnalysing = { handler.post { state = state.copy(computing = true) } },
+            keepsRecording = keepsRecordings(filesDir),
+            calledOff = { stopping }
         ).run()
         // Written before anything is stored, so a refused run still leaves its evidence behind.
         File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(run.json)
@@ -169,6 +304,9 @@ class CalibrateActivity : ComponentActivity() {
         // screen, or the two numbers it is now asking about - a sentence underneath saying it has
         // just measured is the screen reporting on itself.
         val note = when {
+            // Before the refusal below it, because a run that was stopped is refused too and the
+            // reason it was refused is not news to the person who stopped it.
+            stopping -> getString(R.string.calibrate_stopping)
             micros == null -> getString(R.string.calibrate_refused, run.result.refusal ?: "")
             samePath -> getString(
                 R.string.calibrate_repeatability,
@@ -212,5 +350,8 @@ class CalibrateActivity : ComponentActivity() {
     private companion object {
         const val LOG_TAG = "SoundMeshCalibrate"
         const val ARTIFACT = "output-lead.json"
+
+        /** How often both outputs are read back while this screen is up. See [readVolumes]. */
+        const val VOLUME_MILLIS = 500L
     }
 }

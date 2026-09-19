@@ -80,7 +80,16 @@ class PeerCalibrationRunner(
      * loop, which is the whole difference between a round that stops and a round that has merely
      * been told to.
      */
-    private val calledOff: () -> Boolean = { false }
+    private val calledOff: () -> Boolean = { false },
+    /**
+     * Whether the recording stays on the handset once the analysis has read it.
+     *
+     * Defaulted to keeping it, because that is what every round did before this existed and a
+     * default that quietly destroys the only evidence a round leaves is the wrong way round. The
+     * product passes false for an ordinary listener, whose phone otherwise carries a few
+     * megabytes of audio per case that nothing on it will ever open.
+     */
+    private val keepsRecording: Boolean = true
 ) {
     private val tone = TonePcmSource()
 
@@ -122,8 +131,15 @@ class PeerCalibrationRunner(
         // recording on disk is part of a round, and part of a round correlated against a whole
         // schedule gives a number rather than a measurement - so nothing is read, nothing is
         // combined, and what every later reader sees is the refusal.
-        if (calledOff()) return refused(CALLED_OFF)
-        return analyse(calibration)
+        try {
+            if (calledOff()) return refused(CALLED_OFF)
+            return analyse(calibration)
+        } finally {
+            // In a finally because there are two ways out of the try and both leave the same file
+            // behind: a round called off mid-schedule has recorded just as many megabytes as one
+            // that finished, and it is the exit that happens more often.
+            if (!keepsRecording) calibration.discardRecording()
+        }
     }
 
     /**

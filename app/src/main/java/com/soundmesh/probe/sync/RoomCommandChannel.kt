@@ -1,6 +1,8 @@
 package com.soundmesh.probe.sync
 
 import com.soundmesh.core.HostId
+import com.soundmesh.core.RoomBadgeCodec
+import com.soundmesh.core.RoomColours
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomCommandCodec
 import com.soundmesh.core.RoomExcuse
@@ -13,6 +15,16 @@ import java.util.Collections
 
 /** Next after the room's 45127. One socket per standing-by handset, and nothing on it per second. */
 const val COMMAND_PORT = 45128
+
+/**
+ * How long [RoomCommands.stillServing] waits for the far end to answer.
+ *
+ * Short, because the two answers it has to tell apart arrive at very different speeds: a handset
+ * on this network that is no longer a host refuses the connection at once, and a handset that is
+ * one accepts at once. Anything that takes longer than this is neither - it is a phone that has
+ * left the network - and the thing asking is a person waiting on a screen.
+ */
+private const val SERVING_TIMEOUT_MILLIS = 900
 
 /**
  * What a standing handset said about the correction it carries for this host.
@@ -133,6 +145,14 @@ private fun carriedFrom(said: String): Carried? {
  */
 class RoomCommandServer(
     private val port: Int,
+    /**
+     * This host's own name, so that it holds a colour in its own room.
+     *
+     * Null is a host that has not got one yet, and then the table is the sinks alone rather than
+     * a table with a hole in it: a room drawn from that would give the host whatever colour the
+     * first sink did not want, and the drawing has the host in it.
+     */
+    private val selfId: String? = null,
     /** Injectable only so that a test can watch the window pass without waiting out its length. */
     private val quietAfterMillis: Long = GONE_QUIET_MILLIS
 ) {
@@ -198,6 +218,25 @@ class RoomCommandServer(
     @Volatile
     var onExcuse: ((String, RoomExcuse) -> Unit)? = null
 
+    /**
+     * Who holds which colour, decided here because this is the channel that is up the longest.
+     *
+     * It used to be decided inside a session - see [SpatialFieldServer], which still holds a table
+     * of its own - and so a handset had no colour until somebody pressed play. That is backwards:
+     * the colours exist to tell four identical black rectangles apart, and the minutes when a
+     * person most needs that are the ones before anything is playing, when they are calibrating
+     * four handsets and reading a room drawing that is entirely grey. Reported on a room of four,
+     * 2026-09-18.
+     *
+     * A session started later starts from this table rather than building its own - see
+     * [SpatialFieldServer.seed] - so nothing changes colour at the instant play is pressed, which
+     * is the recolouring [RoomColours] exists to avoid.
+     *
+     * Guarded by the clients lock, which is what the roster it is derived from is guarded by.
+     */
+    private val colours = RoomColours()
+    @Volatile private var heldPlaces: Map<String, Int> = emptyMap()
+
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
 
@@ -215,6 +254,9 @@ class RoomCommandServer(
         bound.bind(InetSocketAddress(port))
         server = bound
         running = true
+        // A host by itself is a room of one, and it holds a colour before anybody arrives to see
+        // it - the same first line [SpatialFieldServer.start] has, for the same reason.
+        refreshBadges()
         Thread {
             runCatching {
                 bound.use {
@@ -283,6 +325,9 @@ class RoomCommandServer(
             runCatching { old.socket.close() }
             left(old.peerId, "it opened a second line, and the newer one wins")
         }
+        // After the roster settled, not before: a handset that replaced its own older line is one
+        // handset in the room, and reconciling between the add and the remove would see two.
+        refreshBadges()
         // Then parked on a read, which is what makes this a count rather than a guess at one:
         // the read ends the moment that handset closes its end, and this is the only place that
         // finds out without having something to send.
@@ -315,7 +360,14 @@ class RoomCommandServer(
                 }
             }
         }
-        if (clients.remove(standing)) left(standing.peerId, "it closed its line")
+        if (clients.remove(standing)) {
+            left(standing.peerId, "it closed its line")
+            // So the colour it held is free for the next handset to arrive. Nobody still here
+            // moves - see [RoomColours.reconcile], which only ever settles handsets it has not
+            // seen before, exactly so that a drop is not also a recolouring of the room somebody
+            // is at that moment looking at to find out which one dropped.
+            refreshBadges()
+        }
     }
 
     /**
@@ -338,8 +390,38 @@ class RoomCommandServer(
      * exactly the fork a listener was stuck at - four presses, no handset ever arriving, and no
      * way to tell which half of the room was at fault.
      */
-    fun send(order: RoomOrder): Int {
-        val frame = SpatialFrame.encode(RoomCommandCodec.encode(order))
+    fun send(order: RoomOrder): Int = tellEverybody(RoomCommandCodec.encode(order))
+
+    /**
+     * Who holds which colour, for whoever is drawing this room.
+     *
+     * The host's own entry is in here too, which is the difference between this and every other
+     * reading on this channel: the rest are things sinks said, and a colour is something this
+     * handset decided, about a room it is itself in.
+     */
+    fun places(): Map<String, Int> = heldPlaces
+
+    /**
+     * Settles colours for whoever is standing by now, and tells them.
+     *
+     * Called on the two events that can change the answer and on nothing else. A handset already
+     * holding a colour keeps it - see [RoomColours] for why that matters more than it looks.
+     *
+     * Told to the whole room rather than to the one that joined, because a handset arriving can
+     * push another off the colour it preferred, and the one that moved is not the one that
+     * arrived. Guarded, on the same terms as every other optional message on this channel: a
+     * colour is decoration, and a room that kept working without one is every build before this.
+     */
+    private fun refreshBadges() {
+        heldPlaces = synchronized(clients) {
+            colours.reconcile(listOfNotNull(selfId) + clients.map { it.peerId })
+        }
+        if (heldPlaces.isEmpty()) return
+        runCatching { RoomBadgeCodec.encode(heldPlaces) }.getOrNull()?.let { tellEverybody(it) }
+    }
+
+    private fun tellEverybody(text: String): Int {
+        val frame = SpatialFrame.encode(text)
         val told = synchronized(clients) { ArrayList(clients) }
         Thread({
             for (standing in told) {
@@ -657,6 +739,29 @@ class RoomCommandClient(
         private set
 
     /**
+     * Who holds which colour, as this host last said - the whole room, not this handset's entry.
+     *
+     * The whole table for the reason [RoomBadgeCodec] gives: the receiver is the one thing that
+     * knows which entry is its own, and a sink that can draw the room already needs the rest.
+     *
+     * Kept across a dropped line rather than cleared with it. What a colour is for is telling this
+     * phone from the other three across a room, and a reconnecting handset gets the same colour
+     * back - so blanking it for the three seconds of a retry would be the screen losing an
+     * identity that never actually changed.
+     */
+    @Volatile var places: Map<String, Int> = emptyMap()
+        private set
+
+    /**
+     * Told when a new table arrives, or null for nobody.
+     *
+     * Beside [places] rather than instead of it, because the two answer different questions: the
+     * field is for whatever is drawing right now, and this is for whatever has to be rebuilt when
+     * the answer changes - a notification already on screen does not redraw itself.
+     */
+    @Volatile var onPlaces: ((Map<String, Int>) -> Unit)? = null
+
+    /**
      * Why the last thing this handset tried to say did not go out, or null if it went.
      *
      * Held here rather than thrown because none of these is a reason to stop standing by: a line
@@ -725,6 +830,16 @@ class RoomCommandClient(
                     val stream = open.getInputStream()
                     while (running) {
                         val text = SpatialFrame.read(stream) ?: break
+                        // The colour table is told apart from a command by its own first word,
+                        // the same way the rule channel tells it from a rule. Two kinds of
+                        // message on one socket rather than a second socket for the decoration.
+                        if (RoomBadgeCodec.looksLikeOne(text)) {
+                            runCatching { RoomBadgeCodec.decode(text) }.getOrNull()?.let {
+                                places = it
+                                runCatching { onPlaces?.invoke(it) }
+                            }
+                            continue
+                        }
                         // Guarded: an unreadable command is one this build does not speak, and the
                         // socket is still worth holding for the next one it does.
                         runCatching { RoomCommandCodec.decode(text) }.getOrNull()?.let(onCommand)
@@ -823,6 +938,24 @@ class RoomCommandClient(
         return false
     }
 
+    /**
+     * Throws away the socket so [hold] opens another, without ending this client.
+     *
+     * The one thing this end cannot do for itself. A socket whose far end left the network is not
+     * closed by anything: the read below parks for ever with no timeout on it, writes wait in the
+     * kernel rather than failing, and [connected] goes on reading true - so a handset that changed
+     * network, or whose host did, sat holding a line that would never carry anything again and
+     * never dialled a second one. Whether that has happened is not knowable here, because nothing
+     * arrives on this socket while a room is idle; it is knowable to whoever is counting what did
+     * not go out, and that is [com.soundmesh.product.StandbyService].
+     *
+     * Not a reconnection, just the close. What follows is [hold]'s ordinary retry, which is the
+     * same path a host that was switched off takes - one loop, one place where a socket is opened.
+     */
+    fun dialAgain() {
+        runCatching { socket?.close() }
+    }
+
     override fun close() {
         running = false
         connected = false
@@ -849,10 +982,16 @@ class RoomCommandClient(
 object RoomCommands {
     private var server: RoomCommandServer? = null
 
+    /**
+     * [selfId] is this host's own name, so that it holds a colour in the room it is gathering.
+     *
+     * Passed in rather than read here because this object is in the sync package and identity is
+     * a file in the app's own directory, which is the caller's to open.
+     */
     @Synchronized
-    fun serve() {
+    fun serve(selfId: String? = null) {
         if (server != null) return
-        server = runCatching { RoomCommandServer(COMMAND_PORT).also { it.start() } }.getOrNull()
+        server = runCatching { RoomCommandServer(COMMAND_PORT, selfId).also { it.start() } }.getOrNull()
     }
 
     @Synchronized
@@ -873,6 +1012,30 @@ object RoomCommands {
 
     @Synchronized
     fun standingBy(): Int = server?.standingBy() ?: 0
+
+    /**
+     * Whether a handset at [address] is still serving room commands, asked by dialling it.
+     *
+     * The one question a discovered record cannot answer. Giving back the host role is a request
+     * to a platform daemon rather than an act: the record goes on being answered for seconds after
+     * somebody picks a different role, and other devices' caches hold it longer still. So a
+     * handset that is told "another host answered" is being told about a record, and a record is
+     * not a host - this port is. It is bound by [serve] and closed by [stop], which is to say it
+     * is open exactly while that handset is one.
+     *
+     * Not synchronized, and it must not be: it waits on a network, and every other call here is
+     * something a screen does. What it reads is the far end, so there is nothing of this object's
+     * to hold still.
+     *
+     * A connect and a close, with nothing said. [RoomCommandServer.hold] reads a name off every
+     * new socket under a timeout and drops the ones that never send one, so this leaves no trace
+     * on the other handset: no roster entry, no colour, no departure.
+     */
+    fun stillServing(address: String, timeoutMillis: Int = SERVING_TIMEOUT_MILLIS): Boolean =
+        runCatching {
+            Socket().use { it.connect(InetSocketAddress(address, COMMAND_PORT), timeoutMillis) }
+            true
+        }.getOrDefault(false)
 
     @Synchronized
     fun uncalibrated(): Int = server?.uncalibrated() ?: 0
@@ -905,6 +1068,10 @@ object RoomCommands {
     /** Which handsets are standing by, for the drawing. See [RoomCommandServer.standingPeerIds]. */
     @Synchronized
     fun standingPeerIds(): List<String> = server?.standingPeerIds() ?: emptyList()
+
+    /** Who holds which colour in this host's room. See [RoomCommandServer.places]. */
+    @Synchronized
+    fun places(): Map<String, Int> = server?.places() ?: emptyMap()
 
     /** Which of those have stopped saying so. Quiet, not gone - see [RoomCommandServer.quietPeerIds]. */
     @Synchronized

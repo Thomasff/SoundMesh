@@ -1,6 +1,7 @@
 package com.soundmesh.product
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
@@ -567,7 +568,7 @@ private fun medianOf(values: List<Double>): Double {
  * measured sits tens of milliseconds out, and there is no constant for a window to be around.
  * That is also the jam this leaves open, and [StoredCalibration.forget] is its exit.
  *
- * Recorded in docs/feasibility-results/on-device-calibration.md, section 19.
+ * Measured on device rather than reasoned about.
  */
 internal fun foldsIntoStoredCalibration(
     observations: Int,
@@ -952,6 +953,12 @@ internal enum class RoundResult {
  * harness runs it replaces, and that comparison is driven over ADB.
  */
 class PeerCalibrateActivity : ComponentActivity() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private val handler = Handler(Looper.getMainLooper())
 
     /** One timeline, shared with every other part of the app. See [EventLog]. */
@@ -991,6 +998,17 @@ class PeerCalibrateActivity : ComponentActivity() {
      * between one evening and the next, and the step below it says out loud that it can be skipped.
      */
     private var roomStep by mutableStateOf(1)
+
+    /**
+     * Which step the result now on screen came from, or null while there is no such result.
+     *
+     * The walk-through this sits beside only goes forwards, so it is the whole of the way back:
+     * see [PeerCalibrateState.redo]. Set where a round finishes and cleared where one starts,
+     * because what it has to name is the round whose answer is on the screen - an aborted round
+     * leaves a message rather than an answer, and offering to run "that step" again beside it
+     * would be naming a step this screen did not measure.
+     */
+    private var roomRedo: Int? by mutableStateOf(null)
 
     /** One calibration at a time: two would share a microphone, a port and a run directory. */
     @Volatile private var running = false
@@ -1070,6 +1088,7 @@ class PeerCalibrateActivity : ComponentActivity() {
                             approximate = approximateCalibration(),
                             observations = stored?.observations ?: 0,
                             step = roomStep,
+                            redo = roomRedo,
                             colours = colours
                         ),
                         // Unrecognised or absent means PAIR - see peerJobOf - which is what every
@@ -1282,7 +1301,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         // something would be handed a correction measured on a link that cannot carry one - and
         // it would then be applied to every session afterwards with nothing to notice it by.
         // What is on the other side of it is an experiment: measure the network asymmetry
-        // acoustically on a link slow enough to have one worth measuring. See the roadmap.
+        // acoustically on a link slow enough to have one worth measuring.
         allowSlowLink = intent.getBooleanExtra("allow_slow_link", false)
     )
 
@@ -1323,6 +1342,10 @@ class PeerCalibrateActivity : ComponentActivity() {
         stopping = false
         roundCalledOff = false
         MeasuringNow.calledOff = false
+        // The last round's second chance goes with the last round's answer. Whether this run
+        // earns one is decided where it finishes, so a run that is called off or throws leaves
+        // none - see [roomRedo].
+        roomRedo = null
         state = state.copy(
             running = true,
             stopOffer = stopOfferFor(role()),
@@ -1681,7 +1704,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                 hostNanosNow = { System.nanoTime() },
                 audioSource = audioSource(),
                 edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES,
-                calledOff = { stopping }
+                calledOff = { stopping },
+                keepsRecording = keepsRecordings(filesDir)
             )
             show(
                 getString(R.string.pair_calibrate_running),
@@ -1789,7 +1813,14 @@ class PeerCalibrateActivity : ComponentActivity() {
                     else StoredSeparation(filesDir, peer).write(metres)
                 }
             }
-            if (overhead()) handler.post { roomStep = 2 }
+            // Where the walk-through goes next, and which step the answer about to be shown came
+            // from. The overhead round hands over to the round that measures the phones; the
+            // round of the phones is the last step, so it leaves the walk-through where it is.
+            val which = if (overhead()) 1 else 2
+            handler.post {
+                if (which == 1) roomStep = 2
+                roomRedo = which
+            }
             show(getString(
                 R.string.pair_calibrate_room_done,
                 plan.slotIds.size,
@@ -1900,7 +1931,8 @@ class PeerCalibrateActivity : ComponentActivity() {
             hostNanosNow = { System.nanoTime() },
             audioSource = audioSource(),
             edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES,
-            calledOff = { stopping }
+            calledOff = { stopping },
+            keepsRecording = keepsRecordings(filesDir)
         )
         show(
             getString(R.string.pair_calibrate_running),
@@ -2229,7 +2261,12 @@ class PeerCalibrateActivity : ComponentActivity() {
             listenerMetres = StoredListenerDistance.all(filesDir),
             // A fresh measurement is a fresh reason to offer to move the drawing onto it, whatever
             // was done with the last one.
-            fitted = false
+            fitted = false,
+            // The same table the home screen draws from. Without it this drawing was grey, and
+            // this is the screen where telling four identical handsets apart matters most: a
+            // person standing over a room round is looking at four phones and a picture of four
+            // phones, and has to match them up. Reported on a room of four, 2026-09-18.
+            colours = RoomCommands.places()
         )
         handler.post {
             state = state.copy(room = room)

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -98,6 +99,16 @@ data class PeerCalibrateState(
      */
     val step: Int = 1,
     /**
+     * Which step the result now on screen came from, or null while no round has finished here.
+     *
+     * A step that has been done can be worth doing again - somebody was still walking to their
+     * chair, a door was open, a phone was in the wrong hand - and the moment anybody knows that is
+     * the moment they read the result. So the second chance is offered beside the result rather
+     * than in the steps: the walk-through below only goes forwards, and by the time the first
+     * step's answer is on screen it is already asking for the second.
+     */
+    val redo: Int? = null,
+    /**
      * When the step now running should be over, on [android.os.SystemClock.elapsedRealtime].
      *
      * Null wherever the length is not actually known, and that is the whole discipline of it: a
@@ -166,6 +177,12 @@ class PeerCalibrateActions(
  * Keyed on the instant it counts to, so a new step replaces the count instead of continuing the
  * last one's. It stops at zero rather than going negative: what comes next is a message, and a
  * screen counting downwards past zero is one that has lost track of its own run.
+ *
+ * At zero it says so instead of going blank. The instant this counts to is the end of the
+ * recording, not the end of the step - what follows is several seconds of correlating, and while
+ * that ran every word on this screen still said "hold still, keep quiet" with nothing moving
+ * anywhere. Reported on a four-handset room, 2026-09-18: it reads as a hang, and somebody who
+ * decides a run has hung picks the phone up, which is the one thing the step cannot survive.
  */
 @Composable
 private fun HoldStill(until: Long, text: Int, style: TextStyle) {
@@ -179,7 +196,15 @@ private fun HoldStill(until: Long, text: Int, style: TextStyle) {
             left = secondsLeft(SystemClock.elapsedRealtime(), until)
         }
     }
+    // The count is its own sign of life while it moves. What follows it is not: the recording has
+    // stopped, the room may talk again, and the arithmetic takes several seconds with nothing on
+    // screen changing at all - so that half sweeps and the count does not. See [Modifier.sweeping].
     if (left > 0) Text(stringResource(text, left), style = style)
+    else Text(
+        stringResource(R.string.calibrate_computing),
+        modifier = Modifier.sweeping(LocalContentColor.current),
+        style = style
+    )
 }
 
 private const val TICK_MILLIS = 500L
@@ -248,15 +273,81 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, job: PeerJob, actions: PeerCa
             // and the button for it is a few lines above.
             MeasuredRoom(room, RoomMapActions(actions.moveIcon, actions.fitRoom, null))
         }
-        // Not while a round runs: it is said with the countdown then, and the same sentence in
-        // two places reads as two things having happened.
-        val said = state.message.takeIf { !state.running }
-        if (said != null || state.outcomes.isNotEmpty()) {
-            Label(R.string.pair_calibrate_result)
-            said?.let { Note(it) }
-            // Only the host ever fills this: the sink measures one host and says so above.
-            state.outcomes.forEach {
-                Note(stringResource(R.string.pair_calibrate_sink_line, it.name, it.text))
+        // The pair job keeps its result here, at the end of a screen whose whole body is two
+        // buttons - the words land a finger's width under the button that was pressed. The room
+        // job does not: see the box RoomBody draws in the running box's own place.
+        if (job == PeerJob.PAIR) RoundResult(state)
+    }
+}
+
+/**
+ * What the round came to, in the ordinary flow of the screen.
+ *
+ * Not drawn while a round runs: it is said with the countdown then, and the same sentence in two
+ * places reads as two things having happened.
+ */
+@Composable
+private fun RoundResult(state: PeerCalibrateState) {
+    val said = state.message.takeIf { !state.running }
+    if (said == null && state.outcomes.isEmpty()) return
+    Label(R.string.pair_calibrate_result)
+    said?.let { Note(it) }
+    // Only the host ever fills this: the sink measures one host and says so above.
+    state.outcomes.forEach {
+        Note(stringResource(R.string.pair_calibrate_sink_line, it.name, it.text))
+    }
+}
+
+/**
+ * The same result, in the place the person is already looking.
+ *
+ * The room job's screen is long - a volume gate, two steps of three lines each, and a drawing of
+ * the room - and the result used to be under all of it. So a round finished, the box that had
+ * said 测量进行中 vanished, and the screen went back to looking exactly as it had before anybody
+ * pressed anything, with the answer several screens below the fold. Reported 2026-09-19.
+ *
+ * Drawn in that box's own slot, framed the same way, because it is the answer to the thing that
+ * box was doing: the strong edge moves from the round to what the round found, and there is never
+ * a moment when both are on the screen.
+ */
+@Composable
+private fun RoomRoundResult(
+    state: PeerCalibrateState,
+    tooQuiet: List<String>,
+    actions: PeerCalibrateActions
+) {
+    val said = state.message
+    if (said == null && state.outcomes.isEmpty()) return
+    Label(R.string.pair_calibrate_result)
+    Framed(strong = true) {
+        said?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        }
+        state.outcomes.forEach {
+            Note(stringResource(R.string.pair_calibrate_sink_line, it.name, it.text))
+        }
+        // The second chance, and the only place it is offered. Outlined rather than filled
+        // because the screen is not asking for it: what it costs to press by accident is a minute
+        // and a number that gets measured again. Named by its number rather than "this step",
+        // because the step it runs is the one this result came from and the step highlighted
+        // below is usually the other one - see [PeerCalibrateState.redo].
+        state.redo?.let { which ->
+            Column(
+                modifier = Modifier.padding(top = 7.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Ghost(
+                    stringResource(R.string.room_calibrate_again, which),
+                    enabled = tooQuiet.isEmpty(),
+                    onClick = if (which == 1) actions.measureOverhead else actions.measureRoom
+                )
+                TooQuietNote(tooQuiet)
+                // The one direction the two steps depend on each other in, said where the press
+                // happens. Where the phones stand is what the second step measures; where the
+                // person sat is what the first measures, from those phones - so phones that moved
+                // make the first step's answer describe a room that is gone, while a first step
+                // redone on phones that did not move leaves the second exactly as true as it was.
+                if (which == 2) Note(stringResource(R.string.room_calibrate_step2_again_note))
             }
         }
     }
@@ -291,9 +382,15 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
                 state.until?.let {
                     HoldStill(it, R.string.room_calibrate_left, MaterialTheme.typography.bodyMedium)
                 }
-                state.message?.let { Note(it) }
+                // Swept only while there is no count beside it, which is the same question as
+                // whether anything is audible: the count is handed over by the thing that fires
+                // the chirps. Before it arrives this line is a room waiting for handsets to dial
+                // in, and it is the only thing on the screen. See [Modifier.sweeping].
+                state.message?.let { Note(it, waiting = state.until == null) }
             }
         }
+    } else {
+        RoomRoundResult(state, tooQuiet, actions)
     }
     when (state.role) {
         // Only the host is held over anybody's head: it is the handset that gathers the room and
@@ -368,7 +465,11 @@ private fun VolumeGate(
 ) {
     if (state.volumes.isEmpty()) return
     Note(stringResource(R.string.room_volume_gate_hint))
-    Label(R.string.room_volume_unify)
+    // The advice rides on the label rather than in the note above it, because the note is about
+    // the whole gate and this is about the one slider under this word. A reading and not a chip:
+    // there is nothing to tap, the number is a suggestion, and how loud a room has to be is still
+    // only known by somebody standing in it.
+    Label(R.string.room_volume_unify, trailing = stringResource(R.string.room_volume_unify_advice))
     VolumeLine(
         name = stringResource(R.string.room_volume_all),
         percent = state.volumes.first().percent,
@@ -415,8 +516,12 @@ private fun TooQuietNote(tooQuiet: List<String>) {
  * One step of the walk-through: its number, what it is for, what to do, and its controls.
  *
  * [now] is what makes it a walk-through rather than a list. The step that is not the one to do is
- * drawn quiet and carries no buttons, so there is never a moment where two starts are on screen
- * and the order between them is something to work out.
+ * drawn quiet, so there is never a moment where two starts are on screen and the order between
+ * them is something to work out.
+ *
+ * A step that is not the one to do carries no controls at all, not even an outlined second chance:
+ * running a step again is offered beside that step's own result, which is what somebody reads to
+ * decide the room was not ready. See [RoomRoundResult].
  */
 @Composable
 private fun Step(
@@ -511,7 +616,10 @@ private fun PairBody(
     // that is about the next few seconds.
     if (state.running) {
         Label(R.string.room_calibrate_now)
-        state.message?.let { Note(it) }
+        // The first phase of a pair round is the one this was asked for: dialling the other
+        // handset and then agreeing a clock with it, sixteen seconds during which nothing is
+        // heard and nothing on the screen moves. See [Modifier.sweeping].
+        state.message?.let { Note(it, waiting = state.until == null) }
         // The same two lines the room walk-through shows, because it is the same minute of the
         // same request. Two wordings for one instruction is two chances to write one of them
         // badly and no way to notice which screen somebody read.
@@ -526,6 +634,12 @@ private fun PairBody(
         }
         return
     }
+    // The same gate the room round carries, and the same one for the same reason: a pair is two
+    // handsets each listening for the other, so a phone nobody can hear is exactly as fatal here
+    // as it is in a room of four. It was only ever on the other screen because that is the screen
+    // it was written for.
+    val tooQuiet = tooQuietFor(state.volumes)
+    if (state.role == CalibrationRole.HOST) VolumeGate(state, tooQuiet, actions)
     Column(modifier = Modifier.padding(top = 12.dp)) {
         Framed {
             Note(stringResource(R.string.pair_calibrate_quiet))
@@ -535,9 +649,10 @@ private fun PairBody(
             ) {
                 Solid(
                     stringResource(R.string.pair_calibrate_start),
-                    enabled = !state.running,
+                    enabled = !state.running && tooQuiet.isEmpty(),
                     onClick = actions.calibrate
                 )
+                TooQuietNote(tooQuiet)
                 // Only once there is something to check. A verification with nothing stored applies
                 // nothing and measures the whole difference again, which reads like a failed check
                 // rather than like a pair nobody has measured.

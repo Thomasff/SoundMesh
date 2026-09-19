@@ -381,7 +381,8 @@ internal class SinkRound(
                 offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos },
                 audioSource = audioSource(),
                 edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES,
-                calledOff = calledOff
+                calledOff = calledOff,
+                keepsRecording = keepsRecordings(filesDir)
             )
             // Counted to the instant the recording closes rather than to the last chirp: the
             // sound still has to leave the output buffer and cross the room, and somebody who

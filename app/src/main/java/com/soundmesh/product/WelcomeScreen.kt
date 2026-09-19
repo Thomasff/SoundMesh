@@ -41,6 +41,12 @@ fun WelcomeScreen(state: HomeState, actions: HomeActions) {
         Note(stringResource(R.string.welcome_role))
     }
     RolePicker(actions)
+    // Why this screen is up when nobody asked for it. A handset that picked 当主机 and found the
+    // network already had one is sent back here, and until 2026-09-19 it was sent back in
+    // silence: the sentence existed but was drawn in the song block, which belongs to the screen
+    // this handset had just been thrown out of. Somebody pressing that role twice in a row saw
+    // the app undo the press and say nothing at all.
+    state.problem?.let { Note(stringResource(it), Tone.WRONG) }
     Box(
         modifier = Modifier
             .padding(top = 12.dp)

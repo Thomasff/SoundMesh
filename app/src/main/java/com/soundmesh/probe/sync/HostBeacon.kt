@@ -1,7 +1,11 @@
 package com.soundmesh.probe.sync
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import com.soundmesh.core.HostId
+import com.soundmesh.session.NetworkFootprint
 
 /**
  * This handset's mDNS record, held for as long as it is a host.
@@ -35,6 +39,12 @@ object HostBeacon {
     private var application: Context? = null
     private var hostId: String? = null
 
+    /** The network watch that keeps the record honest, held for as long as a record is. */
+    private var watching: ConnectivityManager.NetworkCallback? = null
+
+    /** The network the record was last said on, so a second reading of it is not a move. */
+    private var footprint: NetworkFootprint? = null
+
     /**
      * Says this handset is a host until [who] gives it back, and again is the same as once.
      *
@@ -50,6 +60,7 @@ object HostBeacon {
         this.application = context.applicationContext
         this.hostId = hostId
         register()
+        watch()
     }
 
     /** Gives back [who]'s hold. The record goes when the last holder does. */
@@ -57,6 +68,7 @@ object HostBeacon {
     fun release(who: Holder) {
         if (!holders.remove(who)) return
         if (holders.isNotEmpty()) return
+        stopWatching()
         withdraw()
         application = null
         hostId = null
@@ -79,6 +91,55 @@ object HostBeacon {
     /** Whether there is a record on the network right now, for a test and for a timeline line. */
     @Synchronized
     fun advertising(): Boolean = open != null
+
+    /**
+     * Watches this handset's own network for as long as it is saying it is a host.
+     *
+     * Here rather than in whatever asked for the record, and that is the fault this closes. The
+     * watch used to belong to the session, so it existed only while something was playing - and
+     * standing by is where a room spends nearly all of its time. A host that picked its role and
+     * then switched to its hotspot went on advertising the address it had before, and a sink
+     * looking for it resolved that record, read "the host is still where it was", and changed
+     * nothing: the address in the answer matched the dead address it was already dialling. The
+     * sink's half of this was fixed on 2026-09-19 and did not help on its own, because the two
+     * halves are one feature and this is the half that was easy to leave out.
+     *
+     * The first reading is kept rather than acted on: registering delivers the current network,
+     * and treating that as a move would withdraw and re-say the record the instant it was taken.
+     */
+    private fun watch() {
+        if (watching != null) return
+        val manager = application?.getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
+                moved(
+                    NetworkFootprint(
+                        handle = network.networkHandle,
+                        addresses = properties.linkAddresses.mapNotNull { it.address.hostAddress }.toSet()
+                    )
+                )
+            }
+        }
+        runCatching { manager.registerDefaultNetworkCallback(callback) }
+            .onSuccess { watching = callback }
+    }
+
+    /** One reading of the network, judged against the last one. Synchronised with everything else. */
+    @Synchronized
+    private fun moved(now: NetworkFootprint) {
+        val before = footprint
+        footprint = now
+        if (before == null || !before.movedTo(now)) return
+        again()
+    }
+
+    private fun stopWatching() {
+        val callback = watching ?: return
+        watching = null
+        footprint = null
+        val manager = application?.getSystemService(ConnectivityManager::class.java) ?: return
+        runCatching { manager.unregisterNetworkCallback(callback) }
+    }
 
     private fun register() {
         val context = application ?: return

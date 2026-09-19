@@ -119,6 +119,26 @@ class CalibrationRunner(
     }
 
     /**
+     * Deletes the recording and its reference, for a caller that has finished reading them.
+     *
+     * Only the analysis on this handset and a person at a PC ever read these, and the second of
+     * those is the whole reason to keep them: a calibration that landed on the wrong number can
+     * be re-read from the audio, and nothing else on the handset can say what it heard. So this
+     * is the caller's decision rather than something [record] undoes on its way out - the run
+     * that wants the evidence and the run that wants the megabytes back are the same code.
+     *
+     * A few megabytes per case, held until the next run of the same case writes over it, which
+     * for the handful of cases the product itself uses is until the handset is wiped.
+     */
+    fun discardRecording() {
+        runCatching {
+            val directory = runStore.prepareRun(caseId)
+            File(directory, "calibration.wav").delete()
+            File(directory, "chirp.wav").delete()
+        }
+    }
+
+    /**
      * Opens [source], or returns null if the device refuses it.
      *
      * An AudioRecord for an unsupported source constructs without throwing and then sits in

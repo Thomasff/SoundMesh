@@ -25,9 +25,9 @@ data class StereoGain(val left: Double, val right: Double)
  * millisecond of alignment error is small against thirty milliseconds, not larger than it.
  *
  * That question was asked with a knob and answered on 2026-09-17: a listener could not hear it
- * move at any depth, the argument is in docs/feasibility-results/delay-as-a-spatial-cue.md, and
- * the reverberation added the day before answers the distance half of it properly. So every rule
- * left in this file is an amplitude rule, now by decision rather than by default.
+ * move at any depth, and the reverberation added the day before answers the distance half of it
+ * properly. So every rule left in this file is an amplitude rule, now by decision rather than
+ * by default.
  */
 enum class SpatialMode {
     /**

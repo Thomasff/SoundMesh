@@ -1,5 +1,6 @@
 package com.soundmesh.probe.sync
 
+import android.content.Context
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -12,6 +13,7 @@ import androidx.compose.runtime.setValue
 import com.soundmesh.product.PairCodeScreen
 import com.soundmesh.product.Preferences
 import com.soundmesh.product.SoundMeshTheme
+import com.soundmesh.product.inChosenLanguage
 import com.soundmesh.product.themeChoiceOf
 
 /**
@@ -30,6 +32,12 @@ import com.soundmesh.product.themeChoiceOf
  * going stale.
  */
 class ShowCodeActivity : ComponentActivity() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private var offer by mutableStateOf<HostPairingCode.Offer?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {

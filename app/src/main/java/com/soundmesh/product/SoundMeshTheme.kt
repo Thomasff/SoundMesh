@@ -5,7 +5,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 
 /** What somebody picked on the settings screen. [SYSTEM] is what they get without picking. */
 enum class ThemeChoice { SYSTEM, LIGHT, DARK }
@@ -66,8 +68,27 @@ private val lightScheme = lightColorScheme(
     error = Color(0xFFA83A32)
 )
 
+/**
+ * The colours, and the language the strings under them are read in.
+ *
+ * [language] is here rather than at each screen's `setContent` because this is already the one
+ * wrapper every screen in the app goes through, and what it does is the same shape: a choice
+ * somebody made in settings, applied to the whole composition rather than to any screen.
+ *
+ * It defaults to [LanguageChoice.SYSTEM], which changes nothing - every component has already put
+ * the stored choice on in `attachBaseContext` by the time this runs. Only [HomeActivity] passes
+ * it, because that is the one screen where the choice can change while the screen is up: settings
+ * is a place inside it, so answering that tap by restarting the activity would throw somebody out
+ * of the screen they tapped on.
+ */
 @Composable
-fun SoundMeshTheme(choice: ThemeChoice, content: @Composable () -> Unit) {
+fun SoundMeshTheme(
+    choice: ThemeChoice,
+    language: LanguageChoice = LanguageChoice.SYSTEM,
+    content: @Composable () -> Unit
+) {
     val dark = darkWanted(choice, isSystemInDarkTheme())
-    MaterialTheme(colorScheme = if (dark) darkScheme else lightScheme, content = content)
+    CompositionLocalProvider(LocalContext provides LocalContext.current.inLanguage(language)) {
+        MaterialTheme(colorScheme = if (dark) darkScheme else lightScheme, content = content)
+    }
 }

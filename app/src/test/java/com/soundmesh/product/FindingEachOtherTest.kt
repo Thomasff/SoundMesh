@@ -108,6 +108,95 @@ class FindingEachOtherTest {
     }
 
     /**
+     * A handset never joins its own stale record.
+     *
+     * Giving the role back is a request to a platform daemon, not an act: the record goes on being
+     * answered for seconds after somebody picks 当从机, and other devices' caches hold it longer.
+     * One record on the network is exactly the shape a search accepts, so without this the phone
+     * stores itself as its own host and dials a port nothing is serving. It never recovers on its
+     * own either, because a search does not argue with a stored host - the two rules meet here and
+     * the result is a handset permanently pointed at itself.
+     */
+    @Test
+    fun aHandsetNeverPairsWithItsOwnRecord() {
+        val once = search.substringAfter("fun lookOnce(").substringBefore("fun lookAgain(")
+        assertTrue(
+            "a phone that has just stopped being the host stores itself as its own host",
+            once.contains("PeerAdvertisement.hostIdOf(peer) == HostIdentity(directory).current()")
+        )
+        // The other direction of the same fault: one stale record of its own reads as "one other
+        // host is here", which is the single shape that moves a sink onto a different handset.
+        assertTrue(
+            "its own record counts as another host when this handset re-points itself",
+            search.substringAfter("fun lookAgain(")
+                .contains("outcome.hosts.filter { PeerAdvertisement.hostIdOf(it) != mine }")
+        )
+    }
+
+    /**
+     * The host's record follows the host, whether or not anything is playing.
+     *
+     * The sink's half of this landed first and did nothing on its own. A sink that has been down
+     * long enough looks again and asks where its host is now - and the answer came back off a
+     * record naming the address the host had before it switched networks, which reads as "still
+     * where it was" and changes nothing. The watch used to belong to the session, so it existed
+     * only while music was playing, and standing by is where a room spends nearly all of its time.
+     */
+    @Test
+    fun theRecordFollowsTheHandsetOntoItsNewNetwork() {
+        val beacon = source("src/main/java/com/soundmesh/probe/sync/HostBeacon.kt")
+        assertTrue(
+            "nothing watches the network while this handset is only standing by as the host",
+            beacon.substringAfter("fun hold(").contains("watch()")
+        )
+        assertTrue(
+            "a changed address does not make the record be said again",
+            beacon.substringAfter("private fun moved(").contains("again()")
+        )
+        // Registering delivers the current network. Read as a move, it would withdraw and re-say
+        // the record the instant it was taken, which is the one moment a rename would land.
+        assertTrue(
+            "the first reading of the network is treated as a move",
+            beacon.substringAfter("private fun moved(")
+                .contains("if (before == null || !before.movedTo(now)) return")
+        )
+        // Two watchers calling this on one event re-register a name while its own withdrawal is
+        // still in flight, and the platform answers that by renaming it.
+        assertFalse(
+            "the session says the record again as well, so a network change says it twice",
+            source("src/main/java/com/soundmesh/session/SessionService.kt").contains("readvertise()")
+        )
+    }
+
+    /**
+     * A line that is open and carrying nothing is noticed, and dialled again.
+     *
+     * Holding a socket open says nothing at either end. One whose far end left the network is
+     * closed by nobody: the read parks for ever, writes wait in the kernel rather than failing,
+     * and the flag that says "connected" goes on saying it. Hung off that flag, the clock that
+     * sends this handset looking for its host never started in the one case it exists for.
+     */
+    @Test
+    fun aLineThatCarriesNothingIsNotMistakenForAWorkingOne() {
+        val standby = source("src/main/java/com/soundmesh/product/StandbyService.kt")
+        assertTrue(
+            "the down clock is hung off the socket flag, which a dead line keeps true",
+            standby.contains("private fun carrying(): Boolean = line?.connected == true && missed == 0")
+        )
+        assertTrue(
+            "the clock is started from something other than whether the line is carrying",
+            standby.contains("if (carrying()) downSince = 0L else if (downSince == 0L) downSince = now")
+        )
+        // A look can only fix a host that moved. The other half is the host that did not move and
+        // the socket that died anyway - the network changed and changed back - where the address
+        // in the file is right and nothing will ever close the line holding it.
+        assertTrue(
+            "a dead line to an unchanged address is never dropped, so it is never re-dialled",
+            standby.contains("if (pointed) line?.dialAgain()")
+        )
+    }
+
+    /**
      * A handset told to be the host checks first, and gives way rather than making a second room.
      *
      * Not once it is playing. By then it has a room, and the handset that should give way is the
@@ -131,6 +220,59 @@ class FindingEachOtherTest {
         assertTrue(
             "the person is not told why the screen went back",
             check.contains("R.string.role_host_taken")
+        )
+    }
+
+    /**
+     * And it asks the handset, not the record, and only where the role is taken.
+     *
+     * Two faults, one screen, both reported 2026-09-19 as "两台都点了当主机，来回按几次之后，当主机
+     * 的那台还是会退回选角色界面".
+     *
+     * The first is when it asks. Running on every resume turns "this handset may not become the
+     * second host" into "whichever handset last came back to this screen loses" - so a settled
+     * host that walks back into this screen steps down for the sink it is serving.
+     *
+     * The second is what it asks. A discovered record is not a host: giving the role back is a
+     * request to a platform daemon, the record goes on being answered for seconds afterwards, and
+     * other devices' caches hold it longer still. Pressing the two roles back and forth is exactly
+     * how somebody fills the network with those, and stepping down for one leaves a room with no
+     * host at all - with the ghost gone by the time anybody looks for the reason.
+     */
+    @Test
+    fun aSettledHostIsNotUnseatedByAResumeOrByAGhost() {
+        val role = home.substringAfter("private fun takeUpTheRoom()")
+        assertTrue(
+            "the check runs on every resume, so coming back to this screen can unseat the host",
+            role.contains("val changed = roleTakenUp != state.role") &&
+                role.contains("if (changed) refuseToBeTheSecondHost()")
+        )
+        val check = home.substringAfter("private fun refuseToBeTheSecondHost()")
+        assertTrue(
+            "a record answering is taken for a handset that is still a host",
+            check.contains("if (!RoomCommands.stillServing(other))")
+        )
+        // The port is bound by serve() and closed by stop(), which is to say it is open exactly
+        // while that handset is a host. Nothing else on this network answers on it.
+        assertTrue(
+            "the liveness question is asked of something other than the host's own port",
+            source("src/main/java/com/soundmesh/probe/sync/RoomCommandChannel.kt")
+                .contains("it.connect(InetSocketAddress(address, COMMAND_PORT), timeoutMillis)")
+        )
+    }
+
+    /**
+     * And the sentence lands where the person was sent, which is the role picker.
+     *
+     * It existed before 2026-09-19 and was drawn in the song block - part of the screen this
+     * handset had just been thrown out of. So the app undid the press and said nothing at all.
+     */
+    @Test
+    fun theRefusalIsSaidOnTheScreenItSendsSomebodyTo() {
+        assertTrue(
+            "the role picker says nothing about why it is up",
+            source("src/main/java/com/soundmesh/product/WelcomeScreen.kt")
+                .contains("state.problem?.let { Note(stringResource(it), Tone.WRONG) }")
         )
     }
 

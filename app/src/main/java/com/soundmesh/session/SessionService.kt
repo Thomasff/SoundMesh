@@ -40,6 +40,7 @@ import com.soundmesh.probe.sync.StoredOutputLead
 import com.soundmesh.probe.sync.SyncActivity
 import com.soundmesh.probe.sync.SyncProjectionService
 import com.soundmesh.probe.sync.SyncRenderer
+import com.soundmesh.product.inChosenLanguage
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 
@@ -57,6 +58,12 @@ import java.util.concurrent.atomic.AtomicReference
  * so that whatever comes back lands on the shared timeline instead of re-converging in silence.
  */
 class SessionService : Service() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private var audioFocusRequest: AudioFocusRequest? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     /**
@@ -489,17 +496,6 @@ class SessionService : Service() {
         HostBeacon.hold(this, HostIdentity(filesDir).current(), HostBeacon.Holder.SESSION)
     }
 
-    /**
-     * The record names an address the handset no longer has. Withdraw it and say the new one.
-     *
-     * Said for whoever else is holding it too, because what changed is the handset's address and
-     * that is not a fact about any one holder.
-     */
-    private fun readvertise() {
-        if (!holdingBeacon) return
-        HostBeacon.again()
-    }
-
     private fun withdrawAdvertisement() {
         if (!holdingBeacon) return
         holdingBeacon = false
@@ -578,8 +574,12 @@ class SessionService : Service() {
                 val before = seen.getAndSet(now)
                 Log.i(LOG_TAG, "the network reported ${now.addresses.size} addresses, moved=${before?.movedTo(now)}")
                 if (before == null || !before.movedTo(now)) return
+                // The session only. Saying the record again on the new address belongs to the
+                // thing that holds the record - see [HostBeacon.watch] - because the record
+                // outlives every session and a handset standing by as a host has no session at
+                // all. Said from both places it was said twice, and a name re-registered while
+                // its own withdrawal is still in flight is a name the platform renames.
                 session.onNetworkChanged()
-                readvertise()
             }
         }
         runCatching { manager.registerDefaultNetworkCallback(callback) }
@@ -705,7 +705,7 @@ class SessionService : Service() {
             NotificationChannel(CHANNEL_ID, getString(R.string.session_channel_name), NotificationManager.IMPORTANCE_LOW)
         )
         val builder = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.session_notification))
             .setOngoing(true)
@@ -714,6 +714,24 @@ class SessionService : Service() {
         // finds a media session to point at rather than on every build of this notification.
         mediaSession?.let { builder.setStyle(Notification.MediaStyle().setMediaSession(it.sessionToken)) }
         return builder.build()
+    }
+
+    /**
+     * Swiping the app off the recents list ends the session, the same as the stop button does.
+     *
+     * What this service is built to outlive is the system reclaiming memory behind a person's
+     * back; it is not built to outlive the person saying they are done with it. Without this the
+     * two were the same thing: on a P30 the card could be swiped away and the handset would keep
+     * playing with the notification still up, and the only way to stop it was to launch the app
+     * again. Reported 2026-09-18.
+     *
+     * [stopSession] and not stopSelf, because the orderly stop is the point - the report gets
+     * written, audio focus goes back, and the advertisement is withdrawn so nothing on the network
+     * is still being told this handset is here.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopSession()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

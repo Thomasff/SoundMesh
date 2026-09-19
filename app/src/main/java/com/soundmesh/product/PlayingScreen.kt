@@ -80,9 +80,10 @@ fun PlayingScreen(
         CaptureSilenceLine(state)
         StandbyLine(state, actions)
         // Gated on a setting rather than an on-screen expander: this is the one block here that
-        // nobody but a person troubleshooting a room wants to see at all.
+        // nobody but a person troubleshooting a room wants to see at all. No label of its own -
+        // the two panels below carry theirs, and a "细节" heading stacked straight on top of a
+        // "状态" heading is two headings and one list.
         if (showDetails) {
-            Label(R.string.details_show)
             StatePanel(state)
             HealthPanel(state.health)
             Note(stringResource(R.string.home_build, BuildConfig.BUILD_MARK))

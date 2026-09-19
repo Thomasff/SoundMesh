@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -63,6 +64,12 @@ import com.soundmesh.session.cpuHoldOf
  * somebody else's button owes the person holding it.
  */
 class StandbyService : Service() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private val events: EventLog by lazy { EventLog(filesDir) }
     private val handsetVolume by lazy {
@@ -80,6 +87,18 @@ class StandbyService : Service() {
 
     /** When the last look started, so they are spaced rather than run back to back. */
     private var lookedAt = 0L
+
+    /**
+     * When the line to the stored host last carried anything, or 0 while it is carrying now.
+     *
+     * Measured from the line rather than from the last look, because they answer different
+     * questions: how long since anybody looked says whether a look is due, and how long the line
+     * has been down says whether one is worth doing at all. See [lookForAHost].
+     *
+     * Carrying rather than open - see [carrying]. The two are not the same thing and the
+     * difference is exactly the network change this clock is for.
+     */
+    private var downSince = 0L
 
     /** The last volume this handset got up the line, so only a change is worth a frame. */
     private var saidVolume: VolumeReading? = null
@@ -308,7 +327,20 @@ class StandbyService : Service() {
             // On to the main thread: this arrives on the socket thread, and everything it leads to
             // is either a service being asked for or an activity being started.
             handler.post { obey(order) }
-        }.also { it.start() }
+        }.also { dialling ->
+            // The notification carries this handset's colour, and a notification already on a
+            // lock screen does not redraw itself: without this the colour arrives while nobody is
+            // looking and the phone stays grey until something else happens to rebuild it.
+            dialling.onPlaces = {
+                handler.post {
+                    if (line === dialling) runCatching {
+                        getSystemService(NotificationManager::class.java)
+                            .notify(NOTIFICATION_ID, notification())
+                    }
+                }
+            }
+            dialling.start()
+        }
         ACTIVE = this
     }
 
@@ -319,21 +351,44 @@ class StandbyService : Service() {
      * often switched on minutes after the phone that will follow it was set down, and this service
      * is the only thing still running by then.
      *
-     * It stops the moment there is a host on disk and never argues with one. A scanned code, or a
-     * host found on a previous evening, is somebody having said which handset they meant, and no
-     * amount of answering on a network beats that - see [HostSearch].
+     * A handset that has a host is left alone while the line to it is up: a scanned code, or a host
+     * found on a previous evening, is somebody having said which handset they meant, and no amount
+     * of answering on a network beats that - see [HostSearch].
+     *
+     * Once that line has been down for [HostSearch.STALE_AFTER_MILLIS] it looks anyway, and that
+     * is [HostSearch.lookAgain] rather than a fresh search - it is still that handset's host, and
+     * the question is only where it is now. What used to happen instead was nothing at all, for
+     * ever: the stored address is the one thing in the file that expires, and a host moving onto
+     * a hotspot or onto another network left every sink dialling somewhere nobody was, with the
+     * only way out being somebody finding 忘记主机 by hand. Reported 2026-09-19.
      *
      * Off the ticker's thread, because one look holds still for the whole discovery window and the
      * ticker is what this handset says it is alive with.
      */
     private fun lookForAHost() {
-        if (searching || PairedHost(filesDir).read() != null) return
         val now = SystemClock.elapsedRealtime()
+        // On every tick and not only when a look is due. A line that comes back on its own is the
+        // ordinary way this ends, and it has to clear the clock that would otherwise send this
+        // handset looking for a host it is already talking to.
+        if (carrying()) downSince = 0L else if (downSince == 0L) downSince = now
+        if (searching) return
+        val pointed = PairedHost(filesDir).read() != null
+        val downFor = if (downSince == 0L) 0L else now - downSince
+        if (pointed && downFor < HostSearch.STALE_AFTER_MILLIS) return
         if (lookedAt != 0L && now - lookedAt < HostSearch.GAP_MILLIS) return
         lookedAt = now
+        // On the same cadence as the look and for the other half of the same fault. A look can
+        // only fix a host that has moved; a line that is open and carrying nothing is fixed by
+        // dialling again, and nothing else on either end ever closes one. See
+        // [RoomCommandClient.dialAgain] - the case is a network changed and changed back, where
+        // the address in the file is still right and the socket holding it open is dead.
+        if (pointed) line?.dialAgain()
         searching = true
         Thread({
-            val found = runCatching { HostSearch.lookOnce(this, filesDir, HostSearch.WINDOW_MILLIS) }
+            val found = runCatching {
+                if (pointed) HostSearch.lookAgain(this, filesDir, HostSearch.WINDOW_MILLIS)
+                else HostSearch.lookOnce(this, filesDir, HostSearch.WINDOW_MILLIS)
+            }
             searching = false
             // Written down whichever way it went, and the failures are the half worth keeping:
             // "nothing answered" and "something answered on an older build" send somebody to two
@@ -341,6 +396,22 @@ class StandbyService : Service() {
             found.onSuccess { events.write("standby looked for a host: ${it.why}") }
         }, "SoundMeshHostSearch").start()
     }
+
+    /**
+     * Whether the line is not only open but actually carrying.
+     *
+     * [RoomCommandClient.connected] is the socket's answer and it is the wrong question. A socket
+     * whose far end walked out of the network stays open - writes wait in the kernel rather than
+     * failing, and nothing arrives on it to fail either - so that flag reads true for as long as
+     * this handset does not close it, which is for ever. The down clock hung off it, so the case
+     * the clock exists for, a handset or its host changing network, was the one case it never
+     * started in.
+     *
+     * [missed] is what the other half already counts: every couple of seconds this handset says it
+     * is still here, and the count is the number of those in a row that did not leave. Zero and
+     * connected is a line something is moving on. See [sayHereIfDue] and [complain].
+     */
+    private fun carrying(): Boolean = line?.connected == true && missed == 0
 
     /** What this handset would say on connecting, read fresh because all of it can change. */
     private fun announcement(): StandbyAnnounce? {
@@ -602,6 +673,16 @@ class StandbyService : Service() {
     }
 
     /**
+     * Which colour this handset holds in the room it is standing in, or null before it is told.
+     *
+     * Read out of the standing line rather than kept, so there is one copy of an answer only the
+     * host can give. Null covers three cases that all draw the same way - no line, a host too old
+     * to send a table, and a table that has not arrived yet - and all three are "no colour", which
+     * is a thing the drawing already knows how to be.
+     */
+    fun place(): Int? = dialled?.selfId?.let { line?.places?.get(it) }
+
+    /**
      * Puts the state of the line on the notification, which is the only place a person who is not
      * holding a cable can read it.
      *
@@ -625,47 +706,18 @@ class StandbyService : Service() {
                 NotificationManager.IMPORTANCE_LOW
             )
         )
-        // Four numbers rather than a word, and each one rules something out. The count says
-        // whether this handset is trying and failing or not trying at all. The gap says whether
-        // the loop was away, and for how long. The standing time says whether this process is
-        // the one that started, or one the ROM restarted underneath it. The hold says whether
-        // the arm under test ever ran. On 2026-09-14 all four were a single fixed string.
-        val locks = getString(if (heldAwake) R.string.standby_awake_held else R.string.standby_awake_refused) +
-            "、" + getString(if (heldRadio) R.string.standby_radio_held else R.string.standby_radio_refused) +
-            "、" + getString(if (exempt()) R.string.standby_exempt else R.string.standby_not_exempt)
-        val trouble = lastTrouble?.let { getString(R.string.standby_trouble, it) }
-            ?: getString(R.string.standby_no_trouble)
-        // The same readings that used to be the whole of the collapsed line, word for word - see
-        // dot() and the title below for what took their place there. Nobody reads these; the
-        // evening they are wanted, not one of them can be missing, so they move to BigText rather
-        // than being dropped.
-        val readings =
-            if (connected) getString(
-                R.string.standby_notification,
-                worst.longestGapMillis / 1000L,
-                worst.longestAwayMillis / 1000L,
-                (SystemClock.elapsedRealtime() - standingSince) / 1000L,
-                locks,
-                trouble
-            )
-            else getString(
-                R.string.standby_notification_down,
-                missed,
-                worst.longestGapMillis / 1000L,
-                worst.longestAwayMillis / 1000L,
-                (SystemClock.elapsedRealtime() - standingSince) / 1000L,
-                locks,
-                trouble
-            )
-        // Read off the session rather than kept locally: a sink has no colour of its own until
-        // the host's spatial field has assigned it one - see SinkSession.badgePlace - which is
-        // only true once a session is actually up. Standing by with nothing playing yet is the
-        // ordinary case, not a fault, and the grey fallback below is what that ordinary case draws.
-        val place = SessionService.ACTIVE?.badgePlace()
+        // The session's answer where there is a session, and the standing line's where there is
+        // not. Until 2026-09-18 only the first existed, so standing by - which is where a room
+        // spends nearly all of its time - drew the grey fallback, and four handsets waiting to be
+        // told to play were four identical grey notifications.
+        val place = SessionService.ACTIVE?.badgePlace() ?: place()
         val colour = if (place != null) BadgePalette.colourOf(place, ComposeColor.Gray).toArgb() else AndroidColor.GRAY
         val titleRes = if (connected) R.string.standby_lock_title else R.string.standby_lock_title_down
         val builder = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+            // The app's own mark. It was a stock Android speaker until 2026-09-19, which in a
+            // shade full of other apps' icons is the one thing about this notification that does
+            // not say which app it came from.
+            .setSmallIcon(R.drawable.ic_notification)
             // The handset's own colour, which on a lock screen is a block of colour beside the
             // text - readable from across a room, which is where these phones are.
             .setColor(colour)
@@ -679,15 +731,59 @@ class StandbyService : Service() {
             .setContentText(
                 measuring ?: getString(R.string.standby_lock_text, handsetVolume.read(capturing = false).percent)
             )
-            // Every reading is still here, one pull away. Nobody reads them; the evening they
-            // are wanted, not one of them can be missing.
-            .setStyle(Notification.BigTextStyle().bigText(readings))
             .setOngoing(true)
+        // Only for somebody who asked for the internals. What is in here is four numbers and
+        // three locks, each of which rules something out for whoever is debugging a room, and
+        // none of which means anything to the person whose phone this is - they pulled the
+        // notification down to see whether it was following the host, and got a paragraph about
+        // wake locks and battery exemptions. Reported 2026-09-19.
+        //
+        // Hidden rather than shortened. The evening these are wanted, not one of them can be
+        // missing, and a version of the line with the boring half taken out is exactly the
+        // version that turns out to be missing the number that mattered.
+        if (wantsDetails(filesDir)) {
+            builder.setStyle(Notification.BigTextStyle().bigText(readings()))
+        }
         // Colorized only where the colour is real: a band drawn from the grey fallback would read
         // to somebody who has never seen this handset any other way as its actual colour, which is
         // worse than a plain notification.
         if (place != null) builder.setColorized(true)
         return builder.build()
+    }
+
+    /**
+     * The line of readings behind the diagnostics switch, built only when somebody is shown it.
+     *
+     * Four numbers rather than a word, and each one rules something out. The count says whether
+     * this handset is trying and failing or not trying at all. The gap says whether the loop was
+     * away, and for how long. The standing time says whether this process is the one that started,
+     * or one the ROM restarted underneath it. The hold says whether the arm under test ever ran.
+     * On 2026-09-14 all four were a single fixed string.
+     */
+    private fun readings(): String {
+        val locks = getString(if (heldAwake) R.string.standby_awake_held else R.string.standby_awake_refused) +
+            "、" + getString(if (heldRadio) R.string.standby_radio_held else R.string.standby_radio_refused) +
+            "、" + getString(if (exempt()) R.string.standby_exempt else R.string.standby_not_exempt)
+        val trouble = lastTrouble?.let { getString(R.string.standby_trouble, it) }
+            ?: getString(R.string.standby_no_trouble)
+        val standing = (SystemClock.elapsedRealtime() - standingSince) / 1000L
+        return if (connected) getString(
+            R.string.standby_notification,
+            worst.longestGapMillis / 1000L,
+            worst.longestAwayMillis / 1000L,
+            standing,
+            locks,
+            trouble
+        )
+        else getString(
+            R.string.standby_notification_down,
+            missed,
+            worst.longestGapMillis / 1000L,
+            worst.longestAwayMillis / 1000L,
+            standing,
+            locks,
+            trouble
+        )
     }
 
     /**
@@ -746,6 +842,21 @@ class StandbyService : Service() {
         // Cleared with the socket, not kept: the next connection says it on the way in, and a
         // remembered value would make that frame look like a repeat and hold it back.
         saidExempt = null
+    }
+
+    /**
+     * Swiping the app off the recents list stops standing by.
+     *
+     * This is the service the START_STICKY above is for, and the two answer different questions.
+     * Sticky is about the system killing a handset that still wants to follow the host; a removed
+     * task is a person saying they are done - and a handset that kept standing by through it would
+     * hold the microphone, hold the CPU, and start playing the next time somebody else pressed
+     * play. stopSelf rather than a flag, because an explicit stop is also what keeps sticky from
+     * bringing it back.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

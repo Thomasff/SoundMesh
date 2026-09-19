@@ -1,5 +1,6 @@
 package com.soundmesh.product
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -497,7 +498,7 @@ fun HomeScreen(
             HomeRoute.PLAYING -> when (state.role) {
                 // showDetails is HomeActivity state, not read from Preferences here - a read
                 // in the composable would not repaint the instant the switch on the settings
-                // screen is flipped. See the plan's "另外两条".
+                // screen is flipped.
                 Role.HOST, Role.SINK -> PlayingScreen(state, actions, showDetails, modifier = Modifier.weight(1f))
                 Role.NONE -> Unit
             }
@@ -1023,9 +1024,20 @@ private fun clockOf(micros: Long): String {
     return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 }
 
+/**
+ * What the room is doing, and the counters behind it.
+ *
+ * A label over hairline rows, like every other list on the playing stage. It was a Material card
+ * until 2026-09-18, which is what the rest of the screen stopped being on 2026-09-15 - see
+ * Look.kt - so the one block at the foot of the stage read as another app's panel bolted on.
+ *
+ * The state itself keeps a line of its own rather than becoming the label's trailing pill: a
+ * failure says why it failed, and that sentence is longer than any pill should be.
+ */
 @Composable
 internal fun StatePanel(state: HomeState) {
-    Section(R.string.state_title) {
+    Label(R.string.state_title)
+    Line(first = true) {
         Text(
             if (!state.running && state.failure != null) {
                 StateWording.failure(state.failure)
@@ -1034,43 +1046,50 @@ internal fun StatePanel(state: HomeState) {
             } else {
                 stringResource(StateWording.of(state.sessionState))
             },
-            style = MaterialTheme.typography.titleMedium
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
         )
-        if (state.calledHere.isNotEmpty()) {
-            Reading(stringResource(R.string.state_called_here), state.calledHere)
-        }
-        for (counter in state.counters) Reading(stringResource(counter.label), counter.value)
     }
+    if (state.calledHere.isNotEmpty()) {
+        Reading(R.string.state_called_here, state.calledHere)
+    }
+    for (counter in state.counters) Reading(counter.label, counter.value)
 }
 
 @Composable
 internal fun HealthPanel(health: Health) {
     val unknown = stringResource(R.string.health_unknown)
-    Section(R.string.health_title) {
-        Reading(
-            stringResource(R.string.health_battery),
-            health.batteryPercent?.let { "$it%" } ?: unknown
-        )
-        Reading(
-            stringResource(R.string.health_charging),
-            health.charging?.let { if (it) "✓" else "—" } ?: unknown
-        )
-        Reading(
-            stringResource(R.string.health_temperature),
-            health.celsius?.let { String.format(null as java.util.Locale?, "%.1f °C", it) } ?: unknown
-        )
-        Reading(
-            stringResource(R.string.health_thermal),
-            health.thermalStatus?.let { stringResource(StateWording.thermal(it)) } ?: unknown
-        )
-    }
+    Label(R.string.health_title)
+    Reading(
+        R.string.health_battery,
+        health.batteryPercent?.let { "$it%" } ?: unknown,
+        first = true
+    )
+    Reading(
+        R.string.health_charging,
+        health.charging?.let { if (it) "✓" else "—" } ?: unknown
+    )
+    Reading(
+        R.string.health_temperature,
+        health.celsius?.let { String.format(null as java.util.Locale?, "%.1f °C", it) } ?: unknown
+    )
+    Reading(
+        R.string.health_thermal,
+        health.thermalStatus?.let { stringResource(StateWording.thermal(it)) } ?: unknown
+    )
 }
 
-/** One label and one number, the shape every readable line on this screen has. */
+/**
+ * One name and one number, the shape every reading on this screen has.
+ *
+ * The name is quiet and the number is not, because these rows are read by scanning the right-hand
+ * column: a person looking here already knows which counters they came for.
+ */
 @Composable
-private fun Reading(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+private fun Reading(@StringRes label: Int, value: String, first: Boolean = false) {
+    Line(first = first) {
+        LineName(stringResource(label), quiet = true)
         Text(value, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.End)
     }
 }

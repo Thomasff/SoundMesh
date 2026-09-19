@@ -15,7 +15,7 @@ package com.soundmesh.core
  * arrival, so in every recording `firstIndex` is the sink's chirp and `secondIndex` is the host's.
  * Reading it the other way round on 2026-09-08 filed a handset's whole emission behaviour against
  * the other handset, and the mistake survived a day because both readings are equally plausible
- * looking numbers. Section 21 of docs/feasibility-results/on-device-calibration.md.
+ * looking numbers.
  *
  * Both recordings hold both chirps, so each emission is read twice, independently. That is the
  * check the analysis was missing: a real emission event is seen by both microphones, and the two

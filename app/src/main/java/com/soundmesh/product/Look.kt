@@ -1,5 +1,11 @@
 package com.soundmesh.product
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,13 +32,25 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -189,6 +207,20 @@ private fun toneColour(tone: Tone): Color {
     }
 }
 
+/**
+ * The colour of something that opens a web page, which is the one blue this app has.
+ *
+ * Not a [Tone], because the tones are readings - what a number is saying about the room - and this
+ * says nothing about the room at all. It is here rather than at its one call site so that the
+ * rationing [Tone] explains stays written in one file: at this saturation it cannot be mistaken
+ * for a handset's badge hue, and it only ever appears on the settings screen, where no badge is.
+ */
+@Composable
+fun linkColour(): Color {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return if (dark) Color(0xFF7F9CC4) else Color(0xFF2F5C8C)
+}
+
 /** A small piece of state at the end of a line. Reads, never taps. */
 @Composable
 fun Tag(text: String, tone: Tone = Tone.QUIET) {
@@ -262,9 +294,76 @@ fun Framed(strong: Boolean = false, content: @Composable ColumnScope.() -> Unit)
 
 /** The line of small grey text under a control that says what it is for. */
 @Composable
-fun Note(text: String, tone: Tone = Tone.QUIET) {
-    Text(text, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp, color = toneColour(tone))
+fun Note(text: String, tone: Tone = Tone.QUIET, waiting: Boolean = false) {
+    val colour = toneColour(tone)
+    Text(
+        text,
+        modifier = if (waiting) Modifier.sweeping(colour) else Modifier,
+        style = MaterialTheme.typography.bodySmall,
+        lineHeight = 17.sp,
+        color = colour
+    )
 }
+
+/**
+ * A slow band of light drawn across whatever this is on, once every [SWEEP_MILLIS].
+ *
+ * For one situation only: a wait with nothing to look at and nothing to hear. This app spends
+ * whole minutes on those - a handset waiting for another to dial in, a round that has stopped
+ * recording and is correlating - and on every one of them the screen is a paragraph that does not
+ * move. A frozen screen and a hung app are the same picture, and somebody who reads it as the
+ * second one picks the phone up, which is the one thing a round cannot survive. This is the
+ * cheapest honest way to say the app is still running: it carries no progress and claims none.
+ *
+ * Not while chirps are sounding. The room can hear that something is happening, and a screen that
+ * shimmers through every phase says nothing by saying it everywhere.
+ *
+ * [colour] is the colour the text is otherwise drawn in, because the band has to return to it at
+ * both ends - a sweep that ends on some other colour is a text that changes colour every three
+ * seconds. Drawn into the glyphs rather than over them: the light is the text, not a bar
+ * crossing it.
+ */
+@Composable
+fun Modifier.sweeping(colour: Color): Modifier {
+    val lit = MaterialTheme.colorScheme.onSurface
+    var width by remember { mutableFloatStateOf(0f) }
+    val at by rememberInfiniteTransition(label = "waiting").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(SWEEP_MILLIS, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "sweep"
+    )
+    // The band starts wholly off one edge and ends wholly off the other, so the text sits at its
+    // own colour for most of a pass rather than looking permanently half lit.
+    val band = width * SWEEP_BAND
+    val head = -band + at * (width + 2f * band)
+    return this
+        .onSizeChanged { width = it.width.toFloat() }
+        // Its own layer, or SrcIn would take the whole screen behind the text as what it draws
+        // into. What is masked has to be only these glyphs.
+        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .drawWithContent {
+            drawContent()
+            if (width <= 0f) return@drawWithContent
+            drawRect(
+                brush = Brush.linearGradient(
+                    colorStops = arrayOf(0f to colour, 0.5f to lit, 1f to colour),
+                    start = Offset(head - band, 0f),
+                    end = Offset(head + band, 0f)
+                ),
+                blendMode = BlendMode.SrcIn
+            )
+        }
+}
+
+/** One pass of the band, end to end. Asked for at about three seconds, 2026-09-19. */
+private const val SWEEP_MILLIS = 3000
+
+/** How wide the band is as a share of the text, either side of its centre. */
+private const val SWEEP_BAND = 0.35f
 
 /** A name inside a [Framed] box. A name, not a heading - nothing here is a section. */
 @Composable
@@ -364,6 +463,14 @@ data class Segment(val text: String, val chosen: Boolean, val onClick: () -> Uni
  * width inside one border read as one question with N answers, which is what this is.
  *
  * The filled cell is the state, not a memory of the last tap - see PlayingScreen's SourcePicker.
+ *
+ * A cell holds two lines, and every cell in the row is as tall as the tallest of them. Equal width
+ * is the whole point of the control and cannot bend to the longest word, so something has to: until
+ * 2026-09-20 that was the word itself, cut off with an ellipsis. One line was enough while every
+ * label was four or five Chinese characters, and "This phone's audio" and "Voice and backing" both
+ * lost their ends the day there was an English build. The wrap costs the row a few points of height
+ * in one language and nothing in the other, and it does not have to be re-checked per language or
+ * per font scale, which is what a width fitted to today's longest label would.
  */
 @Composable
 fun Segmented(parts: List<Segment>, modifier: Modifier = Modifier) {
@@ -381,12 +488,19 @@ fun Segmented(parts: List<Segment>, modifier: Modifier = Modifier) {
             Box(
                 modifier = Modifier
                     .weight(1f)
+                    // As tall as the tallest cell, not as tall as its own word. Without this the
+                    // fill behind the chosen cell is the height of the line inside it, so the one
+                    // word that fits on one line sits in a short block beside a taller one - which
+                    // only became visible on 2026-09-20, when a cell was first allowed two lines.
+                    .fillMaxHeight()
                     .background(
                         if (part.chosen) MaterialTheme.colorScheme.onSurface
                         else MaterialTheme.colorScheme.surface
                     )
                     .clickable(onClick = part.onClick)
-                    .padding(vertical = 10.dp, horizontal = 2.dp),
+                    // Room at the sides, now that a word can reach them: two points was slack
+                    // nobody saw while the longest label filled half its cell.
+                    .padding(vertical = 10.dp, horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -395,7 +509,8 @@ fun Segmented(parts: List<Segment>, modifier: Modifier = Modifier) {
                     fontWeight = if (part.chosen) FontWeight.Medium else FontWeight.Normal,
                     color = if (part.chosen) MaterialTheme.colorScheme.surface
                     else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }

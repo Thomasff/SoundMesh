@@ -154,6 +154,23 @@ class HandsetVolume(private val streams: StreamVolumes, directory: File) {
         return reading(stream)
     }
 
+    /**
+     * Sets both of the outputs this app ever plays on to [percent], and says what they are now.
+     *
+     * For the one measurement that uses both at once: the output-lead calibration plays a chirp
+     * on the ordinary path and another on the path a capturing host is heard on, and reads the
+     * difference between the two arrivals. [set] is no use there - it silences one of the two,
+     * which is the right thing everywhere else it is called from and exactly wrong here.
+     *
+     * Both go through [write], so [restore] puts both back to whatever they were before this app
+     * first touched them, the same as every other way in here.
+     */
+    fun setBoth(percent: Int): List<VolumeReading> =
+        listOf(AudioManager.STREAM_MUSIC, CAPTURING_HOST_STREAM).map { stream ->
+            write(stream, indexFor(percent, streams.max(stream)))
+            reading(stream)
+        }
+
     private fun putMediaBack() {
         val was = before.taken()[MEDIA] ?: return
         streams.set(AudioManager.STREAM_MUSIC, was)

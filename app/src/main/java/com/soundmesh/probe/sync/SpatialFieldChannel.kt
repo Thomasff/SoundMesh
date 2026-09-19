@@ -91,7 +91,16 @@ internal object SpatialFrame {
 class SpatialFieldServer(
     private val port: Int,
     /** This handset's own name, so the room it hands out colours to includes the host. */
-    private val selfId: String? = null
+    private val selfId: String? = null,
+    /**
+     * Colours the standing channel has already settled for this room - see [RoomCommands.places].
+     *
+     * Taken up rather than decided again, so that nothing changes colour at the instant play is
+     * pressed. Both tables start from the same handsets' preferences and would usually agree
+     * anyway; "usually" is the problem, because the one time they would not is a room that lost
+     * and regained a handset, which is precisely when somebody is watching the colours.
+     */
+    seed: Map<String, Int> = emptyMap()
 ) {
     private class Client(val socket: Socket, val stream: OutputStream, val peerId: String) {
         val rules = ArrayBlockingQueue<ByteArray>(1)
@@ -141,7 +150,7 @@ class SpatialFieldServer(
      *
      * Guarded by the clients lock, which is also what the roster it is derived from is guarded by.
      */
-    private val colours = RoomColours()
+    private val colours = RoomColours().also { it.adopt(seed) }
     @Volatile private var heldPlaces: Map<String, Int> = emptyMap()
 
     fun start() {

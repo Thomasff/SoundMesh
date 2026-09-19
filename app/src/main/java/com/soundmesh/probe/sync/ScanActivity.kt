@@ -1,6 +1,7 @@
 package com.soundmesh.probe.sync
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
@@ -24,6 +25,7 @@ import com.soundmesh.product.Preferences
 import com.soundmesh.product.ScanSay
 import com.soundmesh.product.ScanScreen
 import com.soundmesh.product.SoundMeshTheme
+import com.soundmesh.product.inChosenLanguage
 import com.soundmesh.product.themeChoiceOf
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -40,6 +42,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * screen is any use at all; the code names a host, it does not carry a way onto the WiFi.
  */
 class ScanActivity : ComponentActivity() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     /**
      * Held by this activity rather than made by the composition, because the camera is bound to
      * it: a view the screen could replace on a recomposition would leave the camera drawing into

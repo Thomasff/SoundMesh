@@ -2,8 +2,10 @@ package com.soundmesh.probe.sync
 
 import android.content.Context
 import com.soundmesh.core.DiscoveryFailure
+import com.soundmesh.core.HostRepoint
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.PeerAdvertisement
+import com.soundmesh.core.Repointing
 import java.io.File
 
 /**
@@ -36,6 +38,16 @@ object HostSearch {
         if (paired.read() != null) return Found(null, ALREADY_PAIRED)
         val outcome = PeerDiscovery(context).discover(windowMillis)
         val peer = outcome.peer ?: return Found(null, wordFor(outcome.failure))
+        // This handset's own record, if that is what answered. Giving the role back is a request
+        // to a platform daemon rather than an act: the record goes on being answered for seconds
+        // after somebody picks 当从机, and other devices' caches hold it longer still. One record
+        // on the network is the shape choose() accepts, so without this the phone stores itself as
+        // its own host and dials a port nothing is serving - for ever, because a stored host is
+        // never replaced by a search. Two records, its own and a real host's, is already refused
+        // as ambiguous and found on the next window.
+        if (PeerAdvertisement.hostIdOf(peer) == HostIdentity(directory).current()) {
+            return Found(null, ONLY_ITS_OWN_RECORD)
+        }
         val code = PairingCode(
             hostId = PeerAdvertisement.hostIdOf(peer),
             address = peer.hostAddress,
@@ -44,6 +56,40 @@ object HostSearch {
         if (paired.read() != null) return Found(null, ALREADY_PAIRED)
         paired.write(code)
         return Found(code, "found a host at ${code.address}")
+    }
+
+    /**
+     * Looks on behalf of a handset that has a host and cannot reach it.
+     *
+     * The counterpart to [lookOnce] and the opposite rule: that one fills an empty slot and never
+     * argues with a full one, this one re-reads a full slot that has stopped working. Both are
+     * needed because a stored pairing carries an identity and two facts that expire with it - the
+     * address and the port are where that handset was standing when somebody scanned it, and a
+     * host that joins another network, switches its hotspot on or takes a new lease has moved
+     * without having changed. Until this existed the sink dialled the old address for ever, and
+     * the only way out was somebody finding 忘记主机 by hand.
+     *
+     * The decision itself is [HostRepoint], pure and tested away from any network. What is here
+     * is the part that needs one: spend a window, then write the answer down unless a scan landed
+     * inside it. The re-read is the same guard [lookOnce] carries, for the same reason - a person
+     * holding a phone up to a screen is the one thing that must not be overwritten.
+     */
+    fun lookAgain(context: Context, directory: File, windowMillis: Int): Found {
+        val paired = PairedHost(directory)
+        val stored = paired.read() ?: return Found(null, NOT_POINTED_AT_ANYBODY)
+        val outcome = PeerDiscovery(context).discover(windowMillis)
+        // Its own record taken out for [lookOnce]'s reason, and here it would do the other kind of
+        // damage: a handset counts as "one other host" while its own stale record is still being
+        // answered, which is the one shape that moves a sink onto a different handset.
+        val mine = HostIdentity(directory).current()
+        val what = HostRepoint.of(
+            stored,
+            outcome.hosts.filter { PeerAdvertisement.hostIdOf(it) != mine }
+        )
+        val host = what.host ?: return Found(null, wordFor(what.verdict, stored))
+        if (paired.read() != stored) return Found(null, SCANNED_MEANWHILE)
+        paired.write(host)
+        return Found(host, wordFor(what.verdict, host))
     }
 
     /**
@@ -83,7 +129,26 @@ object HostSearch {
         null -> "a host answered but could not be read"
     }
 
+    /** What one re-look came to, in the words the timeline needs rather than a verdict's name. */
+    private fun wordFor(verdict: Repointing, host: PairingCode): String = when (verdict) {
+        Repointing.STILL_THERE ->
+            "the host is still at ${host.address}, so whatever is wrong is not the address"
+        Repointing.MOVED -> "the same host has moved to ${host.address}, following it"
+        Repointing.REPLACED ->
+            "the stored host is not on this network and one other is, following ${host.address}"
+        Repointing.NOBODY -> "nothing answered, so this handset stays pointed at ${host.address}"
+        Repointing.TOO_MANY ->
+            "more than one other host answered, so this handset stays pointed at ${host.address}"
+    }
+
     private const val ALREADY_PAIRED = "already pointed at a host"
+
+    private const val ONLY_ITS_OWN_RECORD =
+        "the only host that answered was this handset's own stale record, so nothing was stored"
+
+    private const val NOT_POINTED_AT_ANYBODY = "not pointed at anybody, so there was nothing to re-check"
+
+    private const val SCANNED_MEANWHILE = "a code was scanned while this was looking, so nothing was written"
 
     /**
      * How long one look lasts, and how long the gap between two of them is.
@@ -101,4 +166,14 @@ object HostSearch {
 
     /** @see WINDOW_MILLIS */
     const val GAP_MILLIS = 10_000L
+
+    /**
+     * How long the line to a stored host has to have been down before [lookAgain] is worth running.
+     *
+     * Long enough that the command client's own reconnecting is what fixes an ordinary drop - a
+     * host rebooting, a phone's radio coming back - because that costs nothing and this costs a
+     * multicast window every fifteen seconds. Short enough that somebody who has just turned the
+     * host's hotspot on is not left watching a phone that says 没连上 with nothing happening.
+     */
+    const val STALE_AFTER_MILLIS = 20_000L
 }

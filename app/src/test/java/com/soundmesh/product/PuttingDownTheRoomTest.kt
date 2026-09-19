@@ -119,10 +119,15 @@ class PuttingDownTheRoomTest {
             "a handset that becomes the host goes on pointing at the last one it scanned",
             host.contains("PairedHost(filesDir).forget()")
         )
+        // What makes the line above load bearing: the standby search does not overwrite a stored
+        // host of its own accord. It used to skip looking entirely while one was stored; since
+        // 2026-09-19 it looks again once the line to that host has been down long enough to say
+        // the host has moved, which is a re-point and not a fresh search - so a handset that
+        // became the host still has to let go of its own pairing by hand.
         assertTrue(
             "the standby service would look for a host anyway, so this would not matter",
             source("src/main/java/com/soundmesh/product/StandbyService.kt")
-                .contains("if (searching || PairedHost(filesDir).read() != null) return")
+                .contains("if (pointed && downFor < HostSearch.STALE_AFTER_MILLIS) return")
         )
     }
 

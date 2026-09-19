@@ -54,3 +54,28 @@ class Preferences(private val dir: File) {
         private const val FILE_NAME = "preferences"
     }
 }
+
+/**
+ * Whether somebody has asked this handset to show its internals.
+ *
+ * The same switch the settings screen writes, read from the places that are not a screen and have
+ * no [Preferences] of their own to hand. One reader draws counters on the home screen; the two
+ * below it here are about what a handset does rather than what it draws, and both are things a
+ * person who never turned this on has no way to use and no reason to carry.
+ */
+internal fun wantsDetails(filesDir: File): Boolean =
+    Preferences(filesDir).read("details") == "on"
+
+/**
+ * Whether this handset keeps the audio a calibration recorded, once the analysis has read it.
+ *
+ * Tied to the diagnostics switch because that switch is how somebody says they want the
+ * internals, and a recording is the most internal thing a calibration produces: a few megabytes
+ * per case, readable only over adb, and the only evidence left on the handset if a calibration
+ * lands on a number that cannot be right. Somebody who never turned it on has no way to open
+ * them and no reason to carry them.
+ *
+ * The harness is not on this path. It drives SyncActivity with its own case ids and its own
+ * CalibrationRunner, and it exports the audio itself, so what it records is untouched by this.
+ */
+internal fun keepsRecordings(filesDir: File): Boolean = wantsDetails(filesDir)

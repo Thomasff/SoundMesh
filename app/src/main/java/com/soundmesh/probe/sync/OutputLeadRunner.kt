@@ -79,10 +79,10 @@ class OutputLeadRunner(
      * the difference of two acquisitions of the same path, centred on zero, and its scatter is
      * the size of one acquisition's emission step.
      *
-     * That is the quantity roadmap item 7 is after. The pair's run-level bias moves 0.389 ms
+     * That is the quantity this measurement is after. The pair's run-level bias moves 0.389 ms
      * between runs after the per-chirp jitter is accounted for, and nothing recorded in a paired
      * run can say which handset's emission moved - the four arrivals determine the difference of
-     * the two emissions and never either one (section 23). This measures one handset's own step
+     * the two emissions and never either one. This measures one handset's own step
      * directly, out of one recording, with no second device, no network and no clock: the
      * recording's own opening instant is common to both passes and cancels in the subtraction,
      * which is this class's whole premise already.
@@ -102,7 +102,38 @@ class OutputLeadRunner(
      * near twice its own size. That is O65 -> O66 done on one handset, and it is the only check on
      * this number available without pairing the two phones the other way round.
      */
-    private val appliedLeadNanos: Long = 0L
+    private val appliedLeadNanos: Long = 0L,
+    /**
+     * Called once, on the running thread, when the chirping is over and the correlating begins.
+     *
+     * For the screen, which has nothing else to go on: every word it shows during a run says
+     * "stay quiet, do not touch it", and the last several seconds of a run are silent arithmetic
+     * during which none of that is true and nothing on screen moves. A person reads that as a
+     * hang. Defaulted to nothing so the harness runs that have no screen say nothing about it.
+     */
+    private val onAnalysing: () -> Unit = {},
+    /**
+     * Whether the recording stays on the handset once the analysis has read it.
+     *
+     * Defaulted to keeping it, because that is what every run did before this existed and a
+     * default that quietly destroys the only evidence a run leaves is the wrong way round. The
+     * product passes false for an ordinary listener, whose phone otherwise carries a few
+     * megabytes of audio per case that nothing on it will ever open.
+     */
+    private val keepsRecording: Boolean = true,
+    /**
+     * Whether somebody has called this run off since it started.
+     *
+     * Asked wherever this run stands still - between passes, through the warm-up's pacing, and
+     * inside the recording - because the one thing a stop button has to do is stop the noise,
+     * and this run is a minute and a half of it in somebody's quiet room.
+     *
+     * A called-off run is refused rather than analysed. The recording left on disk holds part of
+     * a schedule, and part of a schedule correlated against the whole of one gives a number
+     * rather than a measurement: the arithmetic would run, the screen would show a result, and
+     * nothing anywhere would say it came from a run that was stopped halfway.
+     */
+    private val calledOff: () -> Boolean = { false }
 ) {
     private val tone = TonePcmSource()
 
@@ -135,18 +166,28 @@ class OutputLeadRunner(
         awaitHostInstant(passes.first().startHostNanos - RECORD_LEAD_NANOS)
         val recordSeconds = secondsUntil(lastEnd + RECORD_TAIL_NANOS)
         val recording = Thread({
-            runCatching { calibration.record(recordSeconds) }
+            runCatching { calibration.record(recordSeconds, calledOff) }
                 .onFailure { recordingFailure = "${it.javaClass.simpleName}: ${it.message}" }
         }, "SoundMeshLeadRecord")
         recording.start()
         // Stopped rather than played out: without a recording every chirp after this is a minute
-        // of noise in someone's quiet room that nothing will ever read.
+        // of noise in someone's quiet room that nothing will ever read. A run somebody stopped is
+        // the same situation arrived at from the other side.
         for (pass in passes) {
-            if (recordingFailure != null) break
+            if (recordingFailure != null || calledOff()) break
             play(pass)
         }
         recording.join()
-        return analyse(passes, calibration)
+        // Before [onAnalysing], not after: that is what puts "计算中" on the screen, and a run
+        // that has just been stopped has nothing to compute. See [calledOff].
+        if (calledOff()) {
+            if (!keepsRecording) calibration.discardRecording()
+            return failed(CALLED_OFF)
+        }
+        runCatching { onAnalysing() }
+        return analyse(passes, calibration).also {
+            if (!keepsRecording) calibration.discardRecording()
+        }
     }
 
     /**
@@ -205,6 +246,10 @@ class OutputLeadRunner(
         val thread = Thread({ renderer.run() }, "SoundMeshLeadRender").also { it.start() }
         warmUp(scheduler, pass)
         submitChirp(scheduler, pass.chirpAtHostNanos)
+        // Ends the render loop here rather than at the instant this pass was given. Without it a
+        // stopped run stands playing silence to the end of a pass nobody is measuring any more,
+        // and from the room that is indistinguishable from a button that did nothing.
+        if (calledOff()) renderer.stopNow()
         thread.join()
         reports += renderer.report(null)
     }
@@ -220,6 +265,7 @@ class OutputLeadRunner(
     private fun warmUp(scheduler: PlaybackScheduler, pass: Pass) {
         val chunks = (warmupNanos / SyncRenderer.CHUNK_NANOS).toInt()
         for (sequence in 0 until chunks) {
+            if (calledOff()) return
             val playAt = pass.startHostNanos + sequence * SyncRenderer.CHUNK_NANOS
             val frameIndex = sequence.toLong() * SyncRenderer.FRAMES_PER_CHUNK
             scheduler.submit(AudioChunk(sequence, playAt, tone.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)))
@@ -315,6 +361,9 @@ class OutputLeadRunner(
          * the directory; it never clears it, so a shared case id is a shared directory.
          */
         const val DEFAULT_CASE_ID = "L90"
+
+        /** What a run that was stopped is refused with, so the artifact says so too. */
+        const val CALLED_OFF = "the run was called off"
 
         /**
          * Where a repeatability run's recording goes, apart from the lead runs.

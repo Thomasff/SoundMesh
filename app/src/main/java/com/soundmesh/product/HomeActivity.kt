@@ -89,6 +89,12 @@ import kotlin.math.roundToLong
  * foreground service precisely so that it outlives whatever started it.
  */
 class HomeActivity : ComponentActivity() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private var state by mutableStateOf(HomeState())
 
     /**
@@ -124,6 +130,18 @@ class HomeActivity : ComponentActivity() {
     private var holdingPlaying by mutableStateOf(false)
 
     /**
+     * Which role [takeUpTheRoom] last acted on, so that a resume can tell itself from a change.
+     *
+     * Not a state field: nothing draws it. It exists because that method is called from both, and
+     * one thing it does may only be done on a change - refusing to be the second host, which on a
+     * resume asks "is anybody else a host" of a handset that has been one all evening.
+     *
+     * Null at first, so the first pass after this screen is built counts as a change however the
+     * role got there. A role read back off disk is a role this process has not acted on yet.
+     */
+    private var roleTakenUp: Role? = null
+
+    /**
      * Whether the first-launch permissions screen is up, replacing everything else this screen
      * draws.
      *
@@ -149,6 +167,21 @@ class HomeActivity : ComponentActivity() {
      * the settings screen writes both the file and this field in the same tap.
      */
     private var themeChoice by mutableStateOf(ThemeChoice.SYSTEM)
+
+    /**
+     * The language somebody picked on the settings screen, held beside [themeChoice].
+     *
+     * Applied to the composition rather than by restarting this activity - see the provider in
+     * [onCreate]. A restart is what most apps do for this, and it is what this one must not do:
+     * settings is a place inside this screen rather than an activity of its own, so a restart
+     * would answer a tap by throwing somebody out of the screen they tapped on. The strings on
+     * every screen come from the composition, so re-providing the context is the whole change.
+     *
+     * [attachBaseContext] covers everything outside it - the handful of `getString` calls in code
+     * here, the notifications the services post - and it runs once per component, which is why
+     * this field exists as well rather than instead.
+     */
+    private var language by mutableStateOf(LanguageChoice.SYSTEM)
 
     /**
      * Whether the playing stage's diagnostic block is shown, held as composable state for the
@@ -382,6 +415,7 @@ class HomeActivity : ComponentActivity() {
         // Read once, here, rather than inside the composition - see themeChoice and showDetails.
         val prefs = Preferences(filesDir)
         themeChoice = themeChoiceOf(prefs.read("theme"))
+        language = languageChoiceOf(prefs.read(LANGUAGE_KEY))
         showDetails = prefs.read("details") == "on"
         // Asked once, on the very first launch this screen is ever created for - a fresh install
         // or a fresh onCreate after the process was killed both read null the same way, which is
@@ -391,37 +425,49 @@ class HomeActivity : ComponentActivity() {
         // Meant to be put down on a table and looked at, like every other screen in this app.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
-            SoundMeshTheme(themeChoice) {
+            SoundMeshTheme(themeChoice, language) {
                 Surface {
                     // Its own branch rather than a block inside HomeScreen: the whole point of
                     // each is that nothing else is on screen while it is up. Checked first among
                     // the four: a first launch shows this and nothing else, whatever else would
                     // otherwise be up.
                     when {
-                        showingPermissions -> PermissionsScreen(
-                            held = permissionsHeld,
-                            askedBefore = permissionsAsked,
-                            onAsk = ::askPermission,
-                            onDone = {
-                                Preferences(filesDir).write("seen_permissions", "yes")
-                                showingPermissions = false
-                            }
-                        )
+                        showingPermissions -> {
+                            // Back leaves this screen only when there is a screen behind it. On a
+                            // first launch there is not, and swallowing the gesture there would
+                            // trap somebody on the one screen that is meant to be tapped past.
+                            BackHandler(enabled = showingSettings) { showingPermissions = false }
+                            PermissionsScreen(
+                                held = permissionsHeld,
+                                askedBefore = permissionsAsked,
+                                onAsk = ::askPermission,
+                                onDone = {
+                                    Preferences(filesDir).write("seen_permissions", "yes")
+                                    showingPermissions = false
+                                },
+                                // Settings is behind it, so the button goes back rather than on.
+                                doneLabel =
+                                    if (showingSettings) R.string.perm_done else R.string.perm_continue
+                            )
+                        }
                         showingSettings -> {
                             BackHandler { showingSettings = false }
                             SettingsScreen(
                                 prefs = Preferences(filesDir),
                                 themeChoice = themeChoice,
+                                language = language,
                                 showDetails = showDetails,
                                 onBack = { showingSettings = false },
                                 onThemeChanged = { choice -> themeChoice = choice },
+                                onLanguageChanged = { choice -> language = choice },
                                 onDetailsChanged = { on -> showDetails = on },
                                 selfCalibrated = state.selfCalibrated,
                                 onSelfCalibrate = {
                                     startActivity(
                                         Intent(this@HomeActivity, CalibrateActivity::class.java)
                                     )
-                                }
+                                },
+                                onPermissions = { showingPermissions = true }
                             )
                         }
                         showingCode -> PairCodeScreen(state.pairingOffer) { showingCode = false }
@@ -940,10 +986,14 @@ class HomeActivity : ComponentActivity() {
             // names a phone, so a guess here would send somebody to the wrong handset's settings.
             blockedPeerNames = RoomCommands.notExemptNames(),
             room = room,
-            // Two different places for one reading, because a host holds the whole table and a
-            // sink is told only the line about itself. Both read null before a room exists,
-            // which is the number on screen with no colour beside it.
-            selfPlace = session?.badgePlace() ?: room?.colours?.get(state.selfId),
+            // Three places for one reading, tried in the order they become true. A session knows
+            // it, and before there is a session the standing channel does: the host settles the
+            // table there and every sink is told it. The third is a sink's copy of the same
+            // table. Null only where no host has met this handset yet, which is the number on
+            // screen with no colour beside it.
+            selfPlace = session?.badgePlace()
+                ?: RoomCommands.places()[state.selfId]
+                ?: StandbyService.ACTIVE?.place(),
             standingBy = RoomCommands.standingBy().also { standing ->
                 if (state.role == Role.HOST && standing != wroteStandingBy) {
                     wroteStandingBy = standing
@@ -1084,8 +1134,14 @@ class HomeActivity : ComponentActivity() {
         val roster = betweenSessionsRoster(kept.selfId ?: state.selfId, kept.icons.map { it.peerId }, standing)
         val icons = SpatialRoom.reconciled(kept.icons, roster, whereTheyWere)
         val silent = whoIsNotStandingBy(roster, standing).toSet()
+        // Beside silentIds rather than only in the rebuild below, and for the same reason it is:
+        // the colours move on events the icon roster does not. A host holds one before any sink
+        // has arrived, and a handset that leaves gives one back - neither adds or removes an icon,
+        // and the early return below is taken on exactly those passes.
+        val places = RoomCommands.places()
         if (icons.map { it.peerId } == kept.icons.map { it.peerId }) {
-            return if (silent == kept.silentIds) kept else kept.copy(silentIds = silent)
+            if (silent == kept.silentIds && places == kept.colours) return kept
+            return kept.copy(silentIds = silent, colours = places)
         }
         // Off disk, and only when the roster actually changed - this runs five times a second.
         // The same three reads the session path does for the same reason, so that a handset which
@@ -1097,6 +1153,7 @@ class HomeActivity : ComponentActivity() {
             measuredMetres = measuredDistances(filesDir, roster.firstOrNull(), icons.map { it.peerId }),
             listenerMetres = StoredListenerDistance.all(filesDir),
             fitted = false,
+            colours = places,
             silentIds = silent,
             otherHalfIds = SpatialRoom.reconciledOtherHalf(
                 kept.otherHalfIds,
@@ -1170,13 +1227,17 @@ class HomeActivity : ComponentActivity() {
      */
     private fun takeUpTheRoom() {
         events.write("role ${state.role}")
+        // Whether this call is the role changing or just the screen coming back. Everything below
+        // is safe to redo on a resume; refusing the role is not - see [refuseToBeTheSecondHost].
+        val changed = roleTakenUp != state.role
+        roleTakenUp = state.role
         when (state.role) {
             // Left open when this screen goes away, unlike the sink end. The host tells the room
             // to go and measure from inside the calibration screen - see RoomCommands - and this
             // screen is paused by then.
             Role.HOST -> {
                 stopStandingBy()
-                RoomCommands.serve()
+                RoomCommands.serve(HostIdentity(filesDir).current())
                 // Said on the network from here rather than from the session, which is the whole
                 // of what makes a sink able to find this handset before anybody presses play -
                 // see HostBeacon. Standing by is where a room spends nearly all of its time.
@@ -1188,7 +1249,7 @@ class HomeActivity : ComponentActivity() {
                 // standing in. Picking this role is the newest thing a person has said about
                 // where this handset belongs, so it is the one that wins.
                 PairedHost(filesDir).forget()
-                refuseToBeTheSecondHost()
+                if (changed) refuseToBeTheSecondHost()
                 // Said out loud because the count going down has no other trace at all: on
                 // 09-13 a room went from three standing to none and the only evidence was the
                 // number itself, which cannot say whether they left or were dropped.
@@ -1236,6 +1297,12 @@ class HomeActivity : ComponentActivity() {
      * exactly as an empty one does, so the refusal is true whenever it fires and its silence
      * promises nothing - which is also why the code on this screen never goes away.
      *
+     * Only where the role is taken, which is the half that was wrong until 2026-09-19. It used to
+     * run on every resume, so it was not "this handset may not become the second host" but
+     * "whichever handset last came back to this screen loses" - and what somebody hit was two
+     * phones settled as host and sink, the host walking back into this screen, and the host being
+     * thrown out to the role picker. See [takeUpTheRoom] for where that is decided.
+     *
      * Not while something is playing: by then this handset has a room, and a handset that took the
      * role a minute ago is the one that should give way.
      */
@@ -1245,12 +1312,20 @@ class HomeActivity : ComponentActivity() {
             val other = runCatching {
                 HostSearch.anotherHost(this, myId, HostSearch.WINDOW_MILLIS)
             }.getOrNull() ?: return@Thread
+            // Asked of the handset rather than of the record, and it is the whole of the fix for
+            // what a person hits by pressing these two roles back and forth: the record of a
+            // handset that has just stopped being a host goes on being answered for seconds, and
+            // other devices' caches hold it longer still. Stepping down for one of those leaves a
+            // room with no host at all, and the stale record is gone by the time anybody looks for
+            // the reason. See [RoomCommands.stillServing].
+            if (!RoomCommands.stillServing(other)) {
+                events.write("staying host: $other answered with a record but is not serving")
+                return@Thread
+            }
             runOnUiThread {
                 if (state.role != Role.HOST || state.running) return@runOnUiThread
-                // Nor if this handset already has a room. The check runs again on every resume,
-                // so without this the phone that has been the host all evening steps down the
-                // moment somebody else's handset appears, taking a room full of standing phones
-                // with it - and the one that should give way is the one that just arrived.
+                // Nor if this handset already has a room, which is now belt and braces rather
+                // than the guard it was: the check no longer runs on a resume at all.
                 if (RoomCommands.standingBy() > 0) return@runOnUiThread
                 events.write("stepping down as host: $other is already one")
                 actions.pickRole(Role.NONE)

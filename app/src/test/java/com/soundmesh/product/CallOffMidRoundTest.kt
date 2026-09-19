@@ -25,6 +25,8 @@ class CallOffMidRoundTest {
 
     private val runner get() = source("src/main/java/com/soundmesh/probe/sync/PeerCalibrationRunner.kt")
 
+    private val lead get() = source("src/main/java/com/soundmesh/probe/sync/OutputLeadRunner.kt")
+
     /**
      * The recording stops, and so does the sound.
      *
@@ -120,6 +122,49 @@ class CallOffMidRoundTest {
         assertTrue(
             "the room host keeps a round it was told to stop",
             host.contains("room-cancelled while chirping; nothing of this round is kept")
+        )
+    }
+
+    /**
+     * The run one handset does to itself stops the same way a room's does.
+     *
+     * It is the longest thing this app ever asks of a quiet room - a minute and a half - and until
+     * 2026-09-19 it was the one measurement with no way out but the back button, which left the
+     * chirps playing to the end in a room whose screen had already moved on.
+     */
+    @Test
+    fun theRunAHandsetDoesToItselfStopsTheSameWay() {
+        assertTrue(
+            "the recording is never told what would stop it",
+            lead.contains("calibration.record(recordSeconds, calledOff)")
+        )
+        assertTrue(
+            "the renderer plays each pass out to the instant it was given",
+            lead.contains("if (calledOff()) renderer.stopNow()")
+        )
+        assertTrue(
+            "the warm-up plays itself out",
+            lead.contains("for (sequence in 0 until chunks) {\n            if (calledOff()) return")
+        )
+        assertTrue(
+            "the passes after the press are played anyway",
+            lead.contains("if (recordingFailure != null || calledOff()) break")
+        )
+        // The same danger as a called-off room: a recording that stops mid-schedule still
+        // correlates, so what a stopped run produces is a number rather than a crash.
+        assertTrue(
+            "a stopped run is correlated and its answer offered as a measurement",
+            lead.contains("return failed(CALLED_OFF)")
+        )
+
+        val screen = source("src/main/java/com/soundmesh/product/CalibrateActivity.kt")
+        assertTrue(
+            "the run is never told about the button",
+            screen.contains("calledOff = { stopping }")
+        )
+        assertTrue(
+            "leaving the screen leaves the run playing",
+            screen.contains("stopping = true\n            putVolumeBack()")
         )
     }
 

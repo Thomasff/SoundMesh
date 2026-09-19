@@ -40,6 +40,23 @@ class SyncProjectionService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * Swiping the app off the recents list hands the projection back.
+     *
+     * The projection is stopped here and only dropped on ACTION_RELEASE, because the two mean
+     * different things. A release happens while the app lives on - somebody picked a file instead -
+     * and asking for consent again is a price worth avoiding. A removed task is the end of
+     * everything, and a live projection left behind is the system's own recording indicator
+     * saying this app is still listening after the person put it away.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        runCatching { acquired?.stop() }
+        acquired = null
+        stopForeground(true)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun acquire(intent: Intent) {
         // Order matters and is the whole point of this class: promotion first, projection second.
         startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
@@ -61,7 +78,7 @@ class SyncProjectionService : Service() {
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.capture_channel_name), NotificationManager.IMPORTANCE_LOW))
         }
         return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.capture_notification))
             .build()

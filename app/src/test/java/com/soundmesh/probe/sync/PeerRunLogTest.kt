@@ -68,4 +68,41 @@ class PeerRunLogTest {
     fun answersNothingBeforeTheFirstAttempt() {
         assertEquals(emptyList<File>(), PeerRunLog(temporaryDir()).filed())
     }
+
+    /**
+     * Nothing else deletes these, and a handset calibrates for as long as somebody owns it. The
+     * oldest go because what anybody asks about is the recent end - the same reason [EventLog]
+     * trims from the front.
+     */
+    @Test
+    fun keepsOnlyTheMostRecentAttempts() {
+        val log = PeerRunLog(temporaryDir())
+
+        for (index in 1..PeerRunLog.MOST_FILES + 5) {
+            log.write("SINK-C90", "{\"n\":$index}", 1_757_300_000_000L + index)
+        }
+
+        val filed = log.filed()
+        assertEquals(PeerRunLog.MOST_FILES, filed.size)
+        assertEquals("{\"n\":6}", filed.first().readText())
+        assertEquals("{\"n\":${PeerRunLog.MOST_FILES + 5}}", filed.last().readText())
+    }
+
+    /**
+     * The trim runs on the way out of a write, so the one file the caller is holding is the one it
+     * could most easily take: it is the newest, and a cap applied before the count is recounted
+     * would be off by exactly one.
+     */
+    @Test
+    fun theAttemptJustFiledSurvivesAFullLog() {
+        val log = PeerRunLog(temporaryDir())
+        for (index in 1..PeerRunLog.MOST_FILES) {
+            log.write("SINK-C90", "{\"n\":$index}", 1_757_300_000_000L + index)
+        }
+
+        val written = log.write("SINK-C90", "{\"last\":true}", 1_757_400_000_000L)
+
+        assertTrue("the trim took the attempt it had just filed", written.isFile)
+        assertEquals("{\"last\":true}", written.readText())
+    }
 }

@@ -41,6 +41,26 @@ class RoomColours {
     }
 
     /**
+     * Takes up a table somebody else settled, so this one continues a room instead of deciding it.
+     *
+     * For the case where two channels in one process both have to answer the same question over
+     * different spans of time: the standing channel settles a room's colours the moment handsets
+     * connect, and a session opened later would otherwise settle the same room again from scratch.
+     * It would usually land on the same answer - same handsets, same preferences - and the once it
+     * would not is a room that lost and regained a handset, which is exactly the minute somebody
+     * is watching the colours to see what happened.
+     *
+     * Adopted entries are held on the same terms as any other, so the next [reconcile] releases
+     * whoever is no longer present and settles only handsets neither channel has seen. [places] is
+     * expected to be another instance's output and so already free of duplicates; a table with two
+     * handsets on one colour is taken as given, because the alternative is silently moving a
+     * handset that the room this came from has already shown somebody.
+     */
+    fun adopt(places: Map<String, Int>) {
+        held.putAll(places)
+    }
+
+    /**
      * The first colour from [preferred] onwards that nobody holds, or [preferred] itself once the
      * palette is full.
      *

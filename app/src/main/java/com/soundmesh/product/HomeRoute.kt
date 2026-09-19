@@ -50,8 +50,8 @@ internal fun stillWatching(state: HomeState, steppedBack: Boolean, holding: Bool
 /**
  * An optional build fact, or null where nobody has set one.
  *
- * Blank counts as unset. Author, repository, licence and release page are all undecided as of
- * 2026-09-15, and every screen that shows one has to render nothing at all rather than a blank
- * line, an empty link, or the word "TODO".
+ * Blank counts as unset. The release page is the one still undecided, and every screen that shows
+ * one of these has to render nothing at all for it rather than a blank line, an empty link, or the
+ * word "TODO".
  */
 internal fun configured(value: String): String? = value.trim().ifEmpty { null }

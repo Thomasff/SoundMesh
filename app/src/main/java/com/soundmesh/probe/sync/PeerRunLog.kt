@@ -38,12 +38,31 @@ class PeerRunLog(private val filesDir: File) {
         require(directory.isDirectory || directory.mkdirs()) {
             "unable to create the peer run directory"
         }
-        return unclaimedFile(directory, label, atMillis).also { it.writeText(json) }
+        return unclaimedFile(directory, label, atMillis).also { it.writeText(json) }.also { trim(directory) }
     }
 
     /** Every attempt filed so far, oldest name first. Empty before the first one. */
     fun filed(): List<File> =
         File(filesDir, DIRECTORY).listFiles()?.sortedBy { it.name } ?: emptyList()
+
+    /**
+     * Drops the oldest attempts once there are more than [MOST_FILES] of them.
+     *
+     * Run after the write rather than before it, so the count being capped is the count that will
+     * be on the disk: trimming first leaves the directory one over every time, and the one file
+     * the caller is about to be handed is the newest, so it is never among those taken.
+     *
+     * A failure is swallowed for the same reason the whole class is best-effort - an attempt that
+     * was measured and filed is not worth throwing away because the housekeeping after it could
+     * not run.
+     */
+    private fun trim(directory: File) {
+        runCatching {
+            val filed = directory.listFiles()?.sortedBy { it.name } ?: return
+            if (filed.size <= MOST_FILES) return
+            for (old in filed.take(filed.size - MOST_FILES)) old.delete()
+        }
+    }
 
     private fun unclaimedFile(directory: File, label: String, atMillis: Long): File {
         var candidate = File(directory, "$atMillis-$label.json")
@@ -60,6 +79,14 @@ class PeerRunLog(private val filesDir: File) {
 
     companion object {
         const val DIRECTORY = "peer-runs"
+
+        /**
+         * Bounded because nothing else ever deletes these and a handset calibrates for as long as
+         * somebody owns it. At a few kilobytes an attempt this is under a megabyte, and it is far
+         * more than the recent end anybody reads: a fortnight of building this, calibrating many
+         * times a day, filed 334.
+         */
+        const val MOST_FILES = 200
 
         /** Long enough for a role and a case id, short enough that the timestamp still reads. */
         /**

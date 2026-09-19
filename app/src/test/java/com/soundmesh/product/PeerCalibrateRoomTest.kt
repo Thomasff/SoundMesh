@@ -580,6 +580,122 @@ class PeerCalibrateRoomTest {
         assertTrue("waited past its budget", rested.size <= 300 / 50 + 1)
     }
 
+    /**
+     * A round that went badly can be run again, and the offer sits beside its own answer.
+     *
+     * Somebody still walking to their chair, a door open, a phone in the wrong hand: what that
+     * leaves is an answer wrong in a way nothing can see, so the moment anybody knows to run it
+     * again is the moment they read the result. The walk-through under it only goes forwards - by
+     * the time the first step's answer is on screen it is already asking for the second - so the
+     * result box is the only place the way back can live.
+     *
+     * Outlined rather than filled, because the screen is not asking for it, and named by number
+     * rather than "this step", because the step highlighted below is usually the other one.
+     */
+    @Test
+    fun aFinishedRoundOffersToBeRunAgainBesideItsOwnResult() {
+        assertTrue(
+            "a step that is not the one to do carries controls, so two starts are on screen",
+            screen.contains("            if (now) {")
+        )
+        assertTrue(
+            "the result box does not offer the round that produced it again",
+            screen.contains("state.redo?.let { which ->")
+        )
+        assertTrue(
+            "the button does not say which of the two steps pressing it runs",
+            screen.contains("stringResource(R.string.room_calibrate_again, which)")
+        )
+        assertTrue(
+            "the button runs a round other than the one whose answer it sits under",
+            screen.contains(
+                "onClick = if (which == 1) actions.measureOverhead else actions.measureRoom"
+            )
+        )
+    }
+
+    /**
+     * Which step a finished round hands over to, and which step its result then names.
+     *
+     * The first measures where a person sat, from phones the second does not move; the second
+     * measures where the phones are. So redoing the first leaves the second exactly as true as it
+     * was, and only the first hands over.
+     *
+     * The other direction is the one that does expire, and it cannot be detected here: phones that
+     * moved make the first step's answer describe a room that is gone. That is a sentence under
+     * the button rather than a rule, because nothing in the files can tell a room that moved from
+     * a round somebody simply ran twice.
+     */
+    @Test
+    fun onlyTheOverheadRoundHandsOverAndEveryRoundNamesItself() {
+        assertTrue(
+            "the round of the phones sends somebody back up to the overhead step",
+            source.contains("val which = if (overhead()) 1 else 2") &&
+                source.contains("if (which == 1) roomStep = 2")
+        )
+        assertTrue(
+            "the result box is never told which of the two rounds it is showing",
+            source.contains("roomRedo = which")
+        )
+        // A round that is called off or throws leaves a message rather than an answer, and an
+        // offer to run "that step" again under it would name a step this screen did not measure.
+        assertTrue(
+            "a round that ends badly keeps the last round's offer under its own message",
+            source.contains("roomRedo = null")
+        )
+        assertTrue(
+            "the sentence saying the overhead answer expires when the phones move is gone",
+            screen.contains(
+                "if (which == 2) Note(stringResource(R.string.room_calibrate_step2_again_note))"
+            )
+        )
+    }
+
+    /**
+     * The volume gate belongs to the round, not to the screen it was written on.
+     *
+     * A pair is two handsets each listening for the other, so a phone nobody can hear ends the
+     * round exactly as it ends a room of four. The gate was on the room screen only because that
+     * is the screen somebody asked for it on.
+     */
+    @Test
+    fun thePairRoundIsGatedOnVolumeTheSameWayTheRoomRoundIs() {
+        val pair = screen.substringAfter("private fun PairBody(").substringBefore("\n@Composable")
+        assertTrue(
+            "the pair screen has no way to set the room's volume before a round",
+            pair.contains("if (state.role == CalibrationRole.HOST) VolumeGate(state, tooQuiet, actions)")
+        )
+        assertTrue(
+            "a pair round starts with a handset nothing can hear",
+            pair.contains("enabled = !state.running && tooQuiet.isEmpty()") &&
+                pair.contains("TooQuietNote(tooQuiet)")
+        )
+    }
+
+    /**
+     * The sweep marks a wait with nothing to see and nothing to hear, and only that.
+     *
+     * A frozen screen and a hung app are the same picture, and somebody who reads it as the second
+     * one picks the phone up - which is the one thing a round cannot survive. What tells the two
+     * phases apart is the countdown: it is handed over by the thing that fires the chirps, so a
+     * line with no count beside it is a line with nothing audible behind it.
+     */
+    @Test
+    fun onlyTheSilentHalfOfARoundShimmers() {
+        assertTrue(
+            "the waiting line sits still while a round dials the other handset",
+            screen.contains("Note(it, waiting = state.until == null)")
+        )
+        assertTrue(
+            "the count sweeps too, so the sweep stops meaning anything",
+            screen.contains("if (left > 0) Text(stringResource(text, left), style = style)")
+        )
+        assertTrue(
+            "the seconds of arithmetic after the chirps stop look like a hang",
+            screen.contains("modifier = Modifier.sweeping(LocalContentColor.current)")
+        )
+    }
+
     private fun facing(edgeMs: Double?) = com.soundmesh.core.FacingPair(
         alignmentErrorMs = 0.0,
         separationMetres = 0.0,

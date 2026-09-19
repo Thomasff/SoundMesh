@@ -12,11 +12,18 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.soundmesh.product.inChosenLanguage
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Owns the one user-approved MediaProjection and serializes private probe captures. */
 class CaptureForegroundService : Service() {
+
+    /** The language this app was told to be, put on before anything here reads a string. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base.inChosenLanguage())
+    }
+
     private val runStore by lazy { RunStore(filesDir) }
     private var mediaProjection: MediaProjection? = null
     private var activeSessionId: String? = null
@@ -196,7 +203,7 @@ class CaptureForegroundService : Service() {
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.capture_channel_name), NotificationManager.IMPORTANCE_LOW))
         }
         return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.capture_notification))
             .build()

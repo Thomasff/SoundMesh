@@ -33,8 +33,15 @@ import com.soundmesh.probe.R
 const val PERMISSION_BACKGROUND = "background"
 
 /**
- * The screen shown once, before anything else, that asks for what the app needs and says in one
- * short line what each thing is actually for.
+ * The screen that asks for what the app needs and says in one short line what each thing is for.
+ *
+ * Shown unprompted on the first launch, and reachable from the settings screen at any time after
+ * it. The second way in is what makes the first one safe to tap past: without it a refusal on the
+ * first evening was permanent as far as this app was concerned, and the only asks left were the
+ * ones that fire at the moment the thing is needed.
+ *
+ * [doneLabel] is the only difference between the two ways in. The first launch is on its way
+ * somewhere and says so; a visit from settings is not going anywhere and should not pretend to be.
  *
  * A refusal here never blocks [onDone]: every permission is asked for again, on its own, at the
  * moment it is actually needed - see the two asks still in [HomeActivity.captureAudio] and
@@ -52,7 +59,8 @@ fun PermissionsScreen(
     held: Set<String>,
     askedBefore: Set<String>,
     onAsk: (String) -> Unit,
-    onDone: () -> Unit
+    onDone: () -> Unit,
+    @StringRes doneLabel: Int = R.string.perm_continue
 ) {
     Column(
         modifier = Modifier
@@ -63,7 +71,6 @@ fun PermissionsScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(stringResource(R.string.perm_title), style = MaterialTheme.typography.titleLarge)
-        Text(stringResource(R.string.perm_intro), style = MaterialTheme.typography.bodyMedium)
 
         PermissionRow(
             R.string.perm_mic, R.string.perm_mic_why,
@@ -91,9 +98,8 @@ fun PermissionsScreen(
         )
 
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.perm_continue))
+            Text(stringResource(doneLabel))
         }
-        Text(stringResource(R.string.perm_skip_hint), style = MaterialTheme.typography.bodySmall)
     }
 }
 
