@@ -12,6 +12,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 /** Next after the room's 45127. One socket per standing-by handset, and nothing on it per second. */
 const val COMMAND_PORT = 45128
@@ -171,6 +172,23 @@ class RoomCommandServer(
     private val clients = Collections.synchronizedList(ArrayList<Standing>())
 
     /**
+     * Every socket accepted on this port, whether its handset has been named yet or not.
+     *
+     * [clients] is the roster, and a socket joins it only once its name has been read - a read
+     * that happens on another thread. Between the accept and that moment there is a live socket
+     * on this port that the roster cannot see, and [stop] closing the roster alone left it open,
+     * and the port with it. A host that stopped and started again - picking host, then sink, then
+     * host, which [start] already worried about - then failed to bind for as long as that thread
+     * took to be scheduled.
+     *
+     * Measured on a one-core Linux machine: two failures in 120 stop-and-start attempts, and both
+     * had an empty roster at the instant of the stop. It never shows on Windows, where setting
+     * reuseAddress takes a port whatever is sitting on it; on Linux that option only ever covered
+     * a socket in TIME_WAIT, so a live one refuses the bind.
+     */
+    private val accepted: MutableSet<Socket> = Collections.newSetFromMap(ConcurrentHashMap())
+
+    /**
      * What to call each handset that has ever stood by here, kept past its socket.
      *
      * Kept rather than cleared with the connection, because every screen that names a handset
@@ -240,6 +258,20 @@ class RoomCommandServer(
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
 
+    /**
+     * The thread sitting in accept, kept so that [stop] can wait for it to leave.
+     *
+     * Closing a ServerSocket does not hand the port back while a thread is still inside accept:
+     * the descriptor is passed to that thread to close on its way out, so close returns with the
+     * port still listening and frees it whenever that thread is next scheduled. Every caller of
+     * [stop] then tries to bind the same port again, and on a loaded machine the two race.
+     *
+     * Measured on Linux with the real server: one stop in two hundred came back with the port
+     * still in LISTEN, and the bind that followed was refused. By the time the refusal was
+     * printed the listener had gone, which is what makes this read as nothing being wrong.
+     */
+    @Volatile private var accepting: Thread? = null
+
     fun start() {
         // Bound on the caller's thread, for the reason ChunkServer.start states: a stop() landing
         // before an async bind completed would find the socket null and miss the close.
@@ -257,20 +289,34 @@ class RoomCommandServer(
         // A host by itself is a room of one, and it holds a colour before anybody arrives to see
         // it - the same first line [SpatialFieldServer.start] has, for the same reason.
         refreshBadges()
-        Thread {
+        accepting = Thread {
             runCatching {
                 bound.use {
                     while (running) {
                         val socket = bound.accept()
                         socket.tcpNoDelay = true
+                        accepted.add(socket)
+                        // Read after adding, not before: [stop] sweeps that set once and never
+                        // looks again, so a socket added after the sweep is one nobody closes.
+                        if (!running) {
+                            accepted.remove(socket)
+                            runCatching { socket.close() }
+                            break
+                        }
                         // The name is read on the new thread, not here: a handset that connects
                         // and then says nothing would otherwise hold the accept loop for as long
                         // as it stayed connected, and nobody else could stand by behind it.
-                        Thread({ hold(socket) }, "SoundMeshCommandHeld").start()
+                        Thread({
+                            try {
+                                hold(socket)
+                            } finally {
+                                accepted.remove(socket)
+                            }
+                        }, "SoundMeshCommandHeld").start()
                     }
                 }
             }
-        }.start()
+        }.also { it.start() }
         // No sweep. There used to be one here, closing the socket of any handset that had not
         // said it was there for eight seconds - see [quietPeerIds] for why that was the bug and
         // not the fix. Quiet is now something this end reports, not something it acts on.
@@ -651,15 +697,33 @@ class RoomCommandServer(
         running = false
         onExcuse = null
         runCatching { server?.close() }
+        // Waited for, not assumed: see [accepting] for what close leaves behind. Bounded because
+        // this is called from whatever thread somebody changed their phone's role on, and a
+        // number that is only ever a safety net can afford to be generous.
+        runCatching { accepting?.join(ACCEPT_EXIT_MILLIS) }
+        accepting = null
         synchronized(clients) {
             for (standing in clients) runCatching { standing.socket.close() }
             clients.clear()
         }
+        // And the ones the roster above cannot see - see [accepted]. This is what actually frees
+        // the port, because a socket still being read for its name is a live socket on it.
+        for (socket in accepted) runCatching { socket.close() }
+        accepted.clear()
     }
 
     internal companion object {
         /** Long enough for a slow link, short enough that a silent socket is not a parked thread. */
         const val ANNOUNCE_TIMEOUT_MILLIS = 5_000
+
+        /**
+         * How long [stop] waits for the accept thread to let go of the port.
+         *
+         * The wait it is really covering is one thread being scheduled, which is microseconds.
+         * This is only the ceiling on a thread that somehow never wakes, and it is on whatever
+         * thread the role was changed on, so it is short enough not to be felt as a freeze.
+         */
+        const val ACCEPT_EXIT_MILLIS = 1_000L
 
         /** As many of the id as every screen and every log line has always printed. */
         const val SHORT_NAME_CHARACTERS = 4
