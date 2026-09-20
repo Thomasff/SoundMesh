@@ -3,10 +3,13 @@ package com.soundmesh.product
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,11 +34,14 @@ import kotlin.math.abs
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.clickable
@@ -409,6 +415,9 @@ class HomeActions(
 internal fun warnsAboutBackground(state: HomeState): Boolean =
     !state.backgroundAllowed && state.role != Role.NONE
 
+/** Which edge of the screen a band is on. Geometry is the whole of what differs between them. */
+private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
+
 /**
  * The four edges of the screen, lit in this handset's own colour.
  *
@@ -418,43 +427,143 @@ internal fun warnsAboutBackground(state: HomeState): Boolean =
  * circle is nothing. The whole edge of a screen is the largest thing a phone can say from that
  * distance without covering up what it is saying it about.
  *
- * Nothing is drawn for a handset with no colour yet, which is every handset before its host has a
- * room to hand colours out in. A default colour would be worse than none: two handsets sharing one
- * is exactly the confusion the colours exist to end.
+ * Called only where there is a colour to draw. A handset before its host has a room to hand
+ * colours out in draws no edge at all, and a default colour would be worse than none: two handsets
+ * sharing one is exactly the confusion the colours exist to end.
  *
  * [glow] answers 0..1 and moves the band's width and alpha together - see [rememberEdgeGlow] for
- * where it comes from. The drawing itself is unchanged; only how wide and how bright it is at this
- * instant moves.
+ * where it comes from.
  *
- * ★ It is a function called here inside the draw, not a Float passed in. A value that moves every
- * frame, read during composition, recomposes the whole screen at the refresh rate - which this app
- * did until 2026-09-20, at a measured 18% of a core on the X10. A read inside a draw lambda
- * invalidates the draw and nothing above it.
+ * ────────────────────────────────────────────────────────────────────────────
+ * Why this is four nodes rather than one modifier on the screen
+ * ────────────────────────────────────────────────────────────────────────────
+ * Until 2026-09-20 this was one `drawWithContent` wrapping the whole screen. What a per-frame
+ * overlay costs is the area of the node it lives in - every frame damages that rectangle, and
+ * everything underneath it is rasterised again - so a full-screen node pays for the whole screen
+ * to draw four thin strips. Measured on the X10 (Android 10, 60Hz), the same four gradients, with
+ * only the node's size changed:
+ *
+ *     full screen          main thread 22.6%   p50 10ms   p99 19ms   janky 5.6%
+ *     one strip (~1/10)    main thread 14.6%   p50  5ms   p99 11ms   janky 0.16%
+ *
+ * A sibling node with its own `graphicsLayer` was measured too, on the theory that the cost was
+ * re-recording the screen's display list. It is not: p50 did not move and jank got four times
+ * worse, because a full-screen offscreen layer is a full-screen offscreen layer whoever asks for
+ * it. Area is the quantity. These four nodes are each one band deep and nothing else.
  */
-private fun Modifier.badgeEdge(colour: Color?, glow: () -> Float): Modifier {
-    if (colour == null) return this
-    return drawWithContent {
-        drawContent()
-        // Over the content rather than under it: the screen scrolls, and an edge drawn beneath
-        // whatever happens to be at the top of the list is an edge that comes and goes.
-        val lit = glow()
-        val band = size.minDimension * 0.045f * (0.6f + 0.8f * lit)
-        val inward = listOf(colour.copy(alpha = 0.85f * (0.4f + 0.6f * lit)), Color.Transparent)
-        val outward = inward.reversed()
-        drawRect(Brush.verticalGradient(inward, 0f, band), size = Size(size.width, band))
-        drawRect(
-            Brush.verticalGradient(outward, size.height - band, size.height),
-            topLeft = Offset(0f, size.height - band),
-            size = Size(size.width, band)
-        )
-        drawRect(Brush.horizontalGradient(inward, 0f, band), size = Size(band, size.height))
-        drawRect(
-            Brush.horizontalGradient(outward, size.width - band, size.width),
-            topLeft = Offset(size.width - band, 0f),
-            size = Size(band, size.height)
+@Composable
+private fun BoxScope.BadgeEdges(colour: Color, glow: () -> Float) {
+    for (edge in Edge.values()) {
+        val place = when (edge) {
+            Edge.TOP -> Alignment.TopCenter
+            Edge.BOTTOM -> Alignment.BottomCenter
+            Edge.LEFT -> Alignment.CenterStart
+            Edge.RIGHT -> Alignment.CenterEnd
+        }
+        val extent = when (edge) {
+            Edge.TOP, Edge.BOTTOM -> Modifier.fillMaxWidth().height(EDGE_NODE)
+            Edge.LEFT, Edge.RIGHT -> Modifier.fillMaxHeight().width(EDGE_NODE)
+        }
+        Spacer(
+            // Sized at the widest the band ever gets rather than at how wide it is now, so that
+            // breathing moves pixels and never the layout.
+            modifier = Modifier.align(place).then(extent).drawBehind { edgeBand(edge, colour, glow()) }
         )
     }
 }
+
+/**
+ * One edge's band, mitred at both ends so the corners are drawn once.
+ *
+ * Each band is clipped to the trapezoid of the perimeter that is nearer to its own edge than to
+ * either neighbour - a 45° cut from each screen corner. Before this the bands were four full-length
+ * rectangles, which meant every corner got a square of both its edges laid over each other: at the
+ * corner itself 0.85 over 0.85 is 0.98, so the four corners read as brighter than the four sides,
+ * and the ring did not look like one ring.
+ *
+ * The cut is at exactly x == y, which is what makes the seam invisible rather than merely tidy:
+ * along that diagonal this band's gradient and its neighbour's are being read at the same depth,
+ * so they arrive at the same colour from both sides.
+ */
+private fun DrawScope.edgeBand(edge: Edge, colour: Color, lit: Float) {
+    val flat = edge == Edge.TOP || edge == Edge.BOTTOM
+    // The node is [EDGE_BAND] * [EDGE_BAND_WIDEST] tall, so the band in pixels comes back out of
+    // its own size. Nothing in here needs to know the density.
+    val node = if (flat) size.height else size.width
+    val band = node / EDGE_BAND_WIDEST * (EDGE_BAND_NARROWEST +
+        (EDGE_BAND_WIDEST - EDGE_BAND_NARROWEST) * lit)
+    val near = colour.copy(alpha = 0.85f * (0.4f + 0.6f * lit))
+    val fade = listOf(near, Color.Transparent)
+    val length = if (flat) size.width else size.height
+    val far = length - node
+    val mitre = Path().apply {
+        when (edge) {
+            Edge.TOP -> { moveTo(0f, 0f); lineTo(length, 0f); lineTo(far, node); lineTo(node, node) }
+            Edge.BOTTOM -> { moveTo(0f, node); lineTo(length, node); lineTo(far, 0f); lineTo(node, 0f) }
+            // Both mitres half a pixel short, which is [SEAM]'s whole job.
+            Edge.LEFT -> {
+                moveTo(0f, SEAM); lineTo(node, node + SEAM)
+                lineTo(node, far - SEAM); lineTo(0f, length - SEAM)
+            }
+            Edge.RIGHT -> {
+                moveTo(node + SEAM, 0f); lineTo(SEAM, node)
+                lineTo(SEAM, far); lineTo(node + SEAM, length)
+            }
+        }
+        close()
+    }
+    clipPath(mitre) {
+        when (edge) {
+            Edge.TOP -> drawRect(
+                Brush.verticalGradient(fade, 0f, band),
+                size = Size(length, band)
+            )
+            Edge.BOTTOM -> drawRect(
+                Brush.verticalGradient(fade.reversed(), node - band, node),
+                topLeft = Offset(0f, node - band),
+                size = Size(length, band)
+            )
+            Edge.LEFT -> drawRect(
+                Brush.horizontalGradient(fade, 0f, band),
+                size = Size(band, length)
+            )
+            Edge.RIGHT -> drawRect(
+                Brush.horizontalGradient(fade.reversed(), node - band, node),
+                topLeft = Offset(node - band, 0f),
+                size = Size(band, length)
+            )
+        }
+    }
+}
+
+/**
+ * How deep the band is at rest, as a length rather than as a fraction of the screen.
+ *
+ * It was `minDimension * 0.045`, which is 16dp on the X10 and 20dp on the Magic6 - the same room,
+ * the same colour, and one phone wearing a visibly fatter ring than the other. The whole point of
+ * the edges is that a row of handsets reads as one set of things, so the band is a length now and
+ * the two phones agree. 16dp is what the X10 already had, which is the handset it was chosen on.
+ */
+private val EDGE_BAND = 16.dp
+
+/** The band at its dimmest and at its brightest, as multiples of [EDGE_BAND]. */
+private const val EDGE_BAND_NARROWEST = 0.6f
+private const val EDGE_BAND_WIDEST = 1.4f
+
+/** The fixed depth of each band's node: the widest the band inside it can ever be. */
+private val EDGE_NODE = EDGE_BAND * EDGE_BAND_WIDEST
+
+/**
+ * Half a pixel, by which the side bands' mitres fall short of the diagonal they share with the
+ * flat ones.
+ *
+ * The clip is a hard test against the pixel's centre, and the corner diagonal runs x == y - which
+ * is exactly where those centres sit. Both bands then claim that one row of pixels and draw it
+ * twice: measured on the X10 at 24dp deep, the diagonal came back at luminance 62 against 50 on
+ * either side of it - a bright hairline out of each corner. Half a pixel is enough to put the
+ * boundary somewhere no pixel centre is, and a whole one would leave a dark hairline instead.
+ */
+private const val SEAM = 0.5f
 
 @Composable
 fun HomeScreen(
@@ -473,45 +582,54 @@ fun HomeScreen(
     // Worked out after the colour, and told whether there is one: with no colour nothing draws an
     // edge, and then nothing should be waking every frame to decide how bright it is not.
     val glow = rememberEdgeGlow(state, lit = edge != null)
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            // Ahead of the padding below, so the edge is the screen's edge and not the text's.
-            .badgeEdge(edge, glow)
-            // Android 15 draws every app edge to edge, so without this the title sits under the
-            // status bar clock. Visible on the Magic6 and not on the X10, which is Android 10.
-            .safeDrawingPadding()
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 10.dp, bottom = 6.dp)) {
-            TopBar(route, actions, onBack)
-        }
-        // Which of the three stages this handset is on is worked out fresh every draw rather than
-        // remembered - see routeOf() - so there is one answer rather than two that can disagree.
-        when (route) {
-            HomeRoute.WELCOME -> ScrollingStage { WelcomeScreen(state, actions) }
-            HomeRoute.READY -> {
-                // Above the scroll rather than inside it. With a room already playing this is the
-                // only thing on the board that cannot wait for somebody to scroll back up to it -
-                // the music is on and there are no controls for it anywhere else on screen.
-                if (state.running) {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
-                        Solid(stringResource(R.string.ready_back_to_play), onClick = actions.backToPlaying)
+    // The edges are laid over the screen rather than wrapped around it, so that each of them is
+    // its own node and a frame of breathing damages four strips instead of the whole display.
+    // See [BadgeEdges], which has the measurements.
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // Android 15 draws every app edge to edge, so without this the title sits under
+                // the status bar clock. Visible on the Magic6 and not on the X10, which is
+                // Android 10.
+                .safeDrawingPadding()
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 10.dp, bottom = 6.dp)) {
+                TopBar(route, actions, onBack)
+            }
+            // Which of the three stages this handset is on is worked out fresh every draw rather
+            // than remembered - see routeOf() - so there is one answer rather than two that can
+            // disagree.
+            when (route) {
+                HomeRoute.WELCOME -> ScrollingStage { WelcomeScreen(state, actions) }
+                HomeRoute.READY -> {
+                    // Above the scroll rather than inside it. With a room already playing this is
+                    // the only thing on the board that cannot wait for somebody to scroll back up
+                    // to it - the music is on and there are no controls for it anywhere else.
+                    if (state.running) {
+                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+                            Solid(stringResource(R.string.ready_back_to_play), onClick = actions.backToPlaying)
+                        }
                     }
+                    ScrollingStage { ReadyScreen(state, actions) }
                 }
-                ScrollingStage { ReadyScreen(state, actions) }
-            }
-            // PlayingScreen carries its own bottom tab bar, which is why its stage is not wrapped
-            // in the same whole-page scroll the other two stages use: a bar pinned to the bottom
-            // of the screen cannot sit inside a column that scrolls as a whole, or the tabs would
-            // carry it away with them. It gets the remaining height instead.
-            HomeRoute.PLAYING -> when (state.role) {
-                // showDetails is HomeActivity state, not read from Preferences here - a read
-                // in the composable would not repaint the instant the switch on the settings
-                // screen is flipped.
-                Role.HOST, Role.SINK -> PlayingScreen(state, actions, showDetails, modifier = Modifier.weight(1f))
-                Role.NONE -> Unit
+                // PlayingScreen carries its own bottom tab bar, which is why its stage is not
+                // wrapped in the same whole-page scroll the other two stages use: a bar pinned to
+                // the bottom of the screen cannot sit inside a column that scrolls as a whole, or
+                // the tabs would carry it away with them. It gets the remaining height instead.
+                HomeRoute.PLAYING -> when (state.role) {
+                    // showDetails is HomeActivity state, not read from Preferences here - a read
+                    // in the composable would not repaint the instant the switch on the settings
+                    // screen is flipped.
+                    Role.HOST, Role.SINK ->
+                        PlayingScreen(state, actions, showDetails, modifier = Modifier.weight(1f))
+                    Role.NONE -> Unit
+                }
             }
         }
+        // Last, so they are over the content: the screen scrolls, and an edge drawn beneath
+        // whatever happens to be at the top of the list is an edge that comes and goes.
+        if (edge != null) BadgeEdges(edge, glow)
     }
 }
 
