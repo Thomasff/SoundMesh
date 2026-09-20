@@ -59,11 +59,21 @@ jobs:
 
       # Says out loud whether the thing about to be published is signed, because the one way to
       # find that out otherwise is for somebody to fail to install it.
+      #
+      # Two things can go wrong here and they get two different sentences, because they send
+      # whoever reads them to different places. The first release said UNSIGNED about a package
+      # that was signed: a runner carries several build-tools, the glob expanded to all of them,
+      # and the line ran the first as the command with the rest as its arguments. Pick one.
       - name: Check it is signed
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
-          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" \
-            || echo "UNSIGNED: $APK" >> "$GITHUB_STEP_SUMMARY"
+          SIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$SIGNER" ]; then
+            echo "Could not check $APK: no apksigner under ANDROID_HOME=${ANDROID_HOME:-unset}" \
+              >> "$GITHUB_STEP_SUMMARY"
+          elif ! "$SIGNER" verify --print-certs "$APK"; then
+            echo "UNSIGNED: $APK" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # The gh command is already on the runner and authenticates with the token this workflow
       # was given, so there is no third-party action in the one job that handles the signing key.
