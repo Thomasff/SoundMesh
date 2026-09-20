@@ -194,10 +194,19 @@ object HostSearch {
     /**
      * How long the line to a stored host has to have been down before [lookAgain] is worth running.
      *
-     * Long enough that the command client's own reconnecting is what fixes an ordinary drop - a
-     * host rebooting, a phone's radio coming back - because that costs nothing and this costs a
-     * multicast window every fifteen seconds. Short enough that somebody who has just turned the
-     * host's hotspot on is not left watching a phone that says 没连上 with nothing happening.
+     * Twenty seconds until 09-21, for a reason that was right when the only way to have a host
+     * was to scan one: an ordinary drop is fixed by the command client's own reconnecting, which
+     * costs nothing, while this costs a multicast window. Handing the role from one handset to
+     * another was rare then. It is ordinary now, and on that path the wait is the whole of what
+     * anybody sees - somebody deliberately gives the role away and the room takes half a minute
+     * to notice. Five seconds by the user's decision, not by measurement.
+     *
+     * What it does not cost is a search every five seconds: [GAP_MILLIS] still spaces the looks,
+     * so all this changes is how soon the first one starts.
+     *
+     * The wait itself is the crude part. The host knows it is standing down and could say so on
+     * the way out, the way the power line is said - a word added, not a version bumped - and then
+     * nobody would be timing anything. Parked in now.md rather than done here.
      */
-    const val STALE_AFTER_MILLIS = 20_000L
+    const val STALE_AFTER_MILLIS = 5_000L
 }
