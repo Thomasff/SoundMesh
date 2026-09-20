@@ -1,5 +1,8 @@
 package com.soundmesh.product
 
+import android.os.Build
+import android.view.RoundedCorner
+import android.view.View
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
@@ -20,8 +23,14 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -81,9 +90,39 @@ private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
  *
  * At 15ms this fits a 60Hz frame with almost nothing to spare, which is why there are three waves
  * and not six. [WAVE_SHOWN] is the knob, and a faster handset can afford more of them.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * What the rounded corners cost, and the three things that did not pay for them
+ * ────────────────────────────────────────────────────────────────────────────
+ * Same handset, same page, the waves at the swing they had before any of this:
+ *
+ *     square corners, node 24dp                              p50 15ms   janky  31%        25.0%
+ *     round corners, node 28dp, a point every 6dp of arc     p50 16ms   janky  53%        27.2%
+ *     the same, a point every 10dp of arc                    p50 16ms   janky  53%        27.3%
+ *     the same, the swing cut by a fifth                     p50 16ms   janky  49%        26.4%
+ *     the same, node back to 24dp - pixel for pixel identical p50 16ms   janky  45%        25.8%
+ *
+ * A quarter circle is about half again as long as the corner it replaces, which is roughly a tenth
+ * more outline in the frame, and the predictor above says that is what it should cost. It is. The
+ * three things that look like they should have paid it back mostly did not:
+ *
+ * - **Sampling the arcs coarsely: nothing at all.** Consistent with three times the points costing
+ *   15% above. So sample them finely - it is a free choice, not a paid one.
+ * - **A fifth off the swing: four points of jank.** A sine of 12dp over a 340px wavelength barely
+ *   lengthens its own polyline, so the swing is nearly free in both directions - which is also the
+ *   answer to whether changing it while the music plays costs anything. It does not.
+ * - **Four dp off each band's depth: another four points**, at pixel-for-pixel identical output.
+ *   The damage rectangle is worth something after all, though nothing like the outline.
+ *
+ * Which leaves the corners costing about a millisecond on this handset and no way to buy it back.
+ * That is the trade taken: square corners on a phone with round glass is the one place the effect
+ * stops looking like part of the phone, and the X10 is the slowest handset this will ever run on.
  */
 @Composable
 internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow) {
+    // Read fresh rather than remembered: on the first composition the view may not be attached to a
+    // window yet, and a remembered null would keep the fallback radius for the life of the screen.
+    val round = screenCornerPx(LocalView.current, LocalDensity.current)
     BoxWithConstraints(modifier = Modifier.matchParentSize()) {
         val wide = maxWidth
         val tall = maxHeight
@@ -106,7 +145,7 @@ internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow) {
                         // Everything here depends on the size and on nothing that moves, so it is
                         // built once per layout rather than sixty times a second. Only the paths
                         // are rebuilt per frame, and even those reuse their storage.
-                        val shape = bandShape(edge, size, wide.toPx(), tall.toPx(), density)
+                        val shape = bandShape(edge, size, wide.toPx(), tall.toPx(), density, round)
                         onDrawBehind { edgeWaves(shape, colour, glow) }
                     }
             )
@@ -138,6 +177,8 @@ private class BandShape(
     val perimeter: Float,
     val bandPx: Float,
     val sigmaPx: Float,
+    /** Radius of the screen's own corner arc, in pixels. See [screenCornerPx]. */
+    val round: Float,
     /** Design-sheet pixels to this screen's pixels, for the two tables quoted in design units. */
     val geoK: Float,
     /** Where the swing starts from nothing, and how far past that it takes to reach full. */
@@ -149,7 +190,14 @@ private class BandShape(
     val paths: List<Path>,
 )
 
-private fun bandShape(edge: Edge, size: Size, wide: Float, tall: Float, density: Float): BandShape {
+private fun bandShape(
+    edge: Edge,
+    size: Size,
+    wide: Float,
+    tall: Float,
+    density: Float,
+    round: Float,
+): BandShape {
     val flat = edge == Edge.TOP || edge == Edge.BOTTOM
     val node = if (flat) size.height else size.width
     val along = if (flat) size.width else size.height
@@ -179,10 +227,7 @@ private fun bandShape(edge: Edge, size: Size, wide: Float, tall: Float, density:
         Edge.LEFT -> 2f * wide + 2f * tall
     }
     val uSign = if (edge == Edge.TOP || edge == Edge.RIGHT) 1f else -1f
-    // One point every 12dp. The shortest wave still shown, m=20, is about 340px a crest on a
-    // handset, so that is nine points a crest - and finer sampling measured almost free but also
-    // looked no different.
-    val samples = (along / (12f * density)).toInt().coerceIn(24, 120)
+    val points = samplePoints(along, round, density)
     return BandShape(
         edge = edge,
         mitre = mitre,
@@ -193,14 +238,66 @@ private fun bandShape(edge: Edge, size: Size, wide: Float, tall: Float, density:
         perimeter = 2f * (wide + tall),
         bandPx = WAVE_BAND_DP * density,
         sigmaPx = WAVE_SIGMA_DP * density,
+        round = round,
         geoK = WAVE_PEAK_AMP_DP * density / 7.8f,
-        // Nothing swings inside the mitre, which is exactly the part two bands share.
-        taperFrom = node,
+        // Nothing swings inside the mitre, which is exactly the part two bands share - nor anywhere
+        // in the corner arc, which is what keeps a wave from swinging across a bend and leaves the
+        // three lines running round it as three plain concentric arcs.
+        taperFrom = max(node, round),
         taperOver = node * 3f,
-        samples = samples,
-        points = FloatArray(samples + 1) { along * it / samples },
+        samples = points.size - 1,
+        points = points,
         paths = List(WAVE_SHOWN.size + 1) { Path() },
     )
+}
+
+/**
+ * Where along the band to put the polylines' vertices.
+ *
+ * One point every 12dp along the straight run: the shortest wave still shown, m=20, is about 340px
+ * a crest on a handset, so that is nine points a crest - and finer sampling measured almost free
+ * but also looked no different.
+ *
+ * The corners are sampled about twice as finely, because there the points are not evenly spaced
+ * along what is drawn. A corner squeezes `round` pixels of this coordinate onto an arc half again
+ * as long, so the same step would put a visible flat on every bend. Twice as fine over two stretches
+ * of 36dp is about forty per cent more points on a phone-width band, which by the measurements in
+ * [BadgeEdges] is worth a couple of per cent of a frame - and it is paid once per layout, not per
+ * frame, because the array is built here and reused.
+ */
+private fun samplePoints(along: Float, round: Float, density: Float): FloatArray {
+    val bend = round.coerceIn(0f, along / 3f)
+    val straight = along - 2f * bend
+    val corner = ceil(bend * QUARTER_TURN / (6f * density)).toInt().coerceIn(1, 24)
+    val middle = (straight / (12f * density)).toInt().coerceIn(2, 120)
+    val marks = FloatArray(2 * corner + middle + 1)
+    for (k in 0 until corner) marks[k] = bend * k / corner
+    for (k in 0..middle) marks[corner + k] = bend + straight * k / middle
+    for (k in 1..corner) marks[corner + middle + k] = along - bend + bend * k / corner
+    return marks
+}
+
+/**
+ * The radius of this screen's own rounded corner, in pixels.
+ *
+ * Android has only known its own corner radius since API 31, and it is not a number that can be
+ * derived from anything else - it is a property of the glass. So: ask when there is something to
+ * ask, and otherwise use a radius typical of the handsets this runs on. Getting it wrong by a few
+ * dp costs nothing visible; the light is 10dp in from the edge and its own bend is that much
+ * gentler than the glass's.
+ *
+ * Clamped at the top because [EDGE_NODE] has to contain the deepest point of the arc, which sits
+ * where the two bands meet, at `round - (round - restingDepth)/√2` in from the edge.
+ */
+private fun screenCornerPx(view: View, density: Density): Float {
+    val asked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        view.rootWindowInsets?.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius?.toFloat()
+    } else {
+        null
+    }
+    return with(density) {
+        (asked ?: CORNER_FALLBACK_DP.toPx()).coerceIn(0f, CORNER_MOST_DP.toPx())
+    }
 }
 
 /**
@@ -223,8 +320,9 @@ private fun bandShape(edge: Edge, size: Size, wide: Float, tall: Float, density:
  */
 private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) {
     val lit = glow.amplitude()
-    val nanos = glow.elapsedNanos()
-    val swing = WAVE_AMP_QUIET + (WAVE_AMP_LOUD - WAVE_AMP_QUIET) * lit
+    val mood = glow.mood()
+    val seconds = glow.travelSeconds()
+    val swing = mood.swingQuiet + (mood.swingLoud - mood.swingQuiet) * lit
     val fade = WAVE_FADE_DARK + (1f - WAVE_FADE_DARK) * lit
     val every = band.paths[WAVE_SHOWN.size].also { it.reset() }
     for (shown in WAVE_SHOWN.indices) {
@@ -233,7 +331,7 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) 
         // an exact multiple of 2π·M[i] of phase because M is a whole number of crests per lap, so
         // this is not an approximation - it is the same angle, computed small.
         val period = 1.0 / WAVE_CYC[i]
-        val travel = WAVE_DIR[i] * WAVE_CYC[i] * (nanos * 1e-9 % period)
+        val travel = WAVE_DIR[i] * WAVE_CYC[i] * (seconds % period)
         val base = band.bandPx + WAVE_OFF[i] * band.geoK
         val reach = WAVE_AMP[i] * band.geoK * swing
         val path = band.paths[shown].also { it.reset() }
@@ -242,7 +340,7 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) 
             val u = (band.uBase + band.uSign * at) / band.perimeter
             val angle = 2.0 * PI * WAVE_M[i] * (u - travel) + WAVE_PHASE[i]
             val deep = base + reach * sin(angle).toFloat() * taper(at, band)
-            val point = place(band, at, deep)
+            val point = bend(band, at, deep)
             if (s == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
         }
         every.addPath(path)
@@ -279,6 +377,41 @@ private fun taper(at: Float, band: BandShape): Float {
     val past = min(at, band.along - at) - band.taperFrom
     val k = (past / band.taperOver).coerceIn(0f, 1f)
     return k * k * (3f - 2f * k)
+}
+
+/**
+ * A distance along the band and a depth in from the screen edge, as a point in the node - with the
+ * band's two ends bent round the screen's own corner arc.
+ *
+ * Handsets have rounded glass, and three straight lines meeting three straight lines at a right
+ * angle in the corner of one is the one place the whole effect stops looking like part of the
+ * phone. A curve inset by `deep` from a rounded rectangle of radius `round` is a rounded rectangle
+ * of radius `round - deep`, so each of the three lines gets its own concentric arc for free - one
+ * subtraction and a sine and cosine per sample, which by the measurements in [BadgeEdges] is not
+ * what a frame's cost is made of.
+ *
+ * The half-arc each band draws is exactly the half its mitre already kept: the mitre's diagonal is
+ * the line y == x out of the screen corner, and that line passes through the 45° point of every
+ * concentric arc whatever its radius. So the two bands still meet on a curve, and meet without a
+ * kink, with the clip unchanged.
+ *
+ * Nothing swings here - `taperFrom` is at least `round` - which is what keeps the arcs concentric
+ * and keeps the deepest of them inside the node.
+ */
+private fun bend(band: BandShape, at: Float, deep: Float): Offset {
+    val r = band.round
+    val reach = (r - deep).coerceAtLeast(0f)
+    return when {
+        at < r -> {
+            val turn = QUARTER_TURN * (at / r)
+            place(band, r - reach * cos(turn), r - reach * sin(turn))
+        }
+        at > band.along - r -> {
+            val turn = QUARTER_TURN * ((band.along - at) / r)
+            place(band, band.along - r + reach * cos(turn), r - reach * sin(turn))
+        }
+        else -> place(band, at, deep)
+    }
 }
 
 /** A distance along the band and a depth in from the screen edge, as a point in the node. */
@@ -372,16 +505,6 @@ private const val CORE_ALPHA = 0.845f
  */
 private const val WAVE_WHITEST = 0.25f
 
-/**
- * How far the waves swing when the room is nearly silent and when it is at its loudest.
- *
- * Never zero: a handset that has a colour is saying so whether or not there is a quiet passage
- * going on, and a ring that flattens into a line during one looks like a handset that has dropped
- * out rather than one playing something quiet.
- */
-private const val WAVE_AMP_QUIET = 0.45f
-private const val WAVE_AMP_LOUD = 1.60f
-
 /** What is left of the brightness with nothing sounding. */
 private const val WAVE_FADE_DARK = 0.40f
 
@@ -397,8 +520,26 @@ private val WAVE_BLEND = BlendMode.Plus
  * The depth of each band's node: the deepest any wave reaches, plus its skirt.
  *
  * Fixed rather than following the music, so that the swing moves pixels and never the layout.
+ *
+ * Also the damage rectangle each frame repaints, and that is worth about four points of jank per
+ * 4dp - see [BadgeEdges]. So it is as shallow as the corners allow rather than a round number:
+ * where two bands meet, the arcs reach `round - (round - restingDepth)/√2` in from the edge, the
+ * waves rest about 12dp in with their skirt, and at [CORNER_MOST_DP] that is 22.5dp.
  */
 private val EDGE_NODE = 24.dp
+
+/**
+ * What to assume the glass is rounded by when the platform will not say, and how round it is
+ * allowed to claim to be.
+ *
+ * The fallback is the middle of the range handsets of this generation actually use. The ceiling is
+ * what [EDGE_NODE] can hold; a phone rounder than this gets a slightly tighter bend than its glass,
+ * which is invisible next to the sharp corner it replaces.
+ */
+private val CORNER_FALLBACK_DP = 32.dp
+private val CORNER_MOST_DP = 48.dp
+
+private const val QUARTER_TURN = (PI / 2.0).toFloat()
 
 /**
  * Half a pixel, by which the side bands' mitres fall short of the diagonal they share with the

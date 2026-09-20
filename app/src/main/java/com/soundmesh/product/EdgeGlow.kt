@@ -3,10 +3,12 @@ package com.soundmesh.product
 import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableDoubleState
 import androidx.compose.runtime.MutableFloatState
-import androidx.compose.runtime.MutableLongState
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.soundmesh.session.SessionService
 import kotlin.math.exp
@@ -30,7 +32,23 @@ internal fun disconnectedSink(state: HomeState): Boolean = !state.onStandby && s
 private enum class Glow { DARK, DISCONNECTED, PLAYING, STANDBY }
 
 /**
- * The two numbers the screen edge is drawn from, as things to call once a frame from inside a
+ * How the waves carry themselves in one regime: how fast they travel, and how far they swing at
+ * the quietest and the loudest this handset gets.
+ *
+ * Two of these exist. A handset that is connected but silent shows a slow, shallow ripple - it is
+ * saying "here I am, this is my colour" and nothing more, and a big fast swing with no music behind
+ * it is a promise the room is not keeping. When playback starts the waves speed up and the swing
+ * opens out, and from then on the loudness moves it.
+ *
+ * Switching between them costs nothing to draw. The swing is one multiplier on a number the frame
+ * already computes; it changes neither how many contours are stroked, nor how wide, which is the
+ * only thing that predicts what a frame costs here (see [BadgeEdges]). A shallower swing is in fact
+ * marginally *cheaper*, because a flatter wave is a shorter polyline.
+ */
+internal class WaveMood(val speed: Float, val swingQuiet: Float, val swingLoud: Float)
+
+/**
+ * The three things the screen edge is drawn from, as things to call once a frame from inside a
  * draw - **not** as values. See [rememberEdgeGlow] for why that distinction is the whole design.
  */
 internal interface EdgeGlow {
@@ -38,15 +56,23 @@ internal interface EdgeGlow {
     fun amplitude(): Float
 
     /**
-     * How long this handset has been in its current state, which is what the waves' phase runs on.
+     * How far the waves have travelled, in seconds of the design's own nominal speed.
      *
-     * Local, and restarted whenever the state changes - so it restarts when playback starts. It is
-     * deliberately not the shared playback position, and not shared between handsets at all: phase
-     * carries no information, so two handsets showing different crests are saying the same thing.
-     * What carries information is [amplitude], and that is each handset's own loudness, which is
-     * already in step with every other handset's without anything being sent.
+     * An accumulator, not a stopwatch: each frame adds its own elapsed time times the current
+     * [mood]'s speed. That is what lets the speed change without the waves jumping - a plain clock
+     * multiplied by a speed moves every crest the instant the multiplier does, and switching from
+     * the standing-by ripple to the playing wave would snap the whole ring sideways.
+     *
+     * Local, and never reset. It is deliberately not the shared playback position, and not shared
+     * between handsets at all: phase carries no information, so two handsets showing different
+     * crests are saying the same thing. What carries information is [amplitude], and that is each
+     * handset's own loudness, which is already in step with every other handset's without anything
+     * being sent.
      */
-    fun elapsedNanos(): Long
+    fun travelSeconds(): Double
+
+    /** Which of the two characters the waves have right now. */
+    fun mood(): WaveMood
 }
 
 /**
@@ -91,7 +117,8 @@ internal interface EdgeGlow {
 @Composable
 internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
     val glow = remember { mutableFloatStateOf(STANDBY_GLOW_MIN) }
-    val clock = remember { mutableLongStateOf(0L) }
+    val travel = remember { mutableDoubleStateOf(0.0) }
+    val mood: MutableState<WaveMood> = remember { mutableStateOf(QUIET_MOOD) }
     val regime = when {
         !lit -> Glow.DARK
         disconnectedSink(state) -> Glow.DISCONNECTED
@@ -99,22 +126,24 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
         else -> Glow.STANDBY
     }
     LaunchedEffect(regime) {
-        clock.longValue = 0L
+        mood.value = if (regime == Glow.PLAYING) PLAYING_MOOD else QUIET_MOOD
+        // The travel accumulator is deliberately not reset here. See [EdgeGlow.travelSeconds].
         when (regime) {
             // No loop: nothing on screen is reading this, and the frame the loop would ask for is
             // a frame the whole app would otherwise not have drawn.
             Glow.DARK -> Unit
-            // No loop here either, so the clock stays where it was put and the waves hold still -
-            // which is the same statement the flat amplitude is making.
+            // No loop here either, so the waves hold still where they were - which is the same
+            // statement the flat amplitude is making.
             Glow.DISCONNECTED -> glow.floatValue = DISCONNECTED_GLOW
-            Glow.PLAYING -> followLoudness(glow, clock)
-            Glow.STANDBY -> breathe(glow, clock)
+            Glow.PLAYING -> followLoudness(glow, travel, PLAYING_MOOD.speed)
+            Glow.STANDBY -> breathe(glow, travel, QUIET_MOOD.speed)
         }
     }
-    return remember(glow, clock) {
+    return remember(glow, travel, mood) {
         object : EdgeGlow {
             override fun amplitude(): Float = glow.floatValue
-            override fun elapsedNanos(): Long = clock.longValue
+            override fun travelSeconds(): Double = travel.doubleValue
+            override fun mood(): WaveMood = mood.value
         }
     }
 }
@@ -132,18 +161,17 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
  * the edge easing up from dark as the first bar plays is the behaviour, not an artefact of how it
  * used to be written.
  */
-private suspend fun followLoudness(glow: MutableFloatState, clock: MutableLongState) {
+private suspend fun followLoudness(glow: MutableFloatState, travel: MutableDoubleState, speed: Float) {
     glow.floatValue = 0f
-    var start: Long? = null
     var previous: Long? = null
     while (true) {
         withInfiniteAnimationFrameNanos { now ->
-            clock.longValue = now - (start ?: now.also { start = it })
             val last = previous
             previous = now
             val target = SessionService.ACTIVE?.loudness() ?: 0f
             if (last != null) {
                 val dt = (now - last) * 1e-9f
+                travel.doubleValue += dt.toDouble() * speed
                 val k = 1f - exp(-dt / LOUDNESS_TAU_SECONDS)
                 glow.floatValue += k * (target - glow.floatValue)
             }
@@ -159,13 +187,16 @@ private suspend fun followLoudness(glow: MutableFloatState, clock: MutableLongSt
  * problem [rememberEdgeGlow] describes. The shape is the same one it had: linear up over
  * [STANDBY_BREATH_MILLIS], linear back down over the same, forever.
  */
-private suspend fun breathe(glow: MutableFloatState, clock: MutableLongState) {
+private suspend fun breathe(glow: MutableFloatState, travel: MutableDoubleState, speed: Float) {
     val half = STANDBY_BREATH_MILLIS * 1_000_000L
     var start: Long? = null
+    var previous: Long? = null
     while (true) {
         withInfiniteAnimationFrameNanos { now ->
             val from = start ?: now.also { start = it }
-            clock.longValue = now - from
+            val last = previous
+            previous = now
+            if (last != null) travel.doubleValue += (now - last) * 1e-9 * speed
             // 0..2 through one full there-and-back, so the fold below needs no branch on direction.
             val at = ((now - from) % (2L * half)).toFloat() / half
             val up = if (at <= 1f) at else 2f - at
@@ -182,6 +213,20 @@ private suspend fun breathe(glow: MutableFloatState, clock: MutableLongState) {
  * gets the same responsiveness in seconds instead of the same fraction per frame.
  */
 private const val LOUDNESS_TAU_SECONDS = 0.058f
+
+/**
+ * The two characters, in the units [WaveMood] describes.
+ *
+ * The quiet one is roughly a third of the speed and a quarter of the swing. A handset sitting on a
+ * table waiting for the music is meant to read as alive rather than as busy, and at the playing
+ * speed and swing a silent room looks like it is already playing something.
+ *
+ * [PLAYING_MOOD]'s swing never reaches zero at its quiet end: a handset that has a colour is saying
+ * so whether or not there is a quiet passage going on, and a ring that flattens into a line during
+ * one looks like a handset that has dropped out rather than one playing something soft.
+ */
+private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.38f, swingLoud = 1.25f)
+private val QUIET_MOOD = WaveMood(speed = 0.35f, swingQuiet = 0.22f, swingLoud = 0.42f)
 
 /** The disconnected sink's fixed, unbreathing amplitude. */
 private const val DISCONNECTED_GLOW = 0.15f
