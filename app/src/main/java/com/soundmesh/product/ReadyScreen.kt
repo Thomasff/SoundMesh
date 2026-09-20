@@ -111,7 +111,16 @@ private fun NetworkLines(state: HomeState) {
     }
 }
 
-/** The sink's half of pairing: it scans, and says whether it has. */
+/**
+ * The sink's half of pairing: it scans, and says whether it has.
+ *
+ * Whether it has, and not whether the line is up - the two are days apart. This said 已连接主机
+ * off [HomeState.paired], which is a stored host and goes on being one after that host closes the
+ * app, so on 09-21 a handset sat saying it was connected to a host that had been gone for minutes.
+ * Live is [HomeState.onStandby] and it is already on this screen twice: the standby line below
+ * says 还没连上主机 and the edge glow goes out. Two parts of one screen contradicting each other
+ * is how this was found, and the line that was wrong is the one claiming something it never read.
+ */
 @Composable
 private fun ScanLine(state: HomeState, actions: HomeActions) {
     Label(R.string.pair_title)
