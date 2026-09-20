@@ -4,12 +4,10 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,14 +32,7 @@ import kotlin.math.abs
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.clickable
@@ -414,161 +405,6 @@ class HomeActions(
  */
 internal fun warnsAboutBackground(state: HomeState): Boolean =
     !state.backgroundAllowed && state.role != Role.NONE
-
-/** Which edge of the screen a band is on. Geometry is the whole of what differs between them. */
-private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
-
-/**
- * The four edges of the screen, lit in this handset's own colour.
- *
- * The colour is the handset's name, and a name is only useful where the thing it names is. A chip
- * at the top of a screen names the phone to whoever is holding it; a room of phones lying face up
- * on tables and shelves is looked at from a chair several metres away, and from there a 28dp
- * circle is nothing. The whole edge of a screen is the largest thing a phone can say from that
- * distance without covering up what it is saying it about.
- *
- * Called only where there is a colour to draw. A handset before its host has a room to hand
- * colours out in draws no edge at all, and a default colour would be worse than none: two handsets
- * sharing one is exactly the confusion the colours exist to end.
- *
- * [glow] answers 0..1 and moves the band's width and alpha together - see [rememberEdgeGlow] for
- * where it comes from.
- *
- * ────────────────────────────────────────────────────────────────────────────
- * What this costs, which is not what four attempts at guessing said it would
- * ────────────────────────────────────────────────────────────────────────────
- * Four nodes rather than one `drawWithContent` around the whole screen because it makes the corner
- * mitres expressible, and for no other reason. It buys nothing. Measured on the X10 (Android 10,
- * 60Hz) on the host's status screen, same breathing, only the structure changed:
- *
- *     one node wrapping the screen          23.1%   p50 10ms   janky 0.49%
- *     four nodes, one per edge              24.3%   p50 10ms   janky 1.03%
- *     four nodes, each its own layer        25.2%   p50 10ms   janky 0.49%
- *     one band only (a quarter of the work) 24.2%   p50  9ms   janky 0.49%
- *     nothing lit, nothing animating         4.2%   no frames at all
- *
- * All four structures are within two points of each other, and one band costs what four do. The
- * twenty points are the screen being redrawn sixty times a second; what the edge puts in those
- * frames is almost free beside it. Node size, sibling versus wrapper, and a layer per band were
- * each tried on a theory and each made no difference.
- *
- * So the budget for anything richer here is not structural. It is the 6.7ms between the 10ms this
- * screen already spends on a frame and the 16.7ms a 60Hz frame has, and that is spent on what gets
- * drawn. Shrinking the nodes does not buy any of it back.
- */
-@Composable
-private fun BoxScope.BadgeEdges(colour: Color, glow: () -> Float) {
-    for (edge in Edge.values()) {
-        val place = when (edge) {
-            Edge.TOP -> Alignment.TopCenter
-            Edge.BOTTOM -> Alignment.BottomCenter
-            Edge.LEFT -> Alignment.CenterStart
-            Edge.RIGHT -> Alignment.CenterEnd
-        }
-        val extent = when (edge) {
-            Edge.TOP, Edge.BOTTOM -> Modifier.fillMaxWidth().height(EDGE_NODE)
-            Edge.LEFT, Edge.RIGHT -> Modifier.fillMaxHeight().width(EDGE_NODE)
-        }
-        Spacer(
-            // Sized at the widest the band ever gets rather than at how wide it is now, so that
-            // breathing moves pixels and never the layout.
-            modifier = Modifier.align(place).then(extent).drawBehind { edgeBand(edge, colour, glow()) }
-        )
-    }
-}
-
-/**
- * One edge's band, mitred at both ends so the corners are drawn once.
- *
- * Each band is clipped to the trapezoid of the perimeter that is nearer to its own edge than to
- * either neighbour - a 45° cut from each screen corner. Before this the bands were four full-length
- * rectangles, which meant every corner got a square of both its edges laid over each other: at the
- * corner itself 0.85 over 0.85 is 0.98, so the four corners read as brighter than the four sides,
- * and the ring did not look like one ring.
- *
- * The cut is at exactly x == y, which is what makes the seam invisible rather than merely tidy:
- * along that diagonal this band's gradient and its neighbour's are being read at the same depth,
- * so they arrive at the same colour from both sides.
- */
-private fun DrawScope.edgeBand(edge: Edge, colour: Color, lit: Float) {
-    val flat = edge == Edge.TOP || edge == Edge.BOTTOM
-    // The node is [EDGE_BAND] * [EDGE_BAND_WIDEST] tall, so the band in pixels comes back out of
-    // its own size. Nothing in here needs to know the density.
-    val node = if (flat) size.height else size.width
-    val band = node / EDGE_BAND_WIDEST * (EDGE_BAND_NARROWEST +
-        (EDGE_BAND_WIDEST - EDGE_BAND_NARROWEST) * lit)
-    val near = colour.copy(alpha = 0.85f * (0.4f + 0.6f * lit))
-    val fade = listOf(near, Color.Transparent)
-    val length = if (flat) size.width else size.height
-    val far = length - node
-    val mitre = Path().apply {
-        when (edge) {
-            Edge.TOP -> { moveTo(0f, 0f); lineTo(length, 0f); lineTo(far, node); lineTo(node, node) }
-            Edge.BOTTOM -> { moveTo(0f, node); lineTo(length, node); lineTo(far, 0f); lineTo(node, 0f) }
-            // Both mitres half a pixel short, which is [SEAM]'s whole job.
-            Edge.LEFT -> {
-                moveTo(0f, SEAM); lineTo(node, node + SEAM)
-                lineTo(node, far - SEAM); lineTo(0f, length - SEAM)
-            }
-            Edge.RIGHT -> {
-                moveTo(node + SEAM, 0f); lineTo(SEAM, node)
-                lineTo(SEAM, far); lineTo(node + SEAM, length)
-            }
-        }
-        close()
-    }
-    clipPath(mitre) {
-        when (edge) {
-            Edge.TOP -> drawRect(
-                Brush.verticalGradient(fade, 0f, band),
-                size = Size(length, band)
-            )
-            Edge.BOTTOM -> drawRect(
-                Brush.verticalGradient(fade.reversed(), node - band, node),
-                topLeft = Offset(0f, node - band),
-                size = Size(length, band)
-            )
-            Edge.LEFT -> drawRect(
-                Brush.horizontalGradient(fade, 0f, band),
-                size = Size(band, length)
-            )
-            Edge.RIGHT -> drawRect(
-                Brush.horizontalGradient(fade.reversed(), node - band, node),
-                topLeft = Offset(node - band, 0f),
-                size = Size(band, length)
-            )
-        }
-    }
-}
-
-/**
- * How deep the band is at rest, as a length rather than as a fraction of the screen.
- *
- * It was `minDimension * 0.045`, which is 16dp on the X10 and 20dp on the Magic6 - the same room,
- * the same colour, and one phone wearing a visibly fatter ring than the other. The whole point of
- * the edges is that a row of handsets reads as one set of things, so the band is a length now and
- * the two phones agree. 16dp is what the X10 already had, which is the handset it was chosen on.
- */
-private val EDGE_BAND = 16.dp
-
-/** The band at its dimmest and at its brightest, as multiples of [EDGE_BAND]. */
-private const val EDGE_BAND_NARROWEST = 0.6f
-private const val EDGE_BAND_WIDEST = 1.4f
-
-/** The fixed depth of each band's node: the widest the band inside it can ever be. */
-private val EDGE_NODE = EDGE_BAND * EDGE_BAND_WIDEST
-
-/**
- * Half a pixel, by which the side bands' mitres fall short of the diagonal they share with the
- * flat ones.
- *
- * The clip is a hard test against the pixel's centre, and the corner diagonal runs x == y - which
- * is exactly where those centres sit. Both bands then claim that one row of pixels and draw it
- * twice: measured on the X10 at 24dp deep, the diagonal came back at luminance 62 against 50 on
- * either side of it - a bright hairline out of each corner. Half a pixel is enough to put the
- * boundary somewhere no pixel centre is, and a whole one would leave a dark hairline instead.
- */
-private const val SEAM = 0.5f
 
 @Composable
 fun HomeScreen(

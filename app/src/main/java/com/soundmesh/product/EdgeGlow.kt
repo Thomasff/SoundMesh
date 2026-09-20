@@ -4,7 +4,9 @@ import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import com.soundmesh.session.SessionService
 import kotlin.math.exp
@@ -26,6 +28,26 @@ internal fun disconnectedSink(state: HomeState): Boolean = !state.onStandby && s
  * nothing for a frame loop to feed and the loop should not be running. See [rememberEdgeGlow].
  */
 private enum class Glow { DARK, DISCONNECTED, PLAYING, STANDBY }
+
+/**
+ * The two numbers the screen edge is drawn from, as things to call once a frame from inside a
+ * draw - **not** as values. See [rememberEdgeGlow] for why that distinction is the whole design.
+ */
+internal interface EdgeGlow {
+    /** How lit the edge should be right now, 0..1. */
+    fun amplitude(): Float
+
+    /**
+     * How long this handset has been in its current state, which is what the waves' phase runs on.
+     *
+     * Local, and restarted whenever the state changes - so it restarts when playback starts. It is
+     * deliberately not the shared playback position, and not shared between handsets at all: phase
+     * carries no information, so two handsets showing different crests are saying the same thing.
+     * What carries information is [amplitude], and that is each handset's own loudness, which is
+     * already in step with every other handset's without anything being sent.
+     */
+    fun elapsedNanos(): Long
+}
 
 /**
  * How bright this handset's screen edge should glow right now, 0..1 - as something to call once a
@@ -67,8 +89,9 @@ private enum class Glow { DARK, DISCONNECTED, PLAYING, STANDBY }
  *   nothing reads, which is the same waste in a cheaper suit.
  */
 @Composable
-internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): () -> Float {
+internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
     val glow = remember { mutableFloatStateOf(STANDBY_GLOW_MIN) }
+    val clock = remember { mutableLongStateOf(0L) }
     val regime = when {
         !lit -> Glow.DARK
         disconnectedSink(state) -> Glow.DISCONNECTED
@@ -76,16 +99,24 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): () -> Float {
         else -> Glow.STANDBY
     }
     LaunchedEffect(regime) {
+        clock.longValue = 0L
         when (regime) {
             // No loop: nothing on screen is reading this, and the frame the loop would ask for is
             // a frame the whole app would otherwise not have drawn.
             Glow.DARK -> Unit
+            // No loop here either, so the clock stays where it was put and the waves hold still -
+            // which is the same statement the flat amplitude is making.
             Glow.DISCONNECTED -> glow.floatValue = DISCONNECTED_GLOW
-            Glow.PLAYING -> followLoudness(glow)
-            Glow.STANDBY -> breathe(glow)
+            Glow.PLAYING -> followLoudness(glow, clock)
+            Glow.STANDBY -> breathe(glow, clock)
         }
     }
-    return remember(glow) { { glow.floatValue } }
+    return remember(glow, clock) {
+        object : EdgeGlow {
+            override fun amplitude(): Float = glow.floatValue
+            override fun elapsedNanos(): Long = clock.longValue
+        }
+    }
 }
 
 /**
@@ -101,11 +132,13 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): () -> Float {
  * the edge easing up from dark as the first bar plays is the behaviour, not an artefact of how it
  * used to be written.
  */
-private suspend fun followLoudness(glow: MutableFloatState) {
+private suspend fun followLoudness(glow: MutableFloatState, clock: MutableLongState) {
     glow.floatValue = 0f
+    var start: Long? = null
     var previous: Long? = null
     while (true) {
         withInfiniteAnimationFrameNanos { now ->
+            clock.longValue = now - (start ?: now.also { start = it })
             val last = previous
             previous = now
             val target = SessionService.ACTIVE?.loudness() ?: 0f
@@ -126,12 +159,13 @@ private suspend fun followLoudness(glow: MutableFloatState) {
  * problem [rememberEdgeGlow] describes. The shape is the same one it had: linear up over
  * [STANDBY_BREATH_MILLIS], linear back down over the same, forever.
  */
-private suspend fun breathe(glow: MutableFloatState) {
+private suspend fun breathe(glow: MutableFloatState, clock: MutableLongState) {
     val half = STANDBY_BREATH_MILLIS * 1_000_000L
     var start: Long? = null
     while (true) {
         withInfiniteAnimationFrameNanos { now ->
             val from = start ?: now.also { start = it }
+            clock.longValue = now - from
             // 0..2 through one full there-and-back, so the fold below needs no branch on direction.
             val at = ((now - from) % (2L * half)).toFloat() / half
             val up = if (at <= 1f) at else 2f - at
