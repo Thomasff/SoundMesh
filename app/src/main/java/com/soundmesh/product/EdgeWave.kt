@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
@@ -122,6 +124,9 @@ internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow) {
     // Read fresh rather than remembered: on the first composition the view may not be attached to a
     // window yet, and a remembered null would keep the fallback radius for the life of the screen.
     val round = screenCornerPx(LocalView.current, LocalDensity.current)
+    // The one thing about the page the waves have to know: whether there is room above this
+    // ground to add light to. See [WaveInk].
+    val ink = WaveInk(MaterialTheme.colorScheme.background.luminance() < HALF_LIT)
     BoxWithConstraints(modifier = Modifier.matchParentSize()) {
         val wide = maxWidth
         val tall = maxHeight
@@ -145,7 +150,7 @@ internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow) {
                         // built once per layout rather than sixty times a second. Only the paths
                         // are rebuilt per frame, and even those reuse their storage.
                         val shape = bandShape(edge, size, wide.toPx(), tall.toPx(), density, round)
-                        onDrawBehind { edgeWaves(shape, colour, glow) }
+                        onDrawBehind { edgeWaves(shape, colour, glow, ink) }
                     }
             )
         }
@@ -317,7 +322,7 @@ private fun screenCornerPx(view: View, density: Density): Float {
  * instead the swing is simply zero where two bands meet - and a corner where nothing swings is a
  * corner where there is nothing to be discontinuous.
  */
-private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) {
+private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow, ink: WaveInk) {
     val lit = glow.amplitude()
     val hit = glow.punch()
     val mood = glow.mood()
@@ -349,20 +354,20 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) 
     clipPath(band.mitre) {
         // The skirt first, once for every wave at an opacity between theirs. Widest step first, so
         // each narrower one adds onto the ones under it.
-        val skirt = lerp(colour, Color.White, (SKIRT_OP * 1.15f - 0.35f).coerceIn(0f, WAVE_WHITEST))
+        val skirt = lerp(colour, ink.crest, (SKIRT_OP * 1.15f - 0.35f).coerceIn(0f, WAVE_WHITEST))
         for (step in SKIRT_AT.indices) {
             drawPath(
                 every, skirt,
                 alpha = (SKIRT_OP * WAVE_GAIN * SKIRT_ALPHA[step]).coerceAtMost(1f) * fade,
                 style = Stroke(band.sigmaPx * SKIRT_WID * 2f * SKIRT_AT[step]),
-                blendMode = WAVE_BLEND,
+                blendMode = ink.blend,
             )
         }
         // Then each wave's own core on top, which is where the brightness that tells the waves
         // apart actually lives.
         for (shown in WAVE_SHOWN.indices) {
             val i = WAVE_SHOWN[shown]
-            val core = lerp(colour, Color.White, (WAVE_OP[i] * 1.15f - 0.35f).coerceIn(0f, WAVE_WHITEST))
+            val core = lerp(colour, ink.crest, (WAVE_OP[i] * 1.15f - 0.35f).coerceIn(0f, WAVE_WHITEST))
             // The lead wave brightens with the music on top of what the whole ring does, and flashes
             // on a hit; the rest keep the ring's own fade. See [LEAD_DIM].
             val beat =
@@ -372,7 +377,7 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) 
                 band.paths[shown], core,
                 alpha = (WAVE_OP[i] * WAVE_GAIN * CORE_ALPHA).coerceAtMost(1f) * fade * beat,
                 style = Stroke(band.sigmaPx * WAVE_WID[i] * 2f * CORE_AT),
-                blendMode = WAVE_BLEND,
+                blendMode = ink.blend,
             )
         }
     }
@@ -560,12 +565,57 @@ private const val WAVE_FADE_DARK = 0.40f
 private const val SIDE_SWING = 0.86f
 
 /**
- * Added rather than laid over, because the waves are one glow rather than several ribbons.
+ * How a wave is laid onto the page, which is not the same operation in the two themes.
  *
- * The brightest wave is also the last one drawn and the widest; over the top it would hide the
- * others instead of summing with them. Measured, this costs exactly what laying over costs.
+ * Added rather than laid over, because the waves are one glow rather than several ribbons. The
+ * brightest wave is also the last one drawn and the widest; over the top it would hide the others
+ * instead of summing with them. Measured, adding costs exactly what laying over costs.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * Why there are two of these and not one
+ * ────────────────────────────────────────────────────────────────────────────
+ * Adding light works on a ground that has none. Reported on 2026-09-20: in the light theme the
+ * edge effect was not faint, it was **absent**, and had been for as long as the theme has existed.
+ * [BlendMode.Plus] adds the source to what is under it and clamps at white, so on a ground of
+ * 0xF7F6F4 every sum lands on white whatever the wave is doing. Worked out for one badge hue
+ * against each theme's own background colour, `moved` being how far the result got from the ground
+ * it was drawn on - zero is invisible:
+ *
+ *     stroke alpha    Plus on 0x16171A        Plus on 0xF7F6F4        Multiply on 0xF7F6F4
+ *     0.15            #28352e  moved 0.092    #ffffff  moved 0.037    #dae5d9  moved 0.097
+ *     0.40            #46684f  moved 0.244    #ffffff  moved 0.037    #aac9ad  moved 0.258
+ *     1.00            #8fe09f  moved 0.611    #ffffff  moved 0.037    #388542  moved 0.645
+ *
+ * The middle column is the bug, and the way it is a bug is worth reading twice: the number does
+ * not shrink down the column, it does not move at all. A wave whose amplitude changes nothing is
+ * not a dim wave, it is a flat wash of white sitting where the effect was meant to be, and the
+ * 0.037 is only the distance from the ground to pure white.
+ *
+ * The mirror of adding light to black is taking it away from white. Multiply on a white ground
+ * hands back the source colour exactly as Plus on a black one does, overlapping strokes still
+ * accumulate in one direction so the skirt and the cores still sum, and the right-hand column
+ * tracks the left one closely enough that not one of the alphas tuned against black needed
+ * retuning. What does not carry over is which way the crest goes: the hot centre of a light is
+ * white and the dense centre of an ink is black, so [WAVE_WHITEST] reaches for the other end.
+ *
+ * Decided by the ground's own luminance rather than by the theme setting, because that is
+ * literally the question being asked - whether there is room above this ground to add light to.
  */
-private val WAVE_BLEND = BlendMode.Plus
+private class WaveInk(onDark: Boolean) {
+    val blend = if (onDark) BlendMode.Plus else BlendMode.Multiply
+
+    /** Where a wave's brightest part is headed. See [WAVE_WHITEST] for how far it gets. */
+    val crest = if (onDark) Color.White else Color.Black
+}
+
+/**
+ * The line between a ground with room above it and one without.
+ *
+ * Halfway, and it does not want tuning: this app's two grounds are 0x16171A and 0xF7F6F4, which
+ * land either side of it by about half its range. A theme that put a ground near this line would
+ * be one where neither operation works well, and the answer to that would be a different ground.
+ */
+private const val HALF_LIT = 0.5f
 
 /**
  * The depth of each band's node: the deepest any wave reaches, plus its skirt.
