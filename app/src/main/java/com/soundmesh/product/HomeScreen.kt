@@ -435,21 +435,26 @@ private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
  * where it comes from.
  *
  * ────────────────────────────────────────────────────────────────────────────
- * Why this is four nodes rather than one modifier on the screen
+ * What this costs, which is not what four attempts at guessing said it would
  * ────────────────────────────────────────────────────────────────────────────
- * Until 2026-09-20 this was one `drawWithContent` wrapping the whole screen. What a per-frame
- * overlay costs is the area of the node it lives in - every frame damages that rectangle, and
- * everything underneath it is rasterised again - so a full-screen node pays for the whole screen
- * to draw four thin strips. Measured on the X10 (Android 10, 60Hz), the same four gradients, with
- * only the node's size changed:
+ * Four nodes rather than one `drawWithContent` around the whole screen because it makes the corner
+ * mitres expressible, and for no other reason. It buys nothing. Measured on the X10 (Android 10,
+ * 60Hz) on the host's status screen, same breathing, only the structure changed:
  *
- *     full screen          main thread 22.6%   p50 10ms   p99 19ms   janky 5.6%
- *     one strip (~1/10)    main thread 14.6%   p50  5ms   p99 11ms   janky 0.16%
+ *     one node wrapping the screen          23.1%   p50 10ms   janky 0.49%
+ *     four nodes, one per edge              24.3%   p50 10ms   janky 1.03%
+ *     four nodes, each its own layer        25.2%   p50 10ms   janky 0.49%
+ *     one band only (a quarter of the work) 24.2%   p50  9ms   janky 0.49%
+ *     nothing lit, nothing animating         4.2%   no frames at all
  *
- * A sibling node with its own `graphicsLayer` was measured too, on the theory that the cost was
- * re-recording the screen's display list. It is not: p50 did not move and jank got four times
- * worse, because a full-screen offscreen layer is a full-screen offscreen layer whoever asks for
- * it. Area is the quantity. These four nodes are each one band deep and nothing else.
+ * All four structures are within two points of each other, and one band costs what four do. The
+ * twenty points are the screen being redrawn sixty times a second; what the edge puts in those
+ * frames is almost free beside it. Node size, sibling versus wrapper, and a layer per band were
+ * each tried on a theory and each made no difference.
+ *
+ * So the budget for anything richer here is not structural. It is the 6.7ms between the 10ms this
+ * screen already spends on a frame and the 16.7ms a 60Hz frame has, and that is spent on what gets
+ * drawn. Shrinking the nodes does not buy any of it back.
  */
 @Composable
 private fun BoxScope.BadgeEdges(colour: Color, glow: () -> Float) {
