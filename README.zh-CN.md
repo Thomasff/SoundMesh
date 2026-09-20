@@ -47,6 +47,14 @@
 - **户外与临时场合** —— 露营、宿舍、出租屋等没有音响的环境，用在场设备就地组建。
 - **空间音效** —— 多点摆位可实现单只音箱无法呈现的方位感与环绕感。
 
+<p align="center">
+  <img src="asset/github/playing-layout-zh.jpg" width="300" alt="播放界面：正在播放的内容，以及按实测摆位绘制的房间位置图">
+  &nbsp;&nbsp;
+  <img src="asset/github/playing-effects-zh.jpg" width="300" alt="同一界面的下半部分：两两实测间距、音效列表，以及每台设备一条音量滑杆">
+</p>
+
+<p align="center"><sub>同一个界面：设备在哪，以及据此能做什么。</sub></p>
+
 ## 设备要求
 
 | 项 | 要求 |

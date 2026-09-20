@@ -57,6 +57,14 @@ hand.
 - **Spatial effects** — several positions give a sense of direction and envelopment that one speaker
   cannot.
 
+<p align="center">
+  <img src="asset/github/playing-layout-en.jpg" width="300" alt="The playing screen: what is playing, and the room layout with each phone drawn where it was measured">
+  &nbsp;&nbsp;
+  <img src="asset/github/playing-effects-en.jpg" width="300" alt="The lower half of the same screen: measured spacing between each pair, the effects, and a volume slider per phone">
+</p>
+
+<p align="center"><sub>One screen: where the phones are, and what to do with that.</sub></p>
+
 ## What it needs
 
 | Item | Requirement |
