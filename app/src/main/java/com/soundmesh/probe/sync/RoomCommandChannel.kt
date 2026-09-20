@@ -652,17 +652,7 @@ class RoomCommandServer(
         onExcuse = null
         runCatching { server?.close() }
         synchronized(clients) {
-            for (standing in clients) runCatching {
-                // Dropped rather than closed politely, because the port has to be free the moment
-                // this returns - the other half of what [start] sets reuseAddress for, and the
-                // half it was missing. Reuse covers a socket sitting in TIME_WAIT and nothing
-                // else, while an ordinary close goes through FIN_WAIT first and stays there until
-                // the handset at the other end answers - which never happens if it walked out of
-                // the network. Zero linger makes the close a reset: the port is clear as soon as
-                // it returns, and the handset hears the room ended one round trip sooner.
-                standing.socket.setSoLinger(true, 0)
-                standing.socket.close()
-            }
+            for (standing in clients) runCatching { standing.socket.close() }
             clients.clear()
         }
     }
