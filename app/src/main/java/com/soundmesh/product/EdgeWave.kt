@@ -37,6 +37,9 @@ import kotlin.math.sin
 /** Which edge of the screen a band is on. Geometry is the whole of what differs between them. */
 private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
 
+/** The two long bands on a handset held upright. See [SIDE_SWING] for the one thing this decides. */
+private fun Edge.isSide() = this == Edge.LEFT || this == Edge.RIGHT
+
 /**
  * The four edges of the screen, lit in this handset's own colour, with sine waves travelling
  * along them.
@@ -319,7 +322,8 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) 
     val hit = glow.punch()
     val mood = glow.mood()
     val seconds = glow.travelSeconds()
-    val swing = mood.swingQuiet + (mood.swingLoud - mood.swingQuiet) * lit
+    val loudest = mood.swingLoud * if (band.edge.isSide()) SIDE_SWING else 1f
+    val swing = mood.swingQuiet + (loudest - mood.swingQuiet) * lit
     val fade = WAVE_FADE_DARK + (1f - WAVE_FADE_DARK) * lit
     val every = band.paths[WAVE_SHOWN.size].also { it.reset() }
     for (shown in WAVE_SHOWN.indices) {
@@ -537,6 +541,23 @@ private const val LEAD_PUNCH = 0.16f
 
 /** What is left of the brightness with nothing sounding. */
 private const val WAVE_FADE_DARK = 0.40f
+
+/**
+ * What the two long bands get of the loud end of the swing. The quiet end is theirs in full.
+ *
+ * The four bands are given the same swing in pixels and do not read as the same size. A handset
+ * held upright is about twice as tall as it is wide, so the side bands carry about twice the
+ * crests, all of them moving at once - twice as much motion in the eye for one number. And the
+ * direction the swing grows in is the direction the screen has least of: a wave reaching inward
+ * from the left edge is taking width off a column of text, while the same wave on the top edge is
+ * reaching into a margin.
+ *
+ * Only the loud end. At the quiet end the swing is a statement that this handset is here and has a
+ * colour, and that statement has to be the same on all four sides or the ring reads as lopsided
+ * rather than as calm. What the sides give up is the part that only exists while the music is
+ * loudest, which is also the only part anybody asked to be smaller.
+ */
+private const val SIDE_SWING = 0.86f
 
 /**
  * Added rather than laid over, because the waves are one glow rather than several ribbons.
