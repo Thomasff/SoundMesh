@@ -17,6 +17,16 @@ enum class Repointing {
     /** A different handset, because the stored one is not on this network and exactly one other is. */
     REPLACED,
 
+    /**
+     * The same, except that the stored handset's record was still answering and was ignored.
+     *
+     * Only [HostRepoint.ofUnreachable] reaches this, and only where the record answers and the
+     * port behind it does not. Kept apart from [REPLACED] because the two send whoever reads the
+     * timeline to different places: that one is a host that left the network, this one is a
+     * registration outliving the handset that made it.
+     */
+    REPLACED_A_GHOST,
+
     /** Nothing this build can talk to answered, so the stored host stays stored. */
     NOBODY,
 
@@ -62,5 +72,44 @@ object HostRepoint {
             Repointing.REPLACED,
             PairingCode(PeerAdvertisement.hostIdOf(other), other.hostAddress, other.port)
         )
+    }
+
+    /**
+     * The same read, made by a handset that cannot reach the host it has stored.
+     *
+     * Which is every caller there is: this is asked only once the line to that address has been
+     * down long enough to go looking. Given that, [Repointing.STILL_THERE] is a record and not a
+     * handset. Giving a registration back is a request to a platform daemon rather than an act,
+     * and on 2026-09-21 a handset that had handed the role over went on being answered for
+     * between 52 and 73 seconds. The one sink that stayed a sink across that handover sat
+     * through five consecutive STILL_THERE looks, ten seconds apart, and the room was silent
+     * for the whole minute.
+     *
+     * [stillServing] is what settles it, and the reason this is not simply "the line is down":
+     * a line can be down because this handset's own radio hiccuped while its host is serving
+     * perfectly well, and striking the record out on that would hand the room to a stranger.
+     * The question it answers is the one a record cannot - see RoomCommands.stillServing, which
+     * dials the port that is open exactly while a handset is the host. Asked lazily and only in
+     * the one case where the answer can change anything, because it waits on a network.
+     *
+     * The record is struck out for exactly one purpose, taking the one host that is here. Where
+     * that buys nothing the verdict is the one actually seen: "nothing answered" and "something
+     * answered and it is a ghost" are read by somebody looking for two different faults.
+     *
+     * [Repointing.MOVED] is untouched, and has to be: a host that moved looks exactly like this
+     * from here - the line down, a record answering - and following it is what this file is for.
+     * Only a record answering from the address already failed at can be a ghost.
+     */
+    fun ofUnreachable(
+        stored: PairingCode,
+        hosts: List<DiscoveredPeer>,
+        stillServing: (PairingCode) -> Boolean
+    ): Repoint {
+        val what = of(stored, hosts)
+        if (what.verdict != Repointing.STILL_THERE) return what
+        val without = of(stored, hosts.filterNot { PeerAdvertisement.hostIdOf(it) == stored.hostId })
+        if (without.verdict != Repointing.REPLACED) return what
+        if (stillServing(stored)) return what
+        return Repoint(Repointing.REPLACED_A_GHOST, without.host)
     }
 }

@@ -237,6 +237,32 @@ class FindingEachOtherTest {
     }
 
     /**
+     * A record that outlived its host does not hold the room up for a minute.
+     *
+     * The decision is [HostRepoint.ofUnreachable] and is tested in core, away from any network.
+     * What is here is the one line that puts it in the path, because with `of` in its place
+     * everything goes on compiling, every test in core goes on passing, and the only trace is a
+     * room that takes a minute to come back after the host is handed over. Measured 09-21: five
+     * consecutive "the host is still at .83" ten seconds apart, pointed at a handset that had
+     * stopped being the host 52 seconds earlier.
+     */
+    @Test
+    fun aSinkDoesNotWaitOutTheOldHostsRecord() {
+        assertTrue(
+            "a re-look believes a record answering from an address it cannot reach",
+            search.substringAfter("fun lookAgain(").contains("HostRepoint.ofUnreachable(")
+        )
+        // The other half of the same wiring: this is only sound because the look happens only
+        // after the line to that address has been down. A look on any other terms would strike
+        // out records of hosts that are perfectly fine.
+        assertTrue(
+            "the re-look is not gated on the line to the stored host being down",
+            source("src/main/java/com/soundmesh/product/StandbyService.kt")
+                .contains("if (pointed && downFor < HostSearch.STALE_AFTER_MILLIS) return")
+        )
+    }
+
+    /**
      * A handset told to be the host checks first, and gives way rather than making a second room.
      *
      * Not once it is playing. By then it has a room, and the handset that should give way is the

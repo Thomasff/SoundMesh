@@ -89,10 +89,15 @@ object HostSearch {
         // damage: a handset counts as "one other host" while its own stale record is still being
         // answered, which is the one shape that moves a sink onto a different handset.
         val mine = HostIdentity(directory).current()
-        val what = HostRepoint.of(
+        // ofUnreachable rather than of: this is only ever asked once the line to the stored
+        // address has been down long enough to come looking, and a record answering from an
+        // address this handset has already failed at is not a host. What decides it is the port
+        // rather than the clock - see RoomCommands.stillServing - so a host that is serving is
+        // left alone however long this handset's own radio has been unable to reach it.
+        val what = HostRepoint.ofUnreachable(
             stored,
             outcome.hosts.filter { PeerAdvertisement.hostIdOf(it) != mine }
-        )
+        ) { RoomCommands.stillServing(it.address) }
         val host = what.host ?: return Found(null, wordFor(what.verdict, stored))
         if (paired.read() != stored) return Found(null, SCANNED_MEANWHILE)
         paired.write(host)
@@ -160,6 +165,9 @@ object HostSearch {
         Repointing.MOVED -> "the same host has moved to ${host.address}, following it"
         Repointing.REPLACED ->
             "the stored host is not on this network and one other is, following ${host.address}"
+        Repointing.REPLACED_A_GHOST ->
+            "the stored host is still being answered but cannot be reached, so its record was " +
+                "ignored; following ${host.address}"
         Repointing.NOBODY -> "nothing answered, so this handset stays pointed at ${host.address}"
         Repointing.TOO_MANY ->
             "more than one other host answered, so this handset stays pointed at ${host.address}"

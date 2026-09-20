@@ -115,4 +115,91 @@ class HostRepointTest {
         assertEquals(Repointing.TOO_MANY, what.verdict)
         assertNull(what.host)
     }
+
+    /**
+     * Measured 2026-09-21: a host that had handed the role over went on being answered for
+     * between 52 and 73 seconds, and the one sink that stayed a sink across the handover sat
+     * through five consecutive [Repointing.STILL_THERE] looks, ten seconds apart, before the
+     * record finally expired and the ordinary [Repointing.REPLACED] fired. Nothing else was
+     * wrong; the room was simply silent for a minute.
+     *
+     * This changes no outcome, only when it happens: the handset was always going to end up on
+     * the other host. Giving a registration back is a request to a platform daemon rather than
+     * an act, so the record answering says nothing about whether anybody is serving - and the
+     * one caller of this asks it precisely because it cannot get through to that address.
+     */
+    @Test
+    fun doesNotWaitOutARecordThatOutlivedItsHost() {
+        val what = HostRepoint.ofUnreachable(
+            stored,
+            listOf(peer(ours, "192.168.1.4"), peer(stranger, "192.168.1.7")),
+            stillServing = { false }
+        )
+
+        assertEquals(Repointing.REPLACED_A_GHOST, what.verdict)
+        assertEquals(PairingCode(stranger, "192.168.1.7", 45124), what.host)
+    }
+
+    /**
+     * And it strikes the record out for one purpose only, which is taking the one host that is
+     * here. With nowhere to go it says what it saw: something did answer from that address, and
+     * reporting "nothing answered" would send whoever reads the timeline to the wrong place.
+     */
+    @Test
+    fun saysWhatItSawWhenStrikingTheRecordOutBuysNothing() {
+        val alone = HostRepoint.ofUnreachable(
+            stored,
+            listOf(peer(ours, "192.168.1.4")),
+            stillServing = { false }
+        )
+        assertEquals(Repointing.STILL_THERE, alone.verdict)
+        assertNull(alone.host)
+
+        val crowded = HostRepoint.ofUnreachable(
+            stored,
+            listOf(peer(ours, "192.168.1.4"), peer(stranger, "1.1.1.1"), peer("abcdefabcdefabcd", "1.1.1.2")),
+            stillServing = { false }
+        )
+        assertEquals(Repointing.STILL_THERE, crowded.verdict)
+        assertNull(crowded.host)
+    }
+
+    /**
+     * A host that is serving keeps the room, however long this handset has failed to reach it.
+     *
+     * The line going down says something about the pair, not about the host: this handset's own
+     * radio hiccuping looks identical from in here. Without this the fix above would hand a room
+     * to a stranger every time a sink lost its network for five seconds beside one - which is a
+     * room already in trouble, and the worst moment to move anybody.
+     */
+    @Test
+    fun leavesAHostThatIsStillServingAloneBesideAStranger() {
+        val what = HostRepoint.ofUnreachable(
+            stored,
+            listOf(peer(ours, "192.168.1.4"), peer(stranger, "192.168.1.7")),
+            stillServing = { true }
+        )
+
+        assertEquals(Repointing.STILL_THERE, what.verdict)
+        assertNull(what.host)
+    }
+
+    /**
+     * A host that moved is not a ghost. The line being down is exactly what a moved host looks
+     * like from here, and following it is the whole reason [HostRepoint] exists - so only a
+     * record answering from the address this handset has already failed to reach is struck out.
+     */
+    @Test
+    fun aHostThatMovedIsFollowedRatherThanStruckOut() {
+        val what = HostRepoint.ofUnreachable(
+            stored,
+            listOf(peer(ours, "192.168.43.1"), peer(stranger, "192.168.1.7")),
+            // Dialling the stored address would be asking about a handset that has told the
+            // network where it is now. Throwing says so: this path must not wait on a network.
+            stillServing = { error("a record that moved is not a ghost and must not be dialled") }
+        )
+
+        assertEquals(Repointing.MOVED, what.verdict)
+        assertEquals(PairingCode(ours, "192.168.43.1", 45124), what.host)
+    }
 }
