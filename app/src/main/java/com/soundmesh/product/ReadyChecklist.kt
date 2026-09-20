@@ -81,14 +81,28 @@ private fun hostList(state: HomeState): List<ReadyItem> = buildList {
     addAll(blocked(state))
 }
 
+/**
+ * A sink has one thing standing between it and a room that plays, and it is the line.
+ *
+ * Read off [HomeState.onStandby], which is whether this handset is talking to a host right now,
+ * and deliberately not off [HomeState.paired], which is the host it will dial when it can. The
+ * stored pairing goes on being true after that host closes the app - it is what makes the phone
+ * join again by itself when the host comes back - so a list ticked off it sat green on 09-21
+ * beside a host that had been gone for minutes. The question this list asks is whether anything
+ * is going to play here, and only the live half answers it.
+ *
+ * 扫一下 stays the way out of every unconnected state, including the one where a host is already
+ * remembered: the reason a remembered host cannot be reached is usually that the room is on a
+ * network where finding anything automatically does not work, and the code is the whole answer
+ * there. See HostSearch.
+ */
 private fun sinkList(state: HomeState): List<ReadyItem> = buildList {
-    val paired = state.paired != null
     add(
         ReadyItem(
-            mark = if (paired) Mark.OK else Mark.BLOCK,
-            line = if (paired) R.string.ready_paired else R.string.ready_paired_none,
+            mark = if (state.onStandby) Mark.OK else Mark.BLOCK,
+            line = if (state.onStandby) R.string.ready_paired else R.string.ready_paired_none,
             detail = null,
-            goto = if (paired) null else ReadyGoto.SCAN
+            goto = if (state.onStandby) null else ReadyGoto.SCAN
         )
     )
     addAll(blocked(state))

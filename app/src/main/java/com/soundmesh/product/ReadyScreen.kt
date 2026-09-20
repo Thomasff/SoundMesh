@@ -112,23 +112,27 @@ private fun NetworkLines(state: HomeState) {
 }
 
 /**
- * The sink's half of pairing: it scans, and says whether it has.
+ * The sink's half of pairing: whether it is talking to a host, and the way to fix it if not.
  *
- * Whether it has, and not whether the line is up - the two are days apart. This said 已连接主机
- * off [HomeState.paired], which is a stored host and goes on being one after that host closes the
- * app, so on 09-21 a handset sat saying it was connected to a host that had been gone for minutes.
- * Live is [HomeState.onStandby] and it is already on this screen twice: the standby line below
- * says 还没连上主机 and the edge glow goes out. Two parts of one screen contradicting each other
- * is how this was found, and the line that was wrong is the one claiming something it never read.
+ * Off [HomeState.onStandby], the live line, rather than [HomeState.paired], the host this handset
+ * will dial when it can. The stored one answers a different question and answers it for days: it
+ * survives the host closing the app, which is deliberate - it is how the room comes back by itself
+ * - and it is set by a background search that this screen does not watch. Both halves of that were
+ * on the phones on 09-21: a sink already in the host's room still saying 正在自动找主机, and a sink
+ * with no host left on the network still claiming one. Nothing but re-picking the role moved either.
+ *
+ * The live reading was on this screen the whole time and agreed with neither: the standby line below
+ * said 还没连上主机 and the edge glow was out. Parts of one screen contradicting each other is how
+ * this was found, twice, and the wrong one both times was the one asserting off a stored field.
  */
 @Composable
 private fun ScanLine(state: HomeState, actions: HomeActions) {
     Label(R.string.pair_title)
     Line(first = true) {
-        Dot(null, hollow = state.paired == null)
+        Dot(null, hollow = !state.onStandby)
         LineName(
-            stringResource(if (state.paired != null) R.string.ready_paired else R.string.ready_paired_none),
-            quiet = state.paired == null
+            stringResource(if (state.onStandby) R.string.ready_paired else R.string.ready_paired_none),
+            quiet = !state.onStandby
         )
         Chip(stringResource(R.string.pair_scan), actions.scan)
     }

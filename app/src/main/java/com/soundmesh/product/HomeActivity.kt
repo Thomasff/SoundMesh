@@ -295,6 +295,14 @@ class HomeActivity : ComponentActivity() {
                 // that depends on both - see readNetwork for why this cannot wait for a resume.
                 readNetwork()
                 state = state.copy(
+                    // Changed by a background search rather than by anything on this screen, so
+                    // a resume is not when it happens - see StandbyService.lookForAHost. Read
+                    // once per resume until 09-21, and on that evening a handset the host was
+                    // already listing in its room went on saying it had no host until somebody
+                    // left this screen and came back. Every four seconds is far inside what a
+                    // search takes; five times a second against a file on disk is not needed and
+                    // is what this tick exists to avoid.
+                    paired = PairedHost(filesDir).read(),
                     health = DeviceHealth.read(this@HomeActivity),
                     // The volume keys are what move this, so the level changes under the screen
                     // rather than because of it, and has to be re-read to stay true.

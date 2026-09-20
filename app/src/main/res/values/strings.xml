@@ -40,7 +40,7 @@
     <string name="ready_uncalibrated_why">会差几十 ms，能听出来</string>
     <string name="ready_blocked">%1$s 可能会被省电权限影响</string>
     <string name="ready_blocked_why">一切走它就跟不上了，放行之后再开始</string>
-    <string name="ready_paired">已配对主机</string>
+    <string name="ready_paired">已连上主机</string>
     <string name="ready_paired_none">正在自动找主机</string>
     <string name="ready_background">本机已经放行后台运行</string>
     <string name="pair_code_title">让其他手机连上</string>

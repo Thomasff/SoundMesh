@@ -139,6 +139,41 @@ class FindingEachOtherTest {
     }
 
     /**
+     * The screen says what is true now, and it is not looking at the field that knows.
+     *
+     * Both halves of the finding happen with nobody touching the phone: the search runs in a
+     * service and writes the host down, and the line to that host comes up and goes down later
+     * still. A screen that reads the stored host once, on the way in, is describing the moment it
+     * opened for as long as somebody leaves it alone - which on a phone lying on a table is the
+     * whole evening. On 09-21 that was both directions at once: a handset the host was already
+     * listing in its room still saying 正在自动找主机, and a handset with no host left on the
+     * network still claiming one. Re-picking the role was the only thing that moved either, and
+     * only because picking a role re-reads the file.
+     */
+    @Test
+    fun theScreenSaysWhetherThereIsAHostRatherThanWhetherThereWasOne() {
+        assertTrue(
+            "the stored host is read on the way into this screen and never again",
+            home.substringAfter("private val refresh = object : Runnable")
+                .substringBefore("handler.postDelayed(this, REFRESH_MILLIS)")
+                .contains("paired = PairedHost(filesDir).read(),")
+        )
+        // Which is a different question from the one above, and the one people read: the stored
+        // host survives that host closing the app - deliberately, it is what brings the room back
+        // by itself - so a line drawn off it is as true the day after.
+        val line = source("src/main/java/com/soundmesh/product/ReadyScreen.kt")
+            .substringAfter("private fun ScanLine(")
+        assertTrue(
+            "the pairing line claims a host off the stored one rather than off the live line",
+            line.contains("if (state.onStandby) R.string.ready_paired else R.string.ready_paired_none")
+        )
+        assertTrue(
+            "the dot beside it still follows the stored host",
+            line.contains("Dot(null, hollow = !state.onStandby)")
+        )
+    }
+
+    /**
      * The host's record follows the host, whether or not anything is playing.
      *
      * The sink's half of this landed first and did nothing on its own. A sink that has been down

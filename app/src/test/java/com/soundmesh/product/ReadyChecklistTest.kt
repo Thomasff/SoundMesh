@@ -1,5 +1,6 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.PairingCode
 import com.soundmesh.probe.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -136,6 +137,30 @@ class ReadyChecklistTest {
     @Test
     fun `an unpaired sink blocks`() {
         assertFalse(nothingBlocks(HomeState(role = Role.SINK)))
+    }
+
+    /** A host this handset has been pointed at, which says nothing about whether it answers. */
+    private val storedHost = PairingCode(hostId = "9f31", address = "192.168.43.7", chunkPort = 45003)
+
+    // Pointed at a host that has closed the app. The stored pairing is still there and still
+    // correct - it is what this handset will dial the moment that host comes back - and it is
+    // not an answer to "is anything going to play here", which is the only question this list
+    // asks. Ticked off the stored pairing, a sink sat green beside a host that had been gone
+    // for minutes on 09-21, while the standby line under it said 还没连上主机.
+    @Test
+    fun `a sink whose host has gone is not ticked`() {
+        val state = HomeState(role = Role.SINK, paired = storedHost, onStandby = false)
+        assertEquals(Mark.BLOCK, markOf(state, R.string.ready_paired, R.string.ready_paired_none))
+        assertFalse(nothingBlocks(state))
+    }
+
+    // The other direction, and it has to be here: without it an implementation that always
+    // blocks passes the test above.
+    @Test
+    fun `a sink that is standing by is ticked`() {
+        val state = HomeState(role = Role.SINK, paired = storedHost, onStandby = true)
+        assertEquals(Mark.OK, markOf(state, R.string.ready_paired, R.string.ready_paired_none))
+        assertTrue(nothingBlocks(state))
     }
 
     // Every line is a thing to do something about. A line with nothing to do about it is a
