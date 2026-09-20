@@ -250,7 +250,7 @@
     <string name="room_volume_none">No phone has reported its volume yet.</string>
     <string name="room_volume_restore">Restore volumes</string>
     <string name="room_volume_restore_hint">Puts every phone back to the volume it was at before this touched it. Phones do not agree on how many steps a stream has, so the same percentage lands on a different step on each; that is why the rows above are what each phone read back rather than a copy of the slider.</string>
-    <string name="capture_silent">Nothing is reaching the host any more: %1$d s of pure silence. Nudging the media volume up a step and back usually brings it straight back. The cause is still open: with media at 0 this phone may be putting the output path to sleep, and that is the path the capture reads.</string>
+    <string name="capture_silent">Sound has been paused for %1$d s. If you did not pause it yourself, try setting this handset\'s media volume to 1.</string>
 
     <string name="pair_title">Pairing</string>
     <string name="pair_code">Pairing code</string>

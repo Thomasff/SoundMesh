@@ -26,8 +26,10 @@ import com.soundmesh.core.HostId
 import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.R
+import com.soundmesh.probe.sync.AndroidStreamVolumes
 import com.soundmesh.probe.sync.CaptureChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
+import com.soundmesh.probe.sync.SilenceNudge
 import com.soundmesh.probe.sync.momentOf
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.FileChunkSource
@@ -430,6 +432,10 @@ class SessionService : Service() {
         // From here rather than from inside the capture, because this is the only arrangement
         // where silence means anything: a host playing a file is the source of its own audio.
         val events = EventLog(filesDir)
+        // One per capture, because the cooldown it holds is about this stretch of listening.
+        val nudge = SilenceNudge(
+            AndroidStreamVolumes(getSystemService(AudioManager::class.java))
+        )
         CaptureSilence.watch(
             onBegan = {
                 // Read here and written on another thread: the reading has to be of the handset as
@@ -437,8 +443,15 @@ class SessionService : Service() {
                 // the capture loop is what the thread below exists to avoid. Nothing audible is
                 // being produced at this instant anyway, which is the fault being recorded.
                 val moment = momentOf(this, CAPTURING_HOST_STREAM)
+                val at = System.nanoTime()
                 Thread({
                     events.write("capture-silence begins | ${moment}")
+                    // The repair a listener has been doing by hand since 09-12, and it goes in the
+                    // record whatever it did - including when it refused. A repair nobody can see
+                    // is a repair that can stop working without anybody noticing, and this one
+                    // sits in front of the only symptom the product has for this fault.
+                    val outcome = nudge.push(at) { Thread.sleep(SilenceNudge.HOLD_MILLIS) }
+                    events.write("capture-silence nudge: $outcome")
                 }, "SoundMeshSilenceRecord").start()
                 Log.w(LOG_TAG, "the capture has been handing over digital silence: ${moment}")
             },

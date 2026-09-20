@@ -253,7 +253,7 @@
     <string name="room_volume_none">还没有手机报回自己的音量。</string>
     <string name="room_volume_restore">一键还原音量</string>
     <string name="room_volume_restore_hint">把每台手机放回动它之前的音量。各机的档数不一样，同一个百分比落到的格子也不一样，所以上面那几行是各自读回来的真值，不是照抄滑钮。</string>
-    <string name="capture_silent">主机这边收不到声音了，已经 %1$d 秒全是静音。把媒体音量调高一格、再调回去，通常马上就恢复。原因还在查：媒体音量为 0 的时候，本机可能把输出通路睡掉了，而抓声抓的正是那条通路。</string>
+    <string name="capture_silent">检测到声音暂停了 %1$d 秒。如果不是你自己暂停的，建议把本机的媒体音量调成 1。</string>
 
     <string name="pair_title">配对</string>
     <string name="pair_code">配对码</string>
