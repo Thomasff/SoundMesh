@@ -15,6 +15,29 @@ val buildMark: String = runCatching {
     else head.take(7)
 }.getOrDefault("unknown")
 
+// What this build calls itself, taken from the tag that started it: v0.2.0 arrives here as
+// 0.2.0. The tag is the one place a version is written down - a number kept here as well would
+// be a second place, and the two would disagree the first time somebody tagged in a hurry.
+val released: String? =
+    System.getenv("SOUNDMESH_VERSION")?.trim()?.removePrefix("v")?.takeIf { it.isNotBlank() }
+
+/**
+ * Android compares versionCode and nothing else when deciding whether a package is an upgrade,
+ * so it has to grow with the name rather than be maintained next to it. Two digits each for
+ * minor and patch, which is how far this scheme goes before it wants replacing.
+ */
+fun versionCodeOf(name: String): Int {
+    val part = { i: Int -> name.split('.').getOrNull(i)?.takeWhile(Char::isDigit)?.toIntOrNull() ?: 0 }
+    return part(0) * 10_000 + part(1) * 100 + part(2)
+}
+
+// The release key, from the environment and never from a file in the tree. There is deliberately
+// no fallback to the debug key: an unsigned package refuses to install, which is loud, whereas a
+// debug-signed one installs perfectly and then can never be upgraded by the real thing, because
+// the debug key on a fresh runner is a different key every time.
+val releaseKey: File? =
+    System.getenv("SOUNDMESH_KEYSTORE")?.let(::File)?.takeIf { it.isFile }
+
 android {
     namespace = "com.soundmesh.probe"
     compileSdk = 35
@@ -23,8 +46,8 @@ android {
         applicationId = "com.soundmesh.probe"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = released?.let(::versionCodeOf) ?: 1
+        versionName = released ?: "0.1.0"
         buildConfigField("String", "BUILD_MARK", "\"$buildMark\"")
 
         // The facts about the project itself, each read from gradle.properties. One left unset
@@ -36,6 +59,26 @@ android {
                 .mapIndexed { i, part -> if (i == 0) part else part.replaceFirstChar { it.uppercase() } }
                 .joinToString("")
             buildConfigField("String", name, "\"${project.findProperty(property) ?: ""}\"")
+        }
+    }
+
+    signingConfigs {
+        if (releaseKey != null) create("release") {
+            storeFile = releaseKey
+            storePassword = System.getenv("SOUNDMESH_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("SOUNDMESH_KEY_ALIAS")
+            keyPassword = System.getenv("SOUNDMESH_KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            // Null where no key was handed in, which is every build on a developer's machine.
+            signingConfig = signingConfigs.findByName("release")
+            // Off until somebody has listened to a minified build all the way through. R8
+            // removing something Compose only reaches for at run time is a crash on a phone and
+            // a green build here, which is the worst pair of outcomes to have.
+            isMinifyEnabled = false
         }
     }
 

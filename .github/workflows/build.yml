@@ -1,0 +1,59 @@
+# Builds the project on a machine that has nothing of it on it.
+#
+# That is what this is for, more than the tests. Nearly every "it works on mine" turns out to be
+# a file that was never committed, a tool that happened to be installed, or a property somebody
+# set months ago and forgot. A runner is a fresh virtual machine every time and knows none of
+# those, so all three arrive here as a red cross instead of as somebody's bug report.
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A second push to a branch makes the first run's answer worthless before it arrives. Stop it
+# rather than pay for both and read the stale one first.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # The runner starts with an empty disk. This is what puts the repository on it, at the one
+      # commit that triggered the run.
+      - uses: actions/checkout@v4
+
+      # Android's SDK is already on GitHub's Ubuntu image. The JDK is, but not necessarily this
+      # one: 17 is what app/build.gradle.kts compiles against, so it is named rather than assumed.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          # Gradle's downloaded dependencies, carried over from the last run. A speed-up and
+          # nothing else: a run that misses this cache has to reach the same verdict as one that
+          # hits it, or the cache is hiding something rather than saving time.
+          cache: gradle
+
+      - run: chmod +x gradlew
+
+      # One command, because the exit code is the whole verdict - a compile error, a failing
+      # test and a missing resource all leave here non-zero and all turn the run red.
+      - run: ./gradlew test assembleDebug --no-daemon
+
+      # Which test, when it is a test. Uploaded only on failure, because on a green run nobody
+      # opens it and it is the slowest step here.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+
+      # The virtual machine is deleted the moment this job ends, so anything worth keeping has
+      # to be handed over before then. This one is so a build can be installed and listened to
+      # without checking the commit out.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soundmesh-debug
+          path: app/build/outputs/apk/debug/*.apk

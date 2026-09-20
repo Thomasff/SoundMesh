@@ -17,3 +17,10 @@
 
 # Build instructions for the icon set, written for this repository and not for a reader of it.
 /asset/README.md
+
+# The release signing key, and the base64 of it that goes into a GitHub secret. This file is the
+# application's identity: committed, anybody can publish as SoundMesh; lost, no install already
+# out there can ever be updated again. It belongs offline and nowhere near a repository.
+*.jks
+*.keystore
+keystore.b64
