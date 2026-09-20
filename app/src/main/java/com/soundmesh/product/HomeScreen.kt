@@ -422,17 +422,24 @@ internal fun warnsAboutBackground(state: HomeState): Boolean =
  * room to hand colours out in. A default colour would be worse than none: two handsets sharing one
  * is exactly the confusion the colours exist to end.
  *
- * [glow] is 0..1 and moves the band's width and alpha together - see [edgeGlow] for where it comes
- * from. The drawing itself is unchanged; only how wide and how bright it is at this instant moves.
+ * [glow] answers 0..1 and moves the band's width and alpha together - see [rememberEdgeGlow] for
+ * where it comes from. The drawing itself is unchanged; only how wide and how bright it is at this
+ * instant moves.
+ *
+ * ★ It is a function called here inside the draw, not a Float passed in. A value that moves every
+ * frame, read during composition, recomposes the whole screen at the refresh rate - which this app
+ * did until 2026-09-20, at a measured 18% of a core on the X10. A read inside a draw lambda
+ * invalidates the draw and nothing above it.
  */
-private fun Modifier.badgeEdge(colour: Color?, glow: Float): Modifier {
+private fun Modifier.badgeEdge(colour: Color?, glow: () -> Float): Modifier {
     if (colour == null) return this
     return drawWithContent {
         drawContent()
         // Over the content rather than under it: the screen scrolls, and an edge drawn beneath
         // whatever happens to be at the top of the list is an edge that comes and goes.
-        val band = size.minDimension * 0.045f * (0.6f + 0.8f * glow)
-        val inward = listOf(colour.copy(alpha = 0.85f * (0.4f + 0.6f * glow)), Color.Transparent)
+        val lit = glow()
+        val band = size.minDimension * 0.045f * (0.6f + 0.8f * lit)
+        val inward = listOf(colour.copy(alpha = 0.85f * (0.4f + 0.6f * lit)), Color.Transparent)
         val outward = inward.reversed()
         drawRect(Brush.verticalGradient(inward, 0f, band), size = Size(size.width, band))
         drawRect(
@@ -459,11 +466,13 @@ fun HomeScreen(
     onBack: () -> Unit = {}
 ) {
     val route = routeOf(state, steppedBack, holding)
-    val glow = edgeGlow(state)
     // Dimmed rather than only slowed: a disconnected sink's edge is meant to read as grey from
     // across the room, not just as a quieter version of its own colour.
     val edge = state.selfPlace?.let { BadgePalette.colourOf(it, MaterialTheme.colorScheme.primary) }
         ?.let { if (disconnectedSink(state)) it.copy(alpha = 0.3f) else it }
+    // Worked out after the colour, and told whether there is one: with no colour nothing draws an
+    // edge, and then nothing should be waking every frame to decide how bright it is not.
+    val glow = rememberEdgeGlow(state, lit = edge != null)
     Column(
         modifier = Modifier
             .fillMaxSize()
