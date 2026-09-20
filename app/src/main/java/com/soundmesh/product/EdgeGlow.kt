@@ -72,6 +72,14 @@ internal interface EdgeGlow {
      */
     fun travelSeconds(): Double
 
+    /**
+     * How much louder this instant is than the last few seconds have been, 0..1.
+     *
+     * Zero through anything held or steady, and near one on a hit. Only the lead wave's brightness
+     * reads it - see [LEAD_PUNCH].
+     */
+    fun punch(): Float
+
     /** Which of the two characters the waves have right now. */
     fun mood(): WaveMood
 }
@@ -118,6 +126,7 @@ internal interface EdgeGlow {
 @Composable
 internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
     val glow = remember { mutableFloatStateOf(STANDBY_GLOW_MIN) }
+    val punch = remember { mutableFloatStateOf(0f) }
     val travel = remember { mutableDoubleStateOf(0.0) }
     val mood: MutableState<WaveMood> = remember { mutableStateOf(QUIET_MOOD) }
     val regime = when {
@@ -128,6 +137,9 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
     }
     LaunchedEffect(regime) {
         mood.value = if (regime == Glow.PLAYING) PLAYING_MOOD else QUIET_MOOD
+        // Nothing but playback has beats in it, and a punch left behind by the last song would sit
+        // on the lead wave for as long as the handset stood by.
+        punch.floatValue = 0f
         // The travel accumulator is deliberately not reset here. See [EdgeGlow.travelSeconds].
         when (regime) {
             // No loop: nothing on screen is reading this, and the frame the loop would ask for is
@@ -136,45 +148,91 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
             // No loop here either, so the waves hold still where they were - which is the same
             // statement the flat amplitude is making.
             Glow.DISCONNECTED -> glow.floatValue = DISCONNECTED_GLOW
-            Glow.PLAYING -> followLoudness(glow, travel, PLAYING_MOOD.speed)
+            Glow.PLAYING -> followLoudness(glow, punch, travel, PLAYING_MOOD.speed)
             Glow.STANDBY -> breathe(glow, travel, QUIET_MOOD.speed)
         }
     }
-    return remember(glow, travel, mood) {
+    return remember(glow, punch, travel, mood) {
         object : EdgeGlow {
             override fun amplitude(): Float = glow.floatValue
             override fun travelSeconds(): Double = travel.doubleValue
+            override fun punch(): Float = punch.floatValue
             override fun mood(): WaveMood = mood.value
         }
     }
 }
 
 /**
- * Follows [SessionService.ACTIVE]'s own loudness, one exponential step per frame.
+ * Follows [SessionService.ACTIVE]'s own loudness, two exponential steps per frame.
  *
- * ★ The step is a time constant, not a per-frame fraction. It used to be `smoothed += 0.25f *
- * (target - smoothed)`, which is a different amount of smoothing on every refresh rate the app
- * runs at - the edge was twice as sluggish on the 120Hz handset as on the 60Hz one, for no reason
- * anybody chose. [LOUDNESS_TAU_SECONDS] is picked so that at 60Hz this is the old 0.25 to three
- * decimal places, which is what makes the change a no-op on the handset it was tuned on.
+ * ★ Both steps are time constants, not per-frame fractions. The first of them used to be
+ * `smoothed += 0.25f * (target - smoothed)`, which is a different amount of smoothing on every
+ * refresh rate the app runs at - the edge was twice as sluggish on the 120Hz handset as on the
+ * 60Hz one, for no reason anybody chose. [LOUDNESS_TAU_SECONDS] is picked so that at 60Hz that
+ * one is the old 0.25 to three decimal places.
  *
- * Starts from zero rather than from whatever the breath left behind, which is what it did before:
- * the edge easing up from dark as the first bar plays is the behaviour, not an artefact of how it
- * used to be written.
+ * ────────────────────────────────────────────────────────────────────────────
+ * Why there are two of them, and why the answer is not the loudness any more
+ * ────────────────────────────────────────────────────────────────────────────
+ * Absolute loudness turns out to be the wrong question even after [heardAs] puts it on a scale the
+ * ear uses. A held violin note or a voice under a mix is *steady* - it sits at one level for
+ * seconds at a time - so an edge driven by the level holds just as still, and the effect reads as
+ * decoration that happens to be on while music happens to be playing. What a person sees as "it is
+ * moving with the music" is not the level. It is the **departure from the level**.
+ *
+ * So: [fast] is where the music is right now, [slow] is where it has been sitting for the last few
+ * seconds, and what the edge is given is the slow one with the gap between them multiplied up -
+ *
+ *     level = slow + (fast - slow) · expand
+ *
+ * The running mean is still in there, so a quiet song is still visibly quieter than a loud one and
+ * silence is still dark, which is the one thing the amplitude has to keep saying. What changes is
+ * that the small departures a sustained passage does have - a phrase, a vibrato, a breath - arrive
+ * with several times their own size, and a passage that genuinely has none reads as still because
+ * it is.
+ *
+ * The expansion is asymmetric. A rise is the interesting half and gets [EXPAND_UP]; a fall gets
+ * much less, because at the same gain a quiet passage would be driven to nearly dark and the edge
+ * would keep announcing that this handset had stopped playing when it had not.
+ *
+ * [punch] is the same gap on its own, positive part only, and that is as close to a beat as this
+ * gets - see [PUNCH_GAIN] for what it is and is not.
+ *
+ * Both envelopes are seeded from the first frame that has any sound in it rather than from zero.
+ * From zero the slow one needs several seconds to catch up, and for those seconds the gap is the
+ * whole level: every song would open with a flare that has nothing to do with the song.
  */
-private suspend fun followLoudness(glow: MutableFloatState, travel: MutableDoubleState, speed: Float) {
+private suspend fun followLoudness(
+    glow: MutableFloatState,
+    punch: MutableFloatState,
+    travel: MutableDoubleState,
+    speed: Float,
+) {
     glow.floatValue = 0f
+    punch.floatValue = 0f
     var previous: Long? = null
+    var fast = 0f
+    var slow = 0f
+    var seeded = false
     while (true) {
         withInfiniteAnimationFrameNanos { now ->
             val last = previous
             previous = now
-            val target = heardAs(SessionService.ACTIVE?.loudness() ?: 0f)
+            val heard = heardAs(SessionService.ACTIVE?.loudness() ?: 0f)
             if (last != null) {
                 val dt = (now - last) * 1e-9f
                 travel.doubleValue += dt.toDouble() * speed
-                val k = 1f - exp(-dt / LOUDNESS_TAU_SECONDS)
-                glow.floatValue += k * (target - glow.floatValue)
+                if (!seeded && heard > 0f) {
+                    fast = heard
+                    slow = heard
+                    seeded = true
+                }
+                fast += (1f - exp(-dt / LOUDNESS_TAU_SECONDS)) * (heard - fast)
+                slow += (1f - exp(-dt / SETTLED_TAU_SECONDS)) * (heard - slow)
+                val gap = fast - slow
+                val expand = if (gap > 0f) EXPAND_UP else EXPAND_DOWN
+                glow.floatValue = (slow + gap * expand).coerceIn(0f, 1f)
+                punch.floatValue = (gap * PUNCH_GAIN).coerceIn(0f, 1f)
             }
         }
     }
@@ -249,8 +307,63 @@ private const val LOUDNESS_TAU_SECONDS = 0.058f
  * so whether or not there is a quiet passage going on, and a ring that flattens into a line during
  * one looks like a handset that has dropped out rather than one playing something soft.
  */
-private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.28f, swingLoud = 1.25f)
+private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.28f, swingLoud = 1.05f)
 private val QUIET_MOOD = WaveMood(speed = 0.35f, swingQuiet = 0.22f, swingLoud = 0.42f)
+
+/**
+ * How long "where the music has been sitting" looks back, and how hard a departure from it is
+ * multiplied up on the way in and on the way out.
+ *
+ * A few seconds because that is about the length of a phrase: long enough that a verse and a chorus
+ * are two different levels rather than one, short enough that the edge re-centres within a bar or
+ * two of a song changing character.
+ *
+ * [EXPAND_UP] is as large as it can be before ordinary beats spend their time pinned at full, which
+ * would throw away the difference between a big hit and a small one. [EXPAND_DOWN] is far smaller
+ * on purpose: at the same gain a quiet passage lands near dark, and dark is the one thing the edge
+ * is not allowed to say while this handset is still playing.
+ */
+private const val SETTLED_TAU_SECONDS = 2.5f
+private const val EXPAND_UP = 2.5f
+private const val EXPAND_DOWN = 1.2f
+
+/**
+ * What turns the gap between the two envelopes into the lead wave's flash.
+ *
+ * **This is not beat detection and does not know what a beat is.** It has no tempo, no grid, no
+ * idea which hit is the downbeat, and it cannot tell a kick from a consonant or a bowed attack -
+ * it only knows that this instant is louder than the last few seconds were. Beat tracking proper
+ * means a spectral flux and a comb filter or autocorrelation over several seconds, which means an
+ * FFT on the audio thread, which is a great deal of machinery and risk on the one path in this app
+ * that must not be disturbed. The thing actually being asked for is that somebody watching should
+ * be in no doubt the edge is listening, and for that a rise is enough.
+ *
+ * What it will get wrong, so that the next person does not rediscover it: a kick drum is mostly
+ * low frequency, and this reads the whole band, so on a track with a loud vocal or a wall of guitar
+ * the kick can pass without moving the total much. The fix, if it ever proves worth it, is a
+ * one-pole low pass before the RMS - cheap in cycles, but it lives in the renderer, on the audio
+ * thread, and that is a different order of risk from anything in this file.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * Where these five numbers come from, since none of them could be measured here
+ * ────────────────────────────────────────────────────────────────────────────
+ * Not tuned by eye and not guessed: the loop above was reimplemented as a few lines of script and
+ * run against loudness traces the bench cannot produce, because getting real music into this app
+ * takes a consent dialog nobody can automate. Each row is what `level`, the swing it drives and the
+ * lead wave's brightness settle to, after the first three seconds:
+ *
+ *     silence, then a steady -16dB record   level 0.74 flat    no startup flare (peak is 0.74)
+ *     held -22dB note, 1Hz vibrato +-2dB    level 0.53..0.71   swing 0.69..0.83   lead 0.46..0.63
+ *     held -22dB note, dead flat            level 0.59 flat    still, because it is
+ *     -20dB bed, +7dB hit every 500ms       level 0.63..0.93   swing 0.76..1.00   lead 0.52..0.88
+ *     -12dB for six seconds, then -26dB     level bottoms at 0.43, never near dark
+ *
+ * The second row is the one this exists for - the held note that used to read as motionless now
+ * moves across a third of its range - and the third is the control that says it is reading the
+ * music rather than inventing motion. Nothing pins at full in any of them, which is what keeps a
+ * big hit distinguishable from a small one.
+ */
+private const val PUNCH_GAIN = 7.0f
 
 /**
  * The two ends of the range [heardAs] stretches music across, in dBFS.

@@ -92,36 +92,27 @@ private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
  * and not six. [WAVE_SHOWN] is the knob, and a faster handset can afford more of them.
  *
  * ────────────────────────────────────────────────────────────────────────────
- * What the rounded corners cost, and the three things that did not pay for them
+ * What this ruler can and cannot resolve
  * ────────────────────────────────────────────────────────────────────────────
- * Same handset, same page, the waves at the swing they had before any of this:
+ * The table above is safe because every row differs from its neighbours by a factor, not a few per
+ * cent. Below that, a thirty-second `gfxinfo` run on this handset resolves nothing. The same
+ * installed package, three runs back to back, nothing touched in between:
  *
- *     square corners, node 24dp                              p50 15ms   janky  31%        25.0%
- *     round corners, node 28dp, a point every 6dp of arc     p50 16ms   janky  53%        27.2%
- *     the same, a point every 10dp of arc                    p50 16ms   janky  53%        27.3%
- *     the same, the swing cut by a fifth                     p50 16ms   janky  49%        26.4%
- *     the same, node back to 24dp - pixel for pixel identical p50 16ms   janky  45%        25.8%
+ *     p50 14ms janky 13%     p50 17ms janky 56%     p50 15ms janky 33%
  *
- * And, separately, the window going edge to edge so that the ring encloses the clock rather than
- * stopping under it: another millisecond, 15ms/27% to 16ms/39%. Same sentence again - the screen is
- * a tenth taller than the space below the status bar, so the perimeter is a tenth longer and so is
- * every contour drawn along it.
+ * That spread is wider than every fine-grained comparison made while the rounded corners and the
+ * edge-to-edge window were being added - each of which was one run against one run, and each of
+ * which was written up here as a finding before these three were run. They are withdrawn: whether
+ * a quarter-circle corner costs a millisecond, whether 4dp off each band's depth is worth anything,
+ * and whether sampling the arcs finely is free are all **unmeasured**, not measured-and-small. To
+ * settle any of them takes repeated runs and a comparison of medians, and none of them changed a
+ * decision here - the corners and the full-screen ring were wanted for how they look on a phone
+ * with round glass and a clock at the top.
  *
- * A quarter circle is about half again as long as the corner it replaces, which is roughly a tenth
- * more outline in the frame, and the predictor above says that is what it should cost. It is. The
- * three things that look like they should have paid it back mostly did not:
- *
- * - **Sampling the arcs coarsely: nothing at all.** Consistent with three times the points costing
- *   15% above. So sample them finely - it is a free choice, not a paid one.
- * - **A fifth off the swing: four points of jank.** A sine of 12dp over a 340px wavelength barely
- *   lengthens its own polyline, so the swing is nearly free in both directions - which is also the
- *   answer to whether changing it while the music plays costs anything. It does not.
- * - **Four dp off each band's depth: another four points**, at pixel-for-pixel identical output.
- *   The damage rectangle is worth something after all, though nothing like the outline.
- *
- * Which leaves the corners costing about a millisecond on this handset and no way to buy it back.
- * That is the trade taken: square corners on a phone with round glass is the one place the effect
- * stops looking like part of the phone, and the X10 is the slowest handset this will ever run on.
+ * What survives is structural rather than numeric, and it is enough to design against: the cost is
+ * in the outline, a quarter circle is about half again as long as the corner it replaces, and the
+ * whole screen is about a tenth taller than the part below the status bar. Both make the ring
+ * longer, so both cost something; how much is not known to better than the noise.
  */
 @Composable
 internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow) {
@@ -325,6 +316,7 @@ private fun screenCornerPx(view: View, density: Density): Float {
  */
 private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) {
     val lit = glow.amplitude()
+    val hit = glow.punch()
     val mood = glow.mood()
     val seconds = glow.travelSeconds()
     val swing = mood.swingQuiet + (mood.swingLoud - mood.swingQuiet) * lit
@@ -367,9 +359,11 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) 
         for (shown in WAVE_SHOWN.indices) {
             val i = WAVE_SHOWN[shown]
             val core = lerp(colour, Color.White, (WAVE_OP[i] * 1.15f - 0.35f).coerceIn(0f, WAVE_WHITEST))
-            // The lead wave brightens with the music on top of what the whole ring does; the rest
-            // keep the ring's own fade. See [LEAD_DIM].
-            val beat = if (shown == WAVE_SHOWN.lastIndex) LEAD_DIM + (1f - LEAD_DIM) * lit else 1f
+            // The lead wave brightens with the music on top of what the whole ring does, and flashes
+            // on a hit; the rest keep the ring's own fade. See [LEAD_DIM].
+            val beat =
+                if (shown == WAVE_SHOWN.lastIndex) LEAD_DIM + LEAD_LEVEL * lit + LEAD_PUNCH * hit
+                else 1f
             drawPath(
                 band.paths[shown], core,
                 alpha = (WAVE_OP[i] * WAVE_GAIN * CORE_ALPHA).coerceAtMost(1f) * fade * beat,
@@ -514,22 +508,28 @@ private const val CORE_ALPHA = 0.845f
 private const val WAVE_WHITEST = 0.25f
 
 /**
- * What is left of the lead wave's brightness at the quiet end, on top of [WAVE_FADE_DARK].
+ * How the lead wave's brightness is split three ways: what it keeps whatever the music does, what
+ * follows the level, and what the hits get.
  *
  * The swing alone says "this handset is sounding" but says it in a way that takes a second or two
  * of watching to read, because the eye is being asked to compare a shape against the same shape a
  * moment ago. Brightness is read instantly and without a reference. So the one wave already carrying
  * the ring's identity - the brightest, widest, slowest, the last one drawn - brightens with the
- * music twice as hard as the other two, and that is the part somebody notices from a chair.
+ * music on top of what the whole ring does, and flashes on [EdgeGlow.punch].
  *
  * Only that one. All three doing it is the whole ring pulsing, which is a different effect and a
  * more tiring one; the two behind it holding steady is what makes the lead read as moving against
  * something.
  *
- * Bounded by construction: the alpha it multiplies is already clamped to 1, and so are this and
- * [WAVE_FADE_DARK]'s factor, so no combination of the three can push a stroke past opaque.
+ * **The three add to exactly one**, which is why there is no clamp here and why there must not be.
+ * A clamp would mean that during a loud passage - where the level term is already near full - a hit
+ * changes nothing, and the beats would disappear from precisely the part of a song that has the
+ * most of them. Keeping a share of the range reserved for the punch is what keeps it visible at
+ * every level. See [PUNCH_GAIN] for what the punch is and, more importantly, what it is not.
  */
-private const val LEAD_DIM = 0.50f
+private const val LEAD_DIM = 0.45f
+private const val LEAD_LEVEL = 0.35f
+private const val LEAD_PUNCH = 0.20f
 
 /** What is left of the brightness with nothing sounding. */
 private const val WAVE_FADE_DARK = 0.40f
