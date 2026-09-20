@@ -1087,6 +1087,14 @@ internal fun Section(title: Int, content: @Composable () -> Unit) {
  * app, so it is already true at the next start - before a role has been picked, when there is
  * nothing to show - and latching on it hid this whole panel, restore button and all, for every
  * session after the first one that touched a volume.
+ *
+ * Null only where there is no host, and [shown] is never taken at its word for that. What this
+ * returns is stored in the same field the next call is handed as [shown], so a null returned once
+ * is the null it is asked about for ever afterwards - and the branch above hands one out on every
+ * tick somebody spends off the host role. Reported on 2026-09-20, which was the second time this
+ * latch produced a missing slider; the first is the paragraph above. The caller has its own half
+ * of the fix, and this half is the invariant: the room's line is the only way a room's volume is
+ * set, and a control that is the only way to do something has no business being absent.
  */
 internal fun roomVolumeShown(
     isHost: Boolean,
@@ -1095,7 +1103,7 @@ internal fun roomVolumeShown(
     onThisPhone: () -> Int
 ): Int? = when {
     !isHost -> null
-    dragged -> shown
+    dragged -> shown ?: onThisPhone()
     else -> onThisPhone()
 }
 

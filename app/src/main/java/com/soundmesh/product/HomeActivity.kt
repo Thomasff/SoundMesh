@@ -501,6 +501,11 @@ class HomeActivity : ComponentActivity() {
             // Before the role changes, because everything that could stop the room reads the
             // role - see [leaveTheRoomPlaying].
             if (role != Role.HOST && state.running) leaveTheRoomPlaying()
+            // Nobody has dragged a room slider that there is no room for. Cleared here rather
+            // than left to expire because the latch is a field and the number it latches onto is
+            // in [state], where stepping off the host role blanks it - see [roomVolumeShown] for
+            // the missing slider the two of them made together, twice.
+            if (role != Role.HOST) roomVolumeSet = false
             state = state.copy(role = role, problem = null)
             readPairing()
             takeUpTheRoom()

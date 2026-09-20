@@ -77,6 +77,34 @@ class HomeScreenTest {
     }
 
     /**
+     * And it survives a stretch of this handset not being the host.
+     *
+     * Reported on 2026-09-20: the room's own line was missing from the volume panel, and pressing
+     * "restore volumes" brought it back. That button is the tell - the one thing it does that
+     * nothing else does is clear the drag latch.
+     *
+     * The same shape as the test above, by a second road. This function's answer is stored in the
+     * very field that is handed back to it as [shown], so a null it returns once is the null it is
+     * asked about for ever after. The `!isHost` branch returns one on every tick somebody spends
+     * off the host role - and stepping back from the ready screen to the welcome screen picks
+     * Role.NONE, which is an ordinary thing to do. Coming back to host, the latch was still set,
+     * so the branch for "somebody dragged it" served that null for the rest of the session.
+     *
+     * Fixed in two places, because the two say different things. The caller clears the latch when
+     * the role leaves host, which is what makes the slider follow this phone again afterwards;
+     * this function refuses to answer null while there is a host, which is the invariant - the
+     * room's line is how a room's volume is set, and a control that is the only way to do
+     * something has no business being absent.
+     */
+    @Test
+    fun theRoomSliderSurvivesAStretchOfNotBeingTheHost() {
+        // The tick that wrote the null: off the host role there is no room line to show.
+        assertNull(roomVolumeShown(isHost = false, dragged = true, shown = 62) { 40 })
+        // Back on it, with the latch still set and that null handed straight back.
+        assertEquals(40, roomVolumeShown(isHost = true, dragged = true, shown = null) { 40 })
+    }
+
+    /**
      * Rounding is not disagreement, and a stream that will not move is.
      *
      * The distinction is the whole value of the read-back line. A percentage lands on a step and
