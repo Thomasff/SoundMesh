@@ -11,8 +11,10 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.soundmesh.session.SessionService
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.log10
+import kotlin.math.max
 
 /**
  * Whether this handset is a sink that has dropped off its standing line while nothing is playing.
@@ -180,27 +182,49 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
  * decoration that happens to be on while music happens to be playing. What a person sees as "it is
  * moving with the music" is not the level. It is the **departure from the level**.
  *
- * So: [fast] is where the music is right now, [slow] is where it has been sitting for the last few
- * seconds, and what the edge is given is the slow one with the gap between them multiplied up -
+ * So there are three running figures rather than one. [fast] is where the music is right now.
+ * [slow] is where it has been sitting for the last few seconds. [spread] is how far from [slow] it
+ * usually strays over that same window - how much this record moves at all.
  *
- *     level = slow + (fast - slow) · expand
+ * ────────────────────────────────────────────────────────────────────────────
+ * And why the departure is measured in the record's own units
+ * ────────────────────────────────────────────────────────────────────────────
+ * A first cut multiplied the departure by a fixed number, and that failed on exactly the records
+ * people put on. A modern pop master is compressed: it sits near the top of the scale and hardly
+ * moves. Viva la Vida runs at about -9dBFS with a string and synth bed under everything, which on
+ * the scale [heardAs] uses is 0.92 - so the edge sat near its widest swing for the length of the
+ * song and the little it did move was lost at the top of the range. The trouble was never that the
+ * swing was too big. It was that the swing was *always* big, because the level was.
  *
- * The running mean is still in there, so a quiet song is still visibly quieter than a loud one and
- * silence is still dark, which is the one thing the amplitude has to keep saying. What changes is
- * that the small departures a sustained passage does have - a phrase, a vibrato, a breath - arrive
- * with several times their own size, and a passage that genuinely has none reads as still because
- * it is.
+ * So the departure is divided by [spread] before it is used:
  *
- * The expansion is asymmetric. A rise is the interesting half and gets [EXPAND_UP]; a fall gets
- * much less, because at the same gain a quiet passage would be driven to nearly dark and the edge
- * would keep announcing that this handset had stopped playing when it had not.
+ *     out   = (fast - slow) / spread          about 1 for an ordinary departure, 2+ for a hit
+ *     level = playing · (MIDDLE + out · reach)
  *
- * [punch] is the same gap on its own, positive part only, and that is as close to a beat as this
- * gets - see [PUNCH_GAIN] for what it is and is not.
+ * A record that barely moves has a small [spread], so the little it does have fills the range; a
+ * record that moves a great deal has a large one, so it does not spend the song clipped. The
+ * question the edge answers stops being "how loud is this" and becomes **"how unusual is this, for
+ * this record"** - which is the question whose answer is visible.
  *
- * Both envelopes are seeded from the first frame that has any sound in it rather than from zero.
- * From zero the slow one needs several seconds to catch up, and for those seconds the gap is the
- * whole level: every song would open with a flare that has nothing to do with the song.
+ * What that trades away, so it is not rediscovered as a bug: a compressed record and a dynamic one
+ * now look about equally lively. The edge no longer reports how much a piece of music moves, only
+ * that it is moving. Nobody watching one phone play one song can see the difference, and being able
+ * to see anything at all was worth more.
+ *
+ * [playing] is what keeps the absolute level in the picture at all, and it is the one thing the
+ * amplitude must never stop saying: silence is dark, and a handset playing something soft is
+ * visibly smaller than one playing something loud. Above [FULL_AT] it stops mattering.
+ *
+ * The reach is asymmetric. A rise is the interesting half and gets [REACH_UP]; a fall gets much
+ * less, because at the same gain an ordinary dip lands at nearly dark, and dark is the one thing
+ * the edge is not allowed to say while this handset is still playing.
+ *
+ * [punch] is the same `out`, thresholded rather than scaled - see [PUNCH_OVER].
+ *
+ * All three figures are seeded on the first frame that has any sound in it rather than from zero.
+ * [slow] from zero needs several seconds to catch up and every song would open with a flare; and
+ * [spread] from zero is worse, because a near-zero divisor makes the first bar arbitrarily large.
+ * It is seeded at a fairly lively value instead, so an opening errs towards calm.
  */
 private suspend fun followLoudness(
     glow: MutableFloatState,
@@ -213,6 +237,7 @@ private suspend fun followLoudness(
     var previous: Long? = null
     var fast = 0f
     var slow = 0f
+    var spread = 0f
     var seeded = false
     while (true) {
         withInfiniteAnimationFrameNanos { now ->
@@ -225,14 +250,20 @@ private suspend fun followLoudness(
                 if (!seeded && heard > 0f) {
                     fast = heard
                     slow = heard
+                    spread = SPREAD_SEED
                     seeded = true
                 }
+                val settle = 1f - exp(-dt / SETTLED_TAU_SECONDS)
                 fast += (1f - exp(-dt / LOUDNESS_TAU_SECONDS)) * (heard - fast)
-                slow += (1f - exp(-dt / SETTLED_TAU_SECONDS)) * (heard - slow)
-                val gap = fast - slow
-                val expand = if (gap > 0f) EXPAND_UP else EXPAND_DOWN
-                glow.floatValue = (slow + gap * expand).coerceIn(0f, 1f)
-                punch.floatValue = (gap * PUNCH_GAIN).coerceIn(0f, 1f)
+                slow += settle * (heard - slow)
+                spread += settle * (abs(fast - slow) - spread)
+                // How far out of the ordinary this instant is, in units of this record's own
+                // ordinary. About 1 for a typical departure, 2 and up for a hit.
+                val out = (fast - slow) / max(spread, SPREAD_FLOOR)
+                val playing = (slow / FULL_AT).coerceAtMost(1f)
+                val reach = if (out > 0f) REACH_UP else REACH_DOWN
+                glow.floatValue = playing * (MIDDLE + out * reach).coerceIn(0f, 1f)
+                punch.floatValue = ((out - PUNCH_OVER) / (PUNCH_FULL - PUNCH_OVER)).coerceIn(0f, 1f)
             }
         }
     }
@@ -311,24 +342,60 @@ private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.28f, swingLoud
 private val QUIET_MOOD = WaveMood(speed = 0.35f, swingQuiet = 0.22f, swingLoud = 0.42f)
 
 /**
- * How long "where the music has been sitting" looks back, and how hard a departure from it is
- * multiplied up on the way in and on the way out.
+ * How long "where the music has been sitting, and how much it moves" looks back.
  *
  * A few seconds because that is about the length of a phrase: long enough that a verse and a chorus
  * are two different levels rather than one, short enough that the edge re-centres within a bar or
  * two of a song changing character.
- *
- * [EXPAND_UP] is as large as it can be before ordinary beats spend their time pinned at full, which
- * would throw away the difference between a big hit and a small one. [EXPAND_DOWN] is far smaller
- * on purpose: at the same gain a quiet passage lands near dark, and dark is the one thing the edge
- * is not allowed to say while this handset is still playing.
  */
 private const val SETTLED_TAU_SECONDS = 2.5f
-private const val EXPAND_UP = 2.5f
-private const val EXPAND_DOWN = 1.2f
 
 /**
- * What turns the gap between the two envelopes into the lead wave's flash.
+ * Where the edge sits when the music is doing exactly what it has been doing, and how far one
+ * ordinary departure from that moves it up and down.
+ *
+ * The middle, not the top: everything above it is the room the record needs to be louder than
+ * itself, and a first cut that had no such room is the whole reason this file works the way it
+ * does. [REACH_UP] is as large as it can be before ordinary passages spend their time pinned at
+ * full, which would throw away the difference between a big hit and a small one; measured against
+ * the traces in [PUNCH_OVER], a dense compressed record is at full about a twentieth of the time.
+ */
+private const val MIDDLE = 0.5f
+private const val REACH_UP = 0.30f
+private const val REACH_DOWN = 0.18f
+
+/**
+ * What `spread` starts at, and how small it is allowed to get.
+ *
+ * The seed is on the lively side so that the first bar of a song is calm rather than wild - a
+ * divisor that starts too small makes an opening arbitrarily large, which is the one failure this
+ * arrangement can produce that the fixed-gain one could not.
+ *
+ * The floor is about 0.4dB. Below it the material is not quiet, it is *flat*, and there is nothing
+ * there to show: dividing by a smaller number than this only amplifies whatever numerical dither
+ * is left, and an edge dancing to dither is worse than an edge holding still.
+ */
+private const val SPREAD_SEED = 0.06f
+private const val SPREAD_FLOOR = 0.010f
+
+/**
+ * The level at and above which this handset counts as fully playing, on [heardAs]'s scale.
+ *
+ * About -24dBFS. This is the only place absolute loudness still enters, and its whole job is the
+ * bottom of the range: silence dark, something soft visibly smaller than something loud. Above it,
+ * how loud the record is stops changing the picture, which is the point.
+ */
+private const val FULL_AT = 0.55f
+
+/**
+ * How far out of the ordinary an instant has to be before the lead wave flashes, and where the
+ * flash reaches full.
+ *
+ * A threshold rather than a gain, and that distinction is what makes this worth having. Dividing by
+ * `spread` already means an ordinary departure scores about 1 whatever record is playing - so a
+ * gain would hand every record a permanent half-flash, which is not a flash, it is brightness. Only
+ * what stands out *against this record's own ordinary* gets through. That is also how real onset
+ * detectors work: a threshold over a moving average, not a fixed level.
  *
  * **This is not beat detection and does not know what a beat is.** It has no tempo, no grid, no
  * idea which hit is the downbeat, and it cannot tell a kick from a consonant or a bowed attack -
@@ -345,25 +412,30 @@ private const val EXPAND_DOWN = 1.2f
  * thread, and that is a different order of risk from anything in this file.
  *
  * ────────────────────────────────────────────────────────────────────────────
- * Where these five numbers come from, since none of them could be measured here
+ * Where all of these numbers come from, since none of them could be measured here
  * ────────────────────────────────────────────────────────────────────────────
  * Not tuned by eye and not guessed: the loop above was reimplemented as a few lines of script and
  * run against loudness traces the bench cannot produce, because getting real music into this app
- * takes a consent dialog nobody can automate. Each row is what `level`, the swing it drives and the
- * lead wave's brightness settle to, after the first three seconds:
+ * takes a consent dialog nobody can automate. Each row is the swing the waves end up with and how
+ * much of the time the lead wave is flashing, after the first six seconds:
  *
- *     silence, then a steady -16dB record   level 0.74 flat    no startup flare (peak is 0.74)
- *     held -22dB note, 1Hz vibrato +-2dB    level 0.53..0.71   swing 0.69..0.83   lead 0.46..0.63
- *     held -22dB note, dead flat            level 0.59 flat    still, because it is
- *     -20dB bed, +7dB hit every 500ms       level 0.63..0.93   swing 0.76..1.00   lead 0.52..0.88
- *     -12dB for six seconds, then -26dB     level bottoms at 0.43, never near dark
+ *     -9dB, dense bed, a hit every 480ms    swing 0.39..1.05  mean 0.70   punch  5% of the time
+ *     the same bed with the hits taken out  swing 0.45..1.03  mean 0.71   punch  0%
+ *     -22dB swinging +-6dB, slowly          swing 0.44..1.03  mean 0.71   punch  0%
+ *     held -22dB note, 1Hz vibrato +-2dB    swing 0.45..1.03  mean 0.71   punch  0%
+ *     held -22dB note, dead flat            swing 0.67 flat               punch  0%
+ *     -12dB for six seconds, then -26dB     swing 0.58..0.61, never near dark
+ *     a quiet room at -40dB                 swing 0.37 flat - present, and plainly not music
+ *     silence, then the dense bed           opens at 0.88 of a possible 1.05: no startup flare
  *
- * The second row is the one this exists for - the held note that used to read as motionless now
- * moves across a third of its range - and the third is the control that says it is reading the
- * music rather than inventing motion. Nothing pins at full in any of them, which is what keeps a
- * big hit distinguishable from a small one.
+ * Rows one and two are the whole case for the threshold: the same bed scores the same *swing*
+ * either way, and the flash is what separates the one with beats in it from the one without. Row
+ * five is the control - material that genuinely does not move reads as still, so the edge is
+ * reading the music rather than inventing motion. Row one is at full a twentieth of the time, which
+ * is what [REACH_UP] is set against.
  */
-private const val PUNCH_GAIN = 7.0f
+private const val PUNCH_OVER = 1.2f
+private const val PUNCH_FULL = 2.8f
 
 /**
  * The two ends of the range [heardAs] stretches music across, in dBFS.
