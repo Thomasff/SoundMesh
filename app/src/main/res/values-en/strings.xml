@@ -401,8 +401,8 @@
     <string name="room_fit">Fit to measurement</string>
     <string name="room_fit_done">The icons have been set from the measurement. Drag any phone to do it again.</string>
     <string name="room_measured">Measured spacing (m)</string>
-    <string name="room_delay_on">Delay compensation: on</string>
-    <string name="room_delay_off">Delay compensation: off</string>
+    <string name="room_delay_on">Distance delay compensation: on</string>
+    <string name="room_delay_off">Distance delay compensation: off</string>
     <string name="room_arrival_delay">Held back so they arrive together (ms)</string>
     <string name="room_listener_unmeasured">Where you sit has not been measured, so the drawing puts you in the middle. Measure it and the volumes and the timing are worked out from where you actually are.</string>
     <string name="room_measure_listener">Measure where I sit (hold it overhead)</string>

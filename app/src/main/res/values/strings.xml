@@ -404,8 +404,8 @@
     <string name="room_fit">吸附到实测位置</string>
     <string name="room_fit_done">图标已按测量摆正。拖动任意一台可以再来一次。</string>
     <string name="room_measured">量到的间距（米）</string>
-    <string name="room_delay_on">延时补偿：开</string>
-    <string name="room_delay_off">延时补偿：关</string>
+    <string name="room_delay_on">距离延时补偿：开</string>
+    <string name="room_delay_off">距离延时补偿：关</string>
     <string name="room_arrival_delay">为了一起到达，各台延后（ms）</string>
     <string name="room_listener_unmeasured">还没量过你坐在哪，图上按你坐在正中算。量过之后，音量和先后才是从你那儿算的。</string>
     <string name="room_measure_listener">量一下我坐在哪（举过头顶）</string>
