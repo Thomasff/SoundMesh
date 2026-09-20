@@ -521,15 +521,19 @@ private const val WAVE_WHITEST = 0.25f
  * more tiring one; the two behind it holding steady is what makes the lead read as moving against
  * something.
  *
- * **The three add to exactly one**, which is why there is no clamp here and why there must not be.
- * A clamp would mean that during a loud passage - where the level term is already near full - a hit
- * changes nothing, and the beats would disappear from precisely the part of a song that has the
- * most of them. Keeping a share of the range reserved for the punch is what keeps it visible at
- * every level. See [PUNCH_GAIN] for what the punch is and, more importantly, what it is not.
+ * **The three add to less than one and are never clamped**, which is deliberate on both counts. No
+ * clamp, because a clamp would mean that during a loud passage - where the level term is already
+ * near full - a hit changes nothing, and the beats would disappear from precisely the part of a
+ * song that has the most of them. Keeping a share of the range reserved for the punch is what keeps
+ * it visible at every level. And less than one, because the ceiling came down by an eighth after a
+ * listen on two handsets while [LEAD_DIM] stayed where it was: the floor is what the ring says
+ * about itself with no music, and only the top of the range was ever too much.
+ *
+ * See [EdgeGlow.punch] for what the punch is and, more importantly, what it is not.
  */
 private const val LEAD_DIM = 0.45f
-private const val LEAD_LEVEL = 0.35f
-private const val LEAD_PUNCH = 0.20f
+private const val LEAD_LEVEL = 0.27f
+private const val LEAD_PUNCH = 0.16f
 
 /** What is left of the brightness with nothing sounding. */
 private const val WAVE_FADE_DARK = 0.40f

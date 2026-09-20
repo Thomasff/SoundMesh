@@ -337,8 +337,14 @@ private const val LOUDNESS_TAU_SECONDS = 0.058f
  * [PLAYING_MOOD]'s swing never reaches zero at its quiet end: a handset that has a colour is saying
  * so whether or not there is a quiet passage going on, and a ring that flattens into a line during
  * one looks like a handset that has dropped out rather than one playing something soft.
+ *
+ * The loud end has come down twice, 1.25 then 1.05 and now 0.92, and the quiet end has not moved
+ * once. That is not indecision about one number, it is the two ends answering to different things:
+ * the quiet end is a floor that has to keep saying "this handset is in the room", and the loud end
+ * is a ceiling on how much of the screen a room may take over while somebody is using the handset
+ * for something else. Only the ceiling gets renegotiated by looking at it.
  */
-private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.28f, swingLoud = 1.05f)
+private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.28f, swingLoud = 0.92f)
 private val QUIET_MOOD = WaveMood(speed = 0.35f, swingQuiet = 0.22f, swingLoud = 0.42f)
 
 /**
@@ -416,23 +422,28 @@ private const val FULL_AT = 0.55f
  * ────────────────────────────────────────────────────────────────────────────
  * Not tuned by eye and not guessed: the loop above was reimplemented as a few lines of script and
  * run against loudness traces the bench cannot produce, because getting real music into this app
- * takes a consent dialog nobody can automate. Each row is the swing the waves end up with and how
- * much of the time the lead wave is flashing, after the first six seconds:
+ * takes a consent dialog nobody can automate. Each row is the swing the waves end up with, the lead
+ * wave's brightness, and how much of the time that wave is flashing, after the first six seconds:
  *
- *     -9dB, dense bed, a hit every 480ms    swing 0.39..1.05  mean 0.70   punch  5% of the time
- *     the same bed with the hits taken out  swing 0.45..1.03  mean 0.71   punch  0%
- *     -22dB swinging +-6dB, slowly          swing 0.44..1.03  mean 0.71   punch  0%
- *     held -22dB note, 1Hz vibrato +-2dB    swing 0.45..1.03  mean 0.71   punch  0%
- *     held -22dB note, dead flat            swing 0.67 flat               punch  0%
- *     -12dB for six seconds, then -26dB     swing 0.58..0.61, never near dark
- *     a quiet room at -40dB                 swing 0.37 flat - present, and plainly not music
- *     silence, then the dense bed           opens at 0.88 of a possible 1.05: no startup flare
+ *     -9dB, dense bed, a hit every 480ms    swing 0.37..0.92 mean 0.63  lead 0.24..0.86  punch 5%
+ *     the same bed with the hits taken out  swing 0.42..0.90 mean 0.64  lead 0.27..0.73  punch 0%
+ *     -22dB swinging +-6dB, slowly          swing 0.41..0.91 mean 0.64  lead 0.27..0.74  punch 0%
+ *     held -22dB note, 1Hz vibrato +-2dB    swing 0.42..0.90 mean 0.64  lead 0.27..0.74  punch 0%
+ *     held -22dB note, dead flat            swing 0.60 flat             lead 0.41 flat   punch 0%
+ *     -12dB for six seconds, then -26dB     swing 0.53..0.55, never near dark
+ *     a quiet room at -40dB                 swing 0.35 flat - present, and plainly not music
+ *     silence, then the dense bed           opens at 0.78 of a possible 0.92: no startup flare
  *
  * Rows one and two are the whole case for the threshold: the same bed scores the same *swing*
  * either way, and the flash is what separates the one with beats in it from the one without. Row
  * five is the control - material that genuinely does not move reads as still, so the edge is
  * reading the music rather than inventing motion. Row one is at full a twentieth of the time, which
  * is what [REACH_UP] is set against.
+ *
+ * The table is re-run rather than rescaled whenever the ends move, because the swing column is not
+ * proportional to anything: it is `swingQuiet + (swingLoud - swingQuiet) * level`, so lowering the
+ * ceiling alone moves every row by a different amount and leaves the floor alone. The punch column
+ * is the one thing a change of ends cannot touch.
  */
 private const val PUNCH_OVER = 1.2f
 private const val PUNCH_FULL = 2.8f
