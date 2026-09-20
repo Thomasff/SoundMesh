@@ -23,11 +23,11 @@ jobs:
     steps:
       # The runner starts with an empty disk. This is what puts the repository on it, at the one
       # commit that triggered the run.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Android's SDK is already on GitHub's Ubuntu image. The JDK is, but not necessarily this
       # one: 17 is what app/build.gradle.kts compiles against, so it is named rather than assumed.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -44,7 +44,7 @@ jobs:
 
       # Which test, when it is a test. Uploaded only on failure, because on a green run nobody
       # opens it and it is the slowest step here.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: failure()
         with:
           name: test-reports
@@ -53,7 +53,7 @@ jobs:
       # The virtual machine is deleted the moment this job ends, so anything worth keeping has
       # to be handed over before then. This one is so a build can be installed and listened to
       # without checking the commit out.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: soundmesh-debug
           path: app/build/outputs/apk/debug/*.apk
