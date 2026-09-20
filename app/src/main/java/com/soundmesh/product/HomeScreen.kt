@@ -807,7 +807,12 @@ internal fun StandbyLine(state: HomeState, actions: HomeActions) {
         // being true whether or not it matters.
         val trouble =
             if (state.onStandby) null
-            else joinTrouble(state.onWifi, state.localNet, state.paired?.address)
+            else joinTrouble(
+                state.onWifi,
+                state.localNet,
+                state.paired?.address,
+                ownAccessPoint = servingAnAccessPoint(state)
+            )
         if (trouble != null) {
             Text(
                 if (trouble == JoinTrouble.OTHER_NETWORK) stringResource(

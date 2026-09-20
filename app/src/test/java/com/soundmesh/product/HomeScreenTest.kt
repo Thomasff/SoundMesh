@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
+import com.soundmesh.probe.sync.LocalAddress
 import org.junit.Test
 
 /** The rules behind the home screen: what it warns about, and what a finger on a slider means. */
@@ -17,6 +18,38 @@ class HomeScreenTest {
      * three different things. Two wake locks and three rounds of instruments later, the answer was
      * a setting on the phone.
      */
+    /**
+     * Which phone opens the hotspot and which phone is the host are two separate choices.
+     *
+     * Nothing has ever enforced that they are the same handset, and on 09-21 somebody ran it the
+     * other way round - the phone serving the hotspot joined as a sink, the room worked - which is
+     * when the screen was caught reading "did this phone join somebody else's network" as "is this
+     * phone on a network". The phone holding the hotspot answers no to the first for ever.
+     */
+    @Test
+    fun `the phone serving the hotspot is on a network`() {
+        val hotspot = HomeState(
+            role = Role.SINK,
+            onWifi = false,
+            codeChoices = listOf(LocalAddress.ReachedBy.HOTSPOT)
+        )
+        assertTrue(onANetwork(hotspot))
+        assertTrue(servingAnAccessPoint(hotspot))
+    }
+
+    // The other two states, so that "always true" does not pass the test above.
+    @Test
+    fun `a phone on neither is on neither, and a joined one needs no hotspot`() {
+        assertFalse(onANetwork(HomeState(role = Role.SINK, onWifi = false)))
+        val joined = HomeState(
+            role = Role.SINK,
+            onWifi = true,
+            codeChoices = listOf(LocalAddress.ReachedBy.WIFI)
+        )
+        assertTrue(onANetwork(joined))
+        assertFalse(servingAnAccessPoint(joined))
+    }
+
     @Test
     fun `a handset whose background is not allowed is warned, once it has a job to do`() {
         assertTrue(warnsAboutBackground(HomeState(role = Role.SINK, backgroundAllowed = false)))

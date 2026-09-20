@@ -75,26 +75,30 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
  * rather than by a name, which this app has no permission to read.
  *
  * A sink has one question, and it is not which of the two: a phone joining its host's hotspot and a
- * phone joining a router look identical from inside Android, and a sink never opens a hotspot of
- * its own. So it gets one line that covers both, and no name - the name was never the thing being
- * asked about, and reading it costs a location permission this app deliberately does not hold.
+ * phone joining a router look identical from inside Android. So it gets one line that covers both,
+ * and no name - the name was never the thing being asked about, and reading it costs a location
+ * permission this app deliberately does not hold.
+ *
+ * What that line may not be read off is [HomeState.onWifi] alone, which is "joined somebody else's
+ * network" and nothing else. A handset serving the hotspot can be a sink - reported 09-21, working
+ * - and that one said 未连接 WiFi/热点 while it was the network every other phone in the room was
+ * on. See [onANetwork].
  */
 @Composable
 private fun NetworkLines(state: HomeState) {
     Label(R.string.network_title)
     if (state.role == Role.SINK) {
+        val on = onANetwork(state)
         Line(first = true) {
-            Dot(null, hollow = !state.onWifi)
+            Dot(null, hollow = !on)
             LineName(
-                stringResource(
-                    if (state.onWifi) R.string.network_joined else R.string.network_not_joined
-                ),
-                quiet = !state.onWifi
+                stringResource(if (on) R.string.network_joined else R.string.network_not_joined),
+                quiet = !on
             )
         }
         return
     }
-    val hotspot = LocalAddress.ReachedBy.HOTSPOT in state.codeChoices
+    val hotspot = servingAnAccessPoint(state)
     Line(first = true) {
         Dot(null, hollow = !hotspot)
         LineName(
@@ -110,6 +114,25 @@ private fun NetworkLines(state: HomeState) {
         )
     }
 }
+
+/**
+ * Whether this handset is serving an access point of its own.
+ *
+ * Off the code choices rather than off a name: an address that is not the joined one is this
+ * handset's own access point, and the interface it sits on carries no such thing - the X10 runs
+ * its hotspot on wlan0. See [LocalAddress.ReachedBy].
+ */
+internal fun servingAnAccessPoint(state: HomeState): Boolean =
+    LocalAddress.ReachedBy.HOTSPOT in state.codeChoices
+
+/**
+ * Whether this handset is on a network the room could be on - joined one, or serving one.
+ *
+ * The second half is the one that was missing. [HomeState.onWifi] answers "did this phone join
+ * somebody else's network", which is false on the phone holding the hotspot however many other
+ * phones are on it.
+ */
+internal fun onANetwork(state: HomeState): Boolean = state.onWifi || servingAnAccessPoint(state)
 
 /**
  * The sink's half of pairing: whether it is talking to a host, and the way to fix it if not.

@@ -98,6 +98,32 @@ class JoinTroubleTest {
         )
     }
 
+    // A handset serving its own access point. Every sentence here is written from inside a
+    // phone that joined somebody else's network, and all three are wrong from inside the phone
+    // that *is* the network: "连上主机的热点" when the host is already on this one, "不在同一个
+    // 网" read off the joined subnet while the host sits on the access point's, which nothing
+    // here can see, and "让主机开热点" to the phone holding the hotspot. Found 09-21, when a
+    // handset serving the hotspot was put in as a sink and the room worked.
+    @Test
+    fun `the phone that is the network is not told to go and find one`() {
+        assertNull(
+            joinTrouble(
+                onWifi = false,
+                mine = null,
+                hostAddress = "192.168.43.9",
+                ownAccessPoint = true
+            )
+        )
+        assertNull(
+            joinTrouble(
+                onWifi = true,
+                mine = mine,
+                hostAddress = "192.168.43.9",
+                ownAccessPoint = true
+            )
+        )
+    }
+
     @Test
     fun `every answer has words to go with it`() {
         for (trouble in JoinTrouble.entries) joinWording(trouble)

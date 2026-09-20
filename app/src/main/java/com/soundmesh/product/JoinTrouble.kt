@@ -45,9 +45,27 @@ enum class JoinTrouble {
  * [mine] is null when this handset's own address could not be read, and [hostAddress] is null when
  * nothing has been paired yet. Both answer null rather than guessing: there is already a line on
  * screen for "not paired", and an unreadable address is not evidence of anything.
+ *
+ * [ownAccessPoint] is the third of those: this handset is serving the network the room is on, and
+ * every answer here would be advice to go and find one. See the guard for what each would say.
  */
-internal fun joinTrouble(onWifi: Boolean, mine: IpSubnet?, hostAddress: String?): JoinTrouble? {
+internal fun joinTrouble(
+    onWifi: Boolean,
+    mine: IpSubnet?,
+    hostAddress: String?,
+    ownAccessPoint: Boolean = false
+): JoinTrouble? {
     if (hostAddress.isNullOrBlank()) return null
+    // Every sentence below is written from inside a handset that joined somebody else's
+    // network, and all three are wrong from inside the one that is the network: 连主机开的热点
+    // when the host is already on this handset's, 不在同一个网 read off the joined subnet while
+    // the host sits on the access point's - which nothing here can see - and 让主机开热点 said
+    // to the phone holding the hotspot. Saying nothing leaves the general line, which is true.
+    //
+    // Not a rule anybody wrote down until 09-21, when somebody put the handset serving the
+    // hotspot in as a sink and the room worked. Nothing forbids it and nothing should: a room
+    // needs one host and one access point and has never required them to be the same phone.
+    if (ownAccessPoint) return null
     if (!onWifi) return JoinTrouble.NO_WIFI
     if (mine == null) return null
     val host = ipv4Of(hostAddress) ?: return null
