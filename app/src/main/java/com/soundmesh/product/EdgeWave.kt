@@ -102,6 +102,11 @@ private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
  *     the same, the swing cut by a fifth                     p50 16ms   janky  49%        26.4%
  *     the same, node back to 24dp - pixel for pixel identical p50 16ms   janky  45%        25.8%
  *
+ * And, separately, the window going edge to edge so that the ring encloses the clock rather than
+ * stopping under it: another millisecond, 15ms/27% to 16ms/39%. Same sentence again - the screen is
+ * a tenth taller than the space below the status bar, so the perimeter is a tenth longer and so is
+ * every contour drawn along it.
+ *
  * A quarter circle is about half again as long as the corner it replaces, which is roughly a tenth
  * more outline in the frame, and the predictor above says that is what it should cost. It is. The
  * three things that look like they should have paid it back mostly did not:
@@ -362,9 +367,12 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow) 
         for (shown in WAVE_SHOWN.indices) {
             val i = WAVE_SHOWN[shown]
             val core = lerp(colour, Color.White, (WAVE_OP[i] * 1.15f - 0.35f).coerceIn(0f, WAVE_WHITEST))
+            // The lead wave brightens with the music on top of what the whole ring does; the rest
+            // keep the ring's own fade. See [LEAD_DIM].
+            val beat = if (shown == WAVE_SHOWN.lastIndex) LEAD_DIM + (1f - LEAD_DIM) * lit else 1f
             drawPath(
                 band.paths[shown], core,
-                alpha = (WAVE_OP[i] * WAVE_GAIN * CORE_ALPHA).coerceAtMost(1f) * fade,
+                alpha = (WAVE_OP[i] * WAVE_GAIN * CORE_ALPHA).coerceAtMost(1f) * fade * beat,
                 style = Stroke(band.sigmaPx * WAVE_WID[i] * 2f * CORE_AT),
                 blendMode = WAVE_BLEND,
             )
@@ -504,6 +512,24 @@ private const val CORE_ALPHA = 0.845f
  * from across a room. Enough white to say "this is the bright one", not enough to lose the hue.
  */
 private const val WAVE_WHITEST = 0.25f
+
+/**
+ * What is left of the lead wave's brightness at the quiet end, on top of [WAVE_FADE_DARK].
+ *
+ * The swing alone says "this handset is sounding" but says it in a way that takes a second or two
+ * of watching to read, because the eye is being asked to compare a shape against the same shape a
+ * moment ago. Brightness is read instantly and without a reference. So the one wave already carrying
+ * the ring's identity - the brightest, widest, slowest, the last one drawn - brightens with the
+ * music twice as hard as the other two, and that is the part somebody notices from a chair.
+ *
+ * Only that one. All three doing it is the whole ring pulsing, which is a different effect and a
+ * more tiring one; the two behind it holding steady is what makes the lead read as moving against
+ * something.
+ *
+ * Bounded by construction: the alpha it multiplies is already clamped to 1, and so are this and
+ * [WAVE_FADE_DARK]'s factor, so no combination of the three can push a stroke past opaque.
+ */
+private const val LEAD_DIM = 0.50f
 
 /** What is left of the brightness with nothing sounding. */
 private const val WAVE_FADE_DARK = 0.40f

@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.soundmesh.session.SessionService
 import kotlin.math.exp
+import kotlin.math.log10
 
 /**
  * Whether this handset is a sink that has dropped off its standing line while nothing is playing.
@@ -168,7 +169,7 @@ private suspend fun followLoudness(glow: MutableFloatState, travel: MutableDoubl
         withInfiniteAnimationFrameNanos { now ->
             val last = previous
             previous = now
-            val target = SessionService.ACTIVE?.loudness() ?: 0f
+            val target = heardAs(SessionService.ACTIVE?.loudness() ?: 0f)
             if (last != null) {
                 val dt = (now - last) * 1e-9f
                 travel.doubleValue += dt.toDouble() * speed
@@ -177,6 +178,29 @@ private suspend fun followLoudness(glow: MutableFloatState, travel: MutableDoubl
             }
         }
     }
+}
+
+/**
+ * The renderer's own loudness, 0..1, turned into how loud it *sounds*, 0..1.
+ *
+ * [com.soundmesh.probe.sync.loudnessOf] hands back a linear RMS of the PCM going to the speaker -
+ * the right number for the audio side, and the wrong one to drive a light with. Hearing is
+ * logarithmic, and so is the way music is mastered: a record sits somewhere around -14dBFS RMS,
+ * which is 0.2 linear, and a quiet passage of the same record around -28dBFS, which is 0.04. Fed
+ * straight in, the whole of a song lives in the bottom fifth of the range and every swing that
+ * depends on it is a swing of a few per cent. That is why the edge looked like it was ignoring the
+ * music: it was following it exactly, inside a band too narrow to see.
+ *
+ * In decibels the same two numbers are 31/39ths and 17/39ths of this scale, and the difference
+ * between them is a third of everything the edge can do.
+ *
+ * The floor is below any music worth showing and above the noise of a near-silent room; the ceiling
+ * is a few dB short of full scale, which nothing mastered ever sustains.
+ */
+private fun heardAs(rms: Float): Float {
+    if (rms <= 0f) return 0f
+    val db = 20f * log10(rms)
+    return ((db - LOUD_FLOOR_DB) / (LOUD_CEILING_DB - LOUD_FLOOR_DB)).coerceIn(0f, 1f)
 }
 
 /**
@@ -225,8 +249,18 @@ private const val LOUDNESS_TAU_SECONDS = 0.058f
  * so whether or not there is a quiet passage going on, and a ring that flattens into a line during
  * one looks like a handset that has dropped out rather than one playing something soft.
  */
-private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.38f, swingLoud = 1.25f)
+private val PLAYING_MOOD = WaveMood(speed = 1.00f, swingQuiet = 0.28f, swingLoud = 1.25f)
 private val QUIET_MOOD = WaveMood(speed = 0.35f, swingQuiet = 0.22f, swingLoud = 0.42f)
+
+/**
+ * The two ends of the range [heardAs] stretches music across, in dBFS.
+ *
+ * The floor is a room with something quiet going on in it rather than a room with nothing in it;
+ * the ceiling is where a master's loudest passages sit. Between them is everything the edge has to
+ * say, so widening this band flattens the effect and narrowing it makes the edge clip on every hit.
+ */
+private const val LOUD_FLOOR_DB = -45f
+private const val LOUD_CEILING_DB = -6f
 
 /** The disconnected sink's fixed, unbreathing amplitude. */
 private const val DISCONNECTED_GLOW = 0.15f

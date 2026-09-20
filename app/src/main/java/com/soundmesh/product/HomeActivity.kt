@@ -22,6 +22,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -424,6 +425,12 @@ class HomeActivity : ComponentActivity() {
         refreshPermissionsState()
         // Meant to be put down on a table and looked at, like every other screen in this app.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Android 15 does this to every app whether it asks or not, and older versions do not -
+        // so without this line the same build has the screen edge under the clock on one handset
+        // and stopping short of it on another, and the lit edge is a ring on one and a bracket
+        // with the top missing on the other. The content is unaffected: the column inside
+        // HomeScreen already carries safeDrawingPadding, which is what made Android 15 bearable.
+        enableEdgeToEdge()
         setContent {
             SoundMeshTheme(themeChoice, language) {
                 Surface {

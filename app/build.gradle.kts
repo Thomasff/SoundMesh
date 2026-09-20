@@ -64,6 +64,9 @@ dependencies {
     // which is why ScanActivity is a ComponentActivity while everything else here is a plain
     // Activity - the harness activities have no use for one and are left alone.
     implementation("androidx.activity:activity:1.9.3")
+    // Was already here by way of activity; declared because the product now asks it for the
+    // system bars' icon colour, which the app picks rather than the system (see SoundMeshTheme).
+    implementation("androidx.core:core:1.13.1")
     implementation("androidx.camera:camera-camera2:$cameraX")
     implementation("androidx.camera:camera-lifecycle:$cameraX")
     implementation("androidx.camera:camera-view:$cameraX")
