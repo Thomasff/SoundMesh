@@ -21,16 +21,28 @@ class HandsetMomentTest {
         musicMax = 150,
         musicMuted = true,
         playing = "ALARM:8/15",
-        batteryPercent = 90
+        batteryPercent = 90,
+        players = "2:1,11"
     )
 
     @Test
     fun `every reading is on the line, named`() {
         assertEquals(
             "charging=usb screen=on music-active=false mode=NORMAL " +
-                "media=0/150 media-muted=yes playing=ALARM:8/15 battery=90%",
+                "media=0/150 media-muted=yes playing=ALARM:8/15 battery=90% players=2:1,11",
             full.toString()
         )
+    }
+
+    /**
+     * The one field that separates the fault from somebody pausing their own music.
+     *
+     * Every other reading is the same in both: zeros arriving from the capture and a handset that
+     * says nothing is active on the media stream. An empty list is a player that has gone away.
+     */
+    @Test
+    fun `no players at all is a reading, not a missing one`() {
+        assertEquals("players=0:", full.copy(players = "0:").toString().substringAfterLast(' '))
     }
 
     /**
@@ -44,12 +56,12 @@ class HandsetMomentTest {
         val partial = HandsetMoment(
             charger = null, screenOn = null, musicActive = null, audioMode = null,
             musicIndex = null, musicMax = null, musicMuted = null, playing = null,
-            batteryPercent = null
+            batteryPercent = null, players = null
         )
 
         assertEquals(
             "charging=? screen=? music-active=? mode=? " +
-                "media=?/? media-muted=? playing=? battery=?",
+                "media=?/? media-muted=? playing=? battery=? players=?",
             partial.toString()
         )
     }
@@ -58,11 +70,11 @@ class HandsetMomentTest {
     fun `the states that are not the suspect read plainly too`() {
         assertEquals(
             "charging=none screen=off music-active=true mode=IN_CALL " +
-                "media=7/15 media-muted=no playing=MEDIA:7/15 battery=18%",
+                "media=7/15 media-muted=no playing=MEDIA:7/15 battery=18% players=1:1",
             full.copy(
                 charger = "none", screenOn = false, musicActive = true, audioMode = "IN_CALL",
                 musicIndex = 7, musicMax = 15, musicMuted = false, playing = "MEDIA:7/15",
-                batteryPercent = 18
+                batteryPercent = 18, players = "1:1"
             ).toString()
         )
     }

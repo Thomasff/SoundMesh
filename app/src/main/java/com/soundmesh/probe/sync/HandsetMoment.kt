@@ -32,6 +32,14 @@ import android.os.PowerManager
  * - [musicIndex]/[musicMuted] - the zero this app writes itself, which has been the suspect since
  *   09-12 and has twice been observed at zero while the room sounded perfect.
  * - [screenOn], [audioMode], [batteryPercent] - the three that were guessed at on the night.
+ * - [players] - added 09-20, because until it existed this record could not tell the fault from
+ *   somebody pausing their music. Both look identical in every other field: the capture hands over
+ *   zeros and the handset says nothing is active on the media stream. A listener pointed that out
+ *   after eighteen of these had been counted as faults, which is eighteen records of two things
+ *   added together. A paused player leaves the active list; a player that is still running while
+ *   something else silences its output stays in it. Written as the count and every usage rather
+ *   than as a verdict, because other apps' entries arrive anonymised and how much of one survives
+ *   on a given ROM is not something to assume - the first record answers it.
  *
  * Every field is nullable and a reading nobody could take prints `?`. A zero standing in for "the
  * handset would not say" would be the answer this line exists to establish, written as though it
@@ -46,7 +54,8 @@ internal data class HandsetMoment(
     val musicMax: Int?,
     val musicMuted: Boolean?,
     val playing: String?,
-    val batteryPercent: Int?
+    val batteryPercent: Int?,
+    val players: String?
 ) {
     override fun toString(): String =
         "charging=${charger ?: UNKNOWN} screen=${said(screenOn, "on", "off")} " +
@@ -54,7 +63,8 @@ internal data class HandsetMoment(
             "media=${musicIndex ?: UNKNOWN}/${musicMax ?: UNKNOWN} " +
             "media-muted=${said(musicMuted, "yes", "no")} " +
             "playing=${playing ?: UNKNOWN} " +
-            "battery=${batteryPercent?.let { "$it%" } ?: UNKNOWN}"
+            "battery=${batteryPercent?.let { "$it%" } ?: UNKNOWN} " +
+            "players=${players ?: UNKNOWN}"
 
     private fun said(value: Boolean?, yes: String, no: String) =
         when (value) { true -> yes; false -> no; null -> UNKNOWN }
@@ -100,7 +110,17 @@ internal fun momentOf(context: Context, playingStream: Int): HandsetMoment {
             val level = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             val scale = it.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
             if (level < 0 || scale <= 0) null else level * 100 / scale
-        }
+        },
+        players = runCatching {
+            audio?.activePlaybackConfigurations?.let { all ->
+                // Count first so an empty list is still an answer, then every usage, ours included
+                // - which one is ours is read off the number rather than filtered out here, so a
+                // ROM that reports something unexpected says so instead of being quietly dropped.
+                all.joinToString(",", prefix = "${all.size}:") {
+                    it.audioAttributes.usage.toString()
+                }
+            }
+        }.getOrNull()
     )
 }
 
