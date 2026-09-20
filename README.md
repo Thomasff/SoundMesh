@@ -5,7 +5,7 @@
   <img src="asset/github/readme-header-light.png" width="520" alt="SoundMesh">
 </picture>
 
-**Turn a few Android phones into one set of synchronised speakers**
+**Turn a few Android phones into one set of tightly synchronised speakers**
 
 Synchronised playback across devices on one local network, aligned to within about 0.5 ms.
 No server, no cloud, nothing leaves the network.
@@ -31,16 +31,24 @@ No server, no cloud, nothing leaves the network.
 ## Overview
 
 Several Android devices join one local network. One of them is the host: it picks the music, decodes
-it and hands out the time, and the rest join by themselves and play in step. Every device puts out
-the same audio at the same instant, which sounds like one source rather than several speakers.
+it and hands out the time, and the rest join by themselves and play in step.
 
-Where the devices are, relative to one another, is measured acoustically. That measurement then
-carries the spatial effects: stereo assignment, a source that circles the room, a source placed by
-hand.
+Most approaches synchronise over the network alone, which cannot synchronise the delay in the
+hardware, so a purely network-based approach usually leaves more than tens of milliseconds between
+when the devices actually sound. Here they calibrate against one another by sound to measure that
+hardware difference, which brings the alignment down to about 0.5 ms - roughly the time sound takes
+to travel 17 cm, while two identical sounds have to be more than 30 ms apart before the ear can
+tell them apart.
+
+The acoustic calibration also measures the approximate distance between devices, which together
+with the tight sync carries the spatial effects: stereo assignment, a source that circles the room,
+a source placed by hand.
 
 ## Features
 
 - **Tight sync** — about 0.5 ms between devices once calibrated.
+- **Ranging by sound** — it measures the distance between devices itself, which together with the
+  tight sync is what the spatial effects run on.
 - **Not only local files** — it can capture whatever this phone is playing, online music apps
   included, and hand that out instead.
 - **Nothing to set up** — one WiFi network or a hotspot is enough; no computer, server or other
