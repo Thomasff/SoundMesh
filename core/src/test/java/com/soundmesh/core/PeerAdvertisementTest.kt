@@ -109,6 +109,27 @@ class PeerAdvertisementTest {
         assertEquals(2, outcome.compatible)
     }
 
+    /**
+     * One host under two service names is one host.
+     *
+     * mDNS names have to be unique on a network, so a handset that registers again while its own
+     * previous registration is still being answered - which is what taking the host role twice in
+     * an evening does - is renamed by the platform rather than refused. Both records then answer,
+     * both carry the same identity, and reading that as two hosts refuses the room its only host
+     * until one of the names ages out. Seen on 09-21: seventy seconds of "more than one host
+     * answered" on a handset with exactly one other handset in the flat.
+     */
+    @Test
+    fun treatsTwoNamesForOneIdentityAsOneHost() {
+        val outcome = PeerAdvertisement.choose(
+            listOf(peer("X10"), peer("X10 (2)", address = "192.168.43.9"))
+        )
+
+        assertNull(outcome.failure)
+        assertEquals("X10", outcome.peer!!.name)
+        assertEquals(1, outcome.compatible)
+    }
+
     /** An incompatible neighbour must not make the one usable host ambiguous. */
     @Test
     fun ignoresAnIncompatibleNeighbourWhenChoosing() {

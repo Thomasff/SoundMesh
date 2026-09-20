@@ -2,6 +2,7 @@ package com.soundmesh.probe.sync
 
 import android.content.Context
 import com.soundmesh.core.DiscoveryFailure
+import com.soundmesh.core.DiscoveryOutcome
 import com.soundmesh.core.HostRepoint
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.PeerAdvertisement
@@ -37,17 +38,23 @@ object HostSearch {
         // scan finishing inside it is exactly the thing that must not be overwritten.
         if (paired.read() != null) return Found(null, ALREADY_PAIRED)
         val outcome = PeerDiscovery(context).discover(windowMillis)
-        val peer = outcome.peer ?: return Found(null, wordFor(outcome.failure))
-        // This handset's own record, if that is what answered. Giving the role back is a request
-        // to a platform daemon rather than an act: the record goes on being answered for seconds
-        // after somebody picks 当从机, and other devices' caches hold it longer still. One record
-        // on the network is the shape choose() accepts, so without this the phone stores itself as
-        // its own host and dials a port nothing is serving - for ever, because a stored host is
-        // never replaced by a search. Two records, its own and a real host's, is already refused
-        // as ambiguous and found on the next window.
-        if (PeerAdvertisement.hostIdOf(peer) == HostIdentity(directory).current()) {
-            return Found(null, ONLY_ITS_OWN_RECORD)
-        }
+        val mine = HostIdentity(directory).current()
+        // Own record out of the whole list before anything is counted, which is what [lookAgain]
+        // has always done and this did not: it asked afterwards, of the single host choose() had
+        // already picked, so its own record standing beside a real one was two hosts and both were
+        // dropped. That is not rare - it is every handset that has just handed the role over, for
+        // as long as the platform goes on answering for it.
+        val others = outcome.hosts.filter { PeerAdvertisement.hostIdOf(it) != mine }
+        val peer = others.singleOrNull() ?: return Found(
+            null,
+            if (others.isEmpty() && outcome.hosts.isNotEmpty()) ONLY_ITS_OWN_RECORD
+            else wordFor(outcome, mine)
+        )
+        // Why its own record is there to be filtered at all: giving the role back is a request to
+        // a platform daemon rather than an act. The record goes on being answered for seconds
+        // after somebody picks 当从机, and other devices' caches hold it longer still. Without
+        // the filter the handset stores itself as its own host and dials a port nothing is
+        // serving - for ever, because a stored host is never replaced by a search.
         val code = PairingCode(
             hostId = PeerAdvertisement.hostIdOf(peer),
             address = peer.hostAddress,
@@ -122,10 +129,27 @@ object HostSearch {
      */
     data class Found(val host: PairingCode?, val why: String)
 
-    private fun wordFor(failure: DiscoveryFailure?): String = when (failure) {
+    /**
+     * Why one look came to nothing, in enough detail to act on.
+     *
+     * Two answers used to be one sentence with nothing in it, and on 09-21 that sentence stood
+     * for seventy seconds at a time while a handset that had just handed the role over sat there
+     * not joining anybody. Two quite different things produce it - this handset's own record still
+     * being answered after it stopped being the host, or one host advertising under two service
+     * names because the platform renamed a registration that collided with its own stale one -
+     * and they are repaired in different places. So the line names what answered: the service
+     * name, where it was, and whose it is.
+     */
+    private fun wordFor(outcome: DiscoveryOutcome, mine: String): String = when (outcome.failure) {
         DiscoveryFailure.NOTHING_FOUND -> "nothing answered"
         DiscoveryFailure.NO_COMPATIBLE_VERSION -> "something answered on an older build"
-        DiscoveryFailure.AMBIGUOUS -> "more than one host answered, so none was joined"
+        DiscoveryFailure.AMBIGUOUS ->
+            "more than one host answered, so none was joined: " +
+                outcome.hosts.joinToString("; ") { peer ->
+                    val id = PeerAdvertisement.hostIdOf(peer)
+                    "${peer.name} at ${peer.hostAddress}:${peer.port} is ${id.take(6)}" +
+                        if (id == mine) " (this handset's own)" else ""
+                }
         null -> "a host answered but could not be read"
     }
 

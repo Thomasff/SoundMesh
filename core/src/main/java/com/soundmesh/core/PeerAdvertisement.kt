@@ -121,7 +121,17 @@ object PeerAdvertisement {
      * that no amount of discovery can.
      */
     fun choose(candidates: List<DiscoveredPeer>): DiscoveryOutcome {
-        val compatible = candidates.filter { isCompatible(it.attributes) }
+        // By identity, not by record. A name has to be unique on the network, so a handset that
+        // registers while its own earlier registration is still being answered is renamed by the
+        // platform rather than refused, and both records answer for as long as the old one is
+        // cached. Counting those as two hosts refuses the room the only host it has - seventy
+        // seconds of it, measured on 09-21, in a flat with two handsets in it. Which of the two
+        // is kept is arbitrary, and it has to be: they carry the same identity and nothing here
+        // can tell which address is the live one. A sink that ends up on the dead one dials, gets
+        // nowhere for twenty seconds and looks again - see HostSearch.lookAgain.
+        val compatible = candidates
+            .filter { isCompatible(it.attributes) }
+            .distinctBy { hostIdOf(it) }
         val failure = when {
             candidates.isEmpty() -> DiscoveryFailure.NOTHING_FOUND
             compatible.isEmpty() -> DiscoveryFailure.NO_COMPATIBLE_VERSION

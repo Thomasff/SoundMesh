@@ -120,9 +120,14 @@ class FindingEachOtherTest {
     @Test
     fun aHandsetNeverPairsWithItsOwnRecord() {
         val once = search.substringAfter("fun lookOnce(").substringBefore("fun lookAgain(")
+        // Out of the whole list, not out of the single host already picked. Asking afterwards
+        // answers only the case where its own record was the only answer; standing beside a real
+        // host it made two, and two is a refusal, so a handset that had just handed the role over
+        // joined nobody for as long as the platform kept answering for it. Seventy seconds of it,
+        // measured on 09-21.
         assertTrue(
-            "a phone that has just stopped being the host stores itself as its own host",
-            once.contains("PeerAdvertisement.hostIdOf(peer) == HostIdentity(directory).current()")
+            "a phone that has just stopped being the host counts its own record as a host",
+            once.contains("outcome.hosts.filter { PeerAdvertisement.hostIdOf(it) != mine }")
         )
         // The other direction of the same fault: one stale record of its own reads as "one other
         // host is here", which is the single shape that moves a sink onto a different handset.
