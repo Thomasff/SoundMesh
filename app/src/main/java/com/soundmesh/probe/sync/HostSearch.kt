@@ -150,6 +150,26 @@ object HostSearch {
             ?.hostAddress
 
     /**
+     * The same question put to the handset this one is reached through, for when nothing answered.
+     *
+     * [anotherHost] can report only what the records report, and on a hotspot they never report
+     * the handset serving it: measured 2026-09-22, eleven searches over two minutes from a client
+     * of a hosting hotspot answered nothing, while a client that took the role was found on the
+     * first. So on the one configuration where two rooms are easiest to make by accident, the
+     * one-host rule was unenforceable - and the second host was never told, which is the half of
+     * that fault nobody can see from a screen.
+     *
+     * Asked after the records rather than instead of them. On 2026-09-21 the same configuration
+     * found the same handset from its records on the first look, so the blindness is not a
+     * property of that handset and neither way is reliable. The cheap one goes first.
+     *
+     * Null is "no host this way", the same as [anotherHost], and for one reason more than it: on
+     * every other network the gateway is a router, and a router answers nothing on that port.
+     */
+    fun anotherHostAtTheGateway(context: Context, myId: String): String? =
+        atTheGateway(context, myId)?.address
+
+    /**
      * The handset this one is reached through, if it is hosting and is not this handset.
      *
      * The identity check is the same one the record list gets and it is here for a sharper

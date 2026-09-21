@@ -1331,23 +1331,37 @@ class HomeActivity : ComponentActivity() {
         Thread({
             val other = runCatching {
                 HostSearch.anotherHost(this, myId, HostSearch.WINDOW_MILLIS)
-            }.getOrNull() ?: return@Thread
+            }.getOrNull()
             // Asked of the handset rather than of the record, and it is the whole of the fix for
             // what a person hits by pressing these two roles back and forth: the record of a
             // handset that has just stopped being a host goes on being answered for seconds, and
             // other devices' caches hold it longer still. Stepping down for one of those leaves a
             // room with no host at all, and the stale record is gone by the time anybody looks for
             // the reason. See [RoomCommands.stillServing].
-            if (!RoomCommands.stillServing(other)) {
+            if (other != null && !RoomCommands.stillServing(other)) {
                 events.write("staying host: $other answered with a record but is not serving")
                 return@Thread
             }
+            // Only where nothing answered, and asked at all because on a hotspot nothing ever
+            // will: a handset serving its own hotspot is not found by the handsets on it
+            // (2026-09-22), so this rule held in exactly the networks that never needed it. That
+            // handset is the default gateway, which is the one address nobody has to look for.
+            //
+            // Nothing asks whether that answer is live, unlike the record above. What answers is
+            // started and stopped by the same holder that says the record - see HostBeacon - so
+            // it cannot outlive the role it speaks for, and a record can and for a minute does.
+            val host = other ?: HostSearch.anotherHostAtTheGateway(this, myId)?.also {
+                // Said here because which of the two paths found the host is the one thing a
+                // timeline cannot work out afterwards, and on 2026-09-21 a round that looked like
+                // this path working turned out to be the records working.
+                events.write("nothing answered, but $it is hosting at the gateway")
+            } ?: return@Thread
             runOnUiThread {
                 if (state.role != Role.HOST || state.running) return@runOnUiThread
                 // Nor if this handset already has a room, which is now belt and braces rather
                 // than the guard it was: the check no longer runs on a resume at all.
                 if (RoomCommands.standingBy() > 0) return@runOnUiThread
-                events.write("stepping down as host: $other is already one")
+                events.write("stepping down as host: $host is already one")
                 actions.pickRole(Role.NONE)
                 state = state.copy(problem = R.string.role_host_taken)
             }

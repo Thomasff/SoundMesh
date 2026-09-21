@@ -322,7 +322,7 @@ class FindingEachOtherTest {
         val check = home.substringAfter("private fun refuseToBeTheSecondHost()")
         assertTrue(
             "a record answering is taken for a handset that is still a host",
-            check.contains("if (!RoomCommands.stillServing(other))")
+            check.contains("if (other != null && !RoomCommands.stillServing(other))")
         )
         // The port is bound by serve() and closed by stop(), which is to say it is open exactly
         // while that handset is a host. Nothing else on this network answers on it.
@@ -330,6 +330,47 @@ class FindingEachOtherTest {
             "the liveness question is asked of something other than the host's own port",
             source("src/main/java/com/soundmesh/probe/sync/RoomCommandChannel.kt")
                 .contains("it.connect(InetSocketAddress(address, COMMAND_PORT), timeoutMillis)")
+        )
+    }
+
+    /**
+     * And where no record can carry the answer, it asks the handset the network runs on.
+     *
+     * The sink half of this shipped on 2026-09-22 and this half did not, which left the rule
+     * enforceable in exactly the networks that never needed it. Measured that day: a handset
+     * serving its own hotspot is not found by the handsets on it - eleven searches, two minutes,
+     * nothing - so on a hotspot every other handset may quietly become a second host. That
+     * handset is the default gateway, so the question that cannot be broadcast is put to it.
+     *
+     * After the records rather than instead of them. On 2026-09-21 the same configuration found
+     * the same handset from its records on the first look, so neither way is reliable and the
+     * cheap one goes first.
+     *
+     * And nothing asks whether that answer is live, unlike the record path. What answers there
+     * is started and stopped by the same holder that says the record, so it cannot outlive the
+     * role it speaks for - a record can, and for about a minute does.
+     */
+    @Test
+    fun aHostNoRecordCanCarryIsAskedBeforeASecondRoomIsMade() {
+        val check = home.substringAfter("private fun refuseToBeTheSecondHost()")
+        assertTrue(
+            "nothing answered is taken for nobody hosting, which a hotspot cannot say",
+            check.contains("HostSearch.anotherHostAtTheGateway(this, myId)")
+        )
+        assertTrue(
+            "the gateway is asked even where a record already named a host",
+            check.substringBefore("anotherHostAtTheGateway").contains("other ?:")
+        )
+        // Which path found the host is the one thing a timeline cannot work out afterwards, and
+        // on 2026-09-21 a round that looked like this feature working was the records working.
+        assertTrue(
+            "the two paths write the same line, so no log can say which one ran",
+            check.contains("is hosting at the gateway")
+        )
+        val beacon = source("src/main/java/com/soundmesh/probe/sync/HostBeacon.kt")
+        assertTrue(
+            "the answer at the gateway outlives the role it speaks for",
+            beacon.contains("HostAtTheGateway.answer(") && beacon.contains("HostAtTheGateway.stop()")
         )
     }
 
