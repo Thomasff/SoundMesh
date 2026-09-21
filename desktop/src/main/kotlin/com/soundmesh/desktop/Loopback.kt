@@ -53,11 +53,14 @@ fun main(args: Array<String>) {
     // capture stream is identical, which is the point: the gap criterion does not care whether
     // the path went through a room, because a room does not change length in 800 milliseconds.
     val throughTheRoom = args.size > 3 && args[3] == "mic"
+    // Worth a flag rather than a default because it changes what the microphone arm measures: with
+    // the endpoint's processing in the way, this machine's own chirp comes back as exact zeros.
+    val raw = args.contains("raw")
 
     val chirp = ChirpGenerator.generateMono()
 
     WasapiRenderer(renderBufferMillis).use { renderer ->
-        WasapiCapture(loopback = !throughTheRoom).use { capture ->
+        WasapiCapture(loopback = !throughTheRoom, raw = raw).use { capture ->
             val rate = renderer.format.sampleRate
             val qpf = renderer.qpcFrequency
 
@@ -124,7 +127,7 @@ fun main(args: Array<String>) {
 
                 val recording = capture.take()
                 packetCsv?.let { writePackets(it, recording) }
-                report(recording, renderer, anchor, late, frames, chirp, searchMillis)
+                report(recording, renderer, anchor, late, frames, chirp, searchMillis, throughTheRoom)
             } finally {
                 Wasapi.timeEndPeriod(1)
             }
@@ -172,7 +175,8 @@ private fun report(
     late: ClockSample,
     frames: LongArray,
     chirp: ShortArray,
-    searchMillis: Double
+    searchMillis: Double,
+    throughTheRoom: Boolean
 ) {
     val rate = recording.format.sampleRate
     val qpf = recording.qpcFrequency
@@ -299,7 +303,11 @@ private fun report(
 
     // The criterion with a known answer. Both ends of a spacing carry the same unknown constant,
     // so it cancels: what comes back has to be what was asked for.
-    println("asked for the gaps below; a loopback stream has nothing that could change them")
+    println(
+        "asked for the gaps below; " +
+            if (throughTheRoom) "a room does not change length in the time between them"
+            else "a loopback stream has nothing that could change them"
+    )
     var worstGap = 0
     for (shot in 1 until found.size) {
         val askedFrames = frames[shot] - frames[shot - 1]
@@ -348,5 +356,10 @@ private fun report(
             "${"%.1f".format((late.qpcPosition - anchor.qpcPosition) * 1000.0 / qpf)} ms apart"
     )
     println()
-    println("  It is NOT the output delay. Nothing here went through a speaker.")
+    println(
+        if (throughTheRoom)
+            "  It is NOT the output delay either. It is that plus the speaker-to-microphone path " +
+                "plus\n  this capture chain's own latency, and nothing here separates the three."
+        else "  It is NOT the output delay. Nothing here went through a speaker."
+    )
 }
