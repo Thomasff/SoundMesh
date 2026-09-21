@@ -169,19 +169,29 @@ object HostSearch {
     fun anotherHostAtTheGateway(context: Context, myId: String): String? =
         atTheGateway(context, myId)?.address
 
-    /**
-     * The handset this one is reached through, if it is hosting and is not this handset.
-     *
-     * The identity check is the same one the record list gets and it is here for a sharper
-     * reason: this handset's own address can be the gateway seen from inside a network it is
-     * itself providing, and a sink that stored itself would dial a port nothing on it serves for
-     * ever, because a stored host is never replaced by a search.
-     */
+    /** The handset this one is reached through, if it is hosting and is not this handset. */
     private fun atTheGateway(context: Context, mine: String): PairingCode? {
         val gateway = HostAtTheGateway.gatewayOf(context) ?: return null
-        val code = HostAtTheGateway.ask(gateway) ?: return null
-        return if (code.hostId == mine) null else code
+        return notThisHandset(HostAtTheGateway.ask(gateway), mine)
     }
+
+    /**
+     * [code], unless it is this handset's own answer - which on a hotspot it can be.
+     *
+     * A handset serving an access point is the default gateway seen from inside the network it is
+     * providing, so asking who is hosting there can reach its own server and hand it its own
+     * pairing code. The two callers would then do two different wrong things with it, both
+     * permanent: a sink would store itself and dial a port nothing on it serves for ever, because
+     * a stored host is never replaced by a search; and a handset picking 当主机 would read it as
+     * somebody else's room and step out of its own, on the one configuration this whole path
+     * exists for - a role that cannot be taken, with nothing on the screen saying why.
+     *
+     * Its own function because everything around it needs a Context, a route table and a socket,
+     * and this is the part that can be asked a question. It was one line inside [atTheGateway]
+     * until 2026-09-21, and deleting that line left the whole app suite green.
+     */
+    internal fun notThisHandset(code: PairingCode?, mine: String): PairingCode? =
+        if (code == null || code.hostId == mine) null else code
 
     /**
      * What one look came to: the host to use, and one line saying why when there is none.
