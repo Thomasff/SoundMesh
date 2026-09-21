@@ -35,6 +35,10 @@ import java.io.File
  * criterion whose answer a tape measure already knows, and it is the only thing in this
  * arrangement that a wrong constant anywhere cannot fake.
  *
+ * **Superseded for new runs by [RoomPairKt]**, which reads both machines' recordings and takes the
+ * distance out exactly instead of measuring it. This is kept because the archived placements were
+ * read with it, and a re-read has to be comparable with what they reported.
+ *
  * **Both searches are windowed, and the handset's goes first.** Two identical chirps in one file
  * is exactly the shape that makes a whole-file maximum answer confidently about the wrong one -
  * the same mistake that once put an answer a full interval out with an infinite confidence ratio.

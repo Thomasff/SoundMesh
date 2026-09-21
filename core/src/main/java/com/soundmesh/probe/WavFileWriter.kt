@@ -3,7 +3,14 @@ package com.soundmesh.probe
 import java.io.File
 import java.io.RandomAccessFile
 
-/** Writes a little-endian PCM16 WAV file and finalizes its sizes on [close]. */
+/**
+ * Writes a little-endian PCM16 WAV file and finalizes its sizes on [close].
+ *
+ * In core beside [WavFileReader] because both ends write these files now. The Windows client
+ * records the same exchange a handset records and one analysis reads the two files together, so a
+ * second writer over there would be a second header layout for the reader to survive - and a
+ * recording read at the wrong offset still correlates and still reports a confident arrival.
+ */
 class WavFileWriter(
     file: File,
     private val sampleRate: Int,

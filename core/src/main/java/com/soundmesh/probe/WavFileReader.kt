@@ -3,13 +3,13 @@ package com.soundmesh.probe
 import java.io.File
 
 /**
- * Reads back a little-endian PCM16 WAV written by the probe's WavFileWriter.
+ * Reads back a little-endian PCM16 WAV written by [WavFileWriter].
  *
  * The counterpart to the writer, and it exists because the measurement moved onto the device: the
  * calibration recording used to be pulled to a PC and correlated there, so nothing on the handset
- * ever had to open one. It sits in core rather than beside the writer because both ends read these
- * files now: the Windows client pulls a handset's recording and correlates it with the same code,
- * and an analysis that opened the bytes its own way would not be comparable with any archived run.
+ * ever had to open one. It sits in core because both ends read these files now: the Windows client
+ * pulls a handset's recording and correlates it with the same code, and an analysis that opened
+ * the bytes its own way would not be comparable with any archived run.
  *
  * The header is parsed rather than skipped. Every file this reads is one this app wrote, so a
  * fixed 44 byte skip would work today and would fail silently the day it does not - a recording
