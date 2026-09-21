@@ -9,6 +9,7 @@ import com.soundmesh.core.RoomGrid
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.PlaybackUsage
 import com.soundmesh.probe.RunStore
+import java.io.File
 
 /**
  * Lends this handset to another machine as a microphone in the room.
@@ -26,10 +27,10 @@ import com.soundmesh.probe.RunStore
  * everything between the two arrivals is measured in samples, which is exact, and the handset's
  * own output delay and the few centimetres from its speaker to its microphone enter as a constant.
  *
- * That constant is never measured here and does not have to be. The quantity this arrangement is
- * after is the *difference* between two placements of the handset, where every constant on both
- * machines cancels and what is left is the distance the handset moved divided by the speed of
- * sound - a number a tape measure already knows.
+ * That constant is never measured here and does not have to be. The other machine records the same
+ * exchange, so between the two recordings everything that scales with the distance between them
+ * leaves the answer: see RoomPair on the PC side for the arithmetic and for the part that does not
+ * leave. Nothing on this side has to know which of the two arrangements it is feeding.
  *
  * **How the two machines agree on an instant without talking.** Both hang their chirp on the same
  * ten-second grid of the host clock: this handset emits on a grid instant, the PC has the offset
@@ -60,10 +61,16 @@ class RoomRunner(
         val grid = RoomGrid.nextInstant(System.nanoTime() + START_LEAD_NANOS)
         chirpAtHostNanos = grid
         val passStart = grid - WARMUP_NANOS - CALIBRATION_GAP_NANOS
-        // On logcat as well as in the json, because the PC needs it before the run ends, not
-        // after: it has to have scheduled its own chirp by the time this one plays. The json is
-        // written when everything is over and would arrive far too late to be the way this is
-        // agreed on.
+        // Written the moment it is chosen, because the PC needs it before the run ends rather than
+        // after: it has to have scheduled its own chirp by the time this one plays, and the json
+        // is not written until everything is over.
+        //
+        // A file rather than logcat, which is how this was first done. The handset it was written
+        // against drops every line an app logs - 7370 lines of system log over the run and not one
+        // of the app's - so the channel worked where it was written and carried nothing here, with
+        // no error anywhere. A stale one from an earlier run under the same case id reads as an
+        // instant in the past, which is what the PC's own lead check already refuses.
+        File(runStore.prepareRun(caseId), GRID_FILE).writeText(grid.toString())
         Log.i(TAG, "ROOM grid=$grid chirpAtHostNanos=$grid peerSlotNanos=${RoomGrid.PEER_SLOT_NANOS}")
 
         val calibration = CalibrationRunner(runStore, caseId, audioSource) { System.nanoTime() }
@@ -175,6 +182,9 @@ class RoomRunner(
     }
 
     companion object {
+        /** Where the chosen instant is left for the PC to read, inside the run's own directory. */
+        const val GRID_FILE = "grid.txt"
+
         private const val TAG = "SoundMeshRoom"
 
         /**

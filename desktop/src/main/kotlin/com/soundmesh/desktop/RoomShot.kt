@@ -21,10 +21,12 @@ import kotlin.math.abs
  *   java --enable-native-access=ALL-UNNAMED -cp "<lib>" com.soundmesh.desktop.RoomShotKt \
  *       <handset-ip> <gridHostNanos> <out.wav> [exchangeSeconds] [intervalMillis] [port]
  *
- * `gridHostNanos` comes off the handset's logcat - the run logs it as soon as it has chosen it,
- * which is the only moment early enough to be useful. It is an argument rather than something
- * derived here on purpose: derived, the two sides could land either side of a grid boundary and
- * play ten seconds apart, and the failure would look like a recording with one chirp in it.
+ * `gridHostNanos` comes out of the `grid.txt` the handset writes the moment it has chosen the
+ * instant, which is the only moment early enough to be useful. It is an argument rather than
+ * something derived here on purpose: derived, the two sides could land either side of a grid
+ * boundary and play ten seconds apart, and the failure would look like a recording with one chirp
+ * in it. A stale value from an earlier run reads as an instant in the past and the lead check
+ * below refuses it.
  *
  * **Why this machine records as well.** Read from the handset's recording alone, the answer holds
  * the whole distance between the two machines, and taking that out means measuring it - a tape

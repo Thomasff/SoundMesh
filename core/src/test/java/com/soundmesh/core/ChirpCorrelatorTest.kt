@@ -51,6 +51,34 @@ class ChirpCorrelatorTest {
         assertEquals(12345, found!!.index)
     }
 
+    /**
+     * The shape that once put an answer three and a half metres late.
+     *
+     * A confidence ratio cannot tell these apart: both arrivals are the same real chirp, and the
+     * louder one rates better. Only the order of the two carries the answer.
+     */
+    @Test
+    fun findsTheFirstArrivalEvenWhenSomethingLaterIsLouder() {
+        val direct = ChirpGenerator.SAMPLE_RATE / 4
+        val reflection = direct + ChirpGenerator.SAMPLE_RATE / 100
+        val recorded = recording(listOf(direct, reflection), gains = listOf(0.4, 0.9))
+        val chirp = ChirpGenerator.generateMono()
+
+        assertEquals(reflection, ChirpCorrelator.findArrival(recorded, chirp, 0, recorded.size)!!.index)
+        assertEquals(direct, ChirpCorrelator.findFirstArrival(recorded, chirp, 0, recorded.size)!!.index)
+    }
+
+    /** With one arrival in the window the two have to agree, or every clean run changes answer. */
+    @Test
+    fun agreesWithTheLoudestLagWhenThereIsOnlyOneArrival() {
+        val recorded = recording(listOf(12345))
+        val chirp = ChirpGenerator.generateMono()
+
+        assertEquals(
+            ChirpCorrelator.findArrival(recorded, chirp, 0, 30000)!!.index,
+            ChirpCorrelator.findFirstArrival(recorded, chirp, 0, 30000)!!.index
+        )
+    }
     @Test
     fun returnsNothingRatherThanABogusIndexWhenTheSearchRangeIsEmpty() {
         assertNull(ChirpCorrelator.findArrival(recording(listOf(1000)), ChirpGenerator.generateMono(), 5000, 4000))

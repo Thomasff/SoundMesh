@@ -166,14 +166,28 @@ private fun read(file: File, rate: Int): ShortArray {
  * Windowed, never over the whole file. Two identical chirps in one recording is exactly the shape
  * that makes a whole-file maximum answer confidently about the wrong one - once, with an infinite
  * confidence ratio and an answer a full interval out.
+ *
+ * First arrival, not loudest. A handset across a room reaches a laptop's microphone array weakly
+ * enough that a reverberation cluster can be the louder sound: measured here at 10.7 ms late and
+ * a confidence ratio of 369.
  */
 private fun find(track: ShortArray, reference: ShortArray, expected: Int, slack: Int, what: String): ChirpArrival? {
-    val arrival = ChirpCorrelator.findArrival(
-        track, reference, expected - slack, expected + slack, ONSET_SHARES
+    val arrival = ChirpCorrelator.findFirstArrival(
+        track, reference, expected - slack, expected + slack, edgeShares = ONSET_SHARES
     )
     if (arrival == null) {
         println("$what: nothing to search - the window falls outside the recording")
         return null
+    }
+    // Reported beside it whenever the two disagree, because the gap is the reverberation this
+    // measurement is standing in the middle of, and a reader who cannot see it has no way to
+    // know how much of the answer rested on picking the earlier one.
+    val loudest = ChirpCorrelator.findArrival(track, reference, expected - slack, expected + slack)!!
+    if (loudest.index != arrival.index) {
+        println(
+            "$what: the loudest lag is ${millis(nanos(loudest.index - arrival.index, ChirpGenerator.SAMPLE_RATE))} " +
+                "later at ${"%.1f".format(loudest.ratio)} - reverberation beat the direct path here"
+        )
     }
     println(
         "$what: sample ${arrival.index} (${"%+d".format(arrival.index - expected)} from expected), " +
