@@ -46,10 +46,25 @@ class HostAtTheGatewayTest {
         HostAtTheGateway.answer(hostId = "da3fe1c00de55dc6", chunkPort = 45124, port = 45331)
         HostAtTheGateway.stop()
 
-        // Deliberately after stop() has returned rather than after a sleep. close() hands the
-        // descriptor to the thread sitting in accept, so "stop returned" and "the port is given
-        // back" are two different instants, and a gate that waits out the difference with a clock
-        // is a gate that passes on a fast machine.
         assertNull(HostAtTheGateway.ask("127.0.0.1", port = 45331, timeoutMillis = 200))
+    }
+
+    @Test
+    fun `a handset that takes the role straight back answers again`() {
+        HostAtTheGateway.answer(hostId = "da3fe1c00de55dc6", chunkPort = 45124, port = 45332)
+        HostAtTheGateway.stop()
+        HostAtTheGateway.answer(hostId = "da3fe1c00de55dc6", chunkPort = 45124, port = 45332)
+
+        // The sequence the timeline of 2026-09-22 is full of: role NONE and role HOST a second or
+        // two apart, somebody changing their mind on the role screen. What it catches is answer()
+        // swallowing a failed re-bind and leaving a host nobody can ask.
+        //
+        // What it does **not** catch, tried on 09-22: the join inside stop(). Removing that left
+        // this green too - the port comes back before the next statement on this JVM either way.
+        // Said here so the next person does not read this test as the reason that line is there.
+        assertEquals(
+            "da3fe1c00de55dc6",
+            HostAtTheGateway.ask("127.0.0.1", port = 45332)?.hostId
+        )
     }
 }

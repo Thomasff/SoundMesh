@@ -75,16 +75,19 @@ object HostAtTheGateway {
         }, "SoundMeshHostAtTheGateway").also { it.start() }
     }
 
-    /** Gives the port back. Waits for it, because close() returning is not the port being free. */
+    /** Gives the port back and waits for the thread that holds it to notice. */
     @Synchronized
     fun stop() {
         running = false
         runCatching { server?.close() }
         server = null
         // close() hands the descriptor to whoever is sitting in accept, so the instant it returns
-        // and the instant the port is listening to nobody are two different instants. Joining is
-        // what makes them one, and it is what lets a test ask straight afterwards rather than
-        // sleep and hope.
+        // and the instant that thread is gone are two different instants. Kept because a socket
+        // outliving its stop has cost this project a whole evening before, and kept honestly:
+        // **nothing here tests it.** Removing this line on 2026-09-22 left every assertion in
+        // HostAtTheGatewayTest green, including binding the same port again in the next statement,
+        // which is the one thing it was supposed to make safe. It is insurance against a platform
+        // that behaves differently from this JVM, not a line any judgement rests on.
         accepting?.let { runCatching { it.join(JOIN_TIMEOUT_MILLIS) } }
         accepting = null
     }
