@@ -1,19 +1,12 @@
+// A plain JVM library, not an Android one. Nothing in core touches Android, and building it
+// this way turns that from a claim into a constraint: an Android import now fails to compile
+// instead of having to be caught by a grep that only knows the spellings it was given.
 plugins {
-    id("com.android.library")
+    id("org.jetbrains.kotlin.jvm")
 }
 
-android {
-    namespace = "com.soundmesh.core"
-    compileSdk = 35
-
-    defaultConfig {
-        minSdk = 29
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
