@@ -39,6 +39,11 @@ import kotlin.math.sqrt
 fun main(args: Array<String>) {
     val shots = if (args.isNotEmpty()) args[0].toInt() else 4
     val packetCsv = if (args.size > 1 && args[1] != "-") args[1] else null
+    // Load-bearing, and not only so there is time to schedule: the capture stream loses frames
+    // while it settles and is clean afterwards. Measured on one run, six jumps totalling 47
+    // frames all fell inside the first 1.27 s and none at all between the chirps. A chirp put out
+    // before the stream has settled would be measured against a recording that is short by an
+    // unknown amount, so the lead is what keeps the answer out of that region.
     val leadSeconds = 1.5
     val gapSeconds = 0.8
     val tailSeconds = 1.6
@@ -141,7 +146,7 @@ private fun say(volume: Pair<Float, Boolean>?): String = volume?.let {
  */
 private fun writePackets(path: String, recording: Recording) {
     val sb = StringBuilder(recording.packets.size * 48 + 128)
-    sb.append("i,device_position,qpc_position,frames,flags,gap\n")
+    sb.append("i,device_position,qpc_position,frames,flags,gap,at_index\n")
     var expected = recording.firstDevicePosition
     recording.packets.forEachIndexed { i, p ->
         sb.append(i).append(',')
@@ -149,7 +154,8 @@ private fun writePackets(path: String, recording: Recording) {
             .append(p.qpcPosition).append(',')
             .append(p.frames).append(',')
             .append(p.flags).append(',')
-            .append(p.devicePosition - expected).append('\n')
+            .append(p.devicePosition - expected).append(',')
+            .append(p.atIndex).append('\n')
         expected = p.devicePosition + p.frames
     }
     java.nio.file.Files.write(
@@ -181,9 +187,24 @@ private fun report(
         "heard  : ${recording.mono.size} frames " +
             "(${"%.2f".format(recording.mono.size.toDouble() / rate)} s) in " +
             "${recording.packets.size} packets, ${recording.skippedFrames} frames skipped" +
-            (if (recording.filled) " and filled" else "") +
             ", $discontinuities discontinuities, $silent silent packets"
     )
+    // Whether any audio was actually missing, asked separately from what the position counter
+    // claimed. Where it went missing is most of the answer: a step at the stream's ends costs
+    // nothing, and the same number of frames lost between two chirps would move one of them.
+    val lost = recording.lostFramesAt()
+    if (lost.isNotEmpty()) {
+        val worstAt = lost.indices.maxByOrNull { abs(lost[it]) }!!
+        val stamped = recording.packets.filter {
+            it.flags and Wasapi.BUFFERFLAGS_TIMESTAMP_ERROR == 0
+        }
+        val where = stamped[worstAt + 1].atIndex
+        println(
+            "loss   : ${"%+.0f".format(lost.sum())} frames short over the run; " +
+                "worst single step ${"%+.1f".format(lost[worstAt])} frames at index " +
+                "$where (${"%.2f".format(where.toDouble() / rate)} s)"
+        )
+    }
     println("level  : peak $peak of 32767, chirp was generated at 12000")
     if (peak < 100) {
         // Below a room's own noise floor, so this is not "the chirp was too quiet" - it is a

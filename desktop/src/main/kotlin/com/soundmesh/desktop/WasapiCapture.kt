@@ -21,12 +21,21 @@ data class CapturePacket(
 )
 
 /**
+ * One jump in the engine's device position counter: how big, and where in [Recording.mono] it fell.
+ *
+ * Recorded and never acted on. A jump is not evidence that audio was lost - see [Recording.gaps]
+ * for what the jumps on this kind of endpoint actually are, and [Recording.lostFramesAt] for the
+ * question they get mistaken for.
+ */
+data class GapEvent(val atIndex: Int, val counterFrames: Long)
+
+/**
  * A recording and everything needed to say when each of its samples happened.
  *
  * The timeline is built on [CapturePacket.atIndex] and the packet's own stamp - on where a
  * packet's samples actually sit in [mono] - and not on the engine's device position counter. The
  * two are the same thing only if every jump in that counter means audio was really lost, and on
- * this endpoint they are not: see [WasapiCapture.fillGaps].
+ * the endpoint this was written against they are not: see [gaps].
  */
 data class Recording(
     val mono: ShortArray,
@@ -34,8 +43,17 @@ data class Recording(
     val packets: List<CapturePacket>,
     /** How many frames the position counter claimed were missing. Zero on a clean run. */
     val skippedFrames: Long,
-    /** Whether those frames were written into [mono] as zeros. */
-    val filled: Boolean,
+    /**
+     * Every jump the counter made. Never written into [mono], and the reason is measured rather
+     * than assumed: this endpoint's real frame rate sits some hundreds of parts per million away
+     * from the nominal one, the counter keeps time and not samples, and the jumps are that
+     * difference arriving in steps. Writing them in as zeros pushed everything after each one
+     * later - four chirps 38400 frames apart came back 38400, 38427 and 38438 apart, and an
+     * earlier run damaged the chirp a fill landed inside by 44%.
+     *
+     * [lostFramesAt] is the separate question of whether audio was ever actually lost.
+     */
+    val gaps: List<GapEvent>,
     val format: MixFormat,
     val qpcFrequency: Long
 ) {
@@ -119,6 +137,36 @@ data class Recording(
         .map { (it.qpcPosition - qpcAt(it.atIndex)).toDouble() }
         .toDoubleArray()
 
+    /**
+     * How many frames of audio never arrived, between each stamped packet and the one before it.
+     *
+     * This is the question a jump in the position counter gets mistaken for, and it is a different
+     * question: a jump says the counter moved, this says the recording is short. Each interval is
+     * asked on its own - time that passed on the clock, against audio written in between - so an
+     * answer at one moment cannot be produced by anything happening at another.
+     *
+     * The nominal rate is used, and deliberately not one fitted across the run. Fitting assumes
+     * the relationship is a line, and on this endpoint it is not: the audio tracks the clock at
+     * nominal to a few tenths of a frame for seconds at a time, with everything that goes missing
+     * arriving in steps at the stream's two ends. A slope fitted through that shape reports a rate
+     * error of a couple of hundred parts per million that nothing in the data has, and then tilts
+     * every interval by it.
+     *
+     * A positive entry means the recording is short there by that many frames. What that costs
+     * depends entirely on where it falls: everything between the steps is untouched, which is why
+     * chirps landing in the clean middle come back spaced to the frame.
+     */
+    fun lostFramesAt(): DoubleArray {
+        val usable = packets.filter { it.flags and Wasapi.BUFFERFLAGS_TIMESTAMP_ERROR == 0 }
+        if (usable.size < 2) return DoubleArray(0)
+        return DoubleArray(usable.size - 1) {
+            val a = usable[it]
+            val b = usable[it + 1]
+            val elapsed = (b.qpcPosition - a.qpcPosition).toDouble() / qpcFrequency * format.sampleRate
+            elapsed - (b.atIndex - a.atIndex)
+        }
+    }
+
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = System.identityHashCode(this)
 }
@@ -137,22 +185,7 @@ data class Recording(
  */
 class WasapiCapture(
     private val loopback: Boolean = false,
-    bufferMillis: Long = 2_000L,
-    /**
-     * Whether a jump in the engine's device position counter is written into the recording as that
-     * many zeros.
-     *
-     * False, which is the opposite of what this class was first written to do, and the change was
-     * forced by a criterion rather than chosen. Filling is right only when a jump means frames
-     * were really lost. On this endpoint's loopback stream the jumps are one to fifty frames,
-     * arrive a few times a second, and are not lost audio: filling them pushed everything after
-     * each one later, so four chirps 38400 frames apart came back 38400, 38431 and 38430 apart,
-     * and the chirp a fill landed inside correlated 44% weaker than its neighbours.
-     *
-     * [Recording.skippedFrames] still reports what the counter claimed, because a jump of a whole
-     * packet would be a different thing from these and should not be silently discarded too.
-     */
-    private val fillGaps: Boolean = false
+    bufferMillis: Long = 2_000L
 ) : AutoCloseable {
 
     private val arena: Arena = Arena.ofShared()
@@ -184,6 +217,7 @@ class WasapiCapture(
     private var nextExpected = -1L
     private var skipped = 0L
     private val packets = ArrayList<CapturePacket>()
+    private val gaps = ArrayList<GapEvent>()
 
     @Volatile private var running = false
     private var reader: Thread? = null
@@ -275,7 +309,7 @@ class WasapiCapture(
             firstDevicePosition = firstDevicePosition,
             packets = ArrayList(packets),
             skippedFrames = skipped,
-            filled = fillGaps,
+            gaps = ArrayList(gaps),
             format = format,
             qpcFrequency = qpcFrequency
         )
@@ -333,7 +367,9 @@ class WasapiCapture(
             if (position > nextExpected) {
                 val gap = position - nextExpected
                 skipped += gap
-                if (fillGaps) appendZeros(gap.toInt())
+                // Noted, never written in. What a jump means is decided after the run and by a
+                // measurement that a rate difference cannot fake: see [Recording.lostFramesAt].
+                gaps.add(GapEvent(count, gap))
             }
             val atIndex = count
             if (silent) {
@@ -349,6 +385,7 @@ class WasapiCapture(
         Wasapi.captureReleaseBuffer(capture, frameCount)
         return true
     }
+
 
     private fun hnsToTicks(hns: Long): Long =
         if (qpcFrequency == HNS_PER_SECOND) hns
