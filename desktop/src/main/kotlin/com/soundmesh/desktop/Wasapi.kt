@@ -125,6 +125,13 @@ internal object Wasapi {
     const val CLSID_MM_DEVICE_ENUMERATOR = "BCDE0395-E52F-467C-8E3D-C4579291692E"
     const val IID_IMM_DEVICE_ENUMERATOR = "A95664D2-9614-4F35-A746-DE8DB63617E6"
     const val IID_IAUDIO_CLIENT = "1CB9AD4C-DBFA-4C32-B178-C2F568A703B2"
+    /**
+     * IAudioClient2, which is IAudioClient plus the three methods that describe the stream
+     * before it is initialised. Activated instead of IAudioClient rather than queried from it:
+     * it derives from IAudioClient, so the same pointer answers every call the rest of this
+     * makes, and one Activate is one fewer thing to release.
+     */
+    const val IID_IAUDIO_CLIENT2 = "726778CD-F60A-4EDA-82DE-E47610CD78AA"
     const val IID_IAUDIO_RENDER_CLIENT = "F294ACFC-3146-4483-A7BF-ADDCA7C260E2"
     const val IID_IAUDIO_CAPTURE_CLIENT = "C8ADBD64-E71E-48A0-A4DE-185C395CD317"
     const val IID_IAUDIO_CLOCK = "CD63314F-3FBA-4A1B-812C-EF96358728E7"
@@ -151,6 +158,21 @@ internal object Wasapi {
      * answer to "when did that chirp come out" is known in advance rather than measured.
      */
     const val STREAMFLAGS_LOOPBACK = 0x00020000
+
+    /**
+     * AUDCLNT_STREAMOPTIONS_RAW: the stream skips the endpoint's signal processing.
+     *
+     * What sits in that chain is the vendor's, configured in the driver package and different
+     * between machines. On a communications capture endpoint it includes noise suppression, and
+     * suppression decides what is worth passing on: this machine's microphone array returns
+     * digital silence for a quiet room, for a clap and for a chirp, while speech goes through
+     * fine. Raw is the documented way past it, and it is the gentler of the two ways - exclusive
+     * mode also bypasses the engine but takes the device away from every other program.
+     */
+    const val STREAMOPTIONS_RAW = 0x1
+
+    /** AudioCategory_Other: no category, which is what a measurement is. */
+    const val AUDIO_CATEGORY_OTHER = 0
 
     /** AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY: frames are missing before this packet. */
     const val BUFFERFLAGS_DISCONTINUITY = 0x1
@@ -227,6 +249,23 @@ internal object Wasapi {
     ): Int = CALL_IIP.invokeExact(method(self, 4), self, dataFlow, role, out) as Int
 
     /** IMMDevice::Activate, vtable 3. */
+    /**
+     * IAudioClient2::SetClientProperties, vtable 16, which must be called before Initialize.
+     *
+     * The AudioClientProperties it takes is four 32-bit fields: its own size, whether the stream
+     * is offloaded, its category, and its options. Built here rather than by the caller because
+     * the size field has to agree with the layout, and a struct whose length is written by one
+     * place and filled by another is the shape that fails quietly.
+     */
+    fun setClientProperties(arena: Arena, self: MemorySegment, options: Int, category: Int = AUDIO_CATEGORY_OTHER): Int {
+        val properties = arena.allocate(16, 8)
+        properties.set(I32, 0, 16)
+        properties.set(I32, 4, 0)
+        properties.set(I32, 8, category)
+        properties.set(I32, 12, options)
+        return CALL_P.invokeExact(method(self, 16), self, properties) as Int
+    }
+
     fun activate(self: MemorySegment, iid: MemorySegment, out: MemorySegment): Int =
         CALL_ACTIVATE.invokeExact(
             method(self, 3), self, iid, CLSCTX_ALL, MemorySegment.NULL, out

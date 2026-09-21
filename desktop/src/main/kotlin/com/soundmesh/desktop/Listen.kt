@@ -23,11 +23,16 @@ import kotlin.math.abs
 fun main(args: Array<String>) {
     val seconds = args.getOrNull(0)?.toDouble() ?: 6.0
     val loopback = args.getOrNull(1) == "loopback"
+    val raw = args.contains("raw")
 
-    WasapiCapture(loopback = loopback).use { capture ->
+    WasapiCapture(loopback = loopback, raw = raw).use { capture ->
         println("capture: ${capture.deviceName ?: "(unnamed)"} - ${capture.format}")
         println("volume : ${capture.volume?.let { "${"%.0f".format(it.first * 100)}%${if (it.second) ", MUTED" else ""}" } ?: "(unknown)"}")
         println("source : ${if (loopback) "the render endpoint's loopback - what the engine mixed" else "the default recording endpoint - the room"}")
+        // Named in the report rather than left to the command line, because the two arrangements
+        // produce comparable-looking numbers from different signal paths, and a level written down
+        // without saying which one it came from is a reading nobody can use later.
+        println("mode   : ${if (raw) "RAW - the endpoint's own processing is bypassed" else "shared, with whatever processing the endpoint applies"}")
         println()
         println("listening for $seconds s, playing nothing ...")
         capture.start()

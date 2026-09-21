@@ -196,7 +196,15 @@ data class Recording(
  */
 class WasapiCapture(
     private val loopback: Boolean = false,
-    bufferMillis: Long = 2_000L
+    bufferMillis: Long = 2_000L,
+    /**
+     * Whether the stream asks to skip the endpoint's own signal processing.
+     *
+     * Off by default, so every reading taken before this existed stays comparable and so a run
+     * says which arrangement produced it. See [Wasapi.STREAMOPTIONS_RAW] for what the chain does
+     * on this machine and why a measurement wants out of it.
+     */
+    private val raw: Boolean = false
 ) : AutoCloseable {
 
     private val arena: Arena = Arena.ofShared()
@@ -260,11 +268,21 @@ class WasapiCapture(
             out.get(Wasapi.PTR, 0)
         }
 
+        val iid = if (raw) Wasapi.IID_IAUDIO_CLIENT2 else Wasapi.IID_IAUDIO_CLIENT
         Wasapi.check(
-            Wasapi.activate(device, Wasapi.guid(arena, Wasapi.IID_IAUDIO_CLIENT), out),
-            "Activate(IAudioClient)"
+            Wasapi.activate(device, Wasapi.guid(arena, iid), out),
+            if (raw) "Activate(IAudioClient2)" else "Activate(IAudioClient)"
         )
         client = out.get(Wasapi.PTR, 0)
+        // Before Initialize, which is the only time the properties can be set, and checked rather
+        // than attempted: a refused request would otherwise leave a stream running the processing
+        // chain while every report on it said raw.
+        if (raw) {
+            Wasapi.check(
+                Wasapi.setClientProperties(arena, client, Wasapi.STREAMOPTIONS_RAW),
+                "SetClientProperties(RAW)"
+            )
+        }
 
         deviceName = Wasapi.friendlyName(arena, device)
         volume = Wasapi.endpointVolume(arena, device)
