@@ -79,9 +79,21 @@ fun main(args: Array<String>) {
         recorded,
         reference,
         pcExpected - SLOT_UNCERTAINTY_SAMPLES,
-        pcExpected + SLOT_UNCERTAINTY_SAMPLES
+        pcExpected + SLOT_UNCERTAINTY_SAMPLES,
+        ONSET_SHARES
     ) ?: run { println("this machine's chirp is not in the file where the schedule puts it"); return }
     report("pc     ", pc, pcExpected)
+    // Where the energy first rose, as well as where it peaked. A confidence ratio answers "is
+    // this noise", and the failure this guards against is a real but wrong arrival: a reflection
+    // is a true sound off a true surface and rates as confidently as the direct path. Anything
+    // that first reaches most of the peak well before the peak means the loudest path is not the
+    // shortest one, and the shortest is what a distance measurement is about.
+    println(
+        "  onset: " + ONSET_SHARES.indices.joinToString(", ") {
+            "${"%.0f".format(ONSET_SHARES[it] * 100)}% at " +
+                "${millis((pc.edgeIndices[it] - pc.index).toLong() * 1_000_000_000L / rate)}"
+        }
+    )
 
     val heardApartNanos = (pc.index - handset.index).toLong() * 1_000_000_000L / rate
     val askedApartNanos = pcConsumed - handsetAsked
@@ -127,6 +139,12 @@ private val OPENING_UNCERTAINTY_SAMPLES = ChirpGenerator.SAMPLE_RATE / 2
  * nowhere near the second and a half to the other chirp.
  */
 private val SLOT_UNCERTAINTY_SAMPLES = ChirpGenerator.SAMPLE_RATE / 20
+
+/**
+ * Shares of the peak whose first crossing is reported, so an arrival that peaks later than it
+ * starts is visible rather than assumed away.
+ */
+private val ONSET_SHARES = listOf(0.3, 0.5, 0.7, 0.9)
 
 /** Dry air at about twenty degrees. A degree is 0.17%, which over a metre is five microseconds. */
 private const val SPEED_OF_SOUND = 343.0
