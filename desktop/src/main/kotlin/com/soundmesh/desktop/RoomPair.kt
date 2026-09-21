@@ -68,7 +68,7 @@ fun main(args: Array<String>) {
     if (args.size < 3) {
         error(
             "usage: <handset.wav> <pc-shot.txt> <handsetRecordingStartedAtHostNanos> " +
-                "[handsetSelfCm] [pcSelfCm]"
+                "[handsetSelfCm] [pcSelfCm] [edgeShare]"
         )
     }
     val handsetFile = File(args[0])
@@ -76,6 +76,12 @@ fun main(args: Array<String>) {
     val handsetOpened = args[2].toLong()
     val handsetSelfNanos = centimetresToNanos(args.getOrNull(3)?.toDouble())
     val pcSelfNanos = centimetresToNanos(args.getOrNull(4)?.toDouble())
+    // Which rule reads an arrival. Left out, every chirp is read at its own peak. Given, every
+    // chirp is read the way the product reads one for a distance: the first lag whose score
+    // reaches this share of the loudest lag's. The point of the argument is that the same
+    // recordings can be re-read both ways, so the two rules can be ranked against a tape rather
+    // than against each other.
+    val edgeShare = args.getOrNull(5)?.toDouble()
 
     val reference = ChirpGenerator.generateMono()
     val rate = ChirpGenerator.SAMPLE_RATE
@@ -91,10 +97,11 @@ fun main(args: Array<String>) {
     println()
     val handsetOwnFirst = find(
         handsetTrack, reference, samples(shot.grid - handsetOpened, rate), OPENING_SLACK,
-        "handset chirp #0"
+        "handset chirp #0", edgeShare
     ) ?: return
-    val pcOwnFirst = find(pcTrack, reference, shot.renderIndex[0], OPENING_SLACK, "pc chirp #0")
-        ?: return
+    val pcOwnFirst = find(
+        pcTrack, reference, shot.renderIndex[0], OPENING_SLACK, "pc chirp #0", edgeShare
+    ) ?: return
     // What the capture chain adds between the engine consuming a frame and the microphone hearing
     // it. Unknown, never used as a measurement, and constant across the window - so measuring it
     // once on the first repeat is what lets every later one be searched tightly.
@@ -118,17 +125,19 @@ fun main(args: Array<String>) {
             if (repeat == 0) handsetOwnFirst
             else find(
                 handsetTrack, reference, handsetOwnFirst.index + repeat * strideSamples, SLOT_SLACK,
-                "handset chirp"
+                "handset chirp", edgeShare
             ) ?: continue
         val pcInHandset = find(
-            handsetTrack, reference, handsetOwn.index + apartSamples, SLOT_SLACK, "pc chirp"
+            handsetTrack, reference, handsetOwn.index + apartSamples, SLOT_SLACK, "pc chirp", edgeShare
         ) ?: continue
         val pcOwn =
             if (repeat == 0) pcOwnFirst
-            else find(pcTrack, reference, shot.renderIndex[repeat] + captureLag, SLOT_SLACK, "pc chirp")
-                ?: continue
+            else find(
+                pcTrack, reference, shot.renderIndex[repeat] + captureLag, SLOT_SLACK, "pc chirp",
+                edgeShare
+            ) ?: continue
         val handsetInPc = find(
-            pcTrack, reference, pcOwn.index - apartSamples, SLOT_SLACK, "handset chirp"
+            pcTrack, reference, pcOwn.index - apartSamples, SLOT_SLACK, "handset chirp", edgeShare
         ) ?: continue
 
         val deltaHandset = nanos(pcInHandset.index - handsetOwn.index, rate) - (consumed - asked)
@@ -294,10 +303,26 @@ private fun read(file: File, rate: Int): ShortArray {
  * enough that a reverberation cluster can be the louder sound: measured here at 10.7 ms late and
  * a confidence ratio of 369.
  */
-private fun find(track: ShortArray, reference: ShortArray, expected: Int, slack: Int, what: String): ChirpArrival? {
-    val arrival = ChirpCorrelator.findFirstArrival(
-        track, reference, expected - slack, expected + slack, edgeShares = ONSET_SHARES
-    )
+private fun find(
+    track: ShortArray,
+    reference: ShortArray,
+    expected: Int,
+    slack: Int,
+    what: String,
+    edgeShare: Double? = null
+): ChirpArrival? {
+    val arrival = if (edgeShare == null) {
+        ChirpCorrelator.findFirstArrival(
+            track, reference, expected - slack, expected + slack, edgeShares = ONSET_SHARES
+        )
+    } else {
+        // The product's rule, run rather than restated: the share is asked of the correlator the
+        // same way [com.soundmesh.core.AlignmentAnalysis] asks for it, and the lag it names is
+        // moved into [ChirpArrival.index] so the arithmetic below cannot tell the difference.
+        ChirpCorrelator.findArrival(
+            track, reference, expected - slack, expected + slack, listOf(edgeShare) + ONSET_SHARES
+        )?.let { it.copy(index = it.edgeIndices.first(), edgeIndices = it.edgeIndices.drop(1)) }
+    }
     if (arrival == null) {
         println("$what: nothing to search - the window falls outside the recording")
         return null
