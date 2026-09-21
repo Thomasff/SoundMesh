@@ -139,7 +139,8 @@ class AlignmentAnalysisTest {
         alignmentErrorMs: Double,
         propagationCorrectionMs: Double = 0.0,
         rawMsByShare: List<Double> = emptyList(),
-        rawLoudestMs: Double? = null
+        rawLoudestMs: Double? = null,
+        rawFirstArrivalMs: Double? = null
     ) = AlignmentReading(
         firstIndex = 0,
         secondIndex = stagger,
@@ -151,7 +152,8 @@ class AlignmentAnalysisTest {
         ratios = listOf(1000.0, 1000.0),
         atSearchEdge = listOf(false, false),
         rawMsByShare = rawMsByShare,
-        rawLoudestMs = rawLoudestMs
+        rawLoudestMs = rawLoudestMs,
+        rawFirstArrivalMs = rawFirstArrivalMs
     )
 
     private fun readEdges(recorded: ShortArray, shares: List<Double>) = AlignmentAnalysis.read(
@@ -276,6 +278,35 @@ class AlignmentAnalysisTest {
         // 600 frames of bounce on one side only, at 48 frames per millisecond.
         assertEquals(-12.5, result.rawLoudestMs!!, 0.5)
         assertEquals(0.0, result.rawMsByShare[0], 2.0)
+    }
+
+    /**
+     * And the pair takes it. Reading it into [AlignmentReading] and using it are two changes, and
+     * a mutation check found the second one had nothing holding it: dropping the preference back
+     * to the loudest left every test green.
+     *
+     * The two sides disagree here the way a real room makes them disagree - a reflection beats
+     * the direct path in one handset's recording and not the other's - so a pair that still
+     * answered from the loudest would answer 5.0 ms instead of 0.5.
+     */
+    @Test
+    fun `the pair's alignment comes from the first arrival, not from the loudest lag`() {
+        val host = reading(0.0, rawMsByShare = listOf(0.0), rawLoudestMs = 9.5, rawFirstArrivalMs = 0.5)
+        val sink = reading(0.0, rawMsByShare = listOf(0.0), rawLoudestMs = 0.5, rawFirstArrivalMs = 0.5)
+
+        assertEquals(0.5, AlignmentAnalysis.combineFacing(host, sink)!!.alignmentErrorMs, 1e-9)
+    }
+
+    /**
+     * And falls back where there is nothing to prefer, which is every reading taken before the
+     * sweep existed: the archived runs have to keep combining the way they always did.
+     */
+    @Test
+    fun `a pair with no first arrival on either side still combines at the loudest`() {
+        val host = reading(0.0, rawMsByShare = listOf(0.0), rawLoudestMs = 9.5)
+        val sink = reading(0.0, rawMsByShare = listOf(0.0), rawLoudestMs = 0.5)
+
+        assertEquals(5.0, AlignmentAnalysis.combineFacing(host, sink)!!.alignmentErrorMs, 1e-9)
     }
 
     /**
