@@ -285,6 +285,10 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, job: PeerJob, actions: PeerCa
  *
  * Not drawn while a round runs: it is said with the countdown then, and the same sentence in two
  * places reads as two things having happened.
+ *
+ * Which leaves this block showing whatever `message` held when the round stopped. That is the
+ * answer only because [PeerCalibrateActivity.record] clears the running line as it files one -
+ * before it did, this read "校准中：两台都别碰" above the numbers, every single time.
  */
 @Composable
 private fun RoundResult(state: PeerCalibrateState) {

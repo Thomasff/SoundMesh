@@ -2171,6 +2171,14 @@ class PeerCalibrateActivity : ComponentActivity() {
     private fun record(sinkId: String, outcome: String) {
         handler.post {
             state = state.copy(
+                // The line that described the work does not survive the work. [RoundResult] shows
+                // `message` once the round stops, on the assumption that by then it holds the
+                // answer - but nothing ever put the answer there, so a finished round printed
+                // "校准中：两台都别碰" above the numbers it had just produced. Cleared here rather
+                // than where the round ends, because here is where an answer exists to replace it,
+                // and a round that ended in a refusal still needs its sentence on screen.
+                message = null,
+                until = null,
                 outcomes = state.outcomes.filterNot { it.sinkId == sinkId } +
                     SinkOutcome(
                         sinkId = sinkId,
