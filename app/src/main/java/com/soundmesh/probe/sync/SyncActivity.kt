@@ -1301,7 +1301,7 @@ class SyncActivity : Activity() {
     }
 
     companion object {
-        const val CLOCK_PORT = 45123
+        const val CLOCK_PORT = ClockPacket.DEFAULT_PORT
 
         /** Clock exchange cadence. A run may ask for a denser one; see [clockIntervalMillisRequested]. */
         private const val DEFAULT_CLOCK_INTERVAL_MILLIS = 2000

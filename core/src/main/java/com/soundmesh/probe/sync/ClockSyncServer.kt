@@ -9,6 +9,16 @@ import java.util.Collections
 object ClockPacket {
     const val BYTES = 32
 
+    /**
+     * The UDP port the exchange runs on.
+     *
+     * Here rather than on the screen that first used it, because it is part of what the two ends
+     * have to agree on and the two ends are now two platforms. A second copy of this number would
+     * fail in the only way that costs a session to diagnose: both ends working perfectly and
+     * neither hearing the other.
+     */
+    const val DEFAULT_PORT = 45123
+
     fun encodeRequest(seq: Int, t1: Long): ByteArray {
         val packet = ByteArray(BYTES)
         writeInt(packet, 0, seq)
@@ -91,6 +101,13 @@ class ClockSyncServer(private val port: Int) {
                     if (incoming.length != ClockPacket.BYTES) continue
                     // After the length check, so that a stray packet on this port cannot make a
                     // handset that has gone look like one that is still asking.
+                    //
+                    // Tried after the reply instead, on the theory that a string and a
+                    // synchronised put sitting between arrival and t2 were charged to the outbound
+                    // leg and became half of themselves as offset. Measured against a second
+                    // process on this machine, where the answer is zero by construction: +54, +58,
+                    // +41 us before the move and +50, +45, +47 us after it. Not the cause. Left
+                    // where it was.
                     incoming.address?.hostAddress?.let { heard[it] = System.currentTimeMillis() }
                     val t2 = System.nanoTime()
                     val reply = ClockPacket.encodeReply(buffer.copyOf(ClockPacket.BYTES), t2, System.nanoTime())
