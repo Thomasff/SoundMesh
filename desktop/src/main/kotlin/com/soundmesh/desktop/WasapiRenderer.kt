@@ -178,6 +178,12 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
         return sample.frames + Math.round(ahead.toDouble() / qpcFrequency * format.sampleRate)
     }
 
+    /** The inverse of [frameAt]: when the engine will be consuming [frame]. */
+    fun qpcAt(frame: Long, sample: ClockSample): Long {
+        val ahead = frame - sample.frames
+        return sample.qpcPosition + Math.round(ahead.toDouble() / format.sampleRate * qpcFrequency)
+    }
+
     // --------------------------------------------------------------------- clock
 
     /**

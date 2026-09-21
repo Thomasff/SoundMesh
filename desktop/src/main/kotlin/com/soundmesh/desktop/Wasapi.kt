@@ -87,6 +87,13 @@ internal object Wasapi {
     private val CALL_RELEASE_BUFFER =
         LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, I32, I32))
 
+    /** HRESULT f(this, count) - the capture side's ReleaseBuffer, which carries no flags. */
+    private val CALL_I = LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, I32))
+
+    /** HRESULT GetBuffer(this, data**, frames*, flags*, devicePosition*, qpcPosition*) */
+    private val CALL_CAPTURE_GET_BUFFER =
+        LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, PTR, PTR, PTR, PTR, PTR))
+
     /**
      * The index-th function pointer in obj's vtable.
      *
@@ -114,12 +121,37 @@ internal object Wasapi {
     const val IID_IMM_DEVICE_ENUMERATOR = "A95664D2-9614-4F35-A746-DE8DB63617E6"
     const val IID_IAUDIO_CLIENT = "1CB9AD4C-DBFA-4C32-B178-C2F568A703B2"
     const val IID_IAUDIO_RENDER_CLIENT = "F294ACFC-3146-4483-A7BF-ADDCA7C260E2"
+    const val IID_IAUDIO_CAPTURE_CLIENT = "C8ADBD64-E71E-48A0-A4DE-185C395CD317"
     const val IID_IAUDIO_CLOCK = "CD63314F-3FBA-4A1B-812C-EF96358728E7"
     const val SUBTYPE_FLOAT = "00000003-0000-0010-8000-00AA00389B71"
 
     const val CLSCTX_ALL = 23
     const val SHARE_MODE_SHARED = 0
     const val DATAFLOW_RENDER = 0
+
+    /** eCapture: the default recording endpoint, which is a different device from the render one. */
+    const val DATAFLOW_CAPTURE = 1
+
+    /**
+     * AUDCLNT_STREAMFLAGS_LOOPBACK, which is set on a client opened against the *render* endpoint.
+     *
+     * What comes back is the mix the engine is about to hand the hardware - the same samples, no
+     * speaker, no room, no microphone. It is the only arrangement on this machine where the right
+     * answer to "when did that chirp come out" is known in advance rather than measured.
+     */
+    const val STREAMFLAGS_LOOPBACK = 0x00020000
+
+    /** AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY: frames are missing before this packet. */
+    const val BUFFERFLAGS_DISCONTINUITY = 0x1
+
+    /** AUDCLNT_BUFFERFLAGS_SILENT: the packet's memory holds nothing and must be read as zeros. */
+    const val BUFFERFLAGS_SILENT = 0x2
+
+    /** AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR: the device position stamp on this packet is not usable. */
+    const val BUFFERFLAGS_TIMESTAMP_ERROR = 0x4
+
+    /** AUDCLNT_S_BUFFER_EMPTY, returned by a capture GetBuffer with nothing waiting. Not an error. */
+    const val S_BUFFER_EMPTY = 0x08890001
 
     /**
      * eMultimedia. Not eCommunications, whose default on this machine is the monitor over HDMI -
@@ -232,6 +264,35 @@ internal object Wasapi {
 
     fun releaseBuffer(self: MemorySegment, frames: Int, flags: Int): Int =
         CALL_RELEASE_BUFFER.invokeExact(method(self, 4), self, frames, flags) as Int
+
+    // -------------------------------------------------------- IAudioCaptureClient
+    //
+    // GetBuffer 3, ReleaseBuffer 4, GetNextPacketSize 5. The same table positions as the render
+    // side and different signatures at both of them, which is the one thing a reader coming from
+    // the interface above is likely to get wrong.
+
+    /**
+     * Hands over the next packet whole: its memory, its length, its flags, and both its stamps.
+     *
+     * Whatever is taken must be given back with [captureReleaseBuffer] before the next call, and
+     * the frame count handed back has to be the one that came out of here or zero - the engine
+     * does not accept a partial read.
+     */
+    fun captureGetBuffer(
+        self: MemorySegment,
+        outData: MemorySegment,
+        outFrames: MemorySegment,
+        outFlags: MemorySegment,
+        outDevicePosition: MemorySegment,
+        outQpcPosition: MemorySegment
+    ): Int = CALL_CAPTURE_GET_BUFFER.invokeExact(
+        method(self, 3), self, outData, outFrames, outFlags, outDevicePosition, outQpcPosition
+    ) as Int
+
+    fun captureReleaseBuffer(self: MemorySegment, frames: Int): Int =
+        CALL_I.invokeExact(method(self, 4), self, frames) as Int
+
+    fun getNextPacketSize(self: MemorySegment, outFrames: MemorySegment): Int = p(self, 5, outFrames)
 
     // ---------------------------------------------------------------- IAudioClock
 
