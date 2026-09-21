@@ -72,6 +72,16 @@ object RoomGrid {
      *
      * Twice [PEER_SLOT_NANOS], so the far handset's chirp of one repeat is a whole slot clear of
      * the near handset's next one - the bound [CalibrationSchedule.of] states and refuses on.
+     *
+     * It has one consequence worth knowing before reading these recordings with anything else:
+     * a window laid out this way cannot be read by [AlignmentAnalysis.read]. That function finds
+     * the loudest lag and then looks a stagger either side of it for the partner, and at exactly
+     * twice the stagger both sides hold a real chirp - the correct partner and the next repeat's
+     * first one. Which wins depends on which chirp was loudest, so it reads correctly near and
+     * silently across two repeats far away. Bounding the search does not help, because the bound
+     * governs where the loudest lag may be found and the partner is measured out from it. Slice
+     * the recording to one repeat first. Nothing the product schedules hits this: it repeats every five
+     * seconds, which is not twice a slot.
      */
     const val REPEAT_NANOS = 2 * PEER_SLOT_NANOS
 
