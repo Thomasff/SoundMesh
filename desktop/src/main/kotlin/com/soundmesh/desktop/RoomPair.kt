@@ -153,11 +153,15 @@ fun main(args: Array<String>) {
     }
 
     println()
-    report("pair constant", pairs, "ms") { "%+.3f".format(it) }
     println(
-        "  <- this machine's output delay minus the handset's, and the half that carries both " +
-            "machines' per-chirp emission jitter. One reading of it is not an answer."
+        "pair constant: ${"%+.3f".format(floorOf(pairs))} ms" +
+            "  (the mean of the $FLOOR_COUNT lowest of ${pairs.size})"
     )
+    println(
+        "  <- this machine's output delay minus the handset's. A floor and not a centre, because " +
+            "what disturbs it only ever pushes it up - see FLOOR_COUNT."
+    )
+    report("  the window  ", pairs, "ms") { "%+.3f".format(it) }
     report("separation   ", flights.map { it / 1000 * SPEED_OF_SOUND * 100 }, "cm") { "%.1f".format(it) }
     println(
         "  <- a criterion, not an output, and the half that emission jitter cannot reach. Its " +
@@ -182,6 +186,27 @@ fun main(args: Array<String>) {
  * handset this was written against steps about 1.3 ms between emissions, so which of the two is
  * happening is the first thing a reader needs and the last thing a summary statistic says.
  */
+/**
+ * How many of a window's lowest readings the pair constant is taken from.
+ *
+ * A floor rather than a centre, because what disturbs this half only ever pushes it one way: a
+ * chirp that leaves its speaker early raises the half sum, and nothing lowers it. Measured
+ * 2026-09-22, eight folded windows at one placement with nothing touched between them - the
+ * median of a window moved 1.489 ms from round to round and its mean 1.468, while the mean of
+ * the three lowest moved 0.628.
+ *
+ * [com.soundmesh.core.AlignmentVerdict.judge] scores 1.468 ms on those same windows, because its
+ * rejection is symmetric about the median and its width is the median deviation: a second level
+ * occupying a third of the window widens that width instead of being rejected by it. Five of the
+ * eight windows came back with nothing rejected at all.
+ *
+ * Three rather than one because a single reading carries the whole of the level's own noise,
+ * about 0.146 ms; three rather than five because a window has been seen with five high draws.
+ */
+private const val FLOOR_COUNT = 3
+
+private fun floorOf(values: List<Double>): Double = values.sorted().take(FLOOR_COUNT).average()
+
 private fun report(what: String, values: List<Double>, unit: String, say: (Double) -> String) {
     val sorted = values.sorted()
     val middle = sorted[sorted.size / 2]
