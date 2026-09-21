@@ -55,6 +55,12 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
     private val render: MemorySegment
     private val clock: MemorySegment
 
+    /** What the person at this machine calls the endpoint this stream is on. */
+    val deviceName: String?
+
+    /** Where this endpoint's own level sits, and whether it is muted. Read, never written. */
+    val volume: Pair<Float, Boolean>?
+
     val format: MixFormat
     val bufferFrames: Int
     val clockFrequency: Long
@@ -105,6 +111,9 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
             "Activate(IAudioClient)"
         )
         client = out.get(Wasapi.PTR, 0)
+
+        deviceName = Wasapi.friendlyName(arena, device)
+        volume = Wasapi.endpointVolume(arena, device)
 
         Wasapi.check(Wasapi.getMixFormat(client, out), "GetMixFormat")
         val mix = out.get(Wasapi.PTR, 0)
@@ -176,6 +185,12 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
     fun frameAt(qpcDeadline: Long, sample: ClockSample): Long {
         val ahead = qpcDeadline - sample.qpcPosition
         return sample.frames + Math.round(ahead.toDouble() / qpcFrequency * format.sampleRate)
+    }
+
+    /** The inverse of [frameAt]: when the engine will be consuming [frame]. */
+    fun qpcAt(frame: Long, sample: ClockSample): Long {
+        val ahead = frame - sample.frames
+        return sample.qpcPosition + Math.round(ahead.toDouble() / format.sampleRate * qpcFrequency)
     }
 
     // --------------------------------------------------------------------- clock
