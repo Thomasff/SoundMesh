@@ -54,6 +54,15 @@ fun main(args: Array<String>) {
         }
         val loudest = bars.maxOrNull() ?: 0
         println("peak   : $loudest of ${Short.MAX_VALUE}")
+        // Per channel as well as after the averaging, because the averaging is a decision this
+        // program is here to check: two channels of a microphone array that oppose each other
+        // cancel into a mono track of almost nothing, and the mono track alone cannot tell that
+        // apart from a microphone that heard nothing.
+        println(
+            "channels: " + recording.channelPeaks.mapIndexed { channel, peak ->
+                "$channel at ${"%.0f".format(peak)}"
+            }.joinToString(", ")
+        )
         println()
         // A bar per tenth of a second, scaled to this run's own loudest tenth. Scaled to itself on
         // purpose: the question is where in the run the sound was, and a scale fixed to full range

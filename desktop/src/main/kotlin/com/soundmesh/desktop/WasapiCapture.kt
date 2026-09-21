@@ -2,6 +2,7 @@ package com.soundmesh.desktop
 
 import java.lang.foreign.Arena
 import java.lang.foreign.MemorySegment
+import kotlin.math.abs
 
 /**
  * One packet as the engine handed it over: how much, when, and whether it can be believed.
@@ -55,7 +56,17 @@ data class Recording(
      */
     val gaps: List<GapEvent>,
     val format: MixFormat,
-    val qpcFrequency: Long
+    val qpcFrequency: Long,
+    /**
+     * The loudest sample each channel carried, before they were averaged into [mono].
+     *
+     * Here because averaging is a decision and this is the only thing that can check it. The
+     * average is right when the channels agree and destroys the signal when they oppose, and a
+     * microphone array has no obligation to hand back two channels in phase. Recorded rather
+     * than reasoned about: on loopback every channel carries the same samples, so the case that
+     * would expose the difference is exactly the one that arrangement cannot produce.
+     */
+    val channelPeaks: DoubleArray
 ) {
     private val anchor: CapturePacket
         get() = packets.firstOrNull { it.flags and Wasapi.BUFFERFLAGS_TIMESTAMP_ERROR == 0 }
@@ -212,6 +223,7 @@ class WasapiCapture(
 
     private val lock = Any()
     private var samples = ShortArray(INITIAL_CAPACITY)
+    private val channelPeaks = DoubleArray(16)
     private var count = 0
     private var firstDevicePosition = -1L
     private var nextExpected = -1L
@@ -311,7 +323,8 @@ class WasapiCapture(
             skippedFrames = skipped,
             gaps = ArrayList(gaps),
             format = format,
-            qpcFrequency = qpcFrequency
+            qpcFrequency = qpcFrequency,
+            channelPeaks = channelPeaks.copyOf(format.channels)
         )
     }
 
@@ -405,11 +418,14 @@ class WasapiCapture(
             var total = 0.0
             for (channel in 0 until channels) {
                 val slot = (frame.toLong() * channels + channel)
-                total += if (format.isFloat) {
+                val sample = if (format.isFloat) {
                     block.get(Wasapi.F32, slot * 4).toDouble() * Short.MAX_VALUE
                 } else {
                     block.get(Wasapi.I16, slot * 2).toDouble()
                 }
+                total += sample
+                val magnitude = abs(sample)
+                if (magnitude > channelPeaks[channel]) channelPeaks[channel] = magnitude
             }
             val value = total / channels
             samples[count + frame] = value.coerceIn(MIN_SAMPLE, MAX_SAMPLE).toInt().toShort()
