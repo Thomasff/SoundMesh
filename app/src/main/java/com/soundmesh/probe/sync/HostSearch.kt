@@ -45,11 +45,22 @@ object HostSearch {
         // dropped. That is not rare - it is every handset that has just handed the role over, for
         // as long as the platform goes on answering for it.
         val others = outcome.hosts.filter { PeerAdvertisement.hostIdOf(it) != mine }
-        val peer = others.singleOrNull() ?: return Found(
-            null,
-            if (others.isEmpty() && outcome.hosts.isNotEmpty()) ONLY_ITS_OWN_RECORD
-            else wordFor(outcome, mine)
-        )
+        val peer = others.singleOrNull() ?: run {
+            // Nothing listened for, so ask. One network answers no search at all from inside it -
+            // a handset serving its own hotspot is invisible to the handsets on it, measured
+            // 2026-09-22 - and on that one the host is not merely findable by other means, it is
+            // the gateway. See [HostAtTheGateway].
+            atTheGateway(context, mine)?.let {
+                if (paired.read() != null) return Found(null, ALREADY_PAIRED)
+                paired.write(it)
+                return Found(it, "${wordFor(outcome, mine)}, but ${it.address} is hosting at the gateway; following it")
+            }
+            return Found(
+                null,
+                if (others.isEmpty() && outcome.hosts.isNotEmpty()) ONLY_ITS_OWN_RECORD
+                else wordFor(outcome, mine)
+            )
+        }
         // Why its own record is there to be filtered at all: giving the role back is a request to
         // a platform daemon rather than an act. The record goes on being answered for seconds
         // after somebody picks 当从机, and other devices' caches hold it longer still. Without
@@ -98,6 +109,19 @@ object HostSearch {
             stored,
             outcome.hosts.filter { PeerAdvertisement.hostIdOf(it) != mine }
         ) { RoomCommands.stillServing(it.address) }
+        // Only where the records came to nothing at all. Anything else means this handset can see
+        // the hosts on its network, and a gateway asked on top of that would be a second opinion
+        // about a question already answered - including [Repointing.TOO_MANY], where two hosts
+        // answered and guessing is precisely what must not happen.
+        if (what.verdict == Repointing.NOBODY) {
+            HostRepoint.ofTheGateway(stored, atTheGateway(context, mine)) {
+                RoomCommands.stillServing(it.address)
+            }?.let {
+                if (paired.read() != stored) return Found(null, SCANNED_MEANWHILE)
+                paired.write(it)
+                return Found(it, "nothing answered, but ${it.address} is hosting at the gateway; following it")
+            }
+        }
         val host = what.host ?: return Found(null, wordFor(what.verdict, stored))
         if (paired.read() != stored) return Found(null, SCANNED_MEANWHILE)
         paired.write(host)
@@ -124,6 +148,20 @@ object HostSearch {
         PeerAdvertisement
             .otherThan(PeerDiscovery(context).discover(windowMillis).hosts, myId)
             ?.hostAddress
+
+    /**
+     * The handset this one is reached through, if it is hosting and is not this handset.
+     *
+     * The identity check is the same one the record list gets and it is here for a sharper
+     * reason: this handset's own address can be the gateway seen from inside a network it is
+     * itself providing, and a sink that stored itself would dial a port nothing on it serves for
+     * ever, because a stored host is never replaced by a search.
+     */
+    private fun atTheGateway(context: Context, mine: String): PairingCode? {
+        val gateway = HostAtTheGateway.gatewayOf(context) ?: return null
+        val code = HostAtTheGateway.ask(gateway) ?: return null
+        return if (code.hostId == mine) null else code
+    }
 
     /**
      * What one look came to: the host to use, and one line saying why when there is none.

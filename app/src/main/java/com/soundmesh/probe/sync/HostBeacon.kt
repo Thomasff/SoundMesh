@@ -70,6 +70,11 @@ object HostBeacon {
         if (holders.isNotEmpty()) return
         stopWatching()
         withdraw()
+        // Here and not in [withdraw], which [again] also calls. The record names an address and
+        // has to be said again when that changes; this is a port, and a port does not move when
+        // the address under it does. Cycling it on every network change would only make this
+        // handset briefly unanswerable to the handsets it is serving.
+        HostAtTheGateway.stop()
         application = null
         hostId = null
     }
@@ -147,6 +152,11 @@ object HostBeacon {
         open = runCatching {
             PeerDiscovery(context).register("$SERVICE_NAME_PREFIX-$id", SyncActivity.CHUNK_PORT, id)
         }.getOrNull()
+        // Said here rather than anywhere else because it says the same thing this record does,
+        // and two places saying "this handset is a host" would be two places to forget to stop.
+        // Idempotent, so the re-say [again] does costs nothing - see [release] for why the
+        // stop is not the mirror of this call.
+        HostAtTheGateway.answer(id, SyncActivity.CHUNK_PORT)
     }
 
     private fun withdraw() {

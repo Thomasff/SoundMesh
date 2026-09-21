@@ -112,4 +112,37 @@ object HostRepoint {
         if (stillServing(stored)) return what
         return Repoint(Repointing.REPLACED_A_GHOST, without.host)
     }
+
+    /**
+     * What to do about a host that was asked for rather than listened for, or null for nothing.
+     *
+     * [atTheGateway] is a pairing code read straight off the handset this one is reached through -
+     * see HostAtTheGateway, and note that the address in it is the one that already worked. It is
+     * the whole of the evidence here, and it is better evidence than a record: a record is
+     * answered by a platform daemon for a minute after the handset behind it stopped hosting,
+     * while this one was written by the handset itself, just now, on the socket being read.
+     *
+     * The case it exists for is the one the rest of this file cannot see at all. Measured
+     * 2026-09-22: a handset serving its own hotspot is not discoverable by the handsets on it -
+     * eleven searches, two minutes, nothing - so from a sink's side that host does not exist, and
+     * every verdict above is reached on a list that will never contain it.
+     *
+     * Same id is a move and nothing else, which is why [stillServing] is not asked there: there is
+     * one host in that answer, the stored address is the stale half, and dialling it could only
+     * ever talk this handset out of following the host it has just heard from.
+     *
+     * A different id is the same decision [ofUnreachable] makes and it is made the same way, for
+     * the same reason: being unable to reach a host is a property of this pair and not of that
+     * handset, so a radio that hiccups next to somebody else's hotspot must not hand the room over.
+     */
+    fun ofTheGateway(
+        stored: PairingCode,
+        atTheGateway: PairingCode?,
+        stillServing: (PairingCode) -> Boolean
+    ): PairingCode? {
+        if (atTheGateway == null) return null
+        if (atTheGateway.hostId == stored.hostId) return atTheGateway
+        if (stillServing(stored)) return null
+        return atTheGateway
+    }
 }

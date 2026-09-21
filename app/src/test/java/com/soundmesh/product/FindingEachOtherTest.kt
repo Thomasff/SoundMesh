@@ -1,5 +1,6 @@
 package com.soundmesh.product
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -96,14 +97,19 @@ class FindingEachOtherTest {
      */
     @Test
     fun aFoundHostNeverArguesWithARememberedOne() {
-        val look = search.substringAfter("fun lookOnce(")
-        assertTrue(
+        val look = search.substringAfter("fun lookOnce(").substringBefore("fun lookAgain(")
+        val guards = look.split("if (paired.read() != null) return").size - 1
+        val writes = look.split("paired.write(").size - 1
+        assertTrue("nothing is written down after a host is found", writes >= 1)
+        // Counted against the writes rather than fixed at a number, which is what this assertion
+        // was until a second way of finding a host arrived (the gateway, 09-22) and moved the
+        // number without touching the rule. The rule is one re-read before the window is spent
+        // and one immediately before every single write - the window is seconds long, and a scan
+        // finishing inside it is the one thing that must never be overwritten.
+        assertEquals(
             "a search that started before a scan finished overwrites the scan",
-            look.split("if (paired.read() != null) return").size - 1 == 2
-        )
-        assertTrue(
-            "nothing is written down after a host is found",
-            look.contains("paired.write(code)")
+            writes + 1,
+            guards
         )
     }
 

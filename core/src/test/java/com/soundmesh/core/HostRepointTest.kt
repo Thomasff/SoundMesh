@@ -202,4 +202,38 @@ class HostRepointTest {
         assertEquals(Repointing.MOVED, what.verdict)
         assertEquals(PairingCode(ours, "192.168.43.1", 45124), what.host)
     }
+
+    @Test
+    fun `a handset that is the network is taken when nothing answered`() {
+        val gateway = PairingCode(hostId = "1c0de55dc6da3fe1", address = "192.168.129.1", chunkPort = 45124)
+
+        val took = HostRepoint.ofTheGateway(stored, gateway) { false }
+
+        assertEquals(gateway, took)
+    }
+
+    @Test
+    fun `the same host answering from the gateway has moved rather than been replaced`() {
+        val moved = PairingCode(hostId = stored.hostId, address = "192.168.129.1", chunkPort = 45124)
+
+        // No question asked of the network at all: there is only one host in this, and the
+        // lambda would be dialling the address it has just been told is out of date.
+        val took = HostRepoint.ofTheGateway(stored, moved) {
+            error("the host that answered is the stored one, so nothing about it is in doubt")
+        }
+
+        assertEquals(moved, took)
+    }
+
+    @Test
+    fun `a stored host that is still serving outranks whatever the gateway says`() {
+        val gateway = PairingCode(hostId = "1c0de55dc6da3fe1", address = "192.168.129.1", chunkPort = 45124)
+
+        assertNull(HostRepoint.ofTheGateway(stored, gateway) { true })
+    }
+
+    @Test
+    fun `a gateway that is not hosting changes nothing`() {
+        assertNull(HostRepoint.ofTheGateway(stored, null) { false })
+    }
 }
