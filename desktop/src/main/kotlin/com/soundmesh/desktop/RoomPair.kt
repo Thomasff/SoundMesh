@@ -1,5 +1,6 @@
 package com.soundmesh.desktop
 
+import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.ChirpArrival
 import com.soundmesh.core.ChirpCorrelator
 import com.soundmesh.core.ChirpGenerator
@@ -147,6 +148,80 @@ fun main(args: Array<String>) {
                 "in centimetres. Ten centimetres unaccounted for is 0.146 ms on either answer."
         )
     }
+
+    crossCheck(handsetTrack, pcTrack, reference, rate, apartSamples, pairNanos, flightNanos)
+}
+
+/**
+ * The same two recordings read by the analysis the product ships, printed beside this program's.
+ *
+ * Not a second opinion for its own sake. [AlignmentAnalysis.combineFacing] is this same algebra -
+ * its half sum is the firing offset and its half difference the flight time - so the two ought to
+ * agree to the noise, and where they do not, one of the two is the number a handset will be told
+ * to apply to every note it plays. Measured on the two archived rounds: they agreed to 0.050 ms at
+ * 140 cm and parted by 0.498 ms at 90 cm, and at 90 cm it was the shipped reading that missed the
+ * tape by 13 cm where this one missed it by 4.
+ *
+ * They differ in one place. Both take an early arrival rather than the loudest, but the shipped
+ * one answers with the lag where the score first reaches a share of the peak, and this one answers
+ * with the peak that crossing belongs to. A flank crossing moves with the flank, and a chirp from
+ * a speaker a few centimetres away is sixty times louder than the one from across the room: its
+ * share of the peak sits far down a skirt of case resonance more than a millisecond wide, and the
+ * crossing slides along it. Profiled on the 90 cm round, the handset's own chirp was already at
+ * 0.25 of its peak 1.2 ms early, so the 20% lag and the 30% lag sat 0.9 ms apart on one chirp
+ * while the far chirp's two sat together.
+ *
+ * The spread across shares is printed for the half sum because nothing else prints it. The product
+ * measures that spread on the half difference and refuses a distance on it; the number it hands a
+ * handset is the half sum, and no gate has ever looked at that one's spread. On both archived
+ * rounds it was about 1.5 ms, against a distance gate of 1.0 m - near 3 ms - that passed both.
+ */
+private fun crossCheck(
+    handsetTrack: ShortArray,
+    pcTrack: ShortArray,
+    reference: ShortArray,
+    rate: Int,
+    apartSamples: Int,
+    pairNanos: Double,
+    flightNanos: Double
+) {
+    val shares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
+    // The handset chirps first, so this machine is the later slot, which is the side combineFacing
+    // calls the host - see AlignmentAnalysis.facingPairs. Swapped, it answers every pair inside out.
+    val sink = AlignmentAnalysis.read(
+        handsetTrack, reference, apartSamples, SLOT_SLACK, 0.0, edgeShares = shares
+    )
+    val host = AlignmentAnalysis.read(
+        pcTrack, reference, apartSamples, SLOT_SLACK, 0.0, edgeShares = shares
+    )
+    val pair = AlignmentAnalysis.combineFacing(host, sink)
+
+    println()
+    println("--- the same two files, read by the analysis the product ships ---")
+    if (pair == null) {
+        println("combineFacing found nothing it would vouch for: ${sink.confidence} / ${host.confidence}")
+        return
+    }
+    val firing = pair.firingOffsetMs
+    println(
+        "pair constant (edge share ${"%.2f".format(shares[0])})  : " +
+            (firing?.let { "${"%+.3f".format(it)} ms, ${"%+.3f".format(it - pairNanos / 1e6)} from above" }
+                ?: "null - the two sides swept different shares")
+    )
+    println(
+        "pair constant (loudest lag)      : ${"%+.3f".format(pair.alignmentErrorMs)} ms, " +
+            "${"%+.3f".format(pair.alignmentErrorMs - pairNanos / 1e6)} from above"
+    )
+    println(
+        "separation                       : ${"%.1f".format(pair.separationMetres * 100)} cm, " +
+            "${"%+.1f".format(pair.separationMetres * 100 - flightNanos / 1e9 * SPEED_OF_SOUND * 100)} from above"
+    )
+    val halfSums = shares.indices.map { (sink.rawMsByShare[it] + host.rawMsByShare[it]) / 2 }
+    println(
+        "  across all of $shares the half sum spans " +
+            "${"%.3f".format(halfSums.max() - halfSums.min())} ms and the half difference " +
+            "${"%.2f".format(pair.separationSpreadMetres ?: 0.0)} m - only the second is gated"
+    )
 }
 
 private fun read(file: File, rate: Int): ShortArray {
