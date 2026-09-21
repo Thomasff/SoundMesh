@@ -86,18 +86,6 @@ fun main(args: Array<String>) {
                     "trips  : ${exchanges.size} exchanges, shortest ${micros(trips.first())}, " +
                         "median ${micros(trips[trips.size / 2])}, longest ${micros(trips.last())}"
                 )
-                // The two legs on their own, which the round trip adds together and the offset
-                // hides. The midpoint estimator is exactly right when they are equal and wrong by
-                // half their difference when they are not, so this is the line that says how much
-                // of an answer is path rather than clock. Only meaningful when the true offset is
-                // known - against a second process on this machine it is zero, and then the two
-                // legs are the whole of what the estimator reports.
-                val out = exchanges.map { it.t2 - it.t1 }.sorted()
-                val back = exchanges.map { it.t4 - it.t3 }.sorted()
-                println(
-                    "legs   : out ${micros(out[out.size / 2])} median / ${micros(out.first())} " +
-                        "shortest, back ${micros(back[back.size / 2])} / ${micros(back.first())}"
-                )
                 val estimate = client.currentEstimate()
                 if (estimate == null) {
                     println("estimator: nothing it will stand behind - too few exchanges survived")
@@ -109,6 +97,25 @@ fun main(args: Array<String>) {
                         "${estimate.sampleCount} kept exchanges"
                 )
                 println("drift  : ${"%+.1f".format(estimate.driftPpm)} ppm")
+
+                // The two legs on their own, which the round trip adds together and the offset
+                // hides. The midpoint estimator is exactly right when the legs are equal and wrong
+                // by half their difference when they are not, so this is the line that says how
+                // much of an answer is path rather than clock.
+                //
+                // Each leg spans both clocks, so the offset has to come out before they mean
+                // anything. Against a second process on this machine it is zero and the raw
+                // difference works; against a handset it is days, and the first run of this
+                // printed legs of +337559882 ms and -337559880 ms. The offset removed here is the
+                // estimator's own, so this cannot prove the estimator right - what it shows is the
+                // shape the estimator is resting on.
+                val offset = estimate.offsetNanos
+                val out = exchanges.map { it.t2 - it.t1 - offset }.sorted()
+                val back = exchanges.map { it.t4 - it.t3 + offset }.sorted()
+                println(
+                    "legs   : out ${micros(out[out.size / 2])} median / ${micros(out.first())} " +
+                        "shortest, back ${micros(back[back.size / 2])} / ${micros(back.first())}"
+                )
                 // The same number the audio half has to use. Reported here so that the conversion
                 // is on the page next to the thing it converts, and not left to be done later by
                 // whoever wires the two together.
