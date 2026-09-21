@@ -65,6 +65,26 @@ data class Recording(
     }
 
     /**
+     * The same as [qpcAt], with the origin taken as the median over every packet rather than from
+     * the first one alone.
+     *
+     * The slope stays nominal. That is the difference from [fittedQpcAt] and the reason this one
+     * can be better: letting a fit choose the slope lets it absorb the device position counter's
+     * habit of running a few hundred parts per million fast, and the answer then leans on where
+     * in the run the chirp happened to fall.
+     */
+    fun medianAnchoredQpcAt(index: Int): Long {
+        val origins = packets
+            .filter { it.flags and Wasapi.BUFFERFLAGS_TIMESTAMP_ERROR == 0 }
+            .map {
+                it.qpcPosition - Math.round(it.atIndex.toDouble() / format.sampleRate * qpcFrequency)
+            }
+            .sorted()
+        val origin = origins[origins.size / 2]
+        return origin + Math.round(index.toDouble() / format.sampleRate * qpcFrequency)
+    }
+
+    /**
      * The same as [qpcAt], with the line fitted across every packet instead of pinned to the first.
      *
      * The two differ by however wrong one reading is, which is the only way to tell an unstable
@@ -147,6 +167,12 @@ class WasapiCapture(
     private val client: MemorySegment
     private val capture: MemorySegment
 
+    /** What the person at this machine calls the endpoint this stream is on. */
+    val deviceName: String?
+
+    /** Where this endpoint's own level sits, and whether it is muted. Read, never written. */
+    val volume: Pair<Float, Boolean>?
+
     val format: MixFormat
     val qpcFrequency: Long
     val bufferFrames: Int
@@ -193,6 +219,9 @@ class WasapiCapture(
             "Activate(IAudioClient)"
         )
         client = out.get(Wasapi.PTR, 0)
+
+        deviceName = Wasapi.friendlyName(arena, device)
+        volume = Wasapi.endpointVolume(arena, device)
 
         Wasapi.check(Wasapi.getMixFormat(client, out), "GetMixFormat")
         val mix = out.get(Wasapi.PTR, 0)

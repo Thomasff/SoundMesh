@@ -44,20 +44,31 @@ fun main(args: Array<String>) {
     val tailSeconds = 1.6
     val searchMillis = 300.0
     val renderBufferMillis = if (args.size > 2) args[2].toLong() else 200L
+    // "mic" swaps the loopback tap for the default recording endpoint. Everything above the
+    // capture stream is identical, which is the point: the gap criterion does not care whether
+    // the path went through a room, because a room does not change length in 800 milliseconds.
+    val throughTheRoom = args.size > 3 && args[3] == "mic"
 
     val chirp = ChirpGenerator.generateMono()
 
     WasapiRenderer(renderBufferMillis).use { renderer ->
-        WasapiCapture(loopback = true).use { capture ->
+        WasapiCapture(loopback = !throughTheRoom).use { capture ->
             val rate = renderer.format.sampleRate
             val qpf = renderer.qpcFrequency
 
-            println("render : ${renderer.format}")
-            println("capture: ${capture.format}  (loopback, buffer ${capture.bufferFrames} frames)")
-            check(capture.format.sampleRate == rate) {
-                "loopback came back at ${capture.format.sampleRate} Hz against the render " +
-                    "endpoint's $rate Hz, which should be impossible on one device"
+            println("render : ${renderer.deviceName ?: "(unnamed)"} - ${renderer.format}")
+            println(
+                "capture: ${capture.deviceName ?: "(unnamed)"} - ${capture.format}  " +
+                    "(${if (throughTheRoom) "microphone" else "loopback"}, " +
+                    "buffer ${capture.bufferFrames} frames)"
+            )
+            // The chirp is generated at core's 48 kHz and correlated against a recording sample
+            // for sample, so an endpoint at any other rate would be measuring a different signal.
+            check(capture.format.sampleRate == ChirpGenerator.SAMPLE_RATE) {
+                "the capture endpoint is at ${capture.format.sampleRate} Hz and the chirp is at " +
+                    "${ChirpGenerator.SAMPLE_RATE} Hz"
             }
+            println("volume : render ${say(renderer.volume)}, capture ${say(capture.volume)}")
             println("clock  : QPC ${qpf} Hz, audio clock ${renderer.clockFrequency}")
             println("buffer : render ${renderer.bufferFrames} frames (${renderBufferMillis} ms asked)")
             println()
@@ -116,6 +127,11 @@ fun main(args: Array<String>) {
     }
 }
 
+/** A level and a mute flag as a person would read them off the slider. */
+private fun say(volume: Pair<Float, Boolean>?): String = volume?.let {
+    "${Math.round(it.first * 100)}%" + if (it.second) " MUTED" else ""
+} ?: "unknown"
+
 /**
  * Every packet as it arrived, so a gap can be looked at rather than reasoned about.
  *
@@ -164,12 +180,17 @@ private fun report(
     println(
         "heard  : ${recording.mono.size} frames " +
             "(${"%.2f".format(recording.mono.size.toDouble() / rate)} s) in " +
-            "${recording.packets.size} packets, ${recording.skippedFrames} frames skipped${if (recording.filled) " and filled" else ""}, " +
-            "$discontinuities discontinuities, $silent silent packets"
+            "${recording.packets.size} packets, ${recording.skippedFrames} frames skipped" +
+            (if (recording.filled) " and filled" else "") +
+            ", $discontinuities discontinuities, $silent silent packets"
     )
     println("level  : peak $peak of 32767, chirp was generated at 12000")
     if (peak < 100) {
-        println("         nothing came back - the endpoint is muted, or the mix is silent")
+        // Below a room's own noise floor, so this is not "the chirp was too quiet" - it is a
+        // stream of zeros. The endpoint said its level and its mute flag on the way in; if those
+        // look fine then whatever is silencing it is below the place this program can see, which
+        // on a laptop usually means a mute key or a vendor privacy switch.
+        println("         nothing came back: $peak is below a quiet room, so these are zeros")
         return
     }
 
@@ -197,7 +218,7 @@ private fun report(
         "anchors: render frame ${anchor.frames} at ${anchor.qpcPosition}, " +
             "capture index ${a.atIndex} (device ${a.devicePosition}) at ${a.qpcPosition}, " +
             "capture ${"%+.3f".format((a.qpcPosition - anchor.qpcPosition) * 1000.0 / qpf)} ms " +
-            "before/after the render one"
+            "from the render one"
     )
 
     val residual = recording.stampResidualTicks()
@@ -275,10 +296,9 @@ private fun report(
     )
     println()
 
-    // And the one that has no known answer, reported as what it is.
-    // Four ways of asking the same question, differing only in which reading of which clock the
-    // two timelines are pinned to. Within a run they all give the same spread; between runs, the
-    // one that does not move is the one to build on.
+    // And the half with no known answer, reported as what it is: the same question asked five
+    // ways, differing only in which reading of which clock the two timelines are pinned to.
+    // Between runs, the one that does not move is the one to build on.
     println("loopback constant: how far the tap sits from the frame the audio clock is counting")
     for ((name, offsets) in listOf(
         "first packet / early clock" to found.mapIndexed { shot, a ->
@@ -286,6 +306,9 @@ private fun report(
         },
         "first packet / late clock" to found.mapIndexed { shot, a ->
             (recording.qpcAt(a.index) - renderer.qpcAt(frames[shot], late)) * 1000.0 / qpf
+        },
+        "median packet / early clock" to found.mapIndexed { shot, a ->
+            (recording.medianAnchoredQpcAt(a.index) - renderer.qpcAt(frames[shot], anchor)) * 1000.0 / qpf
         },
         "fitted packets / early clock" to found.mapIndexed { shot, a ->
             (recording.fittedQpcAt(a.index) - renderer.qpcAt(frames[shot], anchor)) * 1000.0 / qpf

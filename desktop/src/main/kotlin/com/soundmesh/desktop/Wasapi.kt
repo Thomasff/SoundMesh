@@ -45,6 +45,8 @@ internal object Wasapi {
         export("ole32.dll", "CoCreateInstance", FunctionDescriptor.of(I32, PTR, PTR, I32, PTR, PTR))
     private val CO_TASK_MEM_FREE =
         export("ole32.dll", "CoTaskMemFree", FunctionDescriptor.ofVoid(PTR))
+    private val PROP_VARIANT_CLEAR =
+        export("ole32.dll", "PropVariantClear", FunctionDescriptor.of(I32, PTR))
     private val QUERY_PERFORMANCE_COUNTER =
         export("kernel32.dll", "QueryPerformanceCounter", FunctionDescriptor.of(I32, PTR))
     private val QUERY_PERFORMANCE_FREQUENCY =
@@ -90,6 +92,9 @@ internal object Wasapi {
     /** HRESULT f(this, count) - the capture side's ReleaseBuffer, which carries no flags. */
     private val CALL_I = LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, I32))
 
+    /** HRESULT OpenPropertyStore(this, stgmAccess, out*) */
+    private val CALL_PI_P = LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, I32, PTR))
+
     /** HRESULT GetBuffer(this, data**, frames*, flags*, devicePosition*, qpcPosition*) */
     private val CALL_CAPTURE_GET_BUFFER =
         LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, PTR, PTR, PTR, PTR, PTR))
@@ -123,7 +128,13 @@ internal object Wasapi {
     const val IID_IAUDIO_RENDER_CLIENT = "F294ACFC-3146-4483-A7BF-ADDCA7C260E2"
     const val IID_IAUDIO_CAPTURE_CLIENT = "C8ADBD64-E71E-48A0-A4DE-185C395CD317"
     const val IID_IAUDIO_CLOCK = "CD63314F-3FBA-4A1B-812C-EF96358728E7"
+    const val IID_IAUDIO_ENDPOINT_VOLUME = "5CDF2C82-841E-4546-9722-0CF74078229A"
     const val SUBTYPE_FLOAT = "00000003-0000-0010-8000-00AA00389B71"
+
+    /** The format part of PKEY_Device_FriendlyName; its property id is 14. */
+    const val PKEY_DEVICE_FRIENDLY_NAME_FMTID = "A45C254E-DF1C-4EFD-8020-67D146A850E0"
+
+    const val VT_LPWSTR = 31
 
     const val CLSCTX_ALL = 23
     const val SHARE_MODE_SHARED = 0
@@ -220,6 +231,71 @@ internal object Wasapi {
         CALL_ACTIVATE.invokeExact(
             method(self, 3), self, iid, CLSCTX_ALL, MemorySegment.NULL, out
         ) as Int
+
+    /**
+     * What the person at this machine calls the device this code just opened.
+     *
+     * Worth the property store it takes to get: this machine has three endpoints, and which one
+     * is the multimedia default is not something any measurement here can tell by looking at the
+     * numbers. A run that names its device cannot silently be a run of a different device.
+     *
+     * Returns null rather than throwing - a missing name is a worse report, not a failed run.
+     */
+    fun friendlyName(arena: Arena, device: MemorySegment): String? {
+        val out = arena.allocate(8, 8)
+        // IMMDevice::OpenPropertyStore, vtable 4. STGM_READ is 0.
+        if ((CALL_PI_P.invokeExact(method(device, 4), device, 0, out) as Int) < 0) return null
+        val store = out.get(PTR, 0)
+
+        // PKEY_Device_FriendlyName: a GUID followed by a property id, twenty bytes in all.
+        val key = arena.allocate(24, 8)
+        key.copyFrom(guid(arena, PKEY_DEVICE_FRIENDLY_NAME_FMTID).reinterpret(16))
+        key.set(I32, 16, 14)
+
+        // A PROPVARIANT is twenty-four bytes here: the type at 0, then padding, then the union at
+        // 8, which for VT_LPWSTR holds a pointer to a null-terminated wide string.
+        val value = arena.allocate(24, 8)
+        if (pp(store, 5, key, value) < 0) return null
+        if (value.get(I16, 0).toInt() != VT_LPWSTR) return null
+        val text = wideStringAt(value.get(PTR, 8))
+        PROP_VARIANT_CLEAR.invokeExact(value) as Int
+        return text
+    }
+
+    /**
+     * How loud this endpoint is set and whether it is muted, or null if that cannot be asked.
+     *
+     * Read only. Nothing in this project changes a person's volume: it is theirs, it applies to
+     * everything else they run, and a measurement tool that turns the speakers up is a worse
+     * neighbour than one that says it heard nothing.
+     *
+     * Worth having because of what silence looks like from inside. A muted microphone hands back
+     * zeros through the ordinary path - no error, no flag, a full-length recording - and so does a
+     * room with nothing in it. The two are the same recording, and only this tells them apart.
+     */
+    fun endpointVolume(arena: Arena, device: MemorySegment): Pair<Float, Boolean>? {
+        val out = arena.allocate(8, 8)
+        if (activate(device, guid(arena, IID_IAUDIO_ENDPOINT_VOLUME), out) < 0) return null
+        val volume = out.get(PTR, 0)
+        val scratch = arena.allocate(8, 8)
+        // GetMasterVolumeLevelScalar is vtable 9 and GetMute 15; the eleven setters between them
+        // are deliberately not wrapped.
+        if (p(volume, 9, scratch) < 0) return null
+        val level = scratch.get(F32, 0)
+        if (p(volume, 15, scratch) < 0) return null
+        return level to (scratch.get(I32, 0) != 0)
+    }
+
+    private fun wideStringAt(p: MemorySegment): String {
+        val sb = StringBuilder()
+        var at = 0L
+        while (true) {
+            val unit = p.reinterpret(at + 2).get(I16, at)
+            if (unit.toInt() == 0) return sb.toString()
+            sb.append(unit.toInt().toChar())
+            at += 2
+        }
+    }
 
     // --------------------------------------------------------------- IAudioClient
     //
