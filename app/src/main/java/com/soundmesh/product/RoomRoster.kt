@@ -45,16 +45,29 @@ fun RoomRoster(state: HomeState, actions: HomeActions) {
 /**
  * One standing handset: what it is called, how it is lined up, and the way to fix that.
  *
- * The entry appears only where there is something to fix. A handset already carrying its own
- * measurement says so and offers nothing - which is the whole difference between a status line and
- * a menu, and the reason this screen can be read at a glance rather than worked through.
+ * The errand chip appears only where there is something to fix - which is the whole difference
+ * between a status line and a menu, and the reason this screen can be read at a glance rather than
+ * worked through. But "nothing to fix" is a judgement made from a stored number, and a stored number
+ * goes stale without saying so: the handset moves, the room changes, somebody wants it measured
+ * again. That had no way in at all. So the word itself is the way back, rather than a second chip:
+ * the line still holds one errand at most, and an already measured handset still reads as settled.
  */
 @Composable
 private fun StandingLine(row: StandingRow, actions: HomeActions) {
     Line {
         Dot(null, hollow = row.quiet)
         LineName(row.name, quiet = row.quiet)
-        Tag(stringResource(carryingWord(row.carrying)), carryingTone(row.carrying))
+        Tag(
+            stringResource(carryingWord(row.carrying)),
+            carryingTone(row.carrying),
+            // Only where the chip below is absent. Everywhere else the errand is already on the
+            // line, and two targets for one job is how a person learns to trust neither.
+            onClick = if (row.carrying == Carried.SOMETHING) {
+                { actions.calibratePeer(row.peerId) }
+            } else {
+                null
+            }
+        )
         if (row.carrying != Carried.SOMETHING) {
             // Filled rather than outlined. This is the one errand on the line, and beside the grey
             // word 未校准 an outlined chip read as more of the same grey.

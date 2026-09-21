@@ -51,6 +51,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -221,10 +222,25 @@ fun linkColour(): Color {
     return if (dark) Color(0xFF7F9CC4) else Color(0xFF2F5C8C)
 }
 
-/** A small piece of state at the end of a line. Reads, never taps. */
+/**
+ * A small piece of state at the end of a line.
+ *
+ * Reads, and taps only where [onClick] is given. The underline is not decoration: an outlined chip
+ * beside a name and a grey tag already went unseen once on this very line (see [FilledChip]), and a
+ * word that taps while looking exactly like the words that do not is the same mistake with nothing
+ * left to notice. The padding is carried whether or not it taps, so tags stay aligned down the
+ * column and the touch target is bigger than the glyphs.
+ */
 @Composable
-fun Tag(text: String, tone: Tone = Tone.QUIET) {
-    Text(text, style = MaterialTheme.typography.labelMedium, color = toneColour(tone))
+fun Tag(text: String, tone: Tone = Tone.QUIET, onClick: (() -> Unit)? = null) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = toneColour(tone),
+        textDecoration = if (onClick == null) null else TextDecoration.Underline,
+        modifier = (if (onClick == null) Modifier else Modifier.clickable(onClick = onClick))
+            .padding(horizontal = 2.dp, vertical = 4.dp)
+    )
 }
 
 /**
