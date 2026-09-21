@@ -37,7 +37,17 @@ data class ChirpArrival(
      * answer moves with the share costs one comparison per lag rather than another pass over the
      * recording.
      */
-    val edgeIndices: List<Int> = emptyList()
+    val edgeIndices: List<Int> = emptyList(),
+    /**
+     * Where [findFirstArrival] puts the arrival in the same window, or null when nobody filled it
+     * in - this class never sets it, [AlignmentAnalysis] does.
+     *
+     * Kept beside [index] for the same reason [edgeIndices] is: the two answer different
+     * questions. [index] is the loudest lag, which is what the window is confident about; this is
+     * the earliest lag that counts as an arrival, walked forward to its own peak. They are the
+     * same sample in a quiet near field and they are not the same sample across a room.
+     */
+    val firstArrivalIndex: Int? = null
 )
 
 /**

@@ -43,7 +43,25 @@ data class AlignmentReading(
      * moved both, so a run could answer one question or the other, and the product asked for the
      * alignment - which is why nothing it ran ever measured a distance.
      */
-    val rawLoudestMs: Double? = null
+    val rawLoudestMs: Double? = null,
+    /**
+     * The same stagger read at each chirp's own first arrival, in milliseconds and before the
+     * distance correction. Null exactly when no shares were swept.
+     *
+     * What [AlignmentAnalysis.combineFacing] builds its half sum from, and why is a measurement.
+     * Across twelve rounds at 90, 150 and 210 cm on 2026-09-22 the loudest lag and the first
+     * arrival agreed to three decimals on every round at 90 cm, parted on one to three readings
+     * in thirty-four at 150, and on ten to twelve at 210 - by 3.3 to 11.1 ms, every one of them a
+     * chirp heard across the room and never a handset's own. A handset's own speaker is
+     * centimetres from its microphone and cannot lose to a reflection, so nothing cancels, and
+     * the half sum read 1.5 ms high at 210 cm.
+     *
+     * [rawLoudestMs] stays because the M2 gate and every archived correction were produced by it
+     * and have to remain recomputable. It was not wrong: its stated reason was that alignment at
+     * short range is already good, and at 90 cm that is exactly what the measurement says. What
+     * went away was the premise, when the range grew.
+     */
+    val rawFirstArrivalMs: Double? = null
 )
 
 /**
@@ -148,11 +166,7 @@ object AlignmentAnalysis {
             "searchRadiusFrames must be smaller than staggerFrames, or the two chirps can be mistaken for each other"
         }
         val best = ChirpCorrelator.findArrival(recorded, reference, searchFrom, searchTo)
-        val window = { centre: Int ->
-            ChirpCorrelator.findArrival(
-                recorded, reference, centre - searchRadiusFrames, centre + searchRadiusFrames, edgeShares
-            )
-        }
+        val window = { centre: Int -> windowAt(recorded, reference, centre, searchRadiusFrames, edgeShares) }
         // The window the winner was found in holds both chirps, so its own first arrival belongs
         // to whichever came first rather than to the chirp it found. Reading the winner again in
         // a window of its own is what keeps the later chirp from being handed the earlier edge.
@@ -208,11 +222,7 @@ object AlignmentAnalysis {
         }
         val anchor = ChirpCorrelator.findArrival(recorded, reference, searchFrom, searchTo)
             ?: return List(slotCount) { null }
-        val window = { centre: Int ->
-            ChirpCorrelator.findArrival(
-                recorded, reference, centre - searchRadiusFrames, centre + searchRadiusFrames, edgeShares
-            )
-        }
+        val window = { centre: Int -> windowAt(recorded, reference, centre, searchRadiusFrames, edgeShares) }
         return (0 until slotCount).map { slot ->
             // The anchor's own window may hold a neighbour too, so its first arrival can belong to
             // one - read it again in a window of its own. Only where edges exist to be confused.
@@ -257,6 +267,32 @@ object AlignmentAnalysis {
      * measurement itself. Written twice it would drift, and the drift would be invisible - two
      * paths producing numbers that are close rather than equal is what nobody checks.
      */
+    /**
+     * One window, read both ways.
+     *
+     * [read] and [readSlots] both need the loudest lag and the first arrival out of the same
+     * window, and a window opened twice by two call sites is two chances for its bounds to drift
+     * apart. The second pass sweeps the same lags again and buys the only reading of the two that
+     * survives a room - see [AlignmentReading.rawFirstArrivalMs].
+     */
+    private fun windowAt(
+        recorded: ShortArray,
+        reference: ShortArray,
+        centre: Int,
+        searchRadiusFrames: Int,
+        edgeShares: List<Double>
+    ): ChirpArrival? {
+        val from = centre - searchRadiusFrames
+        val to = centre + searchRadiusFrames
+        val loudest = ChirpCorrelator.findArrival(recorded, reference, from, to, edgeShares)
+            ?: return null
+        // Only where shares were asked for, which is the same condition rawLoudestMs is kept
+        // under: without them the caller is on the path every archived number came down.
+        if (edgeShares.isEmpty()) return loudest
+        val first = ChirpCorrelator.findFirstArrival(recorded, reference, from, to)
+        return loudest.copy(firstArrivalIndex = first?.index)
+    }
+
     private fun readingOf(
         first: ChirpArrival?,
         second: ChirpArrival?,
@@ -282,6 +318,13 @@ object AlignmentAnalysis {
         val measuredStaggerFrames = if (trustworthy) at(second!!, 0) - at(first!!, 0) else null
         // The loudest reading of the same pair, kept whenever the reading above is not already it.
         val loudestStaggerFrames = if (trustworthy) second!!.index - first!!.index else null
+        // And the same pair read at each chirp's own first arrival, which is what the alignment
+        // is built from. Null unless both sides carry one, because half a rule is neither.
+        val firstArrivalStaggerFrames = if (!trustworthy) null else {
+            val secondAt = second!!.firstArrivalIndex
+            val firstAt = first!!.firstArrivalIndex
+            if (secondAt == null || firstAt == null) null else secondAt - firstAt
+        }
         // Added back, not subtracted: the partner's chirp arrives late through the air, which drags
         // the raw difference down, so a wider separation must push the error further positive.
         val propagationCorrectionMs = separationMetres / SPEED_OF_SOUND_M_S * 1000
@@ -301,7 +344,9 @@ object AlignmentAnalysis {
                 (at(second!!, it) - at(first!!, it) - staggerFrames).toDouble() / sampleRate * 1000
             },
             rawLoudestMs = if (edgeShares.isEmpty() || loudestStaggerFrames == null) null
-            else (loudestStaggerFrames - staggerFrames).toDouble() / sampleRate * 1000
+            else (loudestStaggerFrames - staggerFrames).toDouble() / sampleRate * 1000,
+            rawFirstArrivalMs = if (edgeShares.isEmpty() || firstArrivalStaggerFrames == null) null
+            else (firstArrivalStaggerFrames - staggerFrames).toDouble() / sampleRate * 1000
         )
     }
 
@@ -325,18 +370,22 @@ object AlignmentAnalysis {
      * difference cannot - which separates the two without inferring either.
      *
      * The two halves are read by different rules once the run swept thresholds, which is the
-     * whole of why it sweeps. The half sum is the alignment and takes the loudest lag from both
-     * sides ([AlignmentReading.rawLoudestMs]); the half difference is the flight time and takes
-     * the leading edge from both. Mixing the rules across the two sides would be worse than
-     * either, so each is taken from both sides or from neither.
+     * whole of why it sweeps. The half sum is the alignment and takes each chirp's own first
+     * arrival from both sides ([AlignmentReading.rawFirstArrivalMs]; it took the loudest lag
+     * until 2026-09-22, which is the same sample at short range and 1.5 ms away at two metres).
+     * The half difference is the flight time and takes the leading edge from both. Mixing the
+     * rules across the two sides would be worse than either, so each is taken from both sides or
+     * from neither.
      *
      * Returns null unless both sides were trustworthy: half a pair says nothing on its own.
      */
     fun combineFacing(hostSide: AlignmentReading?, sinkSide: AlignmentReading?): FacingPair? {
         val hostError = hostSide?.alignmentErrorMs ?: return null
         val sinkError = sinkSide?.alignmentErrorMs ?: return null
-        val rawHostMs = hostSide.rawLoudestMs ?: (hostError - hostSide.propagationCorrectionMs)
-        val rawSinkMs = sinkSide.rawLoudestMs ?: (sinkError - sinkSide.propagationCorrectionMs)
+        val rawHostMs = hostSide.rawFirstArrivalMs ?: hostSide.rawLoudestMs
+            ?: (hostError - hostSide.propagationCorrectionMs)
+        val rawSinkMs = sinkSide.rawFirstArrivalMs ?: sinkSide.rawLoudestMs
+            ?: (sinkError - sinkSide.propagationCorrectionMs)
         val flightTimeMs = edgeFlightTimeMs(hostSide.rawMsByShare, sinkSide.rawMsByShare)
             ?: ((rawSinkMs - rawHostMs) / 2)
         return FacingPair(

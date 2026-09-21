@@ -279,6 +279,27 @@ class AlignmentAnalysisTest {
     }
 
     /**
+     * The half sum is read at each chirp's own first arrival, not at the loudest lag in its
+     * window, because across a room those stop being the same sample.
+     *
+     * Measured 2026-09-22 over twelve rounds at 90, 150 and 210 cm: the two rules agreed to three
+     * decimals on every round at 90 cm, parted on one to three readings in thirty-four at 150,
+     * and on ten to twelve at 210 - by 3.3 to 11.1 ms, every one of them a chirp heard across the
+     * room and never a handset's own, so nothing cancels. The half sum read 1.5 ms high at 210.
+     *
+     * [AlignmentReading.rawLoudestMs] is still reported, because the M2 gate and every archived
+     * correction were produced by it and have to stay recomputable.
+     */
+    @Test
+    fun `reads the alignment at each chirp's first arrival rather than the loudest lag`() {
+        val result = readEdges(bounceOnOneSideOnly(), AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+
+        // 600 frames of bounce on one side only, at 48 frames per millisecond.
+        assertEquals(-12.5, result.rawLoudestMs!!, 0.5)
+        assertEquals(0.0, result.rawFirstArrivalMs!!, 1.0)
+    }
+
+    /**
      * The guard the whole change rests on: every arm sweeps now, so every archived alignment
      * number has to survive the extra pass unchanged.
      *
