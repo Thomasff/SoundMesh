@@ -107,7 +107,8 @@ class SyncActivity : Activity() {
         val seconds = intent.getIntExtra("seconds", -1)
         val mode = intent.getStringExtra("mode")
         if (caseId == null || !ProbeCase.isSafeCaseId(caseId) || role == null || role !in setOf("HOST", "SINK") ||
-            seconds !in 10..900 || mode == null || mode !in setOf("CLOCK_ONLY", "FULL")
+            seconds !in 10..900 || mode == null || mode !in setOf("CLOCK_ONLY", "FULL", "ROOM") ||
+            (mode == "ROOM" && role != "HOST")
         ) {
             statusView.text = "REJECTED"
             return
@@ -199,6 +200,20 @@ class SyncActivity : Activity() {
             Thread.sleep(seconds * 1000L)
             server.stop()
             runStore.writeSyncJson(caseId, "{\"schemaVersion\":1,\"role\":\"HOST\",\"failureCode\":null}")
+        } else if (mode == "ROOM") {
+            // The clock server is what makes this a shared measurement rather than a recording:
+            // the PC asks it for the offset, and the offset is how the PC works out the same grid
+            // instant this handset picked. It goes up first and stays up for the whole of
+            // `seconds`, because the exchange has to have finished before the chirp plays.
+            val server = ClockSyncServer(CLOCK_PORT)
+            server.start()
+            val room = runCatching { RoomRunner(runStore, caseId, calibrationAudioSourceRequested()).run() }
+            server.stop()
+            room.exceptionOrNull()?.let { throw it }
+            runStore.writeSyncJson(
+                caseId,
+                "{\"schemaVersion\":1,\"role\":\"HOST\",\"mode\":\"ROOM\",\"failureCode\":null,${room.getOrThrow()}}"
+            )
         } else {
             runHostFull(caseId, seconds, projection)
         }
