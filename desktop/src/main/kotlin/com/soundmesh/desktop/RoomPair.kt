@@ -1,11 +1,11 @@
 package com.soundmesh.desktop
 
-import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.ChirpArrival
 import com.soundmesh.core.ChirpCorrelator
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.probe.WavFileReader
 import java.io.File
+import kotlin.math.abs
 
 /**
  * Reads both machines' recordings of one exchange, so the room drops out of the answer.
@@ -65,80 +65,103 @@ import java.io.File
  * measured with it and a re-read has to be comparable with them.
  */
 fun main(args: Array<String>) {
-    if (args.size < 6) {
+    if (args.size < 3) {
         error(
-            "usage: <handset.wav> <pc.wav> <handsetChirpAtHostNanos> <pcConsumedAtHostNanos> " +
-                "<handsetRecordingStartedAtHostNanos> <pcRenderIndex> [handsetSelfCm] [pcSelfCm]"
+            "usage: <handset.wav> <pc-shot.txt> <handsetRecordingStartedAtHostNanos> " +
+                "[handsetSelfCm] [pcSelfCm]"
         )
     }
     val handsetFile = File(args[0])
-    val pcFile = File(args[1])
-    val asked = args[2].toLong()
-    val consumed = args[3].toLong()
-    val handsetOpened = args[4].toLong()
-    val pcRenderIndex = args[5].toInt()
-    val handsetSelfNanos = centimetresToNanos(args.getOrNull(6)?.toDouble())
-    val pcSelfNanos = centimetresToNanos(args.getOrNull(7)?.toDouble())
+    val shot = RoomShot.read(File(args[1]))
+    val handsetOpened = args[2].toLong()
+    val handsetSelfNanos = centimetresToNanos(args.getOrNull(3)?.toDouble())
+    val pcSelfNanos = centimetresToNanos(args.getOrNull(4)?.toDouble())
 
     val reference = ChirpGenerator.generateMono()
     val rate = ChirpGenerator.SAMPLE_RATE
     val handsetTrack = read(handsetFile, rate)
-    val pcTrack = read(pcFile, rate)
+    val pcTrack = read(shot.wav, rate)
+    val strideSamples = samples(shot.repeatNanos, rate)
 
-    // The separation the two sides agreed on, in samples. Both files are searched against it and
-    // neither is searched against the other, so a failure to find one chirp cannot drag the other
-    // window onto the wrong sound.
-    val apartSamples = samples(consumed - asked, rate)
-
+    // The first repeat of each file is found against that file's own opening instant, which is the
+    // only anchor either of them has and is good to about half a second. Every later repeat is
+    // found against the first one measured rather than against the opening again: the opening's
+    // error is the same for all of them, so anchoring on a measured arrival replaces half a second
+    // of slack with the clock drift across one window - about twenty samples over the whole eight.
     println()
-    println("--- the handset's recording ---")
-    // The opening instant first, because it is the only anchor either file has, and it is good to
-    // about half a second: CalibrationRunner reads it after the capture device has opened and its
-    // own KDoc calls half a second ample.
-    val handsetOwn = find(
-        handsetTrack, reference, samples(asked - handsetOpened, rate), OPENING_SLACK, "handset chirp"
+    val handsetOwnFirst = find(
+        handsetTrack, reference, samples(shot.grid - handsetOpened, rate), OPENING_SLACK,
+        "handset chirp #0"
     ) ?: return
-    val pcInHandset = find(
-        handsetTrack, reference, handsetOwn.index + apartSamples, SLOT_SLACK, "pc chirp"
-    ) ?: return
+    val pcOwnFirst = find(pcTrack, reference, shot.renderIndex[0], OPENING_SLACK, "pc chirp #0")
+        ?: return
+    // What the capture chain adds between the engine consuming a frame and the microphone hearing
+    // it. Unknown, never used as a measurement, and constant across the window - so measuring it
+    // once on the first repeat is what lets every later one be searched tightly.
+    val captureLag = pcOwnFirst.index - shot.renderIndex[0]
+
+    val pairs = ArrayList<Double>()
+    val flights = ArrayList<Double>()
+    val rows = ArrayList<String>()
+    for (repeat in shot.consumed.indices) {
+        val asked = shot.grid + repeat * shot.repeatNanos
+        val consumed = shot.consumed[repeat]
+        // The gap the two sides agreed on for this repeat, in samples. Read off this repeat's own
+        // consumed instant rather than assumed equal to the first's: the schedule is exact to a
+        // couple of microseconds, but an assumption that the repeats are evenly spaced is one this
+        // program would never find out was wrong.
+        val apartSamples = samples(consumed - asked, rate)
+
+        println()
+        println("--- repeat $repeat ---")
+        val handsetOwn =
+            if (repeat == 0) handsetOwnFirst
+            else find(
+                handsetTrack, reference, handsetOwnFirst.index + repeat * strideSamples, SLOT_SLACK,
+                "handset chirp"
+            ) ?: continue
+        val pcInHandset = find(
+            handsetTrack, reference, handsetOwn.index + apartSamples, SLOT_SLACK, "pc chirp"
+        ) ?: continue
+        val pcOwn =
+            if (repeat == 0) pcOwnFirst
+            else find(pcTrack, reference, shot.renderIndex[repeat] + captureLag, SLOT_SLACK, "pc chirp")
+                ?: continue
+        val handsetInPc = find(
+            pcTrack, reference, pcOwn.index - apartSamples, SLOT_SLACK, "handset chirp"
+        ) ?: continue
+
+        val deltaHandset = nanos(pcInHandset.index - handsetOwn.index, rate) - (consumed - asked)
+        val deltaPc = nanos(handsetInPc.index - pcOwn.index, rate) - (asked - consumed)
+        val flight = (deltaHandset + deltaPc).toDouble() / 2 + (handsetSelfNanos + pcSelfNanos) / 2
+        val pair = (deltaHandset - deltaPc).toDouble() / 2 + (handsetSelfNanos - pcSelfNanos) / 2
+        pairs.add(pair / 1e6)
+        flights.add(flight / 1e6)
+        rows.add(
+            "  #$repeat  pair ${"%+8.3f".format(pair / 1e6)} ms   " +
+                "separation ${"%6.1f".format(flight / 1e9 * SPEED_OF_SOUND * 100)} cm   " +
+                "(handset ${millis(deltaHandset)}, pc ${millis(deltaPc)})"
+        )
+    }
 
     println()
-    println("--- this machine's recording ---")
-    // Anchored on where the engine consumed the frame, which is earlier than the arrival by the
-    // capture chain's own latency - an unknown this program never has to name, because the half
-    // second of slack covers it and only the two arrivals' separation is used.
-    val pcOwn = find(pcTrack, reference, pcRenderIndex, OPENING_SLACK, "pc chirp") ?: return
-    val handsetInPc = find(
-        pcTrack, reference, pcOwn.index - apartSamples, SLOT_SLACK, "handset chirp"
-    ) ?: return
-
-    val heardHandset = nanos(pcInHandset.index - handsetOwn.index, rate)
-    val heardPc = nanos(handsetInPc.index - pcOwn.index, rate)
-    val deltaHandset = heardHandset - (consumed - asked)
-    val deltaPc = heardPc - (asked - consumed)
+    println("--- every repeat ---")
+    rows.forEach { println(it) }
+    if (pairs.isEmpty()) {
+        println("nothing was readable. There is no answer in this pair of files.")
+        return
+    }
 
     println()
-    println("asked apart            : ${millis(consumed - asked)}")
-    println("heard apart (handset)  : ${millis(heardHandset)}  -> delta ${millis(deltaHandset)}")
-    println("heard apart (pc)       : ${millis(heardPc)}  -> delta ${millis(deltaPc)}")
-
-    val flightNanos = (deltaHandset + deltaPc).toDouble() / 2 + (handsetSelfNanos + pcSelfNanos) / 2
-    val pairNanos = (deltaHandset - deltaPc).toDouble() / 2 + (handsetSelfNanos - pcSelfNanos) / 2
-
-    println()
+    report("pair constant", pairs, "ms") { "%+.3f".format(it) }
     println(
-        "separation             : ${"%.1f".format(flightNanos / 1e9 * SPEED_OF_SOUND * 100)} cm " +
-            "(${"%.3f".format(flightNanos / 1e6)} ms of flight)"
+        "  <- this machine's output delay minus the handset's, and the half that carries both " +
+            "machines' per-chirp emission jitter. One reading of it is not an answer."
     )
-    println("  <- a criterion, not an output. A tape measure already knows this one.")
+    report("separation   ", flights.map { it / 1000 * SPEED_OF_SOUND * 100 }, "cm") { "%.1f".format(it) }
     println(
-        "pair constant          : ${"%.3f".format(pairNanos / 1e6)} ms, this machine's output " +
-            "delay minus the handset's"
-    )
-    println(
-        "  <- carries a residue of the two cases' own geometry, bounded by their speaker-to-" +
-            "microphone separations and independent of the distance above. Run this again at a " +
-            "very different separation: this number has to come back the same."
+        "  <- a criterion, not an output, and the half that emission jitter cannot reach. Its " +
+            "spread here is this analysis's own, with the room and the schedule held still."
     )
     if (handsetSelfNanos == 0.0 || pcSelfNanos == 0.0) {
         println()
@@ -148,80 +171,80 @@ fun main(args: Array<String>) {
                 "in centimetres. Ten centimetres unaccounted for is 0.146 ms on either answer."
         )
     }
-
-    crossCheck(handsetTrack, pcTrack, reference, rate, apartSamples, pairNanos, flightNanos)
 }
 
 /**
- * The same two recordings read by the analysis the product ships, printed beside this program's.
+ * The middle of [values], how far they spread, and the widest step inside them.
  *
- * Not a second opinion for its own sake. [AlignmentAnalysis.combineFacing] is this same algebra -
- * its half sum is the firing offset and its half difference the flight time - so the two ought to
- * agree to the noise, and where they do not, one of the two is the number a handset will be told
- * to apply to every note it plays. Measured on the two archived rounds: they agreed to 0.050 ms at
- * 140 cm and parted by 0.498 ms at 90 cm, and at 90 cm it was the shipped reading that missed the
- * tape by 13 cm where this one missed it by 4.
- *
- * They differ in one place. Both take an early arrival rather than the loudest, but the shipped
- * one answers with the lag where the score first reaches a share of the peak, and this one answers
- * with the peak that crossing belongs to. A flank crossing moves with the flank, and a chirp from
- * a speaker a few centimetres away is sixty times louder than the one from across the room: its
- * share of the peak sits far down a skirt of case resonance more than a millisecond wide, and the
- * crossing slides along it. Profiled on the 90 cm round, the handset's own chirp was already at
- * 0.25 of its peak 1.2 ms early, so the 20% lag and the 30% lag sat 0.9 ms apart on one chirp
- * while the far chirp's two sat together.
- *
- * The spread across shares is printed for the half sum because nothing else prints it. The product
- * measures that spread on the half difference and refuses a distance on it; the number it hands a
- * handset is the half sum, and no gate has ever looked at that one's spread. On both archived
- * rounds it was about 1.5 ms, against a distance gate of 1.0 m - near 3 ms - that passed both.
+ * The widest step is printed because a spread cannot tell two shapes apart that want different
+ * answers. Readings scattered about a middle want their median; readings sitting on two levels
+ * want to be reported as two levels, and a median of them is a number none of them took. The
+ * handset this was written against steps about 1.3 ms between emissions, so which of the two is
+ * happening is the first thing a reader needs and the last thing a summary statistic says.
  */
-private fun crossCheck(
-    handsetTrack: ShortArray,
-    pcTrack: ShortArray,
-    reference: ShortArray,
-    rate: Int,
-    apartSamples: Int,
-    pairNanos: Double,
-    flightNanos: Double
-) {
-    val shares = AlignmentAnalysis.DISTANCE_EDGE_SHARES
-    // The handset chirps first, so this machine is the later slot, which is the side combineFacing
-    // calls the host - see AlignmentAnalysis.facingPairs. Swapped, it answers every pair inside out.
-    val sink = AlignmentAnalysis.read(
-        handsetTrack, reference, apartSamples, SLOT_SLACK, 0.0, edgeShares = shares
+private fun report(what: String, values: List<Double>, unit: String, say: (Double) -> String) {
+    val sorted = values.sorted()
+    val middle = sorted[sorted.size / 2]
+    val deviations = sorted.map { abs(it - middle) }.sorted()
+    println(
+        "$what: median ${say(middle)} $unit, spread ${say(sorted.last() - sorted.first())}, " +
+            "mad ${say(deviations[deviations.size / 2])}, from ${values.size}"
     )
-    val host = AlignmentAnalysis.read(
-        pcTrack, reference, apartSamples, SLOT_SLACK, 0.0, edgeShares = shares
-    )
-    val pair = AlignmentAnalysis.combineFacing(host, sink)
-
-    println()
-    println("--- the same two files, read by the analysis the product ships ---")
-    if (pair == null) {
-        println("combineFacing found nothing it would vouch for: ${sink.confidence} / ${host.confidence}")
-        return
+    if (sorted.size < 3) return
+    var gapAt = 1
+    for (index in 2 until sorted.size) {
+        if (sorted[index] - sorted[index - 1] > sorted[gapAt] - sorted[gapAt - 1]) gapAt = index
     }
-    val firing = pair.firingOffsetMs
-    println(
-        "pair constant (edge share ${"%.2f".format(shares[0])})  : " +
-            (firing?.let { "${"%+.3f".format(it)} ms, ${"%+.3f".format(it - pairNanos / 1e6)} from above" }
-                ?: "null - the two sides swept different shares")
-    )
-    println(
-        "pair constant (loudest lag)      : ${"%+.3f".format(pair.alignmentErrorMs)} ms, " +
-            "${"%+.3f".format(pair.alignmentErrorMs - pairNanos / 1e6)} from above"
-    )
-    println(
-        "separation                       : ${"%.1f".format(pair.separationMetres * 100)} cm, " +
-            "${"%+.1f".format(pair.separationMetres * 100 - flightNanos / 1e9 * SPEED_OF_SOUND * 100)} from above"
-    )
-    val halfSums = shares.indices.map { (sink.rawMsByShare[it] + host.rawMsByShare[it]) / 2 }
-    println(
-        "  across all of $shares the half sum spans " +
-            "${"%.3f".format(halfSums.max() - halfSums.min())} ms and the half difference " +
-            "${"%.2f".format(pair.separationSpreadMetres ?: 0.0)} m - only the second is gated"
-    )
+    val gap = sorted[gapAt] - sorted[gapAt - 1]
+    val spread = sorted.last() - sorted.first()
+    // Half the spread in one step is not a scatter any more. Deliberately descriptive: it says
+    // what the readings look like and leaves the deciding to whoever reads them.
+    if (spread > 0 && gap > spread / 2) {
+        println(
+            "  two levels ${say(gap)} $unit apart: " +
+                "${sorted.take(gapAt).joinToString(", ") { say(it) }} | " +
+                sorted.drop(gapAt).joinToString(", ") { say(it) }
+        )
+    }
+}
+
+/**
+ * What the PC left beside its recording: the instants only it observed.
+ *
+ * A file rather than arguments. With one repeat the two numbers went along the command line
+ * through a shell script; with [com.soundmesh.core.RoomGrid.REPEATS] there are sixteen, and every
+ * one of them is an instant this analysis cannot derive and cannot check. Transcribed numbers are
+ * the one input to a measurement that fails silently and reads perfectly.
+ */
+private class RoomShot(
+    val wav: File,
+    val grid: Long,
+    val repeatNanos: Long,
+    val consumed: List<Long>,
+    val renderIndex: List<Int>
+) {
+    companion object {
+        fun read(file: File): RoomShot {
+            val fields = file.readLines().filter { it.isNotBlank() }.associate {
+                val at = it.indexOf('=')
+                require(at > 0) { "not a shot file line: $it" }
+                it.substring(0, at) to it.substring(at + 1)
+            }
+            fun field(name: String) = fields[name] ?: error("${file.name} has no $name")
+            val consumed = field("consumed").split(",").map { it.toLong() }
+            val renderIndex = field("renderIndex").split(",").map { it.toInt() }
+            require(consumed.size == renderIndex.size) {
+                "${file.name} has ${consumed.size} instants and ${renderIndex.size} indices"
+            }
+            return RoomShot(
+                wav = File(file.parentFile, field("wav")),
+                grid = field("grid").toLong(),
+                repeatNanos = field("repeatNanos").toLong(),
+                consumed = consumed,
+                renderIndex = renderIndex
+            )
+        }
+    }
 }
 
 private fun read(file: File, rate: Int): ShortArray {

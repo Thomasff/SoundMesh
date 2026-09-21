@@ -2,6 +2,8 @@ package com.soundmesh.probe.sync
 
 import android.util.Log
 import com.soundmesh.core.AudioChunk
+import com.soundmesh.core.CalibrationSchedule
+import com.soundmesh.core.CalibrationTiming
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
@@ -22,9 +24,9 @@ import java.io.File
  * A recording on its own is not enough, and that is the whole reason this class plays anything.
  * [CalibrationRunner.startedAtHostNanos] is accurate to about half a second and its own KDoc says
  * it is a search hint and never an input to a measurement, so a recording carrying only the other
- * machine's chirp is pinned to the host clock no better than that. This handset therefore puts one
- * chirp of its own into the same recording at an instant it chose. That arrival is the anchor:
- * everything between the two arrivals is measured in samples, which is exact, and the handset's
+ * machine's chirp is pinned to the host clock no better than that. This handset therefore puts
+ * chirps of its own into the same recording at instants it chose. Each arrival is an anchor:
+ * everything between a pair of arrivals is measured in samples, which is exact, and the handset's
  * own output delay and the few centimetres from its speaker to its microphone enter as a constant.
  *
  * That constant is never measured here and does not have to be. The other machine records the same
@@ -32,10 +34,19 @@ import java.io.File
  * leaves the answer: see RoomPair on the PC side for the arithmetic and for the part that does not
  * leave. Nothing on this side has to know which of the two arrangements it is feeding.
  *
- * **How the two machines agree on an instant without talking.** Both hang their chirp on the same
+ * **How the two machines agree on an instant without talking.** Both hang their chirps on the same
  * ten-second grid of the host clock: this handset emits on a grid instant, the PC has the offset
- * from the clock exchange and so knows the same grid, and emits [RoomGrid.PEER_SLOT_NANOS] after it. No
- * command channel, no new wire format, and the two chirps cannot land on top of each other.
+ * from the clock exchange and so knows the same grid, and emits [RoomGrid.PEER_SLOT_NANOS] after
+ * it. No command channel, no new wire format, and the two chirps cannot land on top of each other.
+ *
+ * **Why the pair repeats.** A single exchange cannot answer this. Measured 2026-09-21: five runs
+ * at one placement with nothing touched between them put the pair constant on two levels 1.3 ms
+ * apart, and the clock and the PC's own loop were both ruled out, which leaves the emission - a
+ * step this handset has been measured to take before. Emission jitter enters both recordings with
+ * the same sign, so it lands in the half sum, which is exactly the quantity wanted; the half
+ * difference cannot carry it and held to 4.6 cm across the same five. So the pair runs
+ * [RoomGrid.REPEATS] times in one window and the answer is a cluster, which is what the shipped
+ * pair flow has always done.
  *
  * The emission mirrors [OutputLeadRunner.play] - a real [SyncRenderer] on a real
  * [PlaybackScheduler], warmed up with ordinary audio first, so the chirp travels the scheduling,
@@ -60,7 +71,11 @@ class RoomRunner(
     fun run(): String {
         val grid = RoomGrid.nextInstant(System.nanoTime() + START_LEAD_NANOS)
         chirpAtHostNanos = grid
-        val passStart = grid - WARMUP_NANOS - CALIBRATION_GAP_NANOS
+        // Laid out by the schedule the pair flow already runs on, rather than by arithmetic of its
+        // own. Both machines build this from the one instant they share, so the PC's chirps are
+        // this plan's other slot rather than a formula written out twice - and the repeats, which
+        // are the whole point of this pass, come from a constant neither side can hold alone.
+        val timing = CalibrationSchedule.of(RoomGrid.planFor(caseId, grid), HANDSET_SLOT, chirpNanos())
         // Written the moment it is chosen, because the PC needs it before the run ends rather than
         // after: it has to have scheduled its own chirp by the time this one plays, and the json
         // is not written until everything is over.
@@ -71,12 +86,15 @@ class RoomRunner(
         // no error anywhere. A stale one from an earlier run under the same case id reads as an
         // instant in the past, which is what the PC's own lead check already refuses.
         File(runStore.prepareRun(caseId), GRID_FILE).writeText(grid.toString())
-        Log.i(TAG, "ROOM grid=$grid chirpAtHostNanos=$grid peerSlotNanos=${RoomGrid.PEER_SLOT_NANOS}")
+        Log.i(
+            TAG,
+            "ROOM grid=$grid peerSlotNanos=${RoomGrid.PEER_SLOT_NANOS} " +
+                "repeats=${RoomGrid.REPEATS} repeatNanos=${RoomGrid.REPEAT_NANOS}"
+        )
 
         val calibration = CalibrationRunner(runStore, caseId, audioSource) { System.nanoTime() }
-        val lastSound = grid + RoomGrid.PEER_SLOT_NANOS + chirpNanos()
-        awaitHostInstant(passStart - RECORD_LEAD_NANOS)
-        val recordSeconds = secondsUntil(lastSound + RECORD_TAIL_NANOS)
+        awaitHostInstant(timing.recordFromHostNanos - RECORD_LEAD_NANOS)
+        val recordSeconds = secondsUntil(timing.recordUntilHostNanos)
         val recording = Thread({
             runCatching { calibration.record(recordSeconds) }
                 .onFailure { recordingFailure = "${it.javaClass.simpleName}: ${it.message}" }
@@ -88,7 +106,7 @@ class RoomRunner(
         // to a recording that never opened is several seconds of noise in somebody's quiet room
         // that nothing will ever read, and it looks exactly like a run that worked.
         awaitRecorder(calibration)
-        val report = if (recordingFailure == null) play(passStart, grid) else null
+        val report = if (recordingFailure == null) play(timing) else null
         recording.join()
 
         // Deliberately no correlating on this side. The recording holds two chirps whose meaning
@@ -96,6 +114,7 @@ class RoomRunner(
         // clock offset that relates the two. A number computed here would be one the handset
         // cannot check.
         return "\"room\":{\"chirpAtHostNanos\":$grid,\"peerSlotNanos\":${RoomGrid.PEER_SLOT_NANOS}," +
+            "\"repeats\":${RoomGrid.REPEATS},\"repeatNanos\":${RoomGrid.REPEAT_NANOS}," +
             "\"gridNanos\":${RoomGrid.GRID_NANOS},\"sampleRate\":${ChirpGenerator.SAMPLE_RATE}," +
             "\"audioSource\":\"$audioSource\"," +
             "\"openedSource\":${calibration.openedSource?.let { "\"$it\"" } ?: "null"}," +
@@ -105,8 +124,8 @@ class RoomRunner(
             "\"pass\":${report ?: "null"}}"
     }
 
-    /** Warms a renderer on the ordinary output, lets it settle, then makes it emit one chirp. */
-    private fun play(passStart: Long, chirpAt: Long): String {
+    /** Warms a renderer on the ordinary output, lets it settle, then emits this side's chirps. */
+    private fun play(timing: CalibrationTiming): String {
         val scheduler = PlaybackScheduler(
             SyncRenderer.FRAMES_PER_CHUNK,
             OutputLeadRunner.SCHEDULER_CAPACITY_CHUNKS,
@@ -119,20 +138,37 @@ class RoomRunner(
             trimDeadbandFrames = SyncRenderer.TRIM_DEADBAND_FRAMES,
             playbackUsage = PlaybackUsage.MEDIA
         ) { System.nanoTime() }
-        renderer.endAt(chirpAt + chirpNanos() + CHIRP_DRAIN_NANOS)
+        renderer.endAt(timing.ownChirpAtHostNanos.last() + chirpNanos() + CHIRP_DRAIN_NANOS)
         val thread = Thread({ renderer.run() }, "SoundMeshRoomRender").also { it.start() }
-        warmUp(scheduler, passStart)
-        ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK).forEachIndexed { index, pcm ->
-            scheduler.submit(
-                AudioChunk(
-                    SyncRenderer.CHIRP_SEQUENCE_BASE + index,
-                    chirpAt + index * SyncRenderer.CHUNK_NANOS,
-                    pcm
-                )
-            )
-        }
+        warmUp(scheduler, timing)
+        submitChirps(scheduler, timing)
         thread.join()
         return renderer.report(null)
+    }
+
+    /**
+     * Queues each repeat a second before its instant, the way [PeerCalibrationRunner] does.
+     *
+     * Paced rather than submitted up front for the reason the warm-up is paced, and each repeat
+     * gets its own stretch of sequence numbers so the renderer's exact-release rule applies to
+     * every one of them rather than only to the first.
+     *
+     * The gaps between repeats are longer than anything this renderer is fed in ordinary use, and
+     * that is not new ground: the shipped pair flow spaces its five repeats five seconds apart
+     * through the same code, and these sit closer than that.
+     */
+    private fun submitChirps(scheduler: PlaybackScheduler, timing: CalibrationTiming) {
+        val chunks = ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK)
+        timing.ownChirpAtHostNanos.forEachIndexed { repeat, at ->
+            awaitHostInstant(at - SUBMIT_LEAD_NANOS)
+            // Stops feeding a room nothing is recording, rather than playing the rest of a
+            // schedule out into it - the same check the pass already makes before it starts.
+            if (recordingFailure != null) return
+            val base = SyncRenderer.CHIRP_SEQUENCE_BASE + repeat * SyncRenderer.CHIRP_REPEAT_STRIDE
+            chunks.forEachIndexed { index, pcm ->
+                scheduler.submit(AudioChunk(base + index, at + index * SyncRenderer.CHUNK_NANOS, pcm))
+            }
+        }
     }
 
     /**
@@ -142,10 +178,11 @@ class RoomRunner(
      * scheduler holds a fixed number of chunks and drops the oldest past it, so a warm-up
      * submitted all at once would throw away its own beginning.
      */
-    private fun warmUp(scheduler: PlaybackScheduler, passStart: Long) {
-        val chunks = (WARMUP_NANOS / SyncRenderer.CHUNK_NANOS).toInt()
+    private fun warmUp(scheduler: PlaybackScheduler, timing: CalibrationTiming) {
+        val chunks =
+            ((timing.warmUpUntilHostNanos - timing.warmUpFromHostNanos) / SyncRenderer.CHUNK_NANOS).toInt()
         for (sequence in 0 until chunks) {
-            val playAt = passStart + sequence * SyncRenderer.CHUNK_NANOS
+            val playAt = timing.warmUpFromHostNanos + sequence * SyncRenderer.CHUNK_NANOS
             val frameIndex = sequence.toLong() * SyncRenderer.FRAMES_PER_CHUNK
             scheduler.submit(AudioChunk(sequence, playAt, tone.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)))
             awaitHostInstant(playAt - SUBMIT_LEAD_NANOS)
@@ -185,6 +222,9 @@ class RoomRunner(
         /** Where the chosen instant is left for the PC to read, inside the run's own directory. */
         const val GRID_FILE = "grid.txt"
 
+        /** This side chirps first, which is slot zero of the plan both machines lay out. */
+        const val HANDSET_SLOT = 0
+
         private const val TAG = "SoundMeshRoom"
 
         /**
@@ -198,11 +238,8 @@ class RoomRunner(
          */
         const val START_LEAD_NANOS = 30_000_000_000L
 
-        private const val WARMUP_NANOS = OutputLeadRunner.WARMUP_NANOS
-        private const val CALIBRATION_GAP_NANOS = OutputLeadRunner.CALIBRATION_GAP_NANOS
         private const val CHIRP_DRAIN_NANOS = OutputLeadRunner.CHIRP_DRAIN_NANOS
         private const val SUBMIT_LEAD_NANOS = 1_000_000_000L
         private const val RECORD_LEAD_NANOS = 1_000_000_000L
-        private const val RECORD_TAIL_NANOS = 2_000_000_000L
     }
 }

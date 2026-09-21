@@ -36,6 +36,61 @@ object RoomGrid {
     const val PEER_SLOT_NANOS = 1_500_000_000L
 
     /**
+     * How many times the pair of chirps is repeated inside one window.
+     *
+     * One was not enough, and the way it failed is worth keeping. Measured 2026-09-21: five rounds
+     * at one placement with nothing touched between them answered 0.932, 2.373, 2.444, 1.206 and
+     * 2.369 ms - not a scatter but two levels about 1.3 ms apart. The clock was ruled out (the
+     * five offsets lie on a line to 0.095 ms) and so was this machine's own loop (24 frames, and
+     * moving the other way), which leaves the handset's emission, whose two-level step this
+     * project has measured before at 56 frames.
+     *
+     * [com.soundmesh.core.AlignmentAnalysis.combineFacing] says where that lands: emission jitter
+     * enters both recordings with the same sign, so it lives in the half sum - and the half sum is
+     * the pair constant, the one quantity this arrangement exists to produce. The half difference,
+     * the separation, cannot carry it and did not: the same five rounds held to 4.6 cm.
+     *
+     * So the answer has to be a cluster rather than a reading, which is what the product's own
+     * pair flow has always done. Eight rather than five because these repeats also have to answer
+     * a question five rounds could not: whether the level is drawn once per stream or once per
+     * chirp. Eight chirps through one stream settle it - all eight agreeing is a per-stream draw,
+     * and that would mean repeats inside a window buy nothing and only whole rounds count.
+     */
+    const val REPEATS = 8
+
+    /**
+     * How far apart the repeats sit.
+     *
+     * Twice [PEER_SLOT_NANOS], so the far handset's chirp of one repeat is a whole slot clear of
+     * the near handset's next one - the bound [CalibrationSchedule.of] states and refuses on.
+     */
+    const val REPEAT_NANOS = 2 * PEER_SLOT_NANOS
+
+    /**
+     * The schedule both machines lay out from the one instant they share.
+     *
+     * A function rather than a paragraph telling each side how to compute its own instants. The
+     * two ends run different code on different operating systems, and the failure mode of two
+     * copies of one formula is the one that costs a session: both sides working perfectly and
+     * neither meeting the other. The handset holds slot 0 and the PC slot 1, which is the order
+     * the recordings have always been read in.
+     *
+     * [CalibrationPlan.hostId] is not a pairing here - nothing stores a constant under it - so it
+     * carries the arrangement's name rather than a handset's.
+     */
+    fun planFor(caseId: String, gridHostNanos: Long): CalibrationPlan = CalibrationPlan(
+        caseId = caseId,
+        hostId = PC_SIDE,
+        firstChirpAtHostNanos = gridHostNanos,
+        staggerNanos = PEER_SLOT_NANOS,
+        repeats = REPEATS,
+        intervalNanos = REPEAT_NANOS
+    )
+
+    /** Stands in for a handset id in [planFor], where the far side is not a handset. */
+    const val PC_SIDE = "pc"
+
+    /**
      * The first grid instant at or after [notBefore].
      *
      * Floor division rather than the remainder operator: `System.nanoTime()` is allowed to return

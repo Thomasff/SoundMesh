@@ -1,5 +1,6 @@
 package com.soundmesh.desktop
 
+import com.soundmesh.core.CalibrationSchedule
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.RoomGrid
@@ -11,12 +12,14 @@ import java.lang.foreign.Arena
 import kotlin.math.abs
 
 /**
- * Puts one chirp into the room at an instant a handset's clock will recognise, and records both.
+ * Puts chirps into the room at instants a handset's clock will recognise, and records both sides.
  *
  * This is the half of the acoustic measurement that lives on the PC. The handset, in the probe's
- * `ROOM` mode, is recording the room and has put a chirp of its own on a grid instant of its own
- * clock; this emits [RoomGrid.PEER_SLOT_NANOS] after the same one, so both land in one recording
- * with the room unchanged between them.
+ * `ROOM` mode, is recording the room and has put chirps of its own on a grid instant of its own
+ * clock; this emits [RoomGrid.PEER_SLOT_NANOS] after each one, so both land in one recording with
+ * the room unchanged between them. [RoomGrid.REPEATS] of them, because a single exchange puts the
+ * handset's per-emission latency step straight into the answer - see [RoomGrid.REPEATS] for what
+ * that was measured at and why this side cannot cancel it.
  *
  *   java --enable-native-access=ALL-UNNAMED -cp "<lib>" com.soundmesh.desktop.RoomShotKt \
  *       <handset-ip> <gridHostNanos> <out.wav> [exchangeSeconds] [intervalMillis] [port]
@@ -87,12 +90,20 @@ fun main(args: Array<String>) {
             "offset : ${millis(offset)} of the handset's clock ahead of this one, " +
                 "+-${millis(estimate.uncertaintyNanos)}, from ${estimate.sampleCount} kept exchanges"
         )
+        // Both machines lay the window out from the one instant they share, through the same
+        // function - see RoomGrid.planFor. Written out separately here the two would agree today
+        // and part on the first change to either, with both sides working and neither meeting.
+        val timing = CalibrationSchedule.of(
+            RoomGrid.planFor(CASE, grid), PC_SLOT, chirpNanos(ChirpGenerator.generateMono().size)
+        )
+        val targets = timing.ownChirpAtHostNanos
+        val target = targets.first()
         // Printed because it is the run's own witness that both chirps went into one recording.
         // The handset's is on the grid and this one a second and a half later; anything else means
         // the two sides were not talking about the same grid point.
-        val target = grid + RoomGrid.PEER_SLOT_NANOS
         println(
-            "grid   : handset chirps at $grid, this one at $target " +
+            "grid   : handset chirps at $grid, this one at $target, " +
+                "${targets.size} repeats ${millis(RoomGrid.REPEAT_NANOS)} apart " +
                 "(${millis(grid - (System.nanoTime() + offset))} from now to the handset's)"
         )
 
@@ -127,9 +138,18 @@ fun main(args: Array<String>) {
                 try {
                     renderer.start()
                     val anchor = renderer.sampleClock()
-                    val frame = renderer.frameAt(clock.qpcAt(targetLocal), anchor)
-                    renderer.schedule(chirp, frame)
-                    println("waiting: chirp on frame $frame, ${millis(targetLocal - System.nanoTime())} away")
+                    // Every repeat is scheduled now, off one clock reading, rather than each off a
+                    // fresh one as its turn comes: a reading taken later is a reading taken while
+                    // the stream is running, and the difference between two of them is the thing
+                    // this measurement is made of. One anchor for the window keeps the repeats
+                    // comparable with each other whatever that anchor's own error is.
+                    val frames = targets.map { renderer.frameAt(clock.qpcAt(it - offset), anchor) }
+                    frames.forEach { renderer.schedule(chirp, it) }
+                    val frame = frames.first()
+                    println(
+                        "waiting: ${frames.size} chirps from frame $frame, " +
+                            "${millis(targetLocal - System.nanoTime())} away"
+                    )
 
                     // Started late on purpose, and timed off the handset's instant rather than off
                     // whenever the exchange happened to finish. The capture stream loses frames
@@ -142,7 +162,7 @@ fun main(args: Array<String>) {
                     while (System.nanoTime() < captureAt) Thread.sleep(20)
                     capture.start()
 
-                    val until = renderer.qpcAt(frame + chirp.size, anchor) +
+                    val until = renderer.qpcAt(frames.last() + chirp.size, anchor) +
                         (renderer.qpcFrequency * TAIL_SECONDS).toLong()
                     while (renderer.now() < until) Thread.sleep(20)
 
@@ -158,7 +178,8 @@ fun main(args: Array<String>) {
                     // engine consumed the chirp's first frame, read off the anchor the schedule was
                     // built on and again off a clock sampled at the end. The two agreeing is what says
                     // the stream did not slip underneath the schedule.
-                    val consumedEarly = clock.nanosAt(renderer.qpcAt(frame, anchor)) + offset
+                    val consumed = frames.map { clock.nanosAt(renderer.qpcAt(it, anchor)) + offset }
+                    val consumedEarly = consumed.first()
                     val consumedLate = clock.nanosAt(renderer.qpcAt(frame, late)) + offset
 
                     val recording = capture.take()
@@ -175,7 +196,8 @@ fun main(args: Array<String>) {
                     // sample number in the file just written. The arrival is later than this by
                     // the capture chain's own latency, which nothing here knows - so it is a
                     // search hint for RoomPair and never a measurement.
-                    val renderIndex = recording.indexAt(renderer.qpcAt(frame, anchor))
+                    val renderIndices = frames.map { recording.indexAt(renderer.qpcAt(it, anchor)) }
+                    val renderIndex = renderIndices.first()
                     val peak = recording.mono.maxOfOrNull { abs(it.toInt()) } ?: 0
 
                     println()
@@ -195,11 +217,27 @@ fun main(args: Array<String>) {
                     println("  same, off the late clock : $consumedLate " +
                         "(${millis(consumedLate - consumedEarly)} apart)")
                     println("render index in this file  : $renderIndex")
-                    println()
-                    println(
-                        "RoomPair <handset.wav> ${file.name} $grid $consumedEarly " +
-                            "<recordingStartedAtHostNanos> $renderIndex"
+                    println("repeats: " + consumed.indices.joinToString(", ") {
+                        "#$it ${millis(consumed[it] - targets[it])} off schedule"
+                    })
+
+                    // A file rather than more numbers on the next command line. One repeat needed
+                    // two of them copied by hand through a shell script; eight needs sixteen, and
+                    // a measurement whose inputs are transcribed is a measurement with a transcription
+                    // in it. Every one of these is an instant this program alone observed.
+                    val shot = File(file.parentFile, file.nameWithoutExtension + SHOT_SUFFIX)
+                    shot.writeText(
+                        listOf(
+                            "wav=${file.name}",
+                            "grid=$grid",
+                            "repeatNanos=${RoomGrid.REPEAT_NANOS}",
+                            "consumed=${consumed.joinToString(",")}",
+                            "renderIndex=${renderIndices.joinToString(",")}"
+                        ).joinToString("\n") + "\n"
                     )
+                    println("wrote  : ${shot.absolutePath}")
+                    println()
+                    println("RoomPair <handset.wav> ${shot.name} <recordingStartedAtHostNanos>")
                 } finally {
                     Wasapi.timeEndPeriod(1)
                 }
@@ -207,6 +245,18 @@ fun main(args: Array<String>) {
         }
     }
 }
+
+/** The chirp's own length in nanoseconds, which the schedule needs to know to leave room for it. */
+private fun chirpNanos(samples: Int): Long = samples.toLong() * 1_000_000_000L / ChirpGenerator.SAMPLE_RATE
+
+/** This machine chirps second, which is slot one of the plan both machines lay out. */
+private const val PC_SLOT = 1
+
+/** Names the plan rather than a run: nothing here stores anything under a case id. */
+private const val CASE = "room"
+
+/** What the sidecar beside the recording is called, and what RoomPair is handed instead of numbers. */
+const val SHOT_SUFFIX = "-shot.txt"
 
 private fun millis(nanos: Long): String = "%.3f ms".format(nanos / 1e6)
 
