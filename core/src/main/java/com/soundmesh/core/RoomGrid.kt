@@ -51,10 +51,19 @@ object RoomGrid {
      * the separation, cannot carry it and did not: the same five rounds held to 4.6 cm.
      *
      * So the answer has to be a cluster rather than a reading, which is what the product's own
-     * pair flow has always done. Eight rather than five because these repeats also have to answer
-     * a question five rounds could not: whether the level is drawn once per stream or once per
-     * chirp. Eight chirps through one stream settle it - all eight agreeing is a per-stream draw,
-     * and that would mean repeats inside a window buy nothing and only whole rounds count.
+     * pair flow has always done with its five.
+     *
+     * Eight rather than five for the shape of what is being clustered. The level is drawn per
+     * chirp, not once per stream - measured 2026-09-10, forty chirps read one at a time, runs
+     * test z=0.94 - so a window of repeats does sample it, and a median survives as long as the
+     * high level stays a minority of the window. It need not: the archived occupancy is about
+     * 72/28 but has been seen at 35% and, across whole rounds, at three in five. Eight leaves
+     * room for two or three high draws where five does not. The first folded window, measured
+     * 2026-09-21, ran six low and two high.
+     *
+     * An earlier version of this comment claimed the eight were here to settle whether the draw
+     * is per stream or per chirp. That was already settled, in this project, eleven days before
+     * it was written.
      */
     const val REPEATS = 8
 
