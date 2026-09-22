@@ -922,6 +922,11 @@ class SyncActivity : Activity() {
                     ?: hostSweeps?.markerAt(chunk.sequence)?.let { ByteArray(chunk.pcm.size) }
                 ownSweeps?.markerStartIndex(chunk.sequence)?.let {
                     markerPlays.add(MarkerPlay(it, chunk.sequence, chunk.playAtHostNanos))
+                    // Both ends of the same stride. The schedule alone is only half of what a
+                    // sink's placement is made of: it converts every chunk through a clock
+                    // estimate that moves within a round, so schedule-to-emission is not one
+                    // straight line here and cannot be recovered by fitting one through arrivals.
+                    renderer.watchMarkerRelease(chunk.sequence)
                 }
                 scheduler.submit(
                     if (stamped == null) chunk else AudioChunk(chunk.sequence, chunk.playAtHostNanos, stamped)

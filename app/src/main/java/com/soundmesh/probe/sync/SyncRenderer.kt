@@ -6,6 +6,8 @@ import android.media.AudioTimestamp
 import android.media.AudioTrack
 import com.soundmesh.core.Crossover
 import com.soundmesh.core.DriftController
+import com.soundmesh.core.MarkerRelease
+import com.soundmesh.core.MarkerReleaseCodec
 import com.soundmesh.core.PhaseState
 import com.soundmesh.core.PlaybackDecision
 import com.soundmesh.core.PlaybackScheduler
@@ -511,6 +513,17 @@ class SyncRenderer(
      */
     private val chirpPlays = java.util.concurrent.ConcurrentHashMap<Int, ChirpPlay>()
     /**
+     * The sequences whose release is to be recorded, named by whoever stamped a sweep on them.
+     *
+     * The renderer cannot recognise a marker chunk: a sweep is written into a chunk's content,
+     * and by the time a chunk reaches here it is PCM like any other. So the side that stamped it
+     * says which ones it wants back. Added from the chunk client's thread while this one is
+     * playing, hence the concurrent set.
+     */
+    private val watchedMarkers = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+    /** What each watched marker was released against, keyed by sequence. See [watchedMarkers]. */
+    private val markerReleases = java.util.concurrent.ConcurrentHashMap<Int, MarkerRelease>()
+    /**
      * The output depth this device was working from when it released the chirp's first chunk, or
      * null if no chirp chunk was ever played.
      *
@@ -862,8 +875,34 @@ class SyncRenderer(
             }
             chirpEndStats = scheduler.stats()
         } else {
+            if (watchedMarkers.contains(sequence)) {
+                // Read here rather than beside the schedule, for the reason the chirp's are: this
+                // is the moment the chunk went to the output, and the estimate it converted
+                // through is the one in force now, not the one that was in force when it arrived.
+                markerReleases.computeIfAbsent(sequence) {
+                    MarkerRelease(
+                        sequence = sequence,
+                        localNanos = System.nanoTime(),
+                        offsetNanos = offsetNanosNow(),
+                        depthNanos = depthNanos,
+                        trimFrames = trimFrames,
+                        filteredErrorFrames = lastFilteredError
+                    )
+                }
+            }
             streamingEndStats = scheduler.stats()
         }
+    }
+
+    /**
+     * Asks for [sequence]'s release to be written into the report. See [watchedMarkers].
+     *
+     * Called from the chunk client's thread, before the chunk is submitted - a chunk can be
+     * released as soon as it is submitted, and a watch registered after that would silently miss
+     * the first markers of a round, which are the ones nearest the clock estimate's convergence.
+     */
+    fun watchMarkerRelease(sequence: Int) {
+        watchedMarkers.add(sequence)
     }
 
     /**
@@ -1144,6 +1183,9 @@ class SyncRenderer(
             "\"streamingSilenceWrites\":$streamingSilenceWrites," +
             "\"chirpTrimFrames\":${chirpTrimFrames ?: "null"},\"chirpDepthNanos\":${chirpDepthNanos ?: "null"}," +
             "\"chirpPlays\":${chirpPlaysJson()}," +
+            "\"${MarkerReleaseCodec.FIELD}\":${MarkerReleaseCodec.encode(
+                markerReleases.keys.sorted().map { markerReleases.getValue(it) }
+            )}," +
             "\"reacquireThresholdFrames\":$reacquireThresholdFrames," +
             // Echoed for the same reason the threshold above is: an artifact has to say which band
             // produced it, or a run taken at a widened band is silently compared against the
