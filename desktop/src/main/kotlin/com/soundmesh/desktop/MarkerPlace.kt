@@ -116,19 +116,35 @@ fun main(args: Array<String>) {
     println("slope  : ${"%.9f".format(fit.slope)} (${"%.1f".format((fit.slope - 1) * 1e6)} ppm, " +
         "this machine's clock against the handset's)")
 
-    // A line fitted on 400 seconds and then read 80 seconds past its last point is a line trusted
-    // outside its data. Fitting on the first half and predicting the second measures that trust on
-    // this very recording, over a longer reach than the chirps ask for.
+    // A line read past its last point is a line trusted outside its data. Fitting on the first half
+    // and predicting the second measures that trust on this very recording, over a longer reach
+    // than the chirps ask for - and it is judged against its own standard error, not against a
+    // frame count. Judged against 13 frames it reported a broken line on data that turned out to be
+    // white noise: half a run's markers extrapolated over the other half carry a standard error of
+    // about 30 frames all by themselves, so the threshold was inside the statistic's own scatter.
     val half = xs.size / 2
     val halfFit = Line.through(xs.take(half), arrivals.take(half).map { it.toDouble() })
-    val reachMean = (half until xs.size).map { arrivals[it] - halfFit.at(xs[it]) }.average()
+    val reach = (half until xs.size).map { arrivals[it] - halfFit.at(xs[it]) }
+    val reachMean = reach.average()
+    val reachError = halfFit.errorAt(xs.drop(half).average())
     println("reach  : fitting on the first $half markers and predicting the rest is off by a mean " +
-        "of ${"%.1f".format(reachMean)} frames (${millisOf(reachMean)})")
-    if (abs(reachMean) > REACH_TOLERANCE_FRAMES) {
-        println("       : that is too much to read an ${QUANTUM_FRAMES}-frame step through. The " +
-            "arrivals are not on one line, so treat everything below as a shape and not a level.")
+        "of ${"%.1f".format(reachMean)} frames, against a standard error of " +
+        "${"%.1f".format(reachError)}")
+    if (abs(reachMean) > REACH_SIGMAS * reachError) {
+        println("       : that is $REACH_SIGMAS standard errors or more. The arrivals are not on one " +
+            "line, so treat everything below as a shape and not a level.")
     }
 
+    // Printed, not only summarised. A summary of a residual answers "how wide is it" and the
+    // question the reach check just raised is "what shape is it" - the two are different, and
+    // reading a slope off a shape is how a staircase once reported 183 ppm.
+    println()
+    println("  #   second   sample   residual")
+    plays.indices.forEach {
+        println("%3d %8.1f %8d %10.1f".format(
+            it, xs[it] / ChirpGenerator.SAMPLE_RATE, arrivals[it], markerResidual[it]
+        ))
+    }
     describe("markers", markerResidual)
 
     // The chirps, read against the markers' own line. Nothing is re-fitted: the whole point is
@@ -137,7 +153,9 @@ fun main(args: Array<String>) {
     val chirpXs = (0 until chirpRepeats).map {
         framesBetween(plays[0].playAtHostNanos, hostChirpAt + it * chirpIntervalNanos, rate).toDouble()
     }
-    val chirpResidual = ArrayList<Double>()
+    // Kept with the instant it was scheduled for, because a chirp that could not be read must not
+    // shift the rest of the table onto the wrong instants.
+    val chirpFound = ArrayList<Pair<Double, Double>>()
     var missed = 0
     chirpXs.forEach { x ->
         val expected = fit.at(x).toInt()
@@ -152,13 +170,19 @@ fun main(args: Array<String>) {
             missed++
             return@forEach
         }
-        chirpResidual.add(indexOf(found) - fit.at(x))
+        chirpFound.add(x to (indexOf(found) - fit.at(x)))
     }
     println()
+    val chirpResidual = chirpFound.map { it.second }
     println("chirps : ${chirpResidual.size} of $chirpRepeats read${if (missed > 0) ", $missed missing" else ""}")
     if (chirpResidual.size < MINIMUM_CHIRPS) {
         println("Too few to locate a floor. The comparison needs the chirps from this same round.")
         return
+    }
+    println()
+    println("  #   second   residual")
+    chirpResidual.indices.forEach {
+        println("%3d %8.1f %10.1f".format(it, chirpFound[it].first / ChirpGenerator.SAMPLE_RATE, chirpResidual[it]))
     }
     describe("chirps ", chirpResidual)
 
@@ -168,32 +192,52 @@ fun main(args: Array<String>) {
     // standard deviation, and it is the level's position that the product's floor estimator is
     // trying to hit.
     val sorted = chirpResidual.sorted()
-    val levelZero = levelAt(sorted)
+    val (floor, floorCount) = levelAt(sorted)
     val chirpMean = chirpResidual.average()
+    // What it costs to read the markers' line where the chirps are. Shared by both candidates, and
+    // printed on its own because it is the one term a longer run with denser markers shrinks.
+    val lineError = fit.errorAt(chirpFound.map { it.first }.average())
+    val floorError = sqrt(lineError * lineError + spreadOf(sorted.take(floorCount)).let { it * it } / floorCount)
+    val meanError = sqrt(lineError * lineError + spreadOf(chirpResidual).let { it * it } / chirpResidual.size)
     println()
-    println("answer : the chirp path's floor sits ${"%.1f".format(levelZero.first)} frames " +
-        "(${millisOf(levelZero.first)}) from where streamed playback sits, on ${levelZero.second} " +
-        "of ${sorted.size} draws")
-    println("       : its mean sits ${"%.1f".format(chirpMean)} frames (${millisOf(chirpMean)}) away")
+    println("answer : reading the markers' line where the chirps are costs " +
+        "${"%.1f".format(lineError)} frames")
+    println("       : the chirp path's floor sits ${"%.1f".format(floor)} +-${"%.1f".format(floorError)} " +
+        "frames (${millisOf(floor)}) from where streamed playback sits, on $floorCount of " +
+        "${sorted.size} draws")
+    println("       : its mean sits ${"%.1f".format(chirpMean)} +-${"%.1f".format(meanError)} frames " +
+        "(${millisOf(chirpMean)}) away")
+    val floorFits = abs(floor) <= DECISION_SIGMAS * floorError
+    val meanFits = abs(chirpMean) <= DECISION_SIGMAS * meanError
     println()
     when {
-        abs(levelZero.first) < abs(chirpMean) - DECISION_MARGIN_FRAMES ->
+        floorFits && !meanFits ->
             println("reading: streamed playback sits on the chirp path's lowest level. The pair " +
                 "constant is measured on chirps and spent on streamed audio, so the estimator " +
                 "should take the floor of its five - change AlignmentVerdict.")
-        abs(chirpMean) < abs(levelZero.first) - DECISION_MARGIN_FRAMES ->
+        meanFits && !floorFits ->
             println("reading: streamed playback sits where the chirp path averages, not on its " +
                 "floor. The median estimator is estimating the right thing - keep it, and write " +
                 "this down as the reason.")
+        floorFits && meanFits ->
+            println("reading: both candidates are inside the error bars, so this round does not " +
+                "choose between them. What shrinks it is denser markers and more chirps in one " +
+                "round, or pooling the difference across rounds.")
         else ->
-            println("reading: the floor and the mean are not far enough apart here to choose " +
-                "between them (${"%.1f".format(abs(abs(levelZero.first) - abs(chirpMean)))} frames, " +
-                "against a margin of $DECISION_MARGIN_FRAMES). More chirps in one round, or a " +
-                "round where the ladder is better populated.")
+            println("reading: streamed playback sits on neither - the floor and the mean are both " +
+                "$DECISION_SIGMAS standard errors away. Something is moving that neither candidate " +
+                "describes. Report it and change nothing.")
     }
     println()
     println("note   : this compares two paths through one handset. It says nothing about which " +
         "machine the ladder belongs to, which this arrangement cannot see either.")
+}
+
+/** The plain standard deviation, or zero when there is not enough to have one. */
+private fun spreadOf(values: List<Double>): Double {
+    if (values.size < 2) return 0.0
+    val mean = values.average()
+    return sqrt(values.sumOf { (it - mean) * (it - mean) } / (values.size - 1))
 }
 
 /** Everything both residual tables say about themselves, so the two can be read side by side. */
@@ -242,9 +286,27 @@ private fun levelAt(sorted: List<Double>): Pair<Double, Int> {
     return level.average() to level.size
 }
 
-/** A least squares line, kept as one object so the chirps are read through the markers' own. */
-private class Line(val intercept: Double, val slope: Double) {
+/**
+ * A least squares line, kept as one object so the chirps are read through the markers' own.
+ *
+ * It carries what it needs to say how well it knows itself somewhere. Reading a line outside its
+ * data costs accuracy that grows with the reach, and a comparison stated without that cost invites
+ * exactly the mistake this file already made once: a fixed frame threshold on a statistic whose own
+ * standard error was larger than the threshold, which fires whatever the data does.
+ */
+private class Line(
+    val intercept: Double,
+    val slope: Double,
+    private val meanX: Double,
+    private val sxx: Double,
+    private val count: Int,
+    private val sigma: Double
+) {
     fun at(x: Double): Double = intercept + slope * x
+
+    /** How well this line knows its own value at [x] - the usual prediction standard error. */
+    fun errorAt(x: Double): Double =
+        sigma * sqrt(1.0 / count + (x - meanX) * (x - meanX) / sxx)
 
     companion object {
         fun through(xs: List<Double>, ys: List<Double>): Line {
@@ -257,7 +319,18 @@ private class Line(val intercept: Double, val slope: Double) {
                 varX += (xs[it] - meanX) * (xs[it] - meanX)
             }
             val slope = cov / varX
-            return Line(meanY - slope * meanX, slope)
+            val intercept = meanY - slope * meanX
+            // Two degrees of freedom go to the line itself, so a two point line has no spread to
+            // report and says so with zero rather than with a division by zero.
+            val spread = if (xs.size > 2) {
+                sqrt(xs.indices.sumOf {
+                    val e = ys[it] - (intercept + slope * xs[it])
+                    e * e
+                } / (xs.size - 2))
+            } else {
+                0.0
+            }
+            return Line(intercept, slope, meanX, varX, xs.size, spread)
         }
     }
 }
@@ -289,21 +362,22 @@ private const val QUANTUM_FRAMES = 52
 private const val LEVEL_HOLE_FRAMES = 26.0
 
 /**
- * How far the half-fit may miss the second half before the line is not one line.
+ * How many of its own standard errors the half-fit may miss the second half by.
  *
- * A quarter of the step. The extrapolation the chirps ask for is shorter than this check's, so a
- * check that passes here leaves the chirps a margin smaller again.
+ * Two, the usual reading of "not consistent with one line". A fixed frame count was the first
+ * attempt and it was wrong in a way worth remembering: 13 frames, against a statistic whose own
+ * standard error on a real run was 31, so it fired on white noise.
  */
-private const val REACH_TOLERANCE_FRAMES = 13.0
+private const val REACH_SIGMAS = 2.0
 
 /**
- * How far apart the two candidates must be before the run picks one.
+ * How many standard errors from zero a candidate has to be before it is ruled out.
  *
- * O17 puts the chirp path's mean about 19 frames above its floor, and the two ends of this
- * comparison carry a few frames of their own noise each. Half the separation leaves room for that
- * and still refuses to choose on a coin toss.
+ * Two. Both candidates are tested separately and all four outcomes are reachable, which the first
+ * version of this criterion was not: it compared two absolute values against a fixed margin, so
+ * "neither of them" had nowhere to appear at all.
  */
-private const val DECISION_MARGIN_FRAMES = 9.0
+private const val DECISION_SIGMAS = 2.0
 
 /** Below this the line the chirps are read against is not worth fitting. */
 private const val MINIMUM_MARKERS = 8
