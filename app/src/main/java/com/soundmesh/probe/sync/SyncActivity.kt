@@ -608,6 +608,28 @@ class SyncActivity : Activity() {
             }
             capture = projection?.let { openCapture(it) }
             val file = sourceFileRequested()?.let { FileChunkSource.open(File(getExternalFilesDir(null), it)) }
+
+            val calibration = CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested(), hostNanosNow)
+            // Set once the chirp schedule exists, which is after the segment this recording is
+            // opened to cover. Until then the recording runs on a ceiling it cannot reach.
+            val recordUntilHostNanos = AtomicLong(Long.MAX_VALUE)
+            // A marked run records its own streamed segment, because that is where the sweeps it
+            // is measuring are; the chirp path's window starts a second before the chirp and so
+            // has never held one. Every run without markers keeps the window it has always had,
+            // so nothing already archived becomes incomparable with what comes after.
+            //
+            // Opened alongside the first chunks rather than before them, because the open is what
+            // costs: a few hundred milliseconds of it would push the whole timeline if the loop
+            // waited. The first marker is 2 s in, which is the margin this relies on.
+            val earlyRecordThread = marked?.let {
+                Thread {
+                    calibration.record(
+                        seconds + chirpScheduleSeconds() + RECORD_CEILING_MARGIN_SECONDS,
+                        stopped = { hostNanosNow() >= recordUntilHostNanos.get() }
+                    )
+                }.also(Thread::start)
+            }
+
             val audioStart = System.nanoTime()
             val until = audioStart + seconds * 1_000_000_000L
             var lastPlayAtHostNanos = until
@@ -624,6 +646,11 @@ class SyncActivity : Activity() {
             // landed from it. Reading it off the renderer would be reading the answer off the
             // thing under test.
             val markerPlays = ArrayList<MarkerPlay>()
+            // The sink's grid, written down from the chunks this loop left silence in. Not derived
+            // from this side's own: `playAt` is computed fresh per chunk, and the gap from one
+            // marker to the next measures 4998.17-5001.99 ms rather than the flat 5000 that
+            // deriving it would assume - a millisecond of invention in a quantity under test.
+            val facingMarkerPlays = ArrayList<MarkerPlay>()
             while (System.nanoTime() < until) {
                 // Two paces, one loop. Neither the generator nor the decoded file has one of its
                 // own - both produce a chunk as fast as they are asked - so both are held to the
@@ -659,6 +686,7 @@ class SyncActivity : Activity() {
                     // machinery is responsible for - the part of it that does not need the room.
                     renderer.watchMarkerRelease(sequence)
                 }
+                facing?.markerStartIndex(sequence)?.let { facingMarkerPlays.add(MarkerPlay(it, sequence, playAt)) }
                 chunkServer.broadcast(chunk)
                 scheduler.submit(chunk)
                 sequence++
@@ -678,10 +706,15 @@ class SyncActivity : Activity() {
             // The renderer started on a provisional bound; only now is the chirp's end known.
             renderer.endAt(chirpSubmission.endHostNanos + CHIRP_DRAIN_NANOS)
 
-            val calibration = CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested(), hostNanosNow)
-            awaitHostInstant(sinkChirpAt - RECORD_LEAD_NANOS, hostNanosNow)
-            val recordThread = Thread { calibration.record(secondsUntil(chirpSubmission.endHostNanos + RECORD_TAIL_NANOS)) }
-            recordThread.start()
+            // The instant the recording closes on, whichever of the two windows it opened on.
+            // A marked run's recorder has been running since before the segment and is told to
+            // stop here; every other run opens now, exactly as it always has.
+            recordUntilHostNanos.set(chirpSubmission.endHostNanos + RECORD_TAIL_NANOS)
+            val recordThread = earlyRecordThread ?: run {
+                awaitHostInstant(sinkChirpAt - RECORD_LEAD_NANOS, hostNanosNow)
+                Thread { calibration.record(secondsUntil(chirpSubmission.endHostNanos + RECORD_TAIL_NANOS)) }
+                    .also(Thread::start)
+            }
             val chirpTiming = awaitChirpStart(hostChirpAt, hostNanosNow)
             rendererThread.join()
             recordThread.join()
@@ -735,6 +768,7 @@ class SyncActivity : Activity() {
                     // Where the run aimed each streamed marker. Empty on every run that did not
                     // ask for markers, which is every run the product takes.
                     "\"${MarkerPlayCodec.FIELD}\":${MarkerPlayCodec.encode(markerPlays)}," +
+                    "\"${MarkerPlayCodec.FACING_FIELD}\":${MarkerPlayCodec.encode(facingMarkerPlays)}," +
                     "\"onDeviceAlignment\":${ownAlignment.json}," +
                     // The whole measurement, taken by the two handsets alone. Everything above it
                     // is one side of one; this is the field a pair of phones can act on.
@@ -921,6 +955,9 @@ class SyncActivity : Activity() {
         }
         // Appended from the chunk client's thread and read from the run thread once it has stopped.
         val markerPlays = java.util.Collections.synchronizedList(ArrayList<MarkerPlay>())
+        // The host's grid, written down from the chunks it sent and this side silenced. Both sides
+        // hold both grids afterwards, which is what lets either recording be read as a facing pair.
+        val facingMarkerPlays = java.util.Collections.synchronizedList(ArrayList<MarkerPlay>())
         val chunkClient = ChunkClient(address, host.chunkPort, peerId = HostIdentity(filesDir).current()) { chunk ->
             if (converged.get()) {
                 lastPlayAt.set(chunk.playAtHostNanos)
@@ -933,6 +970,9 @@ class SyncActivity : Activity() {
                     // estimate that moves within a round, so schedule-to-emission is not one
                     // straight line here and cannot be recovered by fitting one through arrivals.
                     renderer.watchMarkerRelease(chunk.sequence)
+                }
+                hostSweeps?.markerStartIndex(chunk.sequence)?.let {
+                    facingMarkerPlays.add(MarkerPlay(it, chunk.sequence, chunk.playAtHostNanos))
                 }
                 scheduler.submit(
                     if (stamped == null) chunk else AudioChunk(chunk.sequence, chunk.playAtHostNanos, stamped)
@@ -987,6 +1027,26 @@ class SyncActivity : Activity() {
             }
             converged.set(true)
 
+            val calibration =
+                if (sinkRecordsRequested()) CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested(), hostNanosNow)
+                else null
+            // Set once the chirp schedule exists. See the host's copy: the two sides open the same
+            // window on purpose, so a marked run has to widen it on both or the pair it is after
+            // appears in one recording only.
+            val recordUntilHostNanos = AtomicLong(Long.MAX_VALUE)
+            // Not before convergence, whatever else moves: the instant this recording writes down
+            // as its own start goes through the clock estimate, and before the first fit that is
+            // an uncorrected nanoTime() - a search hint pointing however far apart the two
+            // handsets were last booted.
+            val earlyRecordThread = if (ownSweeps != null) calibration?.let {
+                Thread {
+                    it.record(
+                        seconds + chirpScheduleSeconds() + RECORD_CEILING_MARGIN_SECONDS,
+                        stopped = { hostNanosNow() >= recordUntilHostNanos.get() }
+                    )
+                }.also(Thread::start)
+            } else null
+
             renderer.endAt(hostNanosNow() + (seconds + RENDERER_MARGIN_SECONDS) * 1_000_000_000L)
             val rendererThread = Thread { renderer.run() }
             rendererThread.start()
@@ -1017,9 +1077,9 @@ class SyncActivity : Activity() {
             // Deliberately the same two host instants the host opens and closes its own recording
             // on, so the two files cover one window and every pair appears in both. The host's own
             // chirp trails this device's by the stagger, so the tail is measured from there.
-            val calibration = if (sinkRecordsRequested()) CalibrationRunner(runStore, caseId, calibrationAudioSourceRequested(), hostNanosNow) else null
-            val recordThread = calibration?.let {
-                val untilHostNanos = chirpSubmission.endHostNanos + STAGGER_NANOS + RECORD_TAIL_NANOS
+            val untilHostNanos = chirpSubmission.endHostNanos + STAGGER_NANOS + RECORD_TAIL_NANOS
+            recordUntilHostNanos.set(untilHostNanos)
+            val recordThread = earlyRecordThread ?: calibration?.let {
                 val fromHostNanos = chirpAt - RECORD_LEAD_NANOS
                 awaitHostInstant(fromHostNanos, hostNanosNow)
                 Thread { it.record(secondsBetween(fromHostNanos, untilHostNanos)) }.also(Thread::start)
@@ -1078,6 +1138,7 @@ class SyncActivity : Activity() {
                     // is the time the chunks arrived stamped with. Written down at submission and
                     // not read back off the renderer, for the reason the host writes its own.
                     "\"${MarkerPlayCodec.FIELD}\":${MarkerPlayCodec.encode(markerPlays.toList())}," +
+                    "\"${MarkerPlayCodec.FACING_FIELD}\":${MarkerPlayCodec.encode(facingMarkerPlays.toList())}," +
                     "\"onDeviceAlignment\":${ownAlignment?.json ?: "null"}," +
                     // Null when the readings reached the host. Named otherwise, because a run whose
                     // delivery failed leaves the host with a one-sided report and no cause in it.
@@ -1482,6 +1543,18 @@ class SyncActivity : Activity() {
 
         /** The host starts recording this long before the sink's chirp. */
         private const val RECORD_LEAD_NANOS = 1_000_000_000L
+
+        /**
+         * The ceiling on a marked run's recording, which its stop predicate closes long before.
+         *
+         * A ceiling and nothing else, said plainly because the number itself is arbitrary. The
+         * recording has to open before the streamed segment, and the instant it should close is
+         * computed from the chirp schedule, which does not exist until that segment is over - so
+         * it is given a length it cannot reach and stopped at the right instant instead. Too small
+         * truncates the chirp segment; too large costs the seconds between the predicate firing
+         * and the deadline, which are never reached because the predicate fires first.
+         */
+        private const val RECORD_CEILING_MARGIN_SECONDS = 30
 
         /** The renderer keeps writing this long past the chirp so the output buffer drains. */
         private const val CHIRP_DRAIN_NANOS = 1_000_000_000L

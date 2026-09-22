@@ -46,6 +46,22 @@ class MarkerPlayCodecTest {
     }
 
     @Test
+    fun eachSidesOwnGridAndItsPeersAreReadFromTheirOwnFields() {
+        // A facing run writes two grids, and they are half a stride apart rather than equal: a
+        // reader that took one for the other would answer with the stride's half in it and no
+        // sign that anything went wrong.
+        val own = listOf(MarkerPlay(0, 100, 1_000L), MarkerPlay(1, 350, 6_000L))
+        val facing = listOf(MarkerPlay(0, 225, 3_500L), MarkerPlay(1, 475, 8_500L))
+        val report = "{\"schemaVersion\":1,\"${MarkerPlayCodec.FACING_FIELD}\":${MarkerPlayCodec.encode(facing)}," +
+            "\"${MarkerPlayCodec.FIELD}\":${MarkerPlayCodec.encode(own)}}"
+
+        // The facing field is written first on purpose: this side's own field name is a substring
+        // of nothing in it, and that is the property being asserted rather than assumed.
+        assertEquals(own, MarkerPlayCodec.decode(report))
+        assertEquals(facing, MarkerPlayCodec.decode(report, MarkerPlayCodec.FACING_FIELD))
+    }
+
+    @Test
     fun theOrderTheyWerePlayedInSurvives() {
         // The reader fits a line through these against their arrival, so a reordering would not
         // fail loudly - it would answer with a slope.

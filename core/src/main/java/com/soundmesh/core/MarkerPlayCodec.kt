@@ -22,6 +22,18 @@ object MarkerPlayCodec {
     /** The field this array is written under in a run's report. */
     const val FIELD = "markerPlays"
 
+    /**
+     * The field the *other* handset's grid is written under, by each side, from what it played.
+     *
+     * A facing run puts two grids in the air half a stride apart, and reading the pair needs both
+     * instants. Neither side can derive the other's: the schedule is computed live on the host
+     * (`System.nanoTime() + LEAD_NANOS` once per chunk) and its marker-to-marker gaps have been
+     * measured at 4998.17-5001.99 ms rather than the flat 5000 a formula would assume, so a grid
+     * rebuilt by arithmetic would be wrong by a millisecond at exactly the precision under test.
+     * Both sides see every chunk's instant, so both simply write down what they saw.
+     */
+    const val FACING_FIELD = "facingMarkerPlays"
+
     fun encode(plays: List<MarkerPlay>): String =
         plays.joinToString(",", "[", "]") {
             "{\"index\":${it.index},\"sequence\":${it.sequence},\"playAtHostNanos\":${it.playAtHostNanos}}"
@@ -34,8 +46,8 @@ object MarkerPlayCodec {
      * is. Deliberately not an error: the reader's own check is that it found as many markers in
      * the recording as the handset says it scheduled, and that check needs a number to compare.
      */
-    fun decode(report: String): List<MarkerPlay> {
-        val start = report.indexOf("\"$FIELD\"").let {
+    fun decode(report: String, field: String = FIELD): List<MarkerPlay> {
+        val start = report.indexOf("\"$field\"").let {
             if (it < 0) report.indexOf('[') else report.indexOf('[', it)
         }
         if (start < 0) return emptyList()
