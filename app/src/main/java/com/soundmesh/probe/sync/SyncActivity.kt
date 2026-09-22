@@ -23,6 +23,8 @@ import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.MarkedStreamSource
+import com.soundmesh.core.MarkerPlay
+import com.soundmesh.core.MarkerPlayCodec
 import com.soundmesh.core.PairedAlignment
 import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.PlaybackScheduler
@@ -587,6 +589,11 @@ class SyncActivity : Activity() {
             var sequence = 0
             var frameIndex = 0L
             var captureAnchorNanos = 0L
+            // Written down at submission rather than at release, which is the whole point: this is
+            // the instant the run asked for, and what the analysis measures is how far the sound
+            // landed from it. Reading it off the renderer would be reading the answer off the
+            // thing under test.
+            val markerPlays = ArrayList<MarkerPlay>()
             while (System.nanoTime() < until) {
                 // Two paces, one loop. Neither the generator nor the decoded file has one of its
                 // own - both produce a chunk as fast as they are asked - so both are held to the
@@ -612,6 +619,9 @@ class SyncActivity : Activity() {
                 }
                 val chunk = AudioChunk(sequence, playAt, pcm)
                 lastPlayAtHostNanos = playAt
+                // Asked of MarkedStreamSource rather than recomputed here: where the markers are
+                // is one decision, and a second copy of it is a copy that can disagree.
+                marked?.markerStartIndex(sequence)?.let { markerPlays.add(MarkerPlay(it, sequence, playAt)) }
                 chunkServer.broadcast(chunk)
                 scheduler.submit(chunk)
                 sequence++
@@ -680,6 +690,14 @@ class SyncActivity : Activity() {
                     // device is trusted to measure on its own.
                     "\"recordingStartedAtHostNanos\":${calibration.startedAtHostNanos ?: "null"}," +
                     "\"sinkChirpAtHostNanos\":$sinkChirpAt," +
+                    // This handset's own chirp instant, written rather than left to be rebuilt
+                    // from the sink's plus STAGGER_NANOS. The analysis compares the streamed
+                    // markers against these chirps, so a stagger the reader held a stale copy of
+                    // would move one of the two things being compared and nothing would complain.
+                    "\"hostChirpAtHostNanos\":$hostChirpAt," +
+                    // Where the run aimed each streamed marker. Empty on every run that did not
+                    // ask for markers, which is every run the product takes.
+                    "\"${MarkerPlayCodec.FIELD}\":${MarkerPlayCodec.encode(markerPlays)}," +
                     "\"onDeviceAlignment\":${ownAlignment.json}," +
                     // The whole measurement, taken by the two handsets alone. Everything above it
                     // is one side of one; this is the field a pair of phones can act on.

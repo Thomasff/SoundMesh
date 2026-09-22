@@ -94,4 +94,20 @@ class MarkedStreamSourceTest {
         // which is the failure that made a global maximum pick the wrong repeat once already.
         MarkedStreamSource(ChirpGenerator.generateStereoChunks(framesPerChunk).size, 100, framesPerChunk)
     }
+
+    @Test
+    fun onlyTheFirstChunkOfAMarkerNamesTheMarker() {
+        // The instant a marker was scheduled for is the instant of its first chunk. Every other
+        // chunk of the sweep is a later instant, and attributing a reading to one of those is off
+        // by up to the whole sweep.
+        val marked = source(strideChunks = 250, firstMarkerChunk = 100)
+
+        assertEquals(0, marked.markerStartIndex(100))
+        assertNull(marked.markerStartIndex(101))
+        assertNull(marked.markerStartIndex(105))
+        assertNull(marked.markerStartIndex(99))
+        assertEquals(1, marked.markerStartIndex(350))
+        assertNull(marked.markerStartIndex(351))
+        assertEquals(4, marked.markerStartIndex(1100))
+    }
 }

@@ -57,6 +57,16 @@ class MarkedStreamSource(
         return Marker(since / strideChunks, within)
     }
 
+    /**
+     * The marker index when [sequence] is a marker's first chunk, and null for every other chunk.
+     *
+     * What a reading gets attributed to is the instant the marker was scheduled for, and that is
+     * the instant of its first chunk; the rest of the sweep is up to five chunks later. Asked of
+     * every chunk by the host loop, which otherwise has to write down where markers are a second
+     * time - and a second copy is a copy that can disagree.
+     */
+    fun markerStartIndex(sequence: Int): Int? = markerAt(sequence)?.takeIf { it.within == 0 }?.index
+
     /** The PCM for this sequence: the sweep on a marker's chunks, the tone everywhere else. */
     fun chunkAt(sequence: Int): ByteArray {
         val marker = markerAt(sequence)
