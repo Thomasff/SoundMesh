@@ -67,6 +67,17 @@ class MarkedStreamSource(
      */
     fun markerStartIndex(sequence: Int): Int? = markerAt(sequence)?.takeIf { it.within == 0 }?.index
 
+    /**
+     * The sweep's PCM for this sequence, or null when this sequence carries no marker.
+     *
+     * For a side that has no source of its own. A sink plays chunks the host sends it, so the
+     * only way it can put a sweep on the streamed release path - the one the pair constant is
+     * spent on - is to write one over a chunk it received. It stamps the same sweep on the same
+     * stride at a different phase, and the two emissions are then far enough apart in one
+     * recording to be told from each other.
+     */
+    fun markerPcm(sequence: Int): ByteArray? = markerAt(sequence)?.let { sweep[it.within] }
+
     /** The PCM for this sequence: the sweep on a marker's chunks, the tone everywhere else. */
     fun chunkAt(sequence: Int): ByteArray {
         val marker = markerAt(sequence)

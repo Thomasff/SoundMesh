@@ -2,7 +2,9 @@ package com.soundmesh.core
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -109,5 +111,37 @@ class MarkedStreamSourceTest {
         assertEquals(1, marked.markerStartIndex(350))
         assertNull(marked.markerStartIndex(351))
         assertEquals(4, marked.markerStartIndex(1100))
+    }
+
+    @Test
+    fun theSweepIsOfferedForStampingOverAChunkThatAlreadyHasContent() {
+        // A sink has no source of its own - it plays chunks the host sends it - so the only way
+        // it can put a sweep on the streamed release path is to write one over a chunk it
+        // received. It needs the same sweep bytes on the same grid, and nothing else.
+        val marked = source(strideChunks = 250, firstMarkerChunk = 100)
+
+        assertNull(marked.markerPcm(99))
+        assertNull(marked.markerPcm(106))
+        assertArrayEquals(marked.chunkAt(100), marked.markerPcm(100))
+        assertArrayEquals(marked.chunkAt(101), marked.markerPcm(101))
+        assertArrayEquals(marked.chunkAt(350), marked.markerPcm(350))
+    }
+
+    @Test
+    fun twoPhasesPutTheirSweepsOnChunksNeitherShares() {
+        // The host and the sink stamp the same stride at different phases so that the two
+        // emissions can be told apart in one recording. A phase that let them collide would give
+        // a correlator two arrivals at one instant, which is the one shape it cannot read.
+        val host = source(strideChunks = 250, firstMarkerChunk = 100)
+        val sink = source(strideChunks = 250, firstMarkerChunk = 225)
+
+        for (sequence in 0..1500) {
+            assertFalse(
+                "sequence $sequence carries a sweep on both sides",
+                host.markerPcm(sequence) != null && sink.markerPcm(sequence) != null
+            )
+        }
+        assertNotNull(sink.markerPcm(225))
+        assertNull(host.markerPcm(225))
     }
 }
