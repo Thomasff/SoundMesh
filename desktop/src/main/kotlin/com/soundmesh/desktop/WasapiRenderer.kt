@@ -77,8 +77,12 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
     @Volatile private var running = false
     private var writer: Thread? = null
 
-    private class Clip(val startFrame: Long, val mono: ShortArray) {
-        val endFrame: Long get() = startFrame + mono.size
+    private class Clip(val startFrame: Long, val samples: ShortArray, val channels: Int) {
+        val frames: Int get() = samples.size / channels
+        val endFrame: Long get() = startFrame + frames
+
+        /** Channel [c] of frame [k], with a one-channel clip answering for every channel. */
+        fun at(k: Int, c: Int): Int = samples[k * channels + c % channels].toInt()
     }
 
     init {
@@ -172,9 +176,26 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
             require(atFrame >= written) {
                 "frame $atFrame is ${written - atFrame} frames behind what has already been written"
             }
-            clips.add(Clip(atFrame, mono))
+            clips.add(Clip(atFrame, mono, 1))
         }
     }
+
+    /**
+     * Schedules [samples] interleaved across [channels], or answers false because that frame
+     * has already been handed to the engine.
+     *
+     * The same arithmetic as [schedule] and the opposite answer to the same failure, because
+     * the two callers want opposite things. A chirp that starts late has already ruined the
+     * measurement it exists for, so throwing is the kindest thing that can happen to it. A
+     * stream that loses a chunk has lost twenty milliseconds and has to keep playing - and
+     * calling [schedule] from a stream would take the process down on the first late one.
+     */
+    fun scheduleIfAhead(samples: ShortArray, channels: Int, atFrame: Long): Boolean =
+        synchronized(lock) {
+            if (atFrame < written) return@synchronized false
+            clips.add(Clip(atFrame, samples, channels))
+            true
+        }
 
     /**
      * Which frame the engine will be consuming at [qpcDeadline], given a fresh clock reading.
@@ -312,15 +333,13 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
         val live = clips.filter { it.startFrame < base + frames && it.endFrame > base }
 
         for (i in 0 until frames) {
-            var v = 0
-            if (live.isNotEmpty()) {
-                val at = base + i
+            val at = base + i
+            for (c in 0 until channels) {
+                var v = 0
                 for (clip in live) {
                     val k = (at - clip.startFrame).toInt()
-                    if (k >= 0 && k < clip.mono.size) v += clip.mono[k].toInt()
+                    if (k >= 0 && k < clip.frames) v += clip.at(k, c)
                 }
-            }
-            for (c in 0 until channels) {
                 val slot = (i * channels + c).toLong()
                 if (format.isFloat) {
                     b.set(Wasapi.F32, slot * 4, v / 32768.0f)

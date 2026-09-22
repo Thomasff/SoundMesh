@@ -90,5 +90,49 @@ class ChunkPlayoutTest {
         assertEquals(1, playout.droppedLate)
     }
 
+    @Test
+    fun chunksAWholeChunkApartLeaveNoSeam() {
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+
+        playout.play(AudioChunk(0, 0L, stereo(960)))
+        playout.play(AudioChunk(1, 20_000_000L, stereo(960)))
+        playout.play(AudioChunk(2, 40_000_000L, stereo(960)))
+
+        assertEquals(listOf(0L, 960L, 1920L), output.scheduled.map { it.first })
+        assertEquals(0, playout.worstSeamFrames)
+        assertEquals(0, playout.seams)
+    }
+
+    @Test
+    fun aChunkThatLandsPastItsNeighbourIsCountedAsASeam() {
+        // A gap leaves a hole in the sound and an overlap sums two signals; the sign is what
+        // says which. Both are the same fault and both have to be visible.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+
+        playout.play(AudioChunk(0, 0L, stereo(960)))
+        playout.play(AudioChunk(1, 20_100_000L, stereo(960)))
+
+        assertEquals(listOf(0L, 964L), output.scheduled.map { it.first })
+        assertEquals(4, playout.worstSeamFrames)
+        assertEquals(1, playout.seams)
+    }
+
+    @Test
+    fun aMissingSequenceIsNotReportedAsASeam() {
+        // The host dropped one, or the network did. That is a hole a whole chunk wide and it
+        // shows up in the sequence itself; calling it a seam would bury the one-frame kind
+        // this counter exists to find.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+
+        playout.play(AudioChunk(0, 0L, stereo(960)))
+        playout.play(AudioChunk(2, 40_000_000L, stereo(960)))
+
+        assertEquals(0, playout.worstSeamFrames)
+        assertEquals(0, playout.seams)
+    }
+
     private fun stereo(frames: Int) = ByteArray(frames * 2 * 2)
 }
