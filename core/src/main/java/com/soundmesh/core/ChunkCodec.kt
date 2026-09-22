@@ -10,6 +10,25 @@ object ChunkCodec {
     const val HEADER_BYTES = 16
     const val MAX_PAYLOAD_BYTES = 1 shl 20
 
+    /**
+     * The TCP port the chunk stream runs on.
+     *
+     * Here rather than on the screen that first used it, for the reason ClockPacket.DEFAULT_PORT
+     * states: the two ends are two platforms now, and a second copy of this number fails in the
+     * one way that costs a session to diagnose - both ends working perfectly and neither hearing
+     * the other.
+     */
+    const val DEFAULT_PORT = 45124
+
+    /**
+     * Frames in one chunk, which is the other thing the two ends agree on without saying so.
+     *
+     * Nothing on the wire carries it: a sink sizes its own buffers from this and plays whatever
+     * arrives, so a host that sent a different length would be heard rather than refused - at a
+     * pace set by the sender while every counter on both sides stayed sane.
+     */
+    const val FRAMES_PER_CHUNK = 960
+
     fun encode(chunk: AudioChunk): ByteArray {
         val frame = ByteArray(HEADER_BYTES + chunk.pcm.size)
         writeInt(frame, 0, frame.size - LENGTH_PREFIX_BYTES)

@@ -18,6 +18,7 @@ import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ChirpGenerator
+import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
@@ -1531,7 +1532,7 @@ class SyncActivity : Activity() {
          * run, and an estimator whose window never fills is a different estimator.
          */
         private const val MAX_ESTIMATOR_WINDOW = 4096
-        const val CHUNK_PORT = 45124
+        const val CHUNK_PORT = ChunkCodec.DEFAULT_PORT
 
         /** Where the host takes delivery of the sink's own reading of the run. */
         const val RESULT_PORT = 45125

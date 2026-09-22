@@ -4,6 +4,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTimestamp
 import android.media.AudioTrack
+import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.Crossover
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.MarkerRelease
@@ -1225,7 +1226,7 @@ class SyncRenderer(
     companion object {
         const val SAMPLE_RATE = 48000
         const val CHANNELS = 2
-        const val FRAMES_PER_CHUNK = 960
+        const val FRAMES_PER_CHUNK = ChunkCodec.FRAMES_PER_CHUNK
         const val CHUNK_NANOS = FRAMES_PER_CHUNK * 1_000_000_000L / SAMPLE_RATE
 
         /**
