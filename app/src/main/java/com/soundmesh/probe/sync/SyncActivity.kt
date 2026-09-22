@@ -652,7 +652,13 @@ class SyncActivity : Activity() {
                 lastPlayAtHostNanos = playAt
                 // Asked of MarkedStreamSource rather than recomputed here: where the markers are
                 // is one decision, and a second copy of it is a copy that can disagree.
-                marked?.markerStartIndex(sequence)?.let { markerPlays.add(MarkerPlay(it, sequence, playAt)) }
+                marked?.markerStartIndex(sequence)?.let {
+                    markerPlays.add(MarkerPlay(it, sequence, playAt))
+                    // The same pair of ends the sink records, so the two sides' placements are the
+                    // same kind of number and their difference is the pair error the playback
+                    // machinery is responsible for - the part of it that does not need the room.
+                    renderer.watchMarkerRelease(sequence)
+                }
                 chunkServer.broadcast(chunk)
                 scheduler.submit(chunk)
                 sequence++

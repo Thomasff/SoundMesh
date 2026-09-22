@@ -18,19 +18,28 @@ class MarkerReleaseWatchedTest {
      * Asserted on the source text because the activity needs a device to run.
      */
     @Test
-    fun theSinkWatchesTheReleaseOfEverySweepItStampsAndOfNoOtherChunk() {
+    fun eachSideWatchesTheReleaseOfEverySweepItStampsAndOfNoOtherChunk() {
         val source = File("src/main/java/com/soundmesh/probe/sync/SyncActivity.kt").readText(Charsets.UTF_8)
-        val stamped = Regex("""ownSweeps\?\.markerStartIndex\(chunk\.sequence\)\?\.let \{([\s\S]*?)\}""")
+        val sinkStamped = Regex("""ownSweeps\?\.markerStartIndex\(chunk\.sequence\)\?\.let \{([\s\S]*?)\}""")
             .find(source)?.groupValues?.get(1)
             ?: throw AssertionError("the sink no longer records its own marker schedule")
+        val hostStamped = Regex("""marked\?\.markerStartIndex\(sequence\)\?\.let \{([\s\S]*?)\}""")
+            .find(source)?.groupValues?.get(1)
+            ?: throw AssertionError("the host no longer records its own marker schedule")
 
         assertTrue(
-            "a marker whose schedule is written down but whose release is not cannot be read: $stamped",
-            stamped.contains("watchMarkerRelease(chunk.sequence)")
+            "a marker whose schedule is written down but whose release is not cannot be read: $sinkStamped",
+            sinkStamped.contains("watchMarkerRelease(chunk.sequence)")
+        )
+        assertTrue(
+            "the host's markers need the same treatment, or the two sides' numbers are not the " +
+                "same kind of number: $hostStamped",
+            hostStamped.contains("watchMarkerRelease(sequence)")
         )
         assertEquals(
-            "the only chunks worth watching are the ones this side stamped itself",
-            1,
+            "one watch per role and no others - the only chunks worth watching are the ones that " +
+                "side stamped itself, and the host's marker chunks reach the sink as well",
+            2,
             Regex("watchMarkerRelease\\(").findAll(source).count()
         )
     }
