@@ -45,9 +45,9 @@ fun main(args: Array<String>) {
     val jsonPath = args.getOrNull(1) ?: error("the handset's sync.json carries the schedule")
 
     val report = File(jsonPath).readText()
-    val plays = MarkerPlayCodec.decode(report)
-    if (plays.size < MINIMUM_MARKERS) {
-        println("the run reports ${plays.size} markers. Was marker_stride_chunks set, and is this " +
+    val allPlays = MarkerPlayCodec.decode(report)
+    if (allPlays.size < MINIMUM_MARKERS) {
+        println("the run reports ${allPlays.size} markers. Was marker_stride_chunks set, and is this " +
             "a build that writes ${MarkerPlayCodec.FIELD}?")
         return
     }
@@ -71,48 +71,91 @@ fun main(args: Array<String>) {
     val mono = WavFileReader.readMono(File(wavPath))
     val chirp = ChirpGenerator.generateMono()
     println("wav    : ${mono.size} samples (${"%.1f".format(mono.size.toDouble() / rate)} s) at $rate Hz")
-    println("report : ${plays.size} markers, $chirpRepeats chirps " +
+    println("report : ${allPlays.size} markers, $chirpRepeats chirps " +
         "${"%.1f".format(chirpIntervalNanos / 1e9)} s apart")
 
-    // Marker 0 is searched for across the whole span up to marker 1, because nothing yet ties the
-    // handset's clock to this recording and any window that wide holds exactly one sweep. Start
-    // this machine's recording before the handset so that the first sweep in the file is marker 0;
-    // the count check below is what says that actually happened.
-    val firstSpan = framesBetween(plays[0].playAtHostNanos, plays[1].playAtHostNanos, rate)
+    // The first sweep is searched for across the whole span up to the next marker, because nothing
+    // yet ties the handset's clock to this recording and any window that wide holds exactly one
+    // sweep. Which marker it is is decided below, not assumed here.
+    val firstSpan = framesBetween(allPlays[0].playAtHostNanos, allPlays[1].playAtHostNanos, rate)
     val first = ChirpCorrelator.findFirstArrival(mono, chirp, 0, firstSpan)
     if (first == null || first.ratio < ChirpCorrelator.MIN_TRUSTWORTHY_RATIO) {
         println("no marker in the first $firstSpan samples. Was the handset already streaming when " +
             "this recording started?")
         return
     }
-    val arrivals = ArrayList<Int>()
-    arrivals.add(indexOf(first))
+    // Which marker that first sweep is. It is marker 0 only if this machine was recording before
+    // the handset started streaming, and a run where it was not looks exactly like a good one: the
+    // markers are evenly spaced, so a whole table shifted by two of them steps along perfectly and
+    // the misfit surfaces only at the very end. It cost a 600 second round. The witness is the last
+    // scheduled marker - under a wrong anchor it is predicted past where the stream ever ran, so
+    // only the right one finds a sweep there.
+    val anchor = (0..MAX_ANCHOR_SLIP).firstOrNull { candidate ->
+        if (candidate >= allPlays.size) return@firstOrNull false
+        val last = allPlays.size - 1
+        val at = indexOf(first) +
+            framesBetween(allPlays[candidate].playAtHostNanos, allPlays[last].playAtHostNanos, rate)
+        if (at + WINDOW_SAMPLES + chirp.size >= mono.size) return@firstOrNull false
+        val witness = ChirpCorrelator.findFirstArrival(
+            mono, chirp, at - WINDOW_SAMPLES, at + WINDOW_SAMPLES
+        )
+        witness != null && witness.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO
+    }
+    if (anchor == null) {
+        println("the first sweep in this recording cannot be matched to any of the run's markers: " +
+            "no anchor within $MAX_ANCHOR_SLIP of it puts a sweep where the last one was scheduled. " +
+            "Start this machine's recording before the handset, in the same breath as the launch.")
+        return
+    }
+    if (anchor > 0) {
+        println("anchor : the first sweep here is marker $anchor, not marker 0 - this recording " +
+            "started after the handset did. The last scheduled marker is where it says it is.")
+    }
+    val plays = allPlays.drop(anchor)
     // Stepped from the previous *measured* arrival by the gap the handset actually scheduled -
     // not by a nominal stride. Two clocks' rate difference then never accumulates into the window,
     // and a window far narrower than the stride is what keeps a neighbouring sweep out of it.
+    //
+    // A marker the correlator cannot find is skipped rather than fatal. Refusing the whole round
+    // on one unreadable sweep threw away 119 good ones on the first long run; the round's own
+    // check is that nearly all of them were found, which needs a count and not an exception. The
+    // window widens by one stride per consecutive miss, because the step has to reach across them.
+    val arrivals = ArrayList<Int?>()
+    arrivals.add(indexOf(first))
+    var lastGood = 0
+    var missing = 0
     for (k in 1 until plays.size) {
-        val expected = arrivals[k - 1] + framesBetween(plays[k - 1].playAtHostNanos, plays[k].playAtHostNanos, rate)
-        if (expected + WINDOW_SAMPLES + chirp.size >= mono.size) {
+        val from = plays[lastGood].playAtHostNanos
+        val expected = arrivals[lastGood]!! + framesBetween(from, plays[k].playAtHostNanos, rate)
+        val window = WINDOW_SAMPLES * (k - lastGood)
+        if (expected + window + chirp.size >= mono.size) {
             println("the recording ends before marker $k. Record through the chirps.")
             return
         }
-        val next = ChirpCorrelator.findFirstArrival(
-            mono, chirp, expected - WINDOW_SAMPLES, expected + WINDOW_SAMPLES
-        )
+        val next = ChirpCorrelator.findFirstArrival(mono, chirp, expected - window, expected + window)
         if (next == null || next.ratio < ChirpCorrelator.MIN_TRUSTWORTHY_RATIO) {
-            println("marker $k missing near $expected. The run and the recording have parted; " +
-                "nothing below would be about the same markers.")
-            return
+            arrivals.add(null)
+            missing++
+            continue
         }
         arrivals.add(indexOf(next))
+        lastGood = k
     }
-    println("found  : all ${arrivals.size} markers the run scheduled")
+    val read = arrivals.indices.filter { arrivals[it] != null }
+    println("found  : ${read.size} of ${plays.size} markers the run scheduled" +
+        if (missing > 0) ", $missing the correlator could not read" else "")
+    if (read.size < plays.size - (plays.size / MISSING_SHARE)) {
+        println("Too many missing to call this the same run. Nothing below would be about the same " +
+            "markers.")
+        return
+    }
 
     // The line. x is the schedule in samples of the handset's clock, so the slope is the two
     // clocks' rate ratio and the intercept is everything constant between the two machines.
-    val xs = plays.map { framesBetween(plays[0].playAtHostNanos, it.playAtHostNanos, rate).toDouble() }
-    val fit = Line.through(xs, arrivals.map { it.toDouble() })
-    val markerResidual = xs.indices.map { arrivals[it] - fit.at(xs[it]) }
+    val xs = read.map { framesBetween(plays[0].playAtHostNanos, plays[it].playAtHostNanos, rate).toDouble() }
+    val found = read.map { arrivals[it]!! }
+    val fit = Line.through(xs, found.map { it.toDouble() })
+    val markerResidual = xs.indices.map { found[it] - fit.at(xs[it]) }
     println("slope  : ${"%.9f".format(fit.slope)} (${"%.1f".format((fit.slope - 1) * 1e6)} ppm, " +
         "this machine's clock against the handset's)")
 
@@ -123,8 +166,8 @@ fun main(args: Array<String>) {
     // white noise: half a run's markers extrapolated over the other half carry a standard error of
     // about 30 frames all by themselves, so the threshold was inside the statistic's own scatter.
     val half = xs.size / 2
-    val halfFit = Line.through(xs.take(half), arrivals.take(half).map { it.toDouble() })
-    val reach = (half until xs.size).map { arrivals[it] - halfFit.at(xs[it]) }
+    val halfFit = Line.through(xs.take(half), found.take(half).map { it.toDouble() })
+    val reach = (half until xs.size).map { found[it] - halfFit.at(xs[it]) }
     val reachMean = reach.average()
     val reachError = halfFit.errorAt(xs.drop(half).average())
     println("reach  : fitting on the first $half markers and predicting the rest is off by a mean " +
@@ -140,9 +183,9 @@ fun main(args: Array<String>) {
     // reading a slope off a shape is how a staircase once reported 183 ppm.
     println()
     println("  #   second   sample   residual")
-    plays.indices.forEach {
+    xs.indices.forEach {
         println("%3d %8.1f %8d %10.1f".format(
-            it, xs[it] / ChirpGenerator.SAMPLE_RATE, arrivals[it], markerResidual[it]
+            read[it], xs[it] / ChirpGenerator.SAMPLE_RATE, found[it], markerResidual[it]
         ))
     }
     describe("markers", markerResidual)
@@ -231,6 +274,14 @@ fun main(args: Array<String>) {
     println()
     println("note   : this compares two paths through one handset. It says nothing about which " +
         "machine the ladder belongs to, which this arrangement cannot see either.")
+    // One line a pooling script can read. Printed rather than left to be transcribed: one repeat
+    // once needed two numbers copied by hand through a shell script, and a measurement whose
+    // inputs are transcribed has a transcription in it.
+    println()
+    println("pool   : floor=%.2f floorErr=%.2f mean=%.2f meanErr=%.2f lineErr=%.2f ".format(
+        floor, floorError, chirpMean, meanError, lineError
+    ) + "floorDraws=$floorCount chirps=${chirpResidual.size} markers=${read.size} " +
+        "markerSd=%.2f".format(spreadOf(markerResidual)))
 }
 
 /** The plain standard deviation, or zero when there is not enough to have one. */
@@ -352,6 +403,16 @@ private fun longField(report: String, name: String): Long? =
 private fun millisOf(frames: Double): String =
     "%.3f ms".format(frames * 1000.0 / ChirpGenerator.SAMPLE_RATE)
 
+/**
+ * How many markers the first sweep in the recording may be past marker 0.
+ *
+ * Eight, which at a five second stride is forty seconds of launch slop - far more than starting the
+ * recording and the handset in one breath ever costs, and far less than a stride count that would
+ * start matching the wrong sweep. Every candidate is checked against the last scheduled marker, so
+ * this only bounds the search; it does not decide anything.
+ */
+private const val MAX_ANCHOR_SLIP = 8
+
 /** 30 ms either side of where the schedule puts a sweep. See MarkerRead for why this width. */
 private const val WINDOW_SAMPLES = 1440
 
@@ -381,6 +442,15 @@ private const val DECISION_SIGMAS = 2.0
 
 /** Below this the line the chirps are read against is not worth fitting. */
 private const val MINIMUM_MARKERS = 8
+
+/**
+ * One in this many markers may go unread before the round is refused.
+ *
+ * A tenth. Far more than the one or two a long run loses to a correlation that will not clear the
+ * trust ratio, and far fewer than a recording that has drifted off the run it claims to be of -
+ * that failure loses them in a block, not one here and one there.
+ */
+private const val MISSING_SHARE = 10
 
 /** Below this there is no floor to locate, only a lowest draw. */
 private const val MINIMUM_CHIRPS = 8
