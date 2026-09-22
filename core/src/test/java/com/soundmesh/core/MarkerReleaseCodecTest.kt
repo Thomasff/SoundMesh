@@ -25,6 +25,7 @@ class MarkerReleaseCodecTest {
         val releases = listOf(
             MarkerRelease(
                 sequence = 150,
+                heardAtHostNanos = 88_845_789_012L,
                 localNanos = 123_456_789_012L,
                 offsetNanos = -34_611_000_000L,
                 depthNanos = 41_666_666L,
@@ -33,6 +34,7 @@ class MarkerReleaseCodecTest {
             ),
             MarkerRelease(
                 sequence = 400,
+                heardAtHostNanos = 93_846_789_012L,
                 localNanos = 128_456_789_012L,
                 offsetNanos = -34_610_100_000L,
                 depthNanos = 40_000_000L,
@@ -49,7 +51,7 @@ class MarkerReleaseCodecTest {
         // Where it really sits: inside the renderer's object, with chirpPlays and the estimate
         // history already written above it. A reader that took the report's first bracket would
         // be reading one of those.
-        val release = MarkerRelease(200, 7L, 8L, 9L, 1, 2)
+        val release = MarkerRelease(200, 6L, 7L, 8L, 9L, 1, 2)
         val report = "{\"schemaVersion\":1,\"role\":\"SINK\",\"markerPlays\":[{\"index\":0}]," +
             "\"renderer\":{\"chirpPlays\":[{\"repeat\":0}],\"markerReleases\":" +
             MarkerReleaseCodec.encode(listOf(release)) + ",\"played\":3}}"
@@ -71,7 +73,7 @@ class MarkerReleaseCodecTest {
         // The whole reading is a residual per marker against its own schedule, in the order the
         // run made them: a reordering would not fail, it would answer with a different drift.
         val releases = (0 until 5).map {
-            MarkerRelease(100 + it * 250, 1_000L + it * 5_000L, -34_611_000_000L + it * 400L, 41_000_000L, it, -it)
+            MarkerRelease(100 + it * 250, 900L + it * 5_000L, 1_000L + it * 5_000L, -34_611_000_000L + it * 400L, 41_000_000L, it, -it)
         }
 
         assertEquals(releases, MarkerReleaseCodec.decode(MarkerReleaseCodec.encode(releases)))
@@ -82,7 +84,7 @@ class MarkerReleaseCodecTest {
         // The pairing correction this pair carries is about -34.6 ms and the drift loop's filtered
         // error swings both ways. A pattern that only matched digits would read the sign off and
         // report a clock 34.6 ms the other way, which is a plausible-looking number.
-        val release = MarkerRelease(250, 5L, -34_611_000_000L, 40_000_000L, 0, -17)
+        val release = MarkerRelease(250, -34_610_995_000L, 5L, -34_611_000_000L, 40_000_000L, 0, -17)
 
         assertEquals(listOf(release), MarkerReleaseCodec.decode(MarkerReleaseCodec.encode(listOf(release))))
     }

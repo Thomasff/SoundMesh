@@ -710,6 +710,10 @@ class SyncRenderer(
                 // this is the only reading that excludes the chirp's own first chunk.
                 val statsBeforePoll = scheduler.stats()
                 val depthNanos = outputDepthNanos(track, timestamp, writtenFrames)
+                // Taken beside the depth, because the depth counts forward from here. The write
+                // below blocks while the output is full, so a clock read after it has that wait
+                // in it and the depth does not - and the two then double-count it.
+                val depthReadAtNanos = System.nanoTime()
                 // The instant the next frame written will be heard. Both poll's release test and
                 // the trim below are asked about the same instant on purpose: poll decides whether
                 // the chunk is due, the trim decides how much of it already is not.
@@ -800,7 +804,10 @@ class SyncRenderer(
                         // A dropped or duplicated frame deliberately does not move the timeline:
                         // shifting the frame-to-instant mapping by one frame is the correction.
                         timelineNextHostNanos = decision.chunk.playAtHostNanos + CHUNK_NANOS
-                        recordPlayedBoundary(decision.chunk.sequence, statsBeforePoll, trimFrames, depthNanos)
+                        recordPlayedBoundary(
+                            decision.chunk.sequence, statsBeforePoll, trimFrames, depthNanos,
+                            depthReadAtNanos, heardAtHostNanos
+                        )
                     }
                     is PlaybackDecision.Silence -> {
                         // Counted as events, not only as frames. The frame total said 124 a second
@@ -848,7 +855,14 @@ class SyncRenderer(
      * silence bury the single missing chunk the window exists to catch - and would leave the
      * reported numbers incomparable with every run taken before repeats existed.
      */
-    private fun recordPlayedBoundary(sequence: Int, statsBeforePoll: SchedulerStats, trimFrames: Int, depthNanos: Long) {
+    private fun recordPlayedBoundary(
+        sequence: Int,
+        statsBeforePoll: SchedulerStats,
+        trimFrames: Int,
+        depthNanos: Long,
+        depthReadAtNanos: Long,
+        heardAtHostNanos: Long
+    ) {
         if (sequence >= CHIRP_SEQUENCE_BASE) {
             // Freeze the silence-write count at the streaming segment's end, the same boundary
             // streamingSilenceFrames is scoped to. O38 reported the whole-run count beside a
@@ -882,7 +896,8 @@ class SyncRenderer(
                 markerReleases.computeIfAbsent(sequence) {
                     MarkerRelease(
                         sequence = sequence,
-                        localNanos = System.nanoTime(),
+                        heardAtHostNanos = heardAtHostNanos,
+                        localNanos = depthReadAtNanos,
                         offsetNanos = offsetNanosNow(),
                         depthNanos = depthNanos,
                         trimFrames = trimFrames,

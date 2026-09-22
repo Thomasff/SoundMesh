@@ -22,6 +22,22 @@ package com.soundmesh.core
  */
 data class MarkerRelease(
     val sequence: Int,
+    /**
+     * When the handset expected this chunk's first frame to be heard, in host time.
+     *
+     * The handset's own number, not a reconstruction: it is what the release was tested against,
+     * so its difference from the schedule is the placement error with nothing assumed about the
+     * pairing correction or the spatial delay in force.
+     */
+    val heardAtHostNanos: Long,
+    /**
+     * This handset's own clock at the instant [depthNanos] was read - before the write, not after.
+     *
+     * AudioTrack.write blocks while the output is full, and a clock read after it returns has
+     * that wait in it while the depth it is added to does not. Measured on two of four rounds:
+     * alternate markers read exactly four chunks out, an 80 ms step in a quantity whose whole
+     * range of interest is one millisecond, with no trim and no dropped chunk to say so.
+     */
     val localNanos: Long,
     val offsetNanos: Long,
     val depthNanos: Long,
@@ -42,7 +58,8 @@ object MarkerReleaseCodec {
 
     fun encode(releases: List<MarkerRelease>): String =
         releases.joinToString(",", "[", "]") {
-            "{\"sequence\":${it.sequence},\"localNanos\":${it.localNanos}," +
+            "{\"sequence\":${it.sequence},\"heardAtHostNanos\":${it.heardAtHostNanos}," +
+                "\"localNanos\":${it.localNanos}," +
                 "\"offsetNanos\":${it.offsetNanos},\"depthNanos\":${it.depthNanos}," +
                 "\"trimFrames\":${it.trimFrames},\"filteredErrorFrames\":${it.filteredErrorFrames}}"
         }
@@ -70,11 +87,12 @@ object MarkerReleaseCodec {
         return ENTRY.findAll(report.substring(start, end)).map {
             MarkerRelease(
                 sequence = it.groupValues[1].toInt(),
-                localNanos = it.groupValues[2].toLong(),
-                offsetNanos = it.groupValues[3].toLong(),
-                depthNanos = it.groupValues[4].toLong(),
-                trimFrames = it.groupValues[5].toInt(),
-                filteredErrorFrames = it.groupValues[6].toInt()
+                heardAtHostNanos = it.groupValues[2].toLong(),
+                localNanos = it.groupValues[3].toLong(),
+                offsetNanos = it.groupValues[4].toLong(),
+                depthNanos = it.groupValues[5].toLong(),
+                trimFrames = it.groupValues[6].toInt(),
+                filteredErrorFrames = it.groupValues[7].toInt()
             )
         }.toList()
     }
@@ -92,7 +110,8 @@ object MarkerReleaseCodec {
      * instead.
      */
     private val ENTRY = Regex(
-        "\\{\"sequence\":(-?\\d+),\"localNanos\":(-?\\d+),\"offsetNanos\":(-?\\d+)," +
+        "\\{\"sequence\":(-?\\d+),\"heardAtHostNanos\":(-?\\d+)," +
+            "\"localNanos\":(-?\\d+),\"offsetNanos\":(-?\\d+)," +
             "\"depthNanos\":(-?\\d+),\"trimFrames\":(-?\\d+),\"filteredErrorFrames\":(-?\\d+)\\}"
     )
 }

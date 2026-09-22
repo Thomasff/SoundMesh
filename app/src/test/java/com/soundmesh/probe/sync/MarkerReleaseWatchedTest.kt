@@ -34,4 +34,27 @@ class MarkerReleaseWatchedTest {
             Regex("watchMarkerRelease\\(").findAll(source).count()
         )
     }
+
+    /**
+     * The instant a marker is recorded at is the instant its depth was read, not a later one.
+     *
+     * AudioTrack.write blocks while the output is full. Reading the clock after it returns puts
+     * that wait inside the answer, while the depth it is added to was measured before the wait -
+     * and the two then double-count it. Measured: on two of four rounds this made alternate
+     * markers read exactly four chunks out, an 80 ms step in a quantity whose whole range of
+     * interest is one millisecond, and it did so without a single trim or dropped chunk to say
+     * anything was wrong.
+     */
+    @Test
+    fun aMarkerReleaseIsStampedWithTheClockItsDepthWasReadAgainst() {
+        val source = File("src/main/java/com/soundmesh/probe/sync/SyncRenderer.kt").readText(Charsets.UTF_8)
+        val record = Regex("""markerReleases\.computeIfAbsent\([\s\S]*?\n {16}\}""")
+            .find(source)?.value
+            ?: throw AssertionError("the renderer no longer records marker releases")
+
+        assertTrue(
+            "the clock here has already waited for the output to drain: $record",
+            !record.contains("System.nanoTime()")
+        )
+    }
 }
