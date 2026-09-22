@@ -57,6 +57,39 @@ class HostStreamTest {
         )
     }
 
+    /**
+     * A host with its own speakers plays the instants it sent, not instants of its own.
+     *
+     * Its clock IS the host clock, so the offset is zero and the frame a chunk lands on is a
+     * function of the instant on the wire alone. Two timelines that agreed on the wire and
+     * disagreed in the room would be the one fault nobody could hear from either end.
+     */
+    @Test
+    fun aHostWithSpeakersPlaysTheInstantsItSent() {
+        val port = freePort()
+        val output = FakeOutput()
+        val host = HostStream(port, TonePcmSource(), localOutput = output)
+        val received = CopyOnWriteArrayList<AudioChunk>()
+        val client = ChunkClient("127.0.0.1", port) { received.add(it) }
+        try {
+            host.start()
+            client.start()
+            awaitSink(host)
+            host.stream(25)
+            awaitDelivery(received, 25)
+        } finally {
+            client.stop()
+            host.stop()
+        }
+
+        assertEquals(25, host.playedLocally())
+        assertEquals(
+            received.map { output.frameAtLocalNanos(it.playAtHostNanos) },
+            output.scheduled.map { it.first }
+        )
+        assertEquals("a whole chunk apart leaves no seam", 0, host.worstLocalSeamFrames())
+    }
+
     private fun streamTo(chunks: Int): List<AudioChunk> {
         val port = freePort()
         val host = HostStream(port, TonePcmSource())

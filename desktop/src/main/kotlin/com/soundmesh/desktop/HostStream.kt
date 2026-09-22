@@ -21,9 +21,23 @@ import com.soundmesh.probe.sync.ChunkServer
 class HostStream(
     private val port: Int = ChunkCodec.DEFAULT_PORT,
     private val source: TonePcmSource = TonePcmSource(),
-    private val leadNanos: Long = DEFAULT_LEAD_NANOS
+    private val leadNanos: Long = DEFAULT_LEAD_NANOS,
+    /**
+     * This machine's own speakers, or null to send without playing.
+     *
+     * The offset is fixed at zero and that is not a simplification: a host's clock IS the host
+     * clock the instants are written on, so there is nothing to estimate. Which makes this the
+     * one participant in the whole system with no clock term in its own playout - useful later,
+     * because it means a residual measured here has network and estimator taken out of it.
+     *
+     * What it does not do is put this machine in step with a handset. Both ends convert an
+     * instant to a frame and neither knows how far its own speaker sits behind that frame; the
+     * two constants are unmeasured and they do not cancel.
+     */
+    private val localOutput: FrameOutput? = null
 ) {
     private val chunkServer = ChunkServer(port)
+    private val localPlayout = localOutput?.let { ChunkPlayout(it) { 0L } }
 
     fun start() = chunkServer.start()
 
@@ -32,6 +46,11 @@ class HostStream(
 
     /** Chunks a sink stopped keeping up for. Zero on a healthy link. */
     fun droppedChunks(): Int = chunkServer.droppedChunks()
+
+    /** What this machine played of what it sent, and how the two counts differ. */
+    fun playedLocally(): Int = localPlayout?.played ?: 0
+    fun localSeams(): Int = localPlayout?.seams ?: 0
+    fun worstLocalSeamFrames(): Int = localPlayout?.worstSeamFrames ?: 0
 
     /**
      * Streams [chunks] chunks and returns once the last one has been handed over.
@@ -53,7 +72,12 @@ class HostStream(
         var frameIndex = 0L
         for (sequence in 0 until chunks) {
             val playAt = anchor + sequence * CHUNK_NANOS
-            chunkServer.broadcast(AudioChunk(sequence, playAt, source.fill(frameIndex, ChunkCodec.FRAMES_PER_CHUNK)))
+            val chunk = AudioChunk(sequence, playAt, source.fill(frameIndex, ChunkCodec.FRAMES_PER_CHUNK))
+            chunkServer.broadcast(chunk)
+            // After the broadcast, so a slow local output cannot hold up the wire. The sinks are
+            // across a room and this one is in the same process; whichever of them is behind, the
+            // instant in the chunk is already fixed and neither is waiting on the other for it.
+            localPlayout?.play(chunk)
             frameIndex += ChunkCodec.FRAMES_PER_CHUNK
             sleepUntil(playAt + CHUNK_NANOS - leadNanos)
         }

@@ -7,23 +7,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * A frame timeline that is a straight line through the origin, which is what makes a sign error
- * in the clock offset visible: frame zero is local nanosecond zero, so a chunk's landing frame is
- * a number that can be worked out by hand.
- */
-private class FakeOutput(private val sampleRate: Int = 48000) : FrameOutput {
-    var firstSchedulableFrame: Long = 0
-    val scheduled = ArrayList<Triple<Long, Int, ShortArray>>()
-
-    override fun frameAtLocalNanos(localNanos: Long): Long = localNanos * sampleRate / 1_000_000_000L
-
-    override fun schedule(samples: ShortArray, channels: Int, atFrame: Long): Boolean {
-        if (atFrame < firstSchedulableFrame) return false
-        scheduled.add(Triple(atFrame, channels, samples))
-        return true
-    }
-}
 
 class ChunkPlayoutTest {
 
