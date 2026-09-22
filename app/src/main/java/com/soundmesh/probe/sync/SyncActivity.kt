@@ -79,12 +79,26 @@ class SyncActivity : Activity() {
         // deadline outright and two recorded chirps the correlator could not locate at all. Turning
         // the screen on here makes a launch self-sufficient; run-sync also refuses to start against a
         // sleeping device, so the two together fail loudly instead of producing plausible garbage.
+        holdScreenForRun()
+        handle()
+    }
+
+    /**
+     * Takes the screen for the run that is about to start.
+     *
+     * Called by every run rather than once at creation, because [startRun] gives the screen back
+     * when a run ends and the second and every later run arrives through [onNewIntent], which does
+     * not rebuild the window. Armed in onCreate alone, this protected the first run and no other:
+     * measured on two handsets, the unprotected rounds read twelve to twenty-seven frames further
+     * out than protected rounds on the same parameters, which is the quantity the runs exist to
+     * measure.
+     */
+    private fun holdScreenForRun() {
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
-        handle()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -170,6 +184,7 @@ class SyncActivity : Activity() {
     }
 
     private fun startRun(role: String, mode: String, caseId: String, seconds: Int, projection: MediaProjection?) {
+        holdScreenForRun()
         statusView.text = "$role RUNNING"
         Thread {
             // Both branches write their own sync.json on success (CLOCK_ONLY inline below, FULL
