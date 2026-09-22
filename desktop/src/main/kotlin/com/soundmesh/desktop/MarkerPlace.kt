@@ -103,20 +103,22 @@ fun main(args: Array<String>) {
             // No slope correction: two clocks differing by twenty parts per million are nine
             // milliseconds apart over a ten minute run, well inside the search window, while an
             // anchor out by one marker is a whole stride away from it.
-            val agreed = witnesses.count { repeat ->
-                val predicted = at + framesBetween(
+            // Only the witnesses this recording is long enough to hold are asked, and all of
+            // those have to agree. A recording clipped a few seconds short otherwise rejects every
+            // candidate, because the last chirp is past its end for all of them - which is not a
+            // statement about the anchor at all.
+            val inRange = witnesses.map { repeat ->
+                at + framesBetween(
                     allPlays[candidate].playAtHostNanos, hostChirpAt + repeat * chirpIntervalNanos, rate
                 )
-                if (predicted - WINDOW_SAMPLES < 0 || predicted + WINDOW_SAMPLES + chirp.size >= mono.size) {
-                    false
-                } else {
-                    val found = ChirpCorrelator.findFirstArrival(
-                        mono, chirp, predicted - WINDOW_SAMPLES, predicted + WINDOW_SAMPLES
-                    )
-                    found != null && found.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO
-                }
+            }.filter { it - WINDOW_SAMPLES >= 0 && it + WINDOW_SAMPLES + chirp.size < mono.size }
+            val agreed = inRange.count { predicted ->
+                val found = ChirpCorrelator.findFirstArrival(
+                    mono, chirp, predicted - WINDOW_SAMPLES, predicted + WINDOW_SAMPLES
+                )
+                found != null && found.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO
             }
-            if (agreed == witnesses.size) {
+            if (inRange.size >= MINIMUM_WITNESSES && agreed == inRange.size) {
                 located = at to candidate
                 break@outer
             }
@@ -442,6 +444,14 @@ private fun longField(report: String, name: String): Long? =
 
 private fun millisOf(frames: Double): String =
     "%.3f ms".format(frames * 1000.0 / ChirpGenerator.SAMPLE_RATE)
+
+/**
+ * How many of the run's chirps must be inside the recording before it can say where the run sits.
+ *
+ * Two. One chirp lands on a two second grid the markers are not on, so even one is a real check -
+ * but two of them at different distances is what makes a chance correlation on noise unable to pass.
+ */
+private const val MINIMUM_WITNESSES = 2
 
 /**
  * How many strides into the recording the search for the first sweep may start.
