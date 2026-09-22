@@ -93,7 +93,7 @@ class SinkSession(
     private val onHostGone: () -> Unit = {},
     private val flags: SessionFlags = SessionFlags()
 ) : SyncSession {
-    private val estimator = ClockOffsetEstimator()
+    private val estimator = ClockOffsetEstimator(CLOCK_WINDOW, CLOCK_BEST)
 
     /**
      * Where the host is, as far as this handset knows. Moves only when [rediscover] finds it
@@ -146,8 +146,8 @@ class SinkSession(
     // How long this handset was silent waiting for its first estimate, which is the whole of
     // what a listener sees when a second phone joins and says nothing. It was never recorded, so
     // the only account of it was that the room said "十几秒" - which turned out to match
-    // CLOCK_INTERVAL_MILLIS times MIN_SAMPLES exactly. Recorded now so the burst that shortens it
-    // is checked rather than argued.
+    // CLOCK_INTERVAL_MILLIS times MIN_SAMPLES exactly. Recorded now so whatever shortens it - a
+    // burst then, the cadence itself now - is checked rather than argued.
     @Volatile private var clockStartedNanos = 0L
     @Volatile private var firstEstimateNanos = 0L
 
@@ -233,7 +233,13 @@ class SinkSession(
             ",\"clockHealth\":\"${clockHealth ?: "NONE"}\"" +
             ",\"hostGone\":$hostGone" +
             ",\"worstUncertaintyNanos\":$worstUncertaintyNanos" +
-            ",\"silentUntilFirstEstimateNanos\":${silentUntilFirstEstimateNanos()}"
+            ",\"silentUntilFirstEstimateNanos\":${silentUntilFirstEstimateNanos()}" +
+            // The shape that produced these numbers, read off the estimator rather than restated
+            // from the constants: a run has to be readable against what it ran, not against what
+            // the source says by the time somebody opens the run.
+            ",\"clockIntervalMillis\":$CLOCK_INTERVAL_MILLIS" +
+            ",\"estimatorWindow\":${estimator.windowSize}" +
+            ",\"estimatorBest\":${estimator.bestCount}"
 
     /** Minus one while still silent, so "has not answered yet" cannot be read as "answered at once". */
     private fun silentUntilFirstEstimateNanos(): Long =
@@ -329,12 +335,7 @@ class SinkSession(
             val client = ClockSyncClient(address, SyncActivity.CLOCK_PORT, estimator)
             clockClient = client
             runCatching {
-                client.runFor(
-                    FOREVER_SECONDS,
-                    CLOCK_INTERVAL_MILLIS,
-                    burstExchanges = CLOCK_BURST_EXCHANGES,
-                    burstIntervalMillis = CLOCK_BURST_INTERVAL_MILLIS
-                )
+                client.runFor(FOREVER_SECONDS, CLOCK_INTERVAL_MILLIS)
             }
             if (flags.isStopped()) return
             // The interrupt is cleared here rather than left set, or the rebuilt client's first
@@ -599,30 +600,43 @@ class SinkSession(
         /** ~3s of audio at 20ms/chunk. */
         const val SCHEDULER_CAPACITY_CHUNKS = 150
 
-        /** The design's clock cadence: 1 ppm of drift moves 2 microseconds across it. */
-        const val CLOCK_INTERVAL_MILLIS = 2000L
+        /**
+         * Four exchanges a second, against a window of [CLOCK_WINDOW], so the fit still spans the
+         * same 128 seconds two seconds apart spanned with sixty-four.
+         *
+         * Not a faster version of the same thing. What sets the estimator's walk is how long its
+         * kept set spans, not how many exchanges it holds, so the span is what was held fixed and
+         * the density is what was bought: over six archived rounds a side, the offset's 5-95 band
+         * falls from 1.051 ms to 0.302 - four standard errors - and the worst round past a full
+         * window from 1.596 ms to 0.385, which is the size of the pairing spread a room measures.
+         * The lag does not move, and the cost measured zero: both arms ran with no underrun, no
+         * drop and no reacquisition. See cross-platform.md, experiments 27 and 28.
+         *
+         * This is also what retired the burst the session used to open with. That burst was
+         * thirty-two exchanges 250 ms apart in front of a two-second cadence, there because the
+         * estimator answers nothing below MIN_SAMPLES and this session plays nothing until it
+         * answers - at two seconds apart that is fourteen seconds of a joining handset standing
+         * silent, which is what the room always reported. At this cadence the burst's own rate IS
+         * the settled rate. The first exchanges go out at the times they went out before, and they
+         * are selected from by the same rule: keepFor is a fraction of the window while the window
+         * fills, and eight of sixty-four and sixty-four of five hundred and twelve are the same
+         * eighth, so the two shapes publish the same numbers until sixty-four are held. Not
+         * approximately - ClockOffsetEstimatorTest pins it, and six archived rounds disagreed by
+         * 0.0e+0 ms. How this session starts did not change, which is why it was not re-measured.
+         */
+        const val CLOCK_INTERVAL_MILLIS = 250L
 
         /**
-         * How many exchanges go out at [CLOCK_BURST_INTERVAL_MILLIS] before the cadence settles.
+         * The window and kept count this session runs, rather than the core defaults.
          *
-         * The estimator answers nothing below MIN_SAMPLES, and this session plays nothing until it
-         * answers, so at the settled cadence alone a joining handset is silent for fourteen
-         * seconds - which is what the room has always seen. None of that is computation.
-         *
-         * Thirty-two rather than eight, and it is not a trade. Replayed over 2026-09-10's
-         * eighteen runs, the first estimate a burst of this length supports sat 0.07 ± 0.74 ms
-         * from that run's mature reading, worst case 1.82; the eight the settled cadence spends
-         * fourteen seconds collecting sat 0.71 ± 2.53, worst case 13.62. Eight seconds instead of
-         * fourteen AND a tighter answer. Stopping at eight would reach sound in two seconds but
-         * with a worst case of 3.8 ms, past the millisecond a room can hear.
-         *
-         * See on-device-calibration.md 28.1. The cost is about twenty-eight extra small packets,
-         * once, over the first eight seconds of a session.
+         * Named here instead of moved into ClockOffsetEstimator because those defaults have two
+         * other readers - the pair calibration round, which waits out one whole window on purpose
+         * and was sized against sixteen seconds, and the desktop peer - and neither was measured
+         * under this shape. Widening a default is how a screen designed around sixteen seconds
+         * quietly becomes one that waits out two minutes.
          */
-        const val CLOCK_BURST_EXCHANGES = 32
-
-        /** The pair calibration screen's cadence, which is where the numbers above were measured. */
-        const val CLOCK_BURST_INTERVAL_MILLIS = 250L
+        const val CLOCK_WINDOW = 512
+        const val CLOCK_BEST = 64
 
         /** No new chunk for this long means the host has stopped sending. The harness's value. */
         const val IDLE_THRESHOLD_NANOS = 800_000_000L

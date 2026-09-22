@@ -317,4 +317,44 @@ class ClockOffsetEstimatorTest {
 
         assertEquals(listOf(8, 8, 8, 8), kept)
     }
+
+    /**
+     * Two configurations of the same eighth publish the same numbers until the narrow one fills.
+     *
+     * This is what lets a session move from eight of sixty-four to sixty-four of five hundred and
+     * twelve without re-measuring how it starts: keepFor is a fraction while the window fills, and
+     * both of these are one eighth, so the two arms keep literally the same exchanges over the
+     * stretch a joining handset is waiting out. Measured over six archived rounds the two disagreed
+     * by 0.0e+0 ms there - this pins the algebra that explains it.
+     *
+     * The second half is what stops the test passing for the wrong reason: past the narrow window
+     * the two must part, or the assertion above is being made about one configuration twice.
+     */
+    @Test
+    fun aWiderWindowOfTheSameFractionChangesNothingUntilTheNarrowOneIsFull() {
+        val narrow = ClockOffsetEstimator(64, 8)
+        val wide = ClockOffsetEstimator(512, 64)
+        // Round trips that vary enough for the selection to have something to choose between, and
+        // reproducibly, so a disagreement is the rule's and not the generator's.
+        var noise = 7L
+        var parted = false
+        repeat(200) { index ->
+            noise = (noise * 1103515245L + 12345L) and 0x7fffffffL
+            val forward = 1_000_000L + noise % 9_000_000L
+            val back = 1_000_000L + (noise / 7) % 9_000_000L
+            val at = index * 250L * 1_000_000L
+            val next = exchange(at, 3 * second, forward, back)
+            narrow.record(next)
+            wide.record(next)
+            val held = index + 1
+            val a = narrow.estimate(at)
+            val b = wide.estimate(at)
+            if (held < 64) {
+                assertEquals("they parted at held=$held", a?.offsetNanos, b?.offsetNanos)
+            } else if (a?.offsetNanos != b?.offsetNanos) {
+                parted = true
+            }
+        }
+        assertTrue("the two arms never parted, so the agreement above is one arm twice", parted)
+    }
 }

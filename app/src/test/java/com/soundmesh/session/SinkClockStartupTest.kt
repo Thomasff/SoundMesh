@@ -18,23 +18,53 @@ class SinkClockStartupTest {
 
     /**
      * The estimator answers nothing below MIN_SAMPLES and this session plays nothing until it
-     * answers, so the settled cadence alone leaves a joining handset silent for fourteen seconds -
-     * which is what the room reported having always seen. The burst is what shortens it, and a
-     * cadence passed without one restores the fourteen with nothing in any report to say so.
+     * answers, so a joining handset stands silent for MIN_SAMPLES of whatever rate its clock opens
+     * at. At the two-second cadence this session used to settle to, that was fourteen seconds -
+     * what the room reported having always seen - and a burst of thirty-two exchanges 250 ms apart
+     * was what shortened it.
+     *
+     * The burst is gone, because the cadence became the burst's own rate. What it was protecting
+     * was never the burst: it was the time to the first estimate. So that is what this asserts,
+     * and either mechanism satisfies it. What must not come back is a session that opens at a rate
+     * slow enough to leave somebody standing in a quiet room.
      */
     @Test
-    fun theClockStartsWithABurstRatherThanLeavingAJoiningHandsetSilentForFourteenSeconds() {
+    fun aJoiningHandsetReachesItsFirstEstimateWithinFourSeconds() {
+        val settled = Regex("""const val CLOCK_INTERVAL_MILLIS = (\d+)L""")
+            .find(source)!!.groupValues[1].toLong()
+        // Whatever rate the opening exchanges actually go out at: a burst in front of the cadence
+        // if there is one, the cadence itself if there is not.
+        val opening =
+            if (source.contains("burstIntervalMillis =")) {
+                Regex("""const val CLOCK_BURST_INTERVAL_MILLIS = (\d+)L""")
+                    .find(source)!!.groupValues[1].toLong()
+            } else {
+                settled
+            }
+        // MIN_SAMPLES is eight, and it lives in core where this test cannot see the constant
+        // without dragging the module in; it has not moved since the estimator was written.
         assertTrue(
-            "the session's clock no longer bursts, so a joining handset waits out MIN_SAMPLES",
-            source.contains("burstExchanges = CLOCK_BURST_EXCHANGES")
+            "the first estimate is ${opening * 8} ms out, and fourteen seconds is what got reported",
+            opening * 8 <= 4000
         )
-        assertTrue(source.contains("burstIntervalMillis = CLOCK_BURST_INTERVAL_MILLIS"))
-        // Long enough to beat the settled cadence on accuracy as well as on time - eight would reach
-        // sound sooner and land past the millisecond a room can hear. See on-device-calibration 28.1.
-        assertTrue(
-            "a burst shorter than the window's quarter buys speed by giving up the accuracy 28.1 measured",
-            Regex("""const val CLOCK_BURST_EXCHANGES = (\d+)""").find(source)!!.groupValues[1].toInt() >= 16
-        )
+    }
+
+    /**
+     * The shape the scatter was measured at, named where a later move of the core defaults cannot
+     * quietly take this session somewhere else.
+     *
+     * Sixty-four of five hundred and twelve at 250 ms: the 5-95 band of the published offset falls
+     * from 1.051 ms to 0.302, and the worst round past a full window from 1.596 to 0.385. Those are
+     * experiments 27 and 28, measured at this shape and at no other.
+     */
+    @Test
+    fun theSessionRunsTheWindowItsScatterWasMeasuredAt() {
+        assertTrue(source.contains("ClockOffsetEstimator(CLOCK_WINDOW, CLOCK_BEST)"))
+        assertTrue(source.contains("const val CLOCK_WINDOW = 512"))
+        assertTrue(source.contains("const val CLOCK_BEST = 64"))
+        // And read back off the instance, so a run says which shape produced it.
+        assertTrue(source.contains("estimator.windowSize"))
+        assertTrue(source.contains("estimator.bestCount"))
     }
 
     /**
