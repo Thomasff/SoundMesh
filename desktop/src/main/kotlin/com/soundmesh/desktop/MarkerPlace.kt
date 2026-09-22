@@ -51,8 +51,14 @@ fun main(args: Array<String>) {
             "a build that writes ${MarkerPlayCodec.FIELD}?")
         return
     }
+    // Either side's own chirp, under the name that side writes it down as. Both are the same
+    // quantity - the instant this handset aimed its own chirps at, on the same timebase as its own
+    // markerPlays - and the names differ only because a paired report carries both handsets' and
+    // has to say whose is whose. Reading the wrong one would compare a handset's markers against
+    // its peer's chirps, which is a real number with no meaning.
     val hostChirpAt = longField(report, "hostChirpAtHostNanos")
-        ?: run { println("no hostChirpAtHostNanos in the report: nothing to compare the markers against."); return }
+        ?: longField(report, "sinkChirpAtHostNanos")
+        ?: run { println("no chirp instant in the report: nothing to compare the markers against."); return }
     val chirpRepeats = (longField(report, "chirpRepeats") ?: 1L).toInt()
     val chirpIntervalNanos = longField(report, "chirpIntervalNanos") ?: 0L
     val alignmentOffsetMicros = longField(report, "alignmentOffsetMicros") ?: 0L
