@@ -86,6 +86,23 @@ object AlignmentVerdict {
         val cluster = errors.filterIndexed { index, _ -> !outlying[index] }
         val outliers = errors.filterIndexed { index, _ -> outlying[index] }
 
+        // A centre of the cluster, and deliberately not the floor of it.
+        //
+        // O17 argued for the floor: the emission steps it measured sit on a ladder 52 frames apart,
+        // the ladder is one-sided, so level 0 is the placement the schedule asked for and the
+        // lowest readings estimate it. That argument needs playback to sit on level 0, and O19
+        // measured where it sits - on neither level. Against the handset's own schedule, its chirps
+        // land 30 +- 11 frames (0.63 ms) later than the streamed audio the constant is spent on,
+        // in all six rounds, and where the streamed audio falls between the two levels moves from
+        // round to round.
+        //
+        // The floor is also the less stable of the two there: over six rounds it scattered 36
+        // frames against the mean's 14, because whether a round happens to draw one of the rare low
+        // emissions is itself a coin toss - one round drew none at all and its floor was its mean.
+        //
+        // What O19 cannot settle is whether any of this survives into a pair, because a pair
+        // constant is a difference between two handsets and every term common to both cancels in
+        // it. That needs two handsets measured the same way; until then this stays a centre.
         val clusterMean = if (cluster.isEmpty()) null else cluster.average()
         if (clusterMean != null && abs(clusterMean) >= MAX_CLUSTER_MEAN_MS) {
             failures.add(VerdictFailure.CLUSTER_MEAN_TOO_LARGE)
