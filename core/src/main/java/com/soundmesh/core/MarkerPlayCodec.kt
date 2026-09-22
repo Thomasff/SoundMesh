@@ -52,6 +52,14 @@ object MarkerPlayCodec {
         }.toList()
     }
 
+    /**
+     * Both braces are escaped, and the closing one is the reason this is worth a comment.
+     *
+     * Desktop Java accepts a bare `}` in a pattern; Android's `java.util.regex` is ICU underneath
+     * and refuses it. So the JVM tests here all passed and the handset threw
+     * ExceptionInInitializerError out of this object's initialiser, at the one moment the run had
+     * nothing left to do but write its report - a whole round of audio recorded and then discarded.
+     */
     private val ENTRY =
-        Regex("\\{\"index\":(-?\\d+),\"sequence\":(-?\\d+),\"playAtHostNanos\":(-?\\d+)}")
+        Regex("\\{\"index\":(-?\\d+),\"sequence\":(-?\\d+),\"playAtHostNanos\":(-?\\d+)\\}")
 }
