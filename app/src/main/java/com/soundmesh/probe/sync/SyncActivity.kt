@@ -241,7 +241,7 @@ class SyncActivity : Activity() {
         val host = locateHost()
         val address = host.address
         if (mode == "CLOCK_ONLY") {
-            val estimator = ClockOffsetEstimator()
+            val estimator = ClockOffsetEstimator(estimatorWindowRequested(), estimatorBestRequested())
             val client = ClockSyncClient(address, CLOCK_PORT, estimator)
             val history = client.runFor(seconds, clockIntervalMillisRequested())
             runStore.writeSyncJson(
@@ -403,6 +403,29 @@ class SyncActivity : Activity() {
     private fun clockIntervalMillisRequested(): Long {
         val requested = intent.getIntExtra("clock_interval_ms", DEFAULT_CLOCK_INTERVAL_MILLIS).toLong()
         return if (requested in MIN_CLOCK_INTERVAL_MILLIS..MAX_CLOCK_INTERVAL_MILLIS) requested else DEFAULT_CLOCK_INTERVAL_MILLIS.toLong()
+    }
+
+    /**
+     * How many exchanges the estimator holds, and how many of the quietest it averages.
+     *
+     * These are a pair, not two knobs: the rationale for keeping eight is "keep the quiet eighth",
+     * so a run that widens the window without widening the count is asking for a different rule,
+     * not a longer one. Replayed over three archived rounds, keeping 64 of 512 at a quarter second
+     * spans the same 128 seconds as the shipped 8 of 64 at two seconds - same staleness, same kept
+     * fraction - and the offset walk falls from 0.332 ms to 0.032. That is a replay; this flag is
+     * what lets an arm actually run it.
+     */
+    private fun estimatorWindowRequested(): Int {
+        val requested = intent.getIntExtra("estimator_window", ClockOffsetEstimator.DEFAULT_WINDOW)
+        return if (requested in ClockOffsetEstimator.MIN_SAMPLES..MAX_ESTIMATOR_WINDOW) requested
+        else ClockOffsetEstimator.DEFAULT_WINDOW
+    }
+
+    /** Clamped to the window: keeping every held exchange is no selection at all. */
+    private fun estimatorBestRequested(): Int {
+        val window = estimatorWindowRequested()
+        val requested = intent.getIntExtra("estimator_best", ClockOffsetEstimator.DEFAULT_BEST)
+        return if (requested in 1..window) requested else minOf(ClockOffsetEstimator.DEFAULT_BEST, window)
     }
 
     /**
@@ -874,7 +897,7 @@ class SyncActivity : Activity() {
 
     private fun runSinkFull(host: HostLocation, caseId: String, seconds: Int) {
         val address = host.address
-        val estimator = ClockOffsetEstimator()
+        val estimator = ClockOffsetEstimator(estimatorWindowRequested(), estimatorBestRequested())
         val clockClient = ClockSyncClient(address, CLOCK_PORT, estimator)
         // currentEstimate() returns the estimate from the last exchange cycle, and runFor stores
         // that cycle's result unconditionally - so a cycle whose fit is rejected clears a
@@ -1501,6 +1524,13 @@ class SyncActivity : Activity() {
         private const val DEFAULT_CLOCK_INTERVAL_MILLIS = 2000
         private const val MIN_CLOCK_INTERVAL_MILLIS = 100L
         private const val MAX_CLOCK_INTERVAL_MILLIS = 10_000L
+
+        /**
+         * Held exchanges are cheap - four longs each - so this is not a memory bound. It is the
+         * point past which a window at any cadence this activity accepts would span longer than a
+         * run, and an estimator whose window never fills is a different estimator.
+         */
+        private const val MAX_ESTIMATOR_WINDOW = 4096
         const val CHUNK_PORT = 45124
 
         /** Where the host takes delivery of the sink's own reading of the run. */
