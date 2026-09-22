@@ -1,7 +1,5 @@
-package com.soundmesh.probe.sync
+package com.soundmesh.core
 
-import com.soundmesh.core.AudioChunk
-import com.soundmesh.core.ChunkCodec
 import java.io.ByteArrayInputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

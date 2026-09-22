@@ -1,8 +1,5 @@
-package com.soundmesh.probe.sync
+package com.soundmesh.core
 
-import com.soundmesh.core.AudioChunk
-import com.soundmesh.core.ChunkCodec
-import com.soundmesh.core.HostId
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
