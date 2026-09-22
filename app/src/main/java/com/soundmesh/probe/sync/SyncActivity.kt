@@ -1204,6 +1204,11 @@ class SyncActivity : Activity() {
     private fun chirpScheduleJson(alignmentOffsetMicros: Long): String =
         "\"chirpRepeats\":${chirpRepeatsRequested()},\"chirpIntervalNanos\":${chirpIntervalNanosRequested()}," +
             "\"deadbandFrames\":${deadbandFramesRequested()}," +
+            // The release band, which until now no artifact recorded. A run comparing the default
+            // band against a collapsed one left nothing behind saying which it had been given, so
+            // the arm had to be inferred from releaseTrims - and `deadbandFrames` beside it is the
+            // drift controller's, a different number with a confusingly similar name.
+            "\"trimDeadbandFrames\":${trimFramesRequested()}," +
             "\"alignmentOffsetMicros\":$alignmentOffsetMicros"
 
     /**

@@ -74,42 +74,65 @@ fun main(args: Array<String>) {
     println("report : ${allPlays.size} markers, $chirpRepeats chirps " +
         "${"%.1f".format(chirpIntervalNanos / 1e9)} s apart")
 
-    // The first sweep is searched for across the whole span up to the next marker, because nothing
-    // yet ties the handset's clock to this recording and any window that wide holds exactly one
-    // sweep. Which marker it is is decided below, not assumed here.
-    val firstSpan = framesBetween(allPlays[0].playAtHostNanos, allPlays[1].playAtHostNanos, rate)
-    val first = ChirpCorrelator.findFirstArrival(mono, chirp, 0, firstSpan)
-    if (first == null || first.ratio < ChirpCorrelator.MIN_TRUSTWORTHY_RATIO) {
-        println("no marker in the first $firstSpan samples. Was the handset already streaming when " +
-            "this recording started?")
+    // Where the run's markers sit in this recording: which sample the first one found is at, and
+    // which marker that is.
+    //
+    // Both have to be searched for. This machine and the handset start within seconds of each
+    // other but not in step, so the recording may begin before the first marker or after the
+    // third - and a recording that begins after it looks exactly like a good one, because the
+    // markers are evenly spaced and a whole table shifted by three of them steps along perfectly.
+    // Only the chirps give it away, and they are the witness here for two reasons: they sit on a
+    // different spacing from the markers, so an anchor out by one marker predicts them where
+    // nothing is, and they are what the comparison needs anyway - an anchor that cannot find them
+    // is an anchor no reading can be taken through.
+    //
+    // The last marker was the witness first, and an unreadable last marker then made the
+    // candidate one past the truth the first one to pass: it predicts the last marker onto the
+    // second to last, which is readable. That round read its chirps a whole stride early and
+    // found none. No single marker can be the witness while unreadable markers are tolerated.
+    val stride = framesBetween(allPlays[0].playAtHostNanos, allPlays[1].playAtHostNanos, rate)
+    val witnesses = listOf(0, chirpRepeats / 2, chirpRepeats - 1).distinct()
+    var located: Pair<Int, Int>? = null
+    outer@ for (skip in 0..MAX_OPENING_STRIDES) {
+        val from = skip * stride
+        if (from + stride + chirp.size >= mono.size) break
+        val sweep = ChirpCorrelator.findFirstArrival(mono, chirp, from, from + stride)
+        if (sweep == null || sweep.ratio < ChirpCorrelator.MIN_TRUSTWORTHY_RATIO) continue
+        val at = indexOf(sweep)
+        for (candidate in 0..minOf(MAX_ANCHOR_SLIP, allPlays.size - 2)) {
+            // No slope correction: two clocks differing by twenty parts per million are nine
+            // milliseconds apart over a ten minute run, well inside the search window, while an
+            // anchor out by one marker is a whole stride away from it.
+            val agreed = witnesses.count { repeat ->
+                val predicted = at + framesBetween(
+                    allPlays[candidate].playAtHostNanos, hostChirpAt + repeat * chirpIntervalNanos, rate
+                )
+                if (predicted - WINDOW_SAMPLES < 0 || predicted + WINDOW_SAMPLES + chirp.size >= mono.size) {
+                    false
+                } else {
+                    val found = ChirpCorrelator.findFirstArrival(
+                        mono, chirp, predicted - WINDOW_SAMPLES, predicted + WINDOW_SAMPLES
+                    )
+                    found != null && found.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO
+                }
+            }
+            if (agreed == witnesses.size) {
+                located = at to candidate
+                break@outer
+            }
+        }
+    }
+    if (located == null) {
+        println("nothing in this recording lines up with this run: no sweep in the opening " +
+            "${MAX_OPENING_STRIDES + 1} strides, at any offset up to $MAX_ANCHOR_SLIP markers, puts " +
+            "the run's chirps where it says they are. Either this recording is not of this run, or " +
+            "the chirps never played - the report's chirpWindow says whether they did.")
         return
     }
-    // Which marker that first sweep is. It is marker 0 only if this machine was recording before
-    // the handset started streaming, and a run where it was not looks exactly like a good one: the
-    // markers are evenly spaced, so a whole table shifted by two of them steps along perfectly and
-    // the misfit surfaces only at the very end. It cost a 600 second round. The witness is the last
-    // scheduled marker - under a wrong anchor it is predicted past where the stream ever ran, so
-    // only the right one finds a sweep there.
-    val anchor = (0..MAX_ANCHOR_SLIP).firstOrNull { candidate ->
-        if (candidate >= allPlays.size) return@firstOrNull false
-        val last = allPlays.size - 1
-        val at = indexOf(first) +
-            framesBetween(allPlays[candidate].playAtHostNanos, allPlays[last].playAtHostNanos, rate)
-        if (at + WINDOW_SAMPLES + chirp.size >= mono.size) return@firstOrNull false
-        val witness = ChirpCorrelator.findFirstArrival(
-            mono, chirp, at - WINDOW_SAMPLES, at + WINDOW_SAMPLES
-        )
-        witness != null && witness.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO
-    }
-    if (anchor == null) {
-        println("the first sweep in this recording cannot be matched to any of the run's markers: " +
-            "no anchor within $MAX_ANCHOR_SLIP of it puts a sweep where the last one was scheduled. " +
-            "Start this machine's recording before the handset, in the same breath as the launch.")
-        return
-    }
+    val (firstAt, anchor) = located
     if (anchor > 0) {
-        println("anchor : the first sweep here is marker $anchor, not marker 0 - this recording " +
-            "started after the handset did. The last scheduled marker is where it says it is.")
+        println("anchor : the first sweep read here is marker $anchor, not marker 0 - this recording " +
+            "started after the handset did. The run's chirps are where that says they are.")
     }
     val plays = allPlays.drop(anchor)
     // Stepped from the previous *measured* arrival by the gap the handset actually scheduled -
@@ -121,7 +144,7 @@ fun main(args: Array<String>) {
     // check is that nearly all of them were found, which needs a count and not an exception. The
     // window widens by one stride per consecutive miss, because the step has to reach across them.
     val arrivals = ArrayList<Int?>()
-    arrivals.add(indexOf(first))
+    arrivals.add(firstAt)
     var lastGood = 0
     var missing = 0
     for (k in 1 until plays.size) {
@@ -198,7 +221,7 @@ fun main(args: Array<String>) {
     }
     // Kept with the instant it was scheduled for, because a chirp that could not be read must not
     // shift the rest of the table onto the wrong instants.
-    val chirpFound = ArrayList<Pair<Double, Double>>()
+    val chirpFound = ArrayList<Triple<Double, Double, ChirpArrival>>()
     var missed = 0
     chirpXs.forEach { x ->
         val expected = fit.at(x).toInt()
@@ -213,7 +236,7 @@ fun main(args: Array<String>) {
             missed++
             return@forEach
         }
-        chirpFound.add(x to (indexOf(found) - fit.at(x)))
+        chirpFound.add(Triple(x, indexOf(found) - fit.at(x), found))
     }
     println()
     val chirpResidual = chirpFound.map { it.second }
@@ -223,9 +246,18 @@ fun main(args: Array<String>) {
         return
     }
     println()
-    println("  #   second   residual")
+    // ratio and the onset-to-peak distance are printed beside each residual to rule out one
+    // specific way a chirp could read early without being early: the onset is the first lag
+    // reaching a share of the peak, so a noisy precursor moves it and the peak does not. A draw
+    // that sits a whole step below the others with an ordinary onset-to-peak distance is a real
+    // step; one with a long distance is the detector.
+    println("  #   second   residual    ratio  onset-peak")
     chirpResidual.indices.forEach {
-        println("%3d %8.1f %10.1f".format(it, chirpFound[it].first / ChirpGenerator.SAMPLE_RATE, chirpResidual[it]))
+        val arrival = chirpFound[it].third
+        println("%3d %8.1f %10.1f %8.0f %11d".format(
+            it, chirpFound[it].first / ChirpGenerator.SAMPLE_RATE, chirpResidual[it],
+            arrival.ratio, arrival.index - (arrival.firstArrivalIndex ?: arrival.index)
+        ))
     }
     describe("chirps ", chirpResidual)
 
@@ -235,7 +267,17 @@ fun main(args: Array<String>) {
     // standard deviation, and it is the level's position that the product's floor estimator is
     // trying to hit.
     val sorted = chirpResidual.sorted()
-    val (floor, floorCount) = levelAt(sorted)
+    // Every group the hole criterion finds, printed. The floor is the lowest of them, and a lowest
+    // group whose own members are a third of a step apart is not a level - it is two stray draws
+    // that the criterion put in one bucket, and averaging them silently would hand the decision a
+    // number with nothing behind it.
+    val groups = groupsIn(sorted)
+    println()
+    println("levels : " + groups.joinToString("; ") {
+        "n=${it.size} at ${"%.1f".format(it.average())}" +
+            (if (it.size > 1) " +-${"%.1f".format(spreadOf(it))}" else "")
+    })
+    val (floor, floorCount) = groups.first().average() to groups.first().size
     val chirpMean = chirpResidual.average()
     // What it costs to read the markers' line where the chirps are. Shared by both candidates, and
     // printed on its own because it is the one term a longer run with denser markers shrinks.
@@ -318,23 +360,21 @@ private fun describe(what: String, residual: List<Double>) {
 }
 
 /**
- * The lowest level's position and how many draws sit on it.
+ * The draws split into levels at every hole wider than [LEVEL_HOLE_FRAMES].
  *
- * The level ends at the first hole wider than [LEVEL_HOLE_FRAMES], which O17 measured the room for:
- * its levels are 52 frames apart with 6 to 9 frames of scatter inside one, so a hole of 26 frames
- * cannot fall inside a level and cannot be missed between two. With no such hole every draw is one
- * level and the answer is the whole mean, which is the correct reading of a path with no ladder.
+ * See [LEVEL_HOLE_FRAMES] for why that width. With no such hole the answer is one group holding
+ * everything, which is the correct reading of a path with no ladder in it.
  */
-private fun levelAt(sorted: List<Double>): Pair<Double, Int> {
-    var end = sorted.size
-    for (k in 1 until sorted.size) {
-        if (sorted[k] - sorted[k - 1] > LEVEL_HOLE_FRAMES) {
-            end = k
-            break
+private fun groupsIn(sorted: List<Double>): List<List<Double>> {
+    val groups = ArrayList<List<Double>>()
+    var start = 0
+    for (k in 1..sorted.size) {
+        if (k == sorted.size || sorted[k] - sorted[k - 1] > LEVEL_HOLE_FRAMES) {
+            groups.add(sorted.subList(start, k).toList())
+            start = k
         }
     }
-    val level = sorted.take(end)
-    return level.average() to level.size
+    return groups
 }
 
 /**
@@ -402,6 +442,14 @@ private fun longField(report: String, name: String): Long? =
 
 private fun millisOf(frames: Double): String =
     "%.3f ms".format(frames * 1000.0 / ChirpGenerator.SAMPLE_RATE)
+
+/**
+ * How many strides into the recording the search for the first sweep may start.
+ *
+ * Three, for the case the anchor search cannot cover: a recording whose opening stride holds no
+ * marker at all, where whatever correlated in it was noise and no offset then fits.
+ */
+private const val MAX_OPENING_STRIDES = 3
 
 /**
  * How many markers the first sweep in the recording may be past marker 0.
