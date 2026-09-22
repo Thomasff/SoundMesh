@@ -462,10 +462,16 @@ private const val MINIMUM_WITNESSES = 2
 /**
  * How many strides into the recording the search for the first sweep may start.
  *
- * Three, for the case the anchor search cannot cover: a recording whose opening stride holds no
- * marker at all, where whatever correlated in it was noise and no offset then fits.
+ * For the case the anchor search cannot cover: a recording whose opening strides hold no marker at
+ * all, where whatever correlated in them was noise and no offset then fits.
+ *
+ * Twelve rather than the three a one-handset run needs, because a sink's first sweep is far later
+ * than a host's: it stamps half a stride behind, and it stamps nothing at all until its clock
+ * estimate has converged, which takes about sixteen seconds. Widening this does not widen what is
+ * accepted - every candidate still has to put the run's chirps where the report says they are -
+ * it only lets the search reach a first sweep that is genuinely further in.
  */
-private const val MAX_OPENING_STRIDES = 3
+private const val MAX_OPENING_STRIDES = 12
 
 /**
  * How many markers the first sweep in the recording may be past marker 0.
