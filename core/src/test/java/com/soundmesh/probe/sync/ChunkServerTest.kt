@@ -1,5 +1,6 @@
-package com.soundmesh.core
+package com.soundmesh.probe.sync
 
+import com.soundmesh.core.AudioChunk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

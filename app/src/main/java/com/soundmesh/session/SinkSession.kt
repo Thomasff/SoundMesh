@@ -2,13 +2,13 @@ package com.soundmesh.session
 
 import android.util.Log
 import com.soundmesh.core.AudioChunk
-import com.soundmesh.core.ChunkClient
 import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockHealth
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.SessionState
+import com.soundmesh.probe.sync.ChunkClient
 import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.SpatialFieldClient
