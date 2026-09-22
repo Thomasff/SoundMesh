@@ -698,6 +698,15 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   //
   // The probe's own package is refused because the host plays back the very stream it is capturing.
   // Capturing itself is a feedback loop, and it would run and build a file rather than fail.
+  // Both sides, never one. The sweeps are stamped on one stride at two phases, and a sink that
+  // was not told the stride would play the host sweeps it receives instead of silencing them -
+  // the same sweep out of both handsets at one instant, which is the one shape a correlator
+  // cannot read. One flag reaching both intents is what keeps that from being possible.
+  const markerRaw = value(args, '--marker-stride-chunks');
+  const markerStrideChunks = markerRaw === undefined ? undefined : Number(markerRaw);
+  if (markerRaw !== undefined && (!Number.isInteger(markerStrideChunks) || markerStrideChunks < 20 || markerStrideChunks > 2000)) {
+    throw new Error('--marker-stride-chunks takes a whole number of 960-frame chunks between one sweep and the next, 20 to 2000 (250 is five seconds). It puts the calibration sweep on the streamed release path, which is the path the pair constant is spent on and the chirp path is not.');
+  }
   const capturePackage = value(args, '--capture-package');
   // The local path of an audio file the host decodes and streams in place of the tone. Unlike
   // capture this needs no consent, and the host plays only what it streams - so the pair can be
@@ -761,12 +770,12 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Before the run, not during it: a push that fails after the handsets have started would
   // leave them playing the tone under a run named for a song.
   const sourceFile = sourceFilePath === undefined ? undefined : await pushSourceFile({ serial: hostSerial, localPath: sourceFilePath, runAdbHost });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode, playbackUsage: hostPlaybackUsage });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode, playbackUsage: hostPlaybackUsage, markerStrideChunks });
   // A generated run keeps the stagger it always had: the host binds its ports immediately. A
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
   else await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode, paired: pairedHost });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode, paired: pairedHost, markerStrideChunks });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

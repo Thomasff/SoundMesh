@@ -88,4 +88,18 @@ class MarkedStreamSource(
     /** The first frame of marker [index], counted from the stream's first frame. */
     fun markerFirstFrame(index: Int): Long =
         (firstMarkerChunk.toLong() + index.toLong() * strideChunks) * framesPerChunk
+
+    companion object {
+        /**
+         * The phase the facing handset stamps on, given this one's.
+         *
+         * Half a stride, so the two sweeps sit as far apart as the grid allows and the analysis
+         * can say which arrival is whose. Both sides derive it from this one rule rather than one
+         * telling the other: a phase that travelled would be a second copy of the decision, and a
+         * side that missed the message would stamp over its peer's sweep - two arrivals at one
+         * instant, the one shape a correlator cannot read.
+         */
+        fun facingPhase(firstMarkerChunk: Int, strideChunks: Int): Int =
+            firstMarkerChunk + strideChunks / 2
+    }
 }

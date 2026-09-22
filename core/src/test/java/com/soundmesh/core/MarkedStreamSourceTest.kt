@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MarkedStreamSourceTest {
@@ -133,7 +134,10 @@ class MarkedStreamSourceTest {
         // emissions can be told apart in one recording. A phase that let them collide would give
         // a correlator two arrivals at one instant, which is the one shape it cannot read.
         val host = source(strideChunks = 250, firstMarkerChunk = 100)
-        val sink = source(strideChunks = 250, firstMarkerChunk = 225)
+        val sink = source(
+            strideChunks = 250,
+            firstMarkerChunk = MarkedStreamSource.facingPhase(100, 250)
+        )
 
         for (sequence in 0..1500) {
             assertFalse(
@@ -143,5 +147,20 @@ class MarkedStreamSourceTest {
         }
         assertNotNull(sink.markerPcm(225))
         assertNull(host.markerPcm(225))
+    }
+
+    @Test
+    fun theFacingPhaseLeavesRoomForTheSweepOnEitherSideOfIt() {
+        // Half a stride, and the half matters: the two sweeps have to sit as far from each other
+        // as the grid allows, because what the analysis reads is which of the two arrivals is
+        // which. Anything closer than a sweep's own length would let them touch.
+        for (stride in 20..500) {
+            val marked = source(strideChunks = stride, firstMarkerChunk = 0)
+            val gap = MarkedStreamSource.facingPhase(0, stride)
+            assertTrue(
+                "stride $stride puts the two sweeps $gap chunks apart",
+                gap >= marked.markerChunkCount && stride - gap >= marked.markerChunkCount
+            )
+        }
     }
 }

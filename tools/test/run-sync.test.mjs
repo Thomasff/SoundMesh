@@ -206,6 +206,24 @@ async function startSyncCalls(extra) {
   return calls;
 }
 
+test('--marker-stride-chunks reaches both roles, and its absence reaches neither', async () => {
+  // The stride is what tells each side which chunks carry its own sweep and which carry its
+  // peer's. A sink that never heard it plays the host's sweeps instead of silencing them, and
+  // both handsets then emit the same sweep at the same instant - two arrivals of equal height,
+  // which no correlator can tell apart. The run would look ordinary and read nothing.
+  const requested = await startSyncCalls(['--marker-stride-chunks', '250']);
+  assert.deepEqual(
+    requested.map(({ role, markerStrideChunks }) => [role, markerStrideChunks]),
+    [['HOST', 250], ['SINK', 250]]
+  );
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(
+    plain.map(({ role, markerStrideChunks }) => [role, markerStrideChunks]),
+    [['HOST', undefined], ['SINK', undefined]]
+  );
+});
+
 test('--low-latency puts both roles on the same output path, and its absence puts neither', async () => {
   const requested = await startSyncCalls(['--low-latency']);
   assert.deepEqual(requested.map(({ role, lowLatency }) => [role, lowLatency]), [['HOST', true], ['SINK', true]]);

@@ -591,6 +591,21 @@ class SyncActivity : Activity() {
                 }
                 MarkedStreamSource(stride, MARKER_FIRST_CHUNK, SyncRenderer.FRAMES_PER_CHUNK)
             }
+            // Where the sink stamps its own sweep, this loop sends silence.
+            //
+            // The sink plays the chunks this loop sends it. A sweep left in one of them would come
+            // out of both handsets at the same instant - two arrivals of equal height, which is the
+            // one shape a correlator cannot read - and the tone left in one would put this handset's
+            // own speaker over the sink's sweep at the sink's own microphone, across the room and
+            // twenty-odd decibels down. The chirp path gets silence around each chirp for the same
+            // reason; this is that arrangement carried onto the streamed path.
+            val facing = markerStrideRequested()?.let { stride ->
+                MarkedStreamSource(
+                    stride,
+                    MarkedStreamSource.facingPhase(MARKER_FIRST_CHUNK, stride),
+                    SyncRenderer.FRAMES_PER_CHUNK
+                )
+            }
             capture = projection?.let { openCapture(it) }
             val file = sourceFileRequested()?.let { FileChunkSource.open(File(getExternalFilesDir(null), it)) }
             val audioStart = System.nanoTime()
@@ -615,11 +630,12 @@ class SyncActivity : Activity() {
                 // timeline by sleeping to the next chunk boundary. Capture has the device's own: a
                 // full chunk only exists once the recorder has produced it, so the read blocks for
                 // exactly as long as the chunk lasts and the sleep would be counted twice.
-                val pcm = when {
+                val produced = when {
                     capture != null -> capture.readChunk() ?: break
                     file != null -> file.readChunk()
                     else -> marked?.chunkAt(sequence) ?: source.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)
                 }
+                val pcm = if (facing?.markerAt(sequence) != null) ByteArray(produced.size) else produced
                 // The generator's sleep advances the clock by exactly one chunk per pass, so reading
                 // it fresh each time and anchoring to the first chunk come to the same instants.
                 // Capture has no such guarantee: a stalled pass leaves the recorder holding several
@@ -880,10 +896,36 @@ class SyncActivity : Activity() {
         // ruled out just letting the scheduler's own capacity/lateness logic handle it - that
         // would show up as droppedLate/droppedOverflow on an otherwise healthy run.
         val converged = AtomicBoolean(false)
+        // This side's own sweeps, and the host's, on the one stride both derive from the same rule.
+        //
+        // A sink has no source of its own, so the only way it can put a sweep on the streamed
+        // release path - the path the pair constant is spent on, and the one the chirp path is not -
+        // is to write one over a chunk it received. The host leaves it silence to write on. The
+        // host's own sweeps arrive inside these chunks and are replaced with silence here, because
+        // playing them would put the same sweep out of both handsets at the same instant.
+        val ownSweeps = markerStrideRequested()?.let { stride ->
+            MarkedStreamSource(
+                stride,
+                MarkedStreamSource.facingPhase(MARKER_FIRST_CHUNK, stride),
+                SyncRenderer.FRAMES_PER_CHUNK
+            )
+        }
+        val hostSweeps = markerStrideRequested()?.let { stride ->
+            MarkedStreamSource(stride, MARKER_FIRST_CHUNK, SyncRenderer.FRAMES_PER_CHUNK)
+        }
+        // Appended from the chunk client's thread and read from the run thread once it has stopped.
+        val markerPlays = java.util.Collections.synchronizedList(ArrayList<MarkerPlay>())
         val chunkClient = ChunkClient(address, host.chunkPort, peerId = HostIdentity(filesDir).current()) { chunk ->
             if (converged.get()) {
                 lastPlayAt.set(chunk.playAtHostNanos)
-                scheduler.submit(chunk)
+                val stamped = ownSweeps?.markerPcm(chunk.sequence)
+                    ?: hostSweeps?.markerAt(chunk.sequence)?.let { ByteArray(chunk.pcm.size) }
+                ownSweeps?.markerStartIndex(chunk.sequence)?.let {
+                    markerPlays.add(MarkerPlay(it, chunk.sequence, chunk.playAtHostNanos))
+                }
+                scheduler.submit(
+                    if (stamped == null) chunk else AudioChunk(chunk.sequence, chunk.playAtHostNanos, stamped)
+                )
             }
         }
 
@@ -1021,6 +1063,10 @@ class SyncActivity : Activity() {
                     // the pair in host time, so either can window its search without the other.
                     "\"recordingStartedAtHostNanos\":${calibration?.startedAtHostNanos ?: "null"}," +
                     "\"sinkChirpAtHostNanos\":$chirpAt," +
+                    // The instants this side aimed its own streamed sweeps at, in host time, which
+                    // is the time the chunks arrived stamped with. Written down at submission and
+                    // not read back off the renderer, for the reason the host writes its own.
+                    "\"${MarkerPlayCodec.FIELD}\":${MarkerPlayCodec.encode(markerPlays.toList())}," +
                     "\"onDeviceAlignment\":${ownAlignment?.json ?: "null"}," +
                     // Null when the readings reached the host. Named otherwise, because a run whose
                     // delivery failed leaves the host with a one-sided report and no cause in it.
