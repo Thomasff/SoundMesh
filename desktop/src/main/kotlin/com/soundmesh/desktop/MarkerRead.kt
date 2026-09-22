@@ -22,16 +22,25 @@ import kotlin.math.roundToInt
  * Start the handset first: `marker_stride_chunks` on the probe's host run puts the same sweep the
  * chirp path submits into the generator's output every `strideChunks` chunks.
  *
- * **Reads gaps, never absolute instants.** No clock exchange happens here and none is wanted: a
- * marker's absolute arrival carries the two machines' clock offset, the capture chain's latency
- * and the distance between them, none of which this needs. The spacing between consecutive markers
- * carries none of those - they are constant across one recording and cancel in a difference. What
- * survives is the placement error of each release, which is the quantity under test.
+ * **Reads relative placement, never absolute instants.** No clock exchange happens here and none
+ * is wanted for this question: a marker's absolute arrival carries the two machines' clock offset,
+ * the capture chain's latency and the distance between them. All three are constant across one
+ * recording, so removing a straight line removes all three at once, and what survives is the
+ * placement error of each release - the quantity under test.
  *
- * Deliberately not a line fit through the arrivals. The two clocks' rate difference would be the
- * slope, and a straight line through a staircase reports a slope the data never had - the same trap
- * that once produced a 183 ppm reading out of six discrete jumps. A difference of neighbours has no
- * slope to get wrong.
+ * The slope of that line is the two clocks' rate difference, and it is estimated three ways and
+ * printed three ways on purpose. A straight line through a staircase reports a slope the data never
+ * had - the trap that once produced a 183 ppm reading out of six discrete jumps - and the endpoint
+ * estimate parting from the fit is what says the shape is not a line.
+ *
+ * What it reads is the residual, not the gap column. Differencing white noise gives a lag-1
+ * autocorrelation of -0.5 on its own, so a gap column whose sign alternates says nothing about the
+ * device; the alternation is the difference operator. A ladder would be visible as residuals piling
+ * near multiples of the step.
+ *
+ * **And the line took the mean with it.** Which level playback sits on is exactly that mean, so
+ * choosing between the floor and the mean for the product's stored constant needs an absolute
+ * offset this cannot produce. This answers whether the level is redrawn, and nothing more.
  */
 fun main(args: Array<String>) {
     val seconds = args.getOrNull(0)?.toDouble() ?: 60.0
@@ -116,48 +125,97 @@ fun main(args: Array<String>) {
         }
 
         val gaps = arrivals.zipWithNext { a, b -> b.index - a.index }
-        val median = gaps.sorted()[gaps.size / 2]
+        val medianGap = gaps.sorted()[gaps.size / 2]
+        // Three slope estimates, printed together. The two machines' sample rates differ, so the
+        // arrivals sit on a line whose slope is not exactly the stride; that slope has to come off
+        // before anything is read. Reported three ways because the endpoint estimate disagreeing
+        // with the fit is the signal that the shape is not a line at all - a straight line through
+        // a staircase once produced a 183 ppm reading out of six discrete jumps.
+        val endpointSlope = (arrivals.last().index - arrivals.first().index).toDouble() / (arrivals.size - 1)
+        val meanK = (arrivals.size - 1) / 2.0
+        val meanIndex = arrivals.map { it.index.toDouble() }.average()
+        var cov = 0.0
+        var varK = 0.0
+        arrivals.forEachIndexed { k, arrival ->
+            cov += (k - meanK) * (arrival.index - meanIndex)
+            varK += (k - meanK) * (k - meanK)
+        }
+        val fitSlope = cov / varK
         println()
-        println("  #   sample      gap   gap-median   ratio  edge")
+        println("slope  : median gap $medianGap, endpoint ${"%.1f".format(endpointSlope)}, " +
+            "fit ${"%.1f".format(fitSlope)} (${"%.1f".format((fitSlope / strideSamples - 1) * 1e6)} ppm)")
+        if (abs(endpointSlope - fitSlope) > SLOPE_DISAGREEMENT_SAMPLES) {
+            println("       : those two disagree. The arrivals are not on a line, so read the " +
+                "residual below as a shape, not as a scatter.")
+        }
+
+        // Residual against that line. This is the per-release placement error, and it is what the
+        // ladder would be visible in - not the gaps. Differencing white noise gives a lag-1
+        // autocorrelation of -0.5 all by itself, so a gap column whose sign alternates says
+        // nothing at all; the alternation is the difference operator, not the device.
+        val residual = arrivals.mapIndexed { k, arrival -> arrival.index - (meanIndex + fitSlope * (k - meanK)) }
+        println()
+        println("  #   sample      gap   residual   ratio  edge")
         arrivals.forEachIndexed { index, arrival ->
             val gap = if (index == 0) null else arrival.index - arrivals[index - 1].index
             println(
-                "%3d %9d %8s %12s %7.0f  %s".format(
-                    index, arrival.index,
-                    gap?.toString() ?: "-",
-                    gap?.let { (it - median).toString() } ?: "-",
-                    arrival.ratio,
+                "%3d %9d %8s %10.1f %7.0f  %s".format(
+                    index, arrival.index, gap?.toString() ?: "-", residual[index], arrival.ratio,
                     if (arrival.atSearchEdge) "EDGE" else ""
                 )
             )
         }
 
-        val lifts = gaps.map { it - median }
-        val worst = lifts.maxOf { abs(it) }
-        val quantised = lifts.count { abs(abs(it) - QUANTUM_FRAMES) <= QUANTUM_TOLERANCE }
-        println()
-        println("gaps   : median $median samples, spread ${lifts.min()} .. ${lifts.max()}")
-        println("       : ${millisOf(worst)} worst departure from the median")
-        println("       : $quantised of ${lifts.size} sit within $QUANTUM_TOLERANCE frames of " +
-            "+-$QUANTUM_FRAMES, the step O17 measured on the chirp path")
-        println()
-        // Stated as the two readings this can produce rather than as a verdict, because the
-        // deadband puts a band of its own into every gap: a streamed chunk released under
-        // TRIM_DEADBAND_FRAMES late is written whole and heard that late, so up to 48 frames of
-        // one-sided lateness is by design and is not the ladder. Only a gap near the 52 frame step
-        // can be the ladder, and only a spread inside the deadband's own band can rule it out.
-        when {
-            quantised > 0 ->
-                println("reading: the streamed path jumps too. The product's constant should keep " +
-                    "taking a centre, and a ${millisOf(QUANTUM_FRAMES)} step needs its own audibility check.")
-            worst <= DEADBAND_FRAMES ->
-                println("reading: every gap sits inside the 48 frame deadband's own band and none " +
-                    "near the 52 frame step. The streamed path does not inherit the ladder, so the " +
-                    "product's constant should take the floor.")
-            else ->
-                println("reading: neither - the departures are larger than the deadband can explain " +
-                    "and not at the step either. Report the distribution, do not pick a branch.")
+        val mean = residual.average()
+        val spread = Math.sqrt(residual.sumOf { (it - mean) * (it - mean) } / residual.size)
+        var autoNum = 0.0
+        var autoDen = 0.0
+        residual.forEachIndexed { index, value ->
+            autoDen += (value - mean) * (value - mean)
+            if (index > 0) autoNum += (value - mean) * (residual[index - 1] - mean)
         }
+        println()
+        println("residual: sd ${"%.1f".format(spread)} frames (${millisOf(spread.roundToInt())}), " +
+            "range ${"%.0f".format(residual.min())} .. ${"%.0f".format(residual.max())}")
+        println("        : lag-1 autocorrelation ${"%.3f".format(autoNum / autoDen)} " +
+            "(near 0 means each release draws its own error)")
+
+        // The quantisation test. Asking "is the departure moderate" accepts almost anything and is
+        // not a test - a band of +-26 either side of 52 covers every deviation from 26 to 78
+        // frames. A ladder shows as residuals piling up near multiples of the step, so the
+        // statistic is the distance to the nearest multiple, against what a spread with no levels
+        // in it would give: a uniform spread over one 52 wide bin averages a quarter of the bin.
+        val toStep = residual.map {
+            val r = ((it % QUANTUM_FRAMES) + QUANTUM_FRAMES) % QUANTUM_FRAMES
+            abs(if (r > QUANTUM_FRAMES / 2.0) r - QUANTUM_FRAMES else r)
+        }
+        val meanToStep = toStep.average()
+        val uniformReference = QUANTUM_FRAMES / 4.0
+        println()
+        println("ladder  : mean distance to the nearest multiple of $QUANTUM_FRAMES is " +
+            "${"%.1f".format(meanToStep)} frames; no levels at all would give " +
+            "${"%.1f".format(uniformReference)}, levels would give something near 0")
+        println()
+        when {
+            meanToStep < uniformReference / 2 ->
+                println("reading: the streamed path jumps on the same step. The product's constant " +
+                    "should keep taking a centre, and a ${millisOf(QUANTUM_FRAMES)} step needs its " +
+                    "own audibility check.")
+            spread <= DEADBAND_FRAMES / 2.0 ->
+                println("reading: no levels, and the scatter fits inside the deadband's own band. " +
+                    "The streamed path does not inherit the ladder.")
+            else ->
+                println("reading: no levels, but the scatter is wider than the deadband alone " +
+                    "explains. The ladder is ruled out; what sets the width is not.")
+        }
+        // Said on every run, because the strongest thing this measurement does is also what it
+        // cannot do. Removing the line removed the mean with it, and the mean is exactly "which
+        // level does playback sit on". Choosing between the floor and the mean for the product's
+        // constant needs that absolute offset, which needs a clock exchange - this reads only
+        // whether the level is redrawn, not which one it is.
+        println()
+        println("note   : the detrend removed the absolute offset along with the slope, so this " +
+            "says whether the level is redrawn and never which level it is.")
     }
 }
 
@@ -176,8 +234,12 @@ private const val WINDOW_SAMPLES = 1440
 /** The step O17 measured on the chirp path: 52 +- 1 frames, three levels. */
 private const val QUANTUM_FRAMES = 52
 
-/** Half a step. Anything closer to 52 than to 0 counts as being at the step. */
-private const val QUANTUM_TOLERANCE = 26
+/**
+ * Endpoint and fit slopes further apart than this say the arrivals are not on a line. One sample
+ * per interval, which at a 240000 sample stride is 4 ppm - well inside the two clocks rate
+ * difference and well outside what a straight line through a real line would show.
+ */
+private const val SLOPE_DISAGREEMENT_SAMPLES = 1.0
 
 /** `SyncRenderer.TRIM_DEADBAND_FRAMES`, which the desktop module does not depend on. */
 private const val DEADBAND_FRAMES = 48
