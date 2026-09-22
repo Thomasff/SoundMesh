@@ -22,6 +22,7 @@ import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockExchange
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
+import com.soundmesh.core.MarkedStreamSource
 import com.soundmesh.core.PairedAlignment
 import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.PlaybackScheduler
@@ -498,6 +499,19 @@ class SyncActivity : Activity() {
     }
 
     /**
+     * Chunks between one streamed marker and the next, or null to stream ordinary content.
+     *
+     * The pair constant is measured with chirp chunks, which are released exactly, and then spent
+     * on streamed chunks, which carry [trimFramesRequested] and sit under a drift controller. The
+     * quantised ladder O17 measured lives on the first path; whether it rides along on the second
+     * decides whether the product's estimator should take the floor or the mean, and no reading
+     * covers it. A marker is the same sweep on the streamed sequence range - see
+     * [MarkedStreamSource].
+     */
+    private fun markerStrideRequested(): Int? =
+        intent.getIntExtra("marker_stride_chunks", 0).takeIf { it > 0 }
+
+    /**
      * The stop callback only records the fact. Tearing the run down from the projection's own
      * thread would race the loop that is mid-chunk; the loop notices on its next read, which
      * returns nothing once the recorder is gone.
@@ -551,6 +565,15 @@ class SyncActivity : Activity() {
             resultServer.start()
 
             val source = TonePcmSource()
+            // Substitutes into the generator's output only. Asked for beside a capture or a file it
+            // would silently do nothing at all - the marker never reaches the stream, and the run
+            // would report a clean recording with no sweeps in it as if that were the answer.
+            val marked = markerStrideRequested()?.let { stride ->
+                if (capturePackageRequested() != null || sourceFileRequested() != null) {
+                    throw SourceUnusable("MARKERS_NEED_THE_GENERATOR")
+                }
+                MarkedStreamSource(stride, MARKER_FIRST_CHUNK, SyncRenderer.FRAMES_PER_CHUNK)
+            }
             capture = projection?.let { openCapture(it) }
             val file = sourceFileRequested()?.let { FileChunkSource.open(File(getExternalFilesDir(null), it)) }
             val audioStart = System.nanoTime()
@@ -573,7 +596,7 @@ class SyncActivity : Activity() {
                 val pcm = when {
                     capture != null -> capture.readChunk() ?: break
                     file != null -> file.readChunk()
-                    else -> source.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)
+                    else -> marked?.chunkAt(sequence) ?: source.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)
                 }
                 // The generator's sleep advances the clock by exactly one chunk per pass, so reading
                 // it fresh each time and anchoring to the first chunk come to the same instants.
@@ -1411,6 +1434,14 @@ class SyncActivity : Activity() {
 
         /** ~3s of audio at 20ms/chunk. */
         private const val SCHEDULER_CAPACITY_CHUNKS = 150
+
+        /**
+         * 2 s at 20 ms/chunk, so the first streamed marker is released after the run's acquisition
+         * transient rather than inside it. O31 found all six of a run's position jumps sitting in
+         * its first 1.27 s and none in the measured segment, so a marker released in there would
+         * measure the transient and be reported as a placement error.
+         */
+        private const val MARKER_FIRST_CHUNK = 100
     }
 }
 
