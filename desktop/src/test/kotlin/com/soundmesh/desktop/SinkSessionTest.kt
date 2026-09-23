@@ -111,6 +111,11 @@ class SinkSessionTest {
             host.setEffect(EffectKind.SPIN)
             host.play(writeTestWav(folder.newFile()), alsoHere = false)
             assertTrue("never shaped: ${sink.status()}", eventually(15_000) { sink.status().shaped > 0 })
+            // And it can draw the room it is in: itself on it, with the host's colour for it.
+            val room = sink.status().room
+            assertEquals(SpatialMode.ROTATE, room?.mode)
+            assertTrue("not on its own drawing: $room", room!!.icons.any { it.peerId == sink.status().selfId })
+            assertTrue("no colours: $room", eventually(5_000) { sink.status().room?.colours?.containsKey(sink.status().selfId) == true })
         } finally {
             sink.stop()
             host.close()

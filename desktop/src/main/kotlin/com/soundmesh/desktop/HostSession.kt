@@ -12,7 +12,9 @@ import com.soundmesh.probe.sync.RoomCommandServer
 import com.soundmesh.probe.sync.SpatialFieldServer
 import com.soundmesh.product.EffectKind
 import com.soundmesh.product.RoomIcon
+import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.RoomState
+import com.soundmesh.product.SourceSpot
 import com.soundmesh.product.SpatialRoom
 import com.soundmesh.product.ruleOf
 import com.soundmesh.product.withEffect
@@ -259,8 +261,16 @@ class HostSession(
         val settled = playing && stream != null && System.nanoTime() - streamSinceNanos >= stoppedGraceMillis * 1_000_000L
         val onAudio = if (settled) chunkServer?.peerIds().orEmpty().toSet() else null
         val volumes = command?.volumes().orEmpty()
+        // The drawing's colours are whichever channel is holding the room just now, as on the
+        // handset: the spatial channel's while playing, the standing channel's between songs.
+        val colours = if (playing && stream != null) spatialServer?.places().orEmpty() else places
         HostStatus(
-            room = room,
+            room = room.copy(
+                colours = colours,
+                silentIds = room.icons.map { it.peerId }
+                    .filter { it != selfId && (it in quiet || (onAudio != null && it !in onAudio)) }
+                    .toSet()
+            ),
             volumePercent = volume.percent,
             roomVolumePercent = roomVolume,
             volumeTouched = roomVolume != null || asked.isNotEmpty() || volume.percent != SoftwareVolume.FULL,
@@ -363,6 +373,39 @@ class HostSession(
 
     /** How long one circuit of 旋转 takes. */
     fun setSpinSeconds(seconds: Int) = updateRoom { it.copy(periodSeconds = seconds) }
+
+    /** One device dragged somewhere else on the drawing. */
+    fun moveIcon(icon: RoomIcon) = updateRoom { room ->
+        room.copy(icons = room.icons.map { if (it.peerId == icon.peerId) SpatialRoom.clamped(icon) else it })
+    }
+
+    /** 自定义声音位置's dot dragged to [spot]: which way, how far off, how far in - the handset's moveSource. */
+    fun moveSource(spot: SourceSpot) = updateRoom {
+        it.copy(
+            pan = SpatialRoom.panOf(spot),
+            retreat = SpatialRoom.retreatOf(spot),
+            envelopment = SpatialRoom.envelopmentOf(spot)
+        )
+    }
+
+    /** Hands [peerId] the other half of the split, or takes it back. */
+    fun togglePart(peerId: String) = updateRoom {
+        it.copy(otherHalfIds = if (peerId in it.otherHalfIds) it.otherHalfIds - peerId else it.otherHalfIds + peerId)
+    }
+
+    /**
+     * 分开放: null for not at all, or which way to split, fully - the handset's three segments.
+     * Who carries which half is left as it was, for [EffectSettings]'s reason.
+     */
+    fun setSplit(axis: SplitAxis?) = updateRoom {
+        if (axis == null) it.copy(separation = 0f) else it.copy(splitAxis = axis, separation = 1f)
+    }
+
+    /** 分得多彻底, 0 to 1. */
+    fun setSeparation(amount: Float) = updateRoom { it.copy(separation = amount) }
+
+    /** Where the low half stops, when splitting low from high. */
+    fun setCrossoverHz(hz: Float) = updateRoom { it.copy(crossoverHz = hz) }
 
     private fun updateRoom(change: (RoomState) -> RoomState) = synchronized(lock) {
         room = change(room)

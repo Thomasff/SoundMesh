@@ -2,6 +2,7 @@ package com.soundmesh.desktop
 
 import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.ClockOffsetEstimator
+import com.soundmesh.core.SpatialField
 import com.soundmesh.probe.sync.ChunkClient
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncClient
@@ -57,6 +58,13 @@ class SinkStream(
 
     val played: Int get() = playout.played
 
+    /** The host's newest rule, or null before one arrived - what this machine draws the room from. */
+    val rule: SpatialField? get() = spatial?.latest
+
+    /** Who holds which colour, as the host last said on the spatial channel. */
+    @Volatile var badges: Map<String, Int> = emptyMap()
+        private set
+
     /** Chunks a handset host's spatial rule changed - see [SinkSpatial.shapedChunks]. */
     val shaped: Int get() = spatial?.shapedChunks ?: 0
     val droppedLate: Int get() = playout.droppedLate
@@ -107,7 +115,7 @@ class SinkStream(
     fun dial() {
         chunkClient.start()
         spatialClient = peerId?.let { name ->
-            SpatialFieldClient(hostAddress, spatialPort, name) { spatial?.apply(it) }
+            SpatialFieldClient(hostAddress, spatialPort, name, onBadges = { badges = it }) { spatial?.apply(it) }
                 .takeIf { runCatching { it.start() }.isSuccess }
         }
     }

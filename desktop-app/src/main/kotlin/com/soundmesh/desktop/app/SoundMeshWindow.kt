@@ -39,8 +39,11 @@ import com.soundmesh.core.BadgeHues
 import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.PeerBadge
 import com.soundmesh.core.SpatialField
+import com.soundmesh.core.SpatialMode
+import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.EffectKind
 import com.soundmesh.product.RoomState
+import com.soundmesh.product.SpatialRoom
 import com.soundmesh.desktop.HostPort
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
@@ -128,6 +131,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     val addresses = remember { ownAddresses() }
     if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、"))
     Roster(status)
+    HostDrawing(host, status.room, sessions)
     Effects(host, status.room, sessions)
     Volumes(host, status, sessions)
     Diagnostics(
@@ -178,6 +182,11 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
     }
     Text(describe(status))
     status.hostName?.let { name -> Text("跟的是：$name" + (status.hostAddress?.let { "（$it）" } ?: "")) }
+    status.room?.let { room ->
+        Text("房间", style = MaterialTheme.typography.titleSmall)
+        RoomDrawing(room, actions = null)
+        Text("图是主机那边摆的，这里只能看。带外圈的是本机。")
+    }
     Diagnostics(
         listOf(
             "时钟偏移" to (status.offsetMillis?.let { String.format("%.3f ms", it) } ?: "—"),
@@ -217,9 +226,45 @@ private fun Roster(status: HostStatus) {
 }
 
 /**
- * The handset host's effect list, less 自定义声音位置: that one is a dot dragged on the room
- * drawing, and this window has no drawing yet. The words are the handset's.
+ * The room drawing, dragged here and sent to the host as it moves.
+ *
+ * Drawn from what was just done until the host's own status catches up: the status is read twice
+ * a second, and an icon that followed the mouse only that often would lag a drag by half a second.
  */
+@Composable
+private fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
+    val scope = rememberCoroutineScope()
+    var local by remember { mutableStateOf<RoomState?>(null) }
+    var touchedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(touchedAt) {
+        delay(LOCAL_HOLD_MILLIS)
+        local = null
+    }
+    fun change(edit: (RoomState) -> RoomState, send: HostSession.() -> Unit) {
+        local = edit(local ?: room)
+        touchedAt = System.nanoTime()
+        scope.launch(sessions) { host.send() }
+    }
+    val shown = local?.copy(colours = room.colours, silentIds = room.silentIds) ?: room
+    Text("房间", style = MaterialTheme.typography.titleSmall)
+    RoomDrawing(
+        shown,
+        DrawingActions(
+            moveIcon = { icon ->
+                change({ r -> r.copy(icons = r.icons.map { if (it.peerId == icon.peerId) icon else it }) }) { moveIcon(icon) }
+            },
+            moveSource = { spot ->
+                change({ it.copy(pan = SpatialRoom.panOf(spot), retreat = SpatialRoom.retreatOf(spot), envelopment = SpatialRoom.envelopmentOf(spot)) }) {
+                    moveSource(spot)
+                }
+            },
+            togglePart = { peerId -> scope.launch(sessions) { host.togglePart(peerId) } }
+        )
+    )
+    Text("把图标拖到每台实际摆的位置，「你」是听的人，朝上是前方。")
+}
+
+/** The handset host's effect list. The words are the handset's. */
 @Composable
 private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
@@ -235,28 +280,69 @@ private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispa
         }
     }
     when (chosen) {
-        EffectKind.UNISON -> Text("同步放相同的声音。")
-        // Not "by where they stand on the drawing above", as the handset says: there is no drawing
-        // here yet, so the sides come from the default arrangement.
-        EffectKind.STEREO -> Text("偏左的放左声道，偏右的放右声道。现在用的是默认摆位，要改摆位得等房间图。")
+        EffectKind.UNISON -> {
+            Text("同步放相同的声音。")
+            ContentSplit(room, ::send)
+        }
+        EffectKind.STEREO -> {
+            Text("偏左的放左声道，偏右的放右声道，按上面图里的摆位分。")
+            ContentSplit(room, ::send)
+        }
         EffectKind.SPIN -> {
             Text("声源环绕转动，三台以上效果更好。")
             KnobLine("转一圈", room.periodSeconds.toFloat(), SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(), "${room.periodSeconds} 秒") {
                 send { setSpinSeconds(it.roundToInt()) }
             }
         }
-        // Not offered above; here because the list is exhaustive.
-        EffectKind.PLACE -> Text("自定义声音位置：要在房间图上拖，这个窗口还没有房间图。")
+        EffectKind.PLACE -> Text("在上面的房间图里拖那个带圈的点，改变声源位置。")
     }
     var open by remember { mutableStateOf(false) }
     TextButton(onClick = { open = !open }) { Text(if (open) "收起细调" else "细调") }
     if (open) {
         KnobLine("回声强度", room.reverb, 0f..1f, "${(room.reverb * 100).roundToInt()}%") { send { setReverb(it) } }
-        KnobLine("包裹感", room.envelopment, 0f..SpatialField.MAX_ENVELOPMENT.toFloat(), "${(room.envelopment * 100).roundToInt()}%") {
-            send { setEnvelopment(it) }
+        // The rotation only, as on the handset: under 自定义声音位置 this number is how far in the
+        // dot has been dragged, and a slider beside it would be a second control for one number.
+        if (room.mode == SpatialMode.ROTATE) {
+            KnobLine("包裹感", room.envelopment, 0f..SpatialField.MAX_ENVELOPMENT.toFloat(), "${(room.envelopment * 100).roundToInt()}%") {
+                send { setEnvelopment(it) }
+            }
+            Text("声音转开之后，每台还留多少。往右拉包裹感更强、方向感更弱。")
         }
-        Text("包裹感只对旋转起作用：声音转开之后，每台还留多少。往右拉包裹感更强、方向感更弱。")
+        if (splitting(room)) {
+            KnobLine("分得多彻底", room.separation, 0f..1f, "${(room.separation * 100).roundToInt()}%") { send { setSeparation(it) } }
+        }
     }
+}
+
+/** 分开放 - the handset's three segments, and what goes with a split once one is chosen. */
+@Composable
+private fun ContentSplit(room: RoomState, send: (HostSession.() -> Unit) -> Unit) {
+    val split = room.separation > 0f
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("分开放")
+        FilterChip(selected = !split, onClick = { send { setSplit(null) } }, label = { Text("不分开") })
+        FilterChip(
+            selected = split && room.splitAxis == SplitAxis.MIDDLE_SIDES,
+            onClick = { send { setSplit(SplitAxis.MIDDLE_SIDES) } },
+            label = { Text("人声和伴奏") }
+        )
+        FilterChip(
+            selected = split && room.splitAxis == SplitAxis.LOW_HIGH,
+            onClick = { send { setSplit(SplitAxis.LOW_HIGH) } },
+            label = { Text("低音和高音") }
+        )
+    }
+    if (!split) return
+    if (room.splitAxis == SplitAxis.LOW_HIGH) {
+        KnobLine(
+            "分界点",
+            room.crossoverHz,
+            SpatialField.LOWEST_CROSSOVER_HZ.toFloat()..SpatialField.HIGHEST_CROSSOVER_HZ.toFloat(),
+            "${room.crossoverHz.roundToInt()} Hz 以下算低音"
+        ) { send { setCrossoverHz(it) } }
+    }
+    Text("点房间图里的图标，换它放哪一半（图标下面写着）。")
+    Text("此功能仅对部分音乐效果好，取决于音频。")
 }
 
 /** One knob, sent on letting go like the volume sliders. */
@@ -279,12 +365,16 @@ private fun KnobLine(name: String, value: Float, range: ClosedFloatingPointRange
     }
 }
 
-/** The handset's titles for the effects this window offers. */
+/** The handset's titles for the effects. */
 private val EFFECT_TITLES = mapOf(
     EffectKind.UNISON to "同步齐奏",
     EffectKind.STEREO to "双声道",
-    EffectKind.SPIN to "旋转"
+    EffectKind.SPIN to "旋转",
+    EffectKind.PLACE to "自定义声音位置"
 )
+
+/** How long the window draws its own drag before going back to the host's word for the room. */
+private const val LOCAL_HOLD_MILLIS = 1_000L
 
 /** The handset's range for one circuit (SpatialPanel's SHORTEST_ and LONGEST_SPIN_SECONDS). */
 private const val SHORTEST_SPIN_SECONDS = 2

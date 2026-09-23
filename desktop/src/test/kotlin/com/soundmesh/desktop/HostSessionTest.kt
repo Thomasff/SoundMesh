@@ -4,10 +4,13 @@ import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialMode
+import com.soundmesh.core.SplitAxis
 import com.soundmesh.probe.sync.RoomCommandClient
 import com.soundmesh.probe.sync.SpatialFieldClient
 import com.soundmesh.product.DEFAULT_REVERB
 import com.soundmesh.product.EffectKind
+import com.soundmesh.product.RoomIcon
+import com.soundmesh.product.SourceSpot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -165,6 +168,44 @@ class HostSessionTest {
             assertEquals(DEFAULT_REVERB.toDouble(), spun.reverb, 1e-6)
             assertTrue("the device is not in the drawing", spun.layout.contains(PHONE))
             assertEquals(2, spun.layout.positions.size)
+        } finally {
+            drawing.stop()
+            phone.close()
+            host.close()
+        }
+    }
+
+    /**
+     * What is done on the drawing reaches the room: a device dragged, a device handed the other
+     * half of the split, and 自定义声音位置's dot dragged to one side.
+     */
+    @Test
+    fun whatIsDoneOnTheDrawingReachesTheRule() {
+        val ports = ports()
+        val host = session(ports)
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        val rules = LinkedBlockingQueue<SpatialField>()
+        host.open()
+        val phone = standBy(ports.command, heard)
+        val drawing = SpatialFieldClient("127.0.0.1", ports.spatial, PHONE) { rules.offer(it) }.apply { start() }
+        fun next(check: (SpatialField) -> Boolean): SpatialField =
+            generateSequence { rules.poll(5, TimeUnit.SECONDS) }.first(check)
+        try {
+            assertTrue(eventually { host.status().room.icons.size == 2 })
+            host.moveIcon(RoomIcon(PHONE, 0.8f, 0.5f))
+            val moved = next { rule -> rule.layout.positions.any { it.peerId == PHONE && it.x > 0.25 } }
+            assertEquals(0.0, moved.layout.positions.single { it.peerId == PHONE }.y, 1e-6)
+
+            host.setSplit(SplitAxis.LOW_HIGH)
+            host.togglePart(PHONE)
+            val split = next { PHONE in it.otherHalfIds }
+            assertEquals(SplitAxis.LOW_HIGH, split.splitAxis)
+            assertEquals(1.0, split.separation, 1e-6)
+
+            host.setEffect(EffectKind.PLACE)
+            host.moveSource(SourceSpot(0.9f, 0.5f))
+            val placed = next { it.mode == SpatialMode.PAN && it.pan > 0.4 }
+            assertEquals("a moving source drops the split from the rule", 0.0, placed.separation, 1e-6)
         } finally {
             drawing.stop()
             phone.close()

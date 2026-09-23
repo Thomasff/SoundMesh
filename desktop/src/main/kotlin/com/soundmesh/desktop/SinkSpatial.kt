@@ -7,6 +7,9 @@ import com.soundmesh.core.SpatialField
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.sync.ruleInForce
 import com.soundmesh.probe.sync.spatialShaped
+import com.soundmesh.product.RoomIcon
+import com.soundmesh.product.RoomState
+import com.soundmesh.product.SpatialRoom
 
 /**
  * A handset host's room, as this machine hears its part of it.
@@ -26,6 +29,29 @@ import com.soundmesh.probe.sync.spatialShaped
  * [apply] is called from the spatial channel's thread and [shaped] from the audio's. A rule is a
  * whole object replaced at once, as on the handset, so a chunk sees the old room or the new one.
  */
+/**
+ * What a sink can draw of its host's room: the rule's own drawing turned back into icons, with
+ * the colours the host sent. Everything needed to show where this machine stands and what the room
+ * is doing, and nothing a sink could change - the drawing is the host's.
+ *
+ * The inverse of SpatialRoom.layoutOf, which also clamps; an icon comes back where the rule has it.
+ */
+fun drawnRoomOf(rule: SpatialField, colours: Map<String, Int>, selfId: String): RoomState = RoomState(
+    icons = rule.layout.positions.map {
+        RoomIcon(it.peerId, SpatialRoom.CENTRE + it.x.toFloat(), SpatialRoom.CENTRE - it.y.toFloat())
+    },
+    mode = rule.mode,
+    pan = rule.pan.toFloat(),
+    selfId = selfId,
+    colours = colours,
+    envelopment = rule.envelopment.toFloat(),
+    retreat = rule.retreat.toFloat(),
+    reverb = rule.reverb.toFloat(),
+    separation = rule.separation.toFloat(),
+    splitAxis = rule.splitAxis,
+    otherHalfIds = rule.otherHalfIds
+)
+
 class SinkSpatial(private val peerId: String) {
     @Volatile private var waiting: SpatialField? = null
     @Volatile private var everReverberated = false
@@ -43,6 +69,9 @@ class SinkSpatial(private val peerId: String) {
     private var shapedUnder: SpatialField? = null
     private val crossover = Crossover()
     private val reverberation by lazy { RoomReverb(peerId, TonePcmSource.SAMPLE_RATE) }
+
+    /** The newest rule handed to [apply], whether or not a chunk has reached its instant yet. */
+    val latest: SpatialField? get() = waiting
 
     /** The newest rule, to take effect on the chunk it names - SyncRenderer.applySpatialField. */
     fun apply(field: SpatialField?) {

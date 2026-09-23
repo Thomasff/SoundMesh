@@ -12,6 +12,7 @@ import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandClient
+import com.soundmesh.product.RoomState
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -51,7 +52,9 @@ data class SinkStatus(
     /** Its colour's place as the host last said, or null before a host has said one. */
     val selfPlace: Int?,
     /** SoundMesh's own volume here, 0 to 100, as the host last set it. */
-    val volumePercent: Int
+    val volumePercent: Int,
+    /** The host's room as its newest rule draws it, while following; null before a rule arrives. */
+    val room: RoomState?
 )
 
 /**
@@ -147,6 +150,7 @@ class SinkSession(
             selfId = selfId,
             selfPlace = line?.places?.get(selfId),
             volumePercent = volume.percent,
+            room = stream?.rule?.let { drawnRoomOf(it, stream.badges, selfId) },
             stage = stage,
             failure = failure,
             hostName = hostName,

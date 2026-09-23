@@ -8,6 +8,9 @@ import com.soundmesh.core.SpatialLayout
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SpatialPosition
 import com.soundmesh.probe.sync.spatialShaped
+import com.soundmesh.product.RoomIcon
+import com.soundmesh.product.RoomState
+import com.soundmesh.product.ruleOf
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,6 +26,24 @@ import org.junit.Test
  */
 class SinkSpatialTest {
     private val desk = "desk0123456789ab"
+
+    /**
+     * A sink draws its host's room from the rule alone, and the drawing comes back where the host
+     * put everybody - the rule's layout undone, not a second arrangement of the same devices.
+     */
+    @Test
+    fun aSinkDrawsTheRoomWhereTheHostPutEverybody() {
+        val drawn = listOf(RoomIcon("host0123456789ab", 0.3f, 0.2f), RoomIcon(desk, 0.75f, 0.6f))
+        val rule = ruleOf(RoomState(icons = drawn, mode = SpatialMode.SPLIT))!!
+        val seen = drawnRoomOf(rule, mapOf(desk to 3), desk)
+        assertEquals(drawn.map { it.peerId }, seen.icons.map { it.peerId })
+        for ((was, now) in drawn.zip(seen.icons)) {
+            assertEquals(was.x, now.x, 1e-6f)
+            assertEquals(was.y, now.y, 1e-6f)
+        }
+        assertEquals(SpatialMode.SPLIT, seen.mode)
+        assertEquals(3, seen.colours[desk])
+    }
     private val phone = "phone0123456789a"
 
     /** This machine nearer the listener than the phone, and to one side of it. */
