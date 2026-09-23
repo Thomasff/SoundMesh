@@ -77,7 +77,13 @@ import kotlin.math.roundToInt
 private enum class Role { HOST, SINK }
 
 @Composable
-fun SoundMeshWindow(host: HostSession, sink: SinkSession, sessions: CoroutineDispatcher) {
+fun SoundMeshWindow(
+    host: HostSession,
+    sink: SinkSession,
+    sessions: CoroutineDispatcher,
+    details: Boolean,
+    onOpenSettings: () -> Unit
+) {
     var role by remember { mutableStateOf<Role?>(null) }
     val scope = rememberCoroutineScope()
     Column(
@@ -102,17 +108,18 @@ fun SoundMeshWindow(host: HostSession, sink: SinkSession, sessions: CoroutineDis
                 },
                 label = { Text("跟着放") }
             )
+            TextButton(onClick = onOpenSettings) { Text("设置") }
         }
         when (role) {
-            Role.HOST -> HostPane(host, sessions)
-            Role.SINK -> SinkPane(sink, sessions)
+            Role.HOST -> HostPane(host, sessions, details)
+            Role.SINK -> SinkPane(sink, sessions, details)
             null -> Text("这台电脑当主机，还是跟着房间里的主机放？")
         }
     }
 }
 
 @Composable
-private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
+private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: Boolean) {
     val status = polled { host.status() } ?: return
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     // A program's sound instead of files; picking either one puts the other down.
@@ -201,6 +208,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     Effects(host, status.room, sessions)
     Volumes(host, status, sessions)
     Diagnostics(
+        details,
         listOf(
             "音频口" to "${status.sinksOnAudio} 台在收",
             "丢块" to "${status.droppedChunks}",
@@ -212,7 +220,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
 }
 
 @Composable
-private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
+private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: Boolean) {
     val status = polled { sink.status() } ?: return
     val scope = rememberCoroutineScope()
     val going = status.stage !in setOf(SinkStage.IDLE, SinkStage.NOT_FOUND, SinkStage.FAILED)
@@ -255,6 +263,7 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
         Text("图是主机那边摆的，这里只能看。带外圈的是本机。")
     }
     Diagnostics(
+        details,
         listOf(
             "时钟偏移" to (status.offsetMillis?.let { String.format("%.3f ms", it) } ?: "—"),
             "放了" to "${status.played} 块",
@@ -554,16 +563,15 @@ private fun Badge(peerId: String, place: Int?, hollow: Boolean = false) {
     }
 }
 
+/** The numbers behind 设置's 显示诊断细节, and nothing at all while it is off - the handset's rule. */
 @Composable
-private fun Diagnostics(rows: List<Pair<String, String>>) {
-    var open by remember { mutableStateOf(false) }
-    TextButton(onClick = { open = !open }) { Text(if (open) "收起诊断" else "诊断") }
-    if (open) {
-        for ((label, value) in rows) {
-            Row {
-                Text(label, Modifier.width(96.dp))
-                Text(value, fontFamily = FontFamily.Monospace)
-            }
+private fun Diagnostics(shown: Boolean, rows: List<Pair<String, String>>) {
+    if (!shown) return
+    Text("诊断", style = MaterialTheme.typography.titleSmall)
+    for ((label, value) in rows) {
+        Row {
+            Text(label, Modifier.width(96.dp))
+            Text(value, fontFamily = FontFamily.Monospace)
         }
     }
 }
