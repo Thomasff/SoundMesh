@@ -54,6 +54,8 @@ import com.soundmesh.desktop.PairingCodeModules
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
 import com.soundmesh.desktop.HostStatus
+import com.soundmesh.desktop.LocalNetworks
+import com.soundmesh.desktop.OwnAddress
 import com.soundmesh.desktop.Playhead
 import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.SinkStage
@@ -68,8 +70,6 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
 import java.io.FilenameFilter
-import java.net.Inet4Address
-import java.net.NetworkInterface
 import javax.swing.JFileChooser
 import javax.swing.UIManager
 import kotlin.math.roundToInt
@@ -113,7 +113,10 @@ fun SoundMeshWindow(
         when (role) {
             Role.HOST -> HostPane(host, sessions, details)
             Role.SINK -> SinkPane(sink, sessions, details)
-            null -> Text("这台电脑当主机，还是跟着房间里的主机放？")
+            null -> {
+                Text("这台电脑当主机，还是跟着房间里的主机放？")
+                Networks()
+            }
         }
     }
 }
@@ -200,7 +203,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
     }
     if (status.ended) Text("放完了。")
     Text("手机上的 SoundMesh 在待命时会自动跟上。")
-    val addresses = remember { ownAddresses() }
+    val addresses = remember { LocalNetworks.list() }
     if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、") { it.address })
     PairCode(host, status.open, addresses, sessions)
     Roster(status)
@@ -249,6 +252,14 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
                 onClick = { scope.launch(sessions) { sink.start(address) } },
                 enabled = address.isNotEmpty()
             ) { Text("连这个地址") }
+        }
+        val own = remember { LocalNetworks.list() }
+        if (LocalNetworks.elsewhere(address, own)) {
+            Text(
+                "$address 不在本机的网段里（本机：" + own.joinToString("、") { it.address } + "）。" +
+                    "连不上的话，先看两台是不是连着同一个网。",
+                color = MaterialTheme.colorScheme.error
+            )
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -631,23 +642,29 @@ private fun songsIn(folder: File): List<File> =
     folder.listFiles { file -> file.isFile && isSong(file.name) }.orEmpty().sortedBy { it.name.lowercase() }
 
 /**
- * The addresses a sink on this network could type in, read once when the pane opens. Every
- * interface that is up, a tunnel's included: which one the other machine shares is not something
- * this side can tell.
+ * Which networks this machine is on, before a role is picked - the handset's network lines. Read
+ * again every few seconds: a cable or a WiFi can come and go while the window is open.
  */
-private fun ownAddresses(): List<OwnAddress> = runCatching {
-    NetworkInterface.getNetworkInterfaces().toList()
-        .filter { it.isUp && !it.isLoopback }
-        .flatMap { nic ->
-            nic.inetAddresses.toList()
-                .filterIsInstance<Inet4Address>()
-                .filter { it.isSiteLocalAddress }
-                .map { OwnAddress(it.hostAddress, nic.displayName ?: nic.name) }
+@Composable
+private fun Networks() {
+    var addresses by remember { mutableStateOf<List<OwnAddress>?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            addresses = withContext(Dispatchers.IO) { LocalNetworks.list() }
+            delay(NETWORKS_POLL_MILLIS)
         }
-}.getOrDefault(emptyList())
+    }
+    val list = addresses ?: return
+    Text("网络", style = MaterialTheme.typography.titleSmall)
+    if (list.isEmpty()) {
+        Text("这台电脑现在没连局域网，手机和别的电脑都连不到它。先连上 WiFi 或网线。", color = MaterialTheme.colorScheme.error)
+        return
+    }
+    for (own in list) Text("${own.adapter}  ${own.address}")
+    Text("房间里的每台都要连在其中一个网上。")
+}
 
-/** One of this machine's addresses, with the name Windows gives the adapter it is on. */
-private data class OwnAddress(val address: String, val adapter: String)
+private const val NETWORKS_POLL_MILLIS = 3_000L
 
 /**
  * The code a handset scans when it cannot find this host by itself - the handset host's
