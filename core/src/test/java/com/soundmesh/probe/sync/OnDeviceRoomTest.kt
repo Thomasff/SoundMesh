@@ -3,7 +3,6 @@ package com.soundmesh.probe.sync
 import com.soundmesh.core.ChirpCorrelator
 import com.soundmesh.core.ChirpGenerator
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Random
@@ -27,7 +26,7 @@ class OnDeviceRoomTest {
      * because its speaker is centimetres from this microphone and everybody else's is metres away.
      *
      * [lateFramesBySlot] moves a slot's chirp off where the schedule put it, which is the only
-     * thing a room measures.
+     * thing a room measures. [gainBySlot] overrides how loud a slot arrives.
      */
     private fun roomRecording(
         repeats: Int,
@@ -35,7 +34,8 @@ class OnDeviceRoomTest {
         slotCount: Int,
         ownSlot: Int,
         lateFramesBySlot: Map<Int, Int> = emptyMap(),
-        silentSlots: Set<Int> = emptySet()
+        silentSlots: Set<Int> = emptySet(),
+        gainBySlot: Map<Int, Double> = emptyMap()
     ): ShortArray {
         val chirp = ChirpGenerator.generateMono()
         val span = leadNanos + repeats * intervalNanos + slotCount * staggerNanos + 2 * second
@@ -48,7 +48,7 @@ class OnDeviceRoomTest {
             for (slot in 0 until slotCount) {
                 if (slot in silentSlots) continue
                 val at = leadFrames + repeat * gapFrames + slot * staggerFrames + (lateFramesBySlot[slot] ?: 0)
-                val gain = if (slot == ownSlot) 0.8 else 0.2
+                val gain = gainBySlot[slot] ?: if (slot == ownSlot) 0.8 else 0.2
                 for (index in chirp.indices) {
                     out[at + index] = (out[at + index] + chirp[index] * gain).toInt().toShort()
                 }
@@ -110,22 +110,38 @@ class OnDeviceRoomTest {
     }
 
     /**
-     * The anchor is told rather than worked out, and this is what that buys. The loudest arrival is
-     * this handset's own chirp, not the room's first one, so a reader that assumed the loudest must
-     * be slot zero would put every handset but one a whole slot out - silently, and plausibly,
-     * because the spacing would still come out exactly right.
+     * The anchor is this machine's own chirp, found in its own slot - not the loudest arrival. A
+     * computer's microphone sits far from its speakers and a handset beside it can be louder than
+     * it is: taking the loudest put that handset in this machine's slot and every other slot a
+     * whole stagger out, so every pair it was in came back unmeasured (09-23, three rounds of
+     * three, own chirp the quietest of the three). A handset heard its neighbour louder than
+     * itself too, when two lay side by side.
+     *
+     * Read with the opening instant 60 ms off, as the computer's was, and the default search.
      */
     @Test
-    fun readsTheRoomAgainstTheSlotItWasTold() {
-        val recording = roomRecording(1, second, slotCount = 3, ownSlot = 2)
+    fun findsItsOwnChirpInItsOwnSlotWhenANeighbourIsLouder() {
+        val recording = roomRecording(
+            1, second, slotCount = 3, ownSlot = 1, gainBySlot = mapOf(0 to 0.6, 1 to 0.1, 2 to 0.9)
+        )
 
-        val told = read(recording, 1, second, 3, 2)
-        val guessed = read(recording, 1, second, 3, 0)
+        val room = OnDeviceAlignment.readRoom(
+            recorded = recording,
+            reference = ChirpGenerator.generateMono(),
+            recordingStartedAtHostNanos = -60_000_000L,
+            firstChirpAtHostNanos = second,
+            staggerNanos = staggerNanos,
+            slotCount = 3,
+            ownSlot = 1,
+            chirpRepeats = 1,
+            chirpIntervalNanos = intervalNanos
+        )
 
-        assertEquals(2 * staggerFrames.toLong(), (told[0][2]!!.index - told[0][0]!!.index).toLong())
-        // The same recording read against the wrong anchor puts slot zero where slot two really is.
-        assertEquals(told[0][2]!!.index, guessed[0][0]!!.index)
-        assertNotEquals(told[0][0]!!.index, guessed[0][0]!!.index)
+        val leadFrames = (second * rate / second).toInt()
+        assertEquals(
+            (0 until 3).map { leadFrames + it * staggerFrames },
+            room[0].map { it!!.index }
+        )
     }
 
     /**

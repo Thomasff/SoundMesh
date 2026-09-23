@@ -193,10 +193,11 @@ object AlignmentAnalysis {
      * told apart until each handset has a signal of its own, so the window grows with the room.
      *
      * [ownSlot] is which chirp is this handset's, and it is told rather than worked out because it
-     * is the anchor. This microphone is centimetres from its own speaker and metres from every
-     * other, so the loudest arrival in the window is its own chirp by a wide margin, and every
-     * other slot is then a known distance from it. Deciding instead that the loudest must be the
-     * first chirp would put every handset but one a whole slot out, silently and plausibly.
+     * is the anchor: the loudest arrival between [searchFrom] and [searchTo], and every other slot a
+     * known distance from it. The caller has to bound that search to this device's own slot. Across
+     * the whole window the loudest arrival need not be its own - a computer's microphone is far
+     * from its speakers, and a handset lying beside it was the loudest of three - and taking a
+     * neighbour for the anchor puts every slot a whole stagger out, silently and plausibly.
      *
      * A slot nobody could hear comes back as an arrival that will not pass the trust gate rather
      * than as a gap, which is what stops one unheard handset from costing the pairs it is not in.

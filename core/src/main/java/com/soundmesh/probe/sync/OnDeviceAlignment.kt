@@ -71,10 +71,14 @@ object OnDeviceAlignment {
      * what a round of pairs cannot do: two rounds are two snapshots with the clocks drifting
      * between them, and the pair between two sinks never comes up in a host-centred round at all.
      *
-     * The search is opened across the whole window rather than one slot of it, because the anchor
-     * is this handset's own chirp and it is found by being the loudest: its speaker is centimetres
-     * from its microphone and every other handset's is metres away. [ownSlot] then says which slot
-     * that anchor is, and the rest are a known number of stagger lengths from it.
+     * The anchor is this device's own chirp, looked for in its own slot only - within
+     * [uncertaintyFrames] of where the opening instant puts it - and the rest are a known number of
+     * stagger lengths from it. It used to be the loudest arrival in the whole window, on the grounds
+     * that a handset's speaker is centimetres from its microphone. A computer's is not: its own
+     * chirp came back the quietest of three, the loudest was the host lying beside it, and every
+     * slot was read a stagger out (09-23). Two handsets lying side by side had done the same. The
+     * opening instant is good to far better than one slot: a handset's landed within 163 ms of it
+     * over every room round archived, a computer's within 60.
      *
      * Returns one list per repeat, each as long as the room. Nothing is combined here - a handset
      * has no business deciding which of two other handsets chirped first, and getting that backwards
@@ -90,14 +94,18 @@ object OnDeviceAlignment {
         ownSlot: Int,
         chirpRepeats: Int,
         chirpIntervalNanos: Long,
-        uncertaintyFrames: Int = CalibrationWindow.DEFAULT_UNCERTAINTY_FRAMES,
+        uncertaintyFrames: Int = SEARCH_RADIUS_FRAMES,
         edgeShares: List<Double> = emptyList()
     ): List<List<ChirpArrival?>> = (0 until maxOf(chirpRepeats, 1)).map { repeat ->
-        val from = firstChirpAtHostNanos + repeat * chirpIntervalNanos
+        val own = firstChirpAtHostNanos + repeat * chirpIntervalNanos + ownSlot * staggerNanos
+        // Narrower than a slot, or a neighbour sits inside this window and can win it by being louder.
+        require(uncertaintyFrames < staggerNanos * ChirpGenerator.SAMPLE_RATE / 1_000_000_000L) {
+            "uncertaintyFrames must be smaller than a slot, or a neighbour can be taken for this device's own chirp"
+        }
         val window = CalibrationWindow.searchWindow(
             recordingStartedAtHostNanos = recordingStartedAtHostNanos,
-            fromHostNanos = from,
-            toHostNanos = from + (slotCount - 1) * staggerNanos,
+            fromHostNanos = own,
+            toHostNanos = own,
             uncertaintyFrames = uncertaintyFrames
         )
         AlignmentAnalysis.readSlots(
