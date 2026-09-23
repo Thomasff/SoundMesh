@@ -1,6 +1,7 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.AudioChunk
+import com.soundmesh.core.DriftController
 import com.soundmesh.core.TonePcmSource
 import kotlin.math.roundToInt
 
@@ -37,13 +38,15 @@ enum class SeamShare { HOST, OFFSET, DEVICE }
  * the clock estimate says what that instant is called here, and the output says which frame it is
  * consuming then.
  *
- * **Nothing accumulates.** Every chunk is placed against a fresh reading of the device's own
- * clock, so there is no running write pointer to drift and no counterpart here to the handset
- * renderer's drift controller. What that trades away is continuity at the seams: two machines
- * whose sample clocks differ by a few parts per million will now and then place neighbouring
- * chunks a frame apart or a frame over, instead of sliding steadily out of time. That is the
- * better failure of the two - it cannot grow - but whether the seams are audible is an ear
- * question and nobody has asked it yet.
+ * **Every chunk is measured, and written end to end.** Each chunk's frame is read against a fresh
+ * reading of the device's own clock, so nothing in the estimate can accumulate. But that reading
+ * wobbles by a frame, and obeying it put a hole or two summed samples at about half of all joins
+ * - some 25 edits a second, which a listener heard as crackle on 09-23, the same number the
+ * handset renderer's own notes give for its "clicks". So the reading only steers: a chunk is
+ * butted against its neighbour, and once the median of the last few readings says the timeline
+ * sits more than [NUDGE_DEADBAND_FRAMES] off, one chunk is drawn a frame longer or shorter. That
+ * is the handset's drift controller, with a stretch in place of its dropped or doubled frame.
+ * Beyond [REPLACE_BEYOND_FRAMES] the chunk is simply placed where the clock says.
  *
  * [offsetNanos] is read once per chunk rather than held. It is an estimate that improves as the
  * exchanges accumulate, and a sink that took a copy when it started would play a whole session
@@ -73,12 +76,11 @@ class ChunkPlayout(
         private set
 
     /**
-     * Consecutive chunks that did not land end to end, which is the fault "late" cannot see.
+     * Consecutive chunks the clock reading did not put end to end.
      *
-     * Every counter here and on the host can read perfectly while this one climbs: the chunks
-     * all arrive, in order, and each lands ahead of the writer. What a seam costs is the join -
-     * a hole where a gap is, two signals summed where an overlap is - and at a few parts per
-     * million between two machines' sample clocks it is a frame at a time, now and then.
+     * This is what the reading said, not what was written: the chunks themselves are butted
+     * together and only [nudges] and [replaced] edit the sound. It is kept because the reading is
+     * what a bad run shows up in, and its shares below say which part of it moved.
      */
     var seams: Int = 0
         private set
@@ -156,8 +158,17 @@ class ChunkPlayout(
         if (joins == 0) return@synchronized "no joins yet"
         val worst = if (worstSeamFrames > 0) "+$worstSeamFrames" else worstSeamFrames.toString()
         "p50 ${quantileOf(seamWidths, 0.5)} / p90 ${quantileOf(seamWidths, 0.9)} / " +
-            "p99 ${quantileOf(seamWidths, 0.99)} / worst $worst frames of $joins joins"
+            "p99 ${quantileOf(seamWidths, 0.99)} / worst $worst frames of $joins joins; " +
+            "heard: $nudges nudged, $replaced re-placed"
     }
+
+    /** Chunks drawn a frame longer or shorter to follow the clock - see the class note. */
+    var nudges: Int = 0
+        private set
+
+    /** Chunks placed where the clock said rather than against their neighbour, which leaves a join. */
+    var replaced: Int = 0
+        private set
 
     // Widths seen and how often, unsigned. A histogram rather than the joins themselves because
     // a run is minutes long and the widths are small integers, so this stays a handful of entries
@@ -178,6 +189,13 @@ class ChunkPlayout(
     private var endOfLastChunk: Long = 0
     private var lastSequence: Int = NO_CHUNK_YET
 
+    // Where what was actually written ran out, which the next consecutive chunk is butted against,
+    // and the filter that decides when that timeline has wandered far enough from the readings to
+    // nudge. A fresh filter whenever the timeline is re-placed: readings taken against the old one
+    // say nothing about the new.
+    private var endOfLastWrite: Long = 0
+    private var steer = DriftController(NUDGE_DEADBAND_FRAMES)
+
     // What the chunk before this one was placed with, so a seam can be split into shares.
     private var lastPlayAtHostNanos: Long = 0
     private var lastOffsetNanos: Long = 0
@@ -190,13 +208,37 @@ class ChunkPlayout(
         // read the other way round.
         val localNanos = chunk.playAtHostNanos - offset + alignmentOffsetNanos
         val frame = output.frameAtLocalNanos(localNanos)
-        val samples = samplesOf(chunk.pcm)
-        if (!output.schedule(samples, channels, frame)) {
+        val measuredSamples = samplesOf(chunk.pcm)
+        // Only a neighbour can be butted against. A chunk after a hole, and the first of all, go
+        // where the reading says.
+        val consecutive = chunk.sequence == lastSequence + 1
+        var at = frame
+        var samples = measuredSamples
+        var nudge = 0
+        var replace = false
+        if (consecutive) {
+            // Median filtered inside, so one stray reading neither nudges nor re-places.
+            val decision = steer.observe((frame - endOfLastWrite).toInt())
+            if (kotlin.math.abs(decision.filteredErrorFrames) > REPLACE_BEYOND_FRAMES) {
+                replace = true
+            } else {
+                at = endOfLastWrite
+                nudge = decision.adjustFrames
+                if (nudge != 0) samples = stretched(measuredSamples, measuredSamples.size / channels + nudge)
+            }
+        }
+        if (!output.schedule(samples, channels, at)) {
             droppedLate++
             return false
         }
-        if (chunk.sequence == lastSequence + 1) {
+        if (!consecutive || replace) steer = DriftController(NUDGE_DEADBAND_FRAMES)
+        endOfLastWrite = at + samples.size / channels
+        if (consecutive) {
             synchronized(stats) {
+                if (nudge != 0) nudges++
+                if (replace) replaced++
+                // Reading against reading, as before the chunks were butted together, so the band
+                // and its shares stay comparable with every run already written down.
                 val seam = (frame - endOfLastChunk).toInt()
                 joins++
                 seamWidths.merge(kotlin.math.abs(seam), 1, Int::plus)
@@ -213,13 +255,34 @@ class ChunkPlayout(
                 countShare(SeamShare.DEVICE, seam - host - offsetShare)
             }
         }
-        endOfLastChunk = frame + samples.size / channels
+        endOfLastChunk = frame + measuredSamples.size / channels
         lastSequence = chunk.sequence
         lastPlayAtHostNanos = chunk.playAtHostNanos
         lastOffsetNanos = offset
-        lastChunkFrames = samples.size / channels
+        lastChunkFrames = measuredSamples.size / channels
         played++
         return true
+    }
+
+    /**
+     * [samples] drawn over [frames] frames by straight-line interpolation, first and last frames
+     * kept where they were so both joins stay as smooth as the music. One frame in 960 is a pitch
+     * change of a thousandth for 20 ms.
+     */
+    private fun stretched(samples: ShortArray, frames: Int): ShortArray {
+        val from = samples.size / channels
+        val out = ShortArray(frames * channels)
+        for (i in 0 until frames) {
+            val position = i.toDouble() * (from - 1) / (frames - 1)
+            val k = position.toInt().coerceAtMost(from - 2)
+            val w = position - k
+            for (c in 0 until channels) {
+                val a = samples[k * channels + c]
+                val b = samples[(k + 1) * channels + c]
+                out[i * channels + c] = (a + (b - a) * w).roundToInt().toShort()
+            }
+        }
+        return out
     }
 
     // At the stream's rate, which WasapiOutput refuses to run at anything other than.
@@ -253,5 +316,17 @@ class ChunkPlayout(
         // Not -1: a host is free to start its sequence anywhere, and -1 would make the first
         // chunk of a stream that starts at zero look like the neighbour of one that never came.
         private const val NO_CHUNK_YET = Int.MIN_VALUE
+
+        /**
+         * How far the median reading may sit off the written timeline before a chunk is nudged:
+         * 0.17 ms. The raw reading's own wobble was p99 2-3 frames on 09-23 and the median of
+         * five cuts that further, so this is about three times the noise - a guess at the margin,
+         * not a measurement of it. Smaller only moves the steady error; the nudge rate is the two
+         * clocks' drift either way.
+         */
+        const val NUDGE_DEADBAND_FRAMES = 8
+
+        /** The handset's product trim band (PRODUCT_TRIM_FRAMES), 5 ms, beyond which a reading is a move. */
+        const val REPLACE_BEYOND_FRAMES = 240
     }
 }

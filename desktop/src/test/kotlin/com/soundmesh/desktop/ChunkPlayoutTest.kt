@@ -89,33 +89,129 @@ class ChunkPlayoutTest {
     }
 
     @Test
-    fun aChunkThatLandsPastItsNeighbourIsCountedAsASeam() {
-        // A gap leaves a hole in the sound and an overlap sums two signals; the sign is what
-        // says which. Both are the same fault and both have to be visible.
+    fun aChunkTheClockPutsAFewFramesOffIsCountedAsASeamButWrittenEndToEnd() {
+        // The seam is what the clock reading said, and it stays visible. What is written is the
+        // chunk butted against its neighbour: obeying a reading that wobbles by a frame put a
+        // hole or two summed samples into the sound some 25 times a second, which a listener
+        // heard as crackle on 09-23 - the handsets' old "clicks" in a new shape.
         val output = FakeOutput()
         val playout = ChunkPlayout(output) { 0L }
 
         playout.play(AudioChunk(0, 0L, stereo(960)))
         playout.play(AudioChunk(1, 20_100_000L, stereo(960)))
 
-        assertEquals(listOf(0L, 964L), output.scheduled.map { it.first })
+        assertEquals(listOf(0L, 960L), output.scheduled.map { it.first })
+        assertEquals(960, output.scheduled[1].third.size / 2)
         assertEquals(4, playout.worstSeamFrames)
         assertEquals(1, playout.seams)
+        assertEquals(0, playout.nudges)
     }
 
     @Test
-    fun aMissingSequenceIsNotReportedAsASeam() {
+    fun aMissingSequenceIsNotReportedAsASeamAndIsPlacedWhereTheClockSays() {
         // The host dropped one, or the network did. That is a hole a whole chunk wide and it
         // shows up in the sequence itself; calling it a seam would bury the one-frame kind
-        // this counter exists to find.
+        // this counter exists to find. There is no neighbour to butt against, so the chunk
+        // goes where its instant says.
         val output = FakeOutput()
         val playout = ChunkPlayout(output) { 0L }
 
         playout.play(AudioChunk(0, 0L, stereo(960)))
         playout.play(AudioChunk(2, 40_000_000L, stereo(960)))
 
+        assertEquals(listOf(0L, 1920L), output.scheduled.map { it.first })
         assertEquals(0, playout.worstSeamFrames)
         assertEquals(0, playout.seams)
+    }
+
+    @Test
+    fun aTimelineThatKeepsDriftingIsFollowedAFrameAtATimeWithoutABreak() {
+        // Two sample clocks a few parts per million apart: here the host's timeline runs one
+        // frame long every fourth chunk, far faster than any real pair, so the test is short.
+        // Every chunk has to start where the one before ran out, and the sound has to stay
+        // within the deadband of where the clock says it belongs.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+        var frame = 0L
+        val measured = ArrayList<Long>()
+        for (sequence in 0 until 400) {
+            if (sequence > 0) frame += 960 + if (sequence % 4 == 0) 1 else 0
+            measured.add(frame)
+            playout.play(AudioChunk(sequence, instantOfFrame(frame), stereo(960)))
+        }
+
+        for (i in 1 until output.scheduled.size) {
+            val (at, _, samples) = output.scheduled[i - 1]
+            assertEquals("chunk $i does not start where chunk ${i - 1} ended", at + samples.size / 2, output.scheduled[i].first)
+        }
+        val worstLag = output.scheduled.indices.maxOf { kotlin.math.abs(measured[it] - output.scheduled[it].first) }
+        assertTrue("fell $worstLag frames behind the clock", worstLag <= ChunkPlayout.NUDGE_DEADBAND_FRAMES + 3)
+        assertTrue("never nudged", playout.nudges > 0)
+        assertEquals(0, playout.replaced)
+    }
+
+    @Test
+    fun aNudgedChunkIsStretchedByAFrameRatherThanHoled() {
+        // A frame is added by drawing the chunk one frame longer, not by leaving a zero or
+        // repeating a sample: the chunk's first and last samples stay where they were, so
+        // both of its joins are as smooth as the music is.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+        val ramp = ramp(960)
+        var frame = 0L
+        for (sequence in 0 until 10) {
+            if (sequence > 0) frame += 960 + ChunkPlayout.NUDGE_DEADBAND_FRAMES + 2
+            playout.play(AudioChunk(sequence, instantOfFrame(frame), ramp))
+        }
+
+        val stretched = output.scheduled.map { it.third }.first { it.size / 2 != 960 }
+        assertEquals(961, stretched.size / 2)
+        assertEquals(sampleOf(ramp, 0), stretched[0].toInt())
+        assertEquals(sampleOf(ramp, 959 * 2), stretched[960 * 2].toInt())
+        for (i in 1 until 961) {
+            assertTrue("sample $i steps back", stretched[i * 2] >= stretched[(i - 1) * 2])
+        }
+    }
+
+    @Test
+    fun aNudgedChunkIsSqueezedByAFrameWhenTheClockRunsTheOtherWay() {
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+        var frame = 10_000L
+        for (sequence in 0 until 10) {
+            if (sequence > 0) frame += 960 - ChunkPlayout.NUDGE_DEADBAND_FRAMES - 2
+            playout.play(AudioChunk(sequence, instantOfFrame(frame), constant(960, 1000)))
+        }
+
+        val squeezed = output.scheduled.map { it.third }.first { it.size / 2 != 960 }
+        assertEquals(959, squeezed.size / 2)
+        assertTrue("a sample other than the music's own", squeezed.all { it.toInt() == 1000 })
+    }
+
+    @Test
+    fun aClockThatJumpsFarIsFollowedAtOnceRatherThanAFrameAtATime() {
+        // Past the handset's product trim band the reading is not wobble to be smoothed but a
+        // move - a new offset estimate, a stalled device - and walking to it a frame per chunk
+        // would take seconds.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+        var frame = 0L
+        for (sequence in 0 until 10) {
+            if (sequence > 0) frame += 960 + if (sequence == 3) ChunkPlayout.REPLACE_BEYOND_FRAMES + 60 else 0
+            playout.play(AudioChunk(sequence, instantOfFrame(frame), stereo(960)))
+        }
+
+        assertEquals(frame, output.scheduled.last().first)
+        assertEquals(1, playout.replaced)
+    }
+
+    @Test
+    fun theBandLineSaysHowOftenTheSoundWasEdited() {
+        val playout = ChunkPlayout(FakeOutput()) { 0L }
+
+        playAJoinedRun(playout, listOf(0, 0))
+
+        assertTrue(playout.seamBand(), playout.seamBand().endsWith("heard: 0 nudged, 0 re-placed"))
     }
 
     @Test
@@ -276,4 +372,23 @@ class ChunkPlayoutTest {
     private fun instantOfFrame(frame: Long) = (frame * 1_000_000_000L + 47_999L) / 48_000L
 
     private fun stereo(frames: Int) = ByteArray(frames * 2 * 2)
+
+    /** Stereo, both channels the same value rising by ten a frame. */
+    private fun ramp(frames: Int) = pcmOf(frames) { it * 10 }
+
+    private fun constant(frames: Int, value: Int) = pcmOf(frames) { value }
+
+    private fun pcmOf(frames: Int, value: (Int) -> Int): ByteArray {
+        val pcm = ByteArray(frames * 2 * 2)
+        for (f in 0 until frames) for (c in 0 until 2) {
+            val v = value(f)
+            pcm[(f * 2 + c) * 2] = (v and 0xFF).toByte()
+            pcm[(f * 2 + c) * 2 + 1] = (v shr 8).toByte()
+        }
+        return pcm
+    }
+
+    /** The sample at [index] (in samples, not bytes) of little-endian [pcm]. */
+    private fun sampleOf(pcm: ByteArray, index: Int): Int =
+        ((pcm[index * 2].toInt() and 0xFF) or (pcm[index * 2 + 1].toInt() shl 8)).toShort().toInt()
 }
