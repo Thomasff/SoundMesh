@@ -86,7 +86,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
 
     status.problem?.let { Text(describe(it), color = MaterialTheme.colorScheme.error) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = { pickWav()?.let { file = it } }, enabled = !status.playing) { Text("选 WAV 文件") }
+        OutlinedButton(onClick = { pickSong()?.let { file = it } }, enabled = !status.playing) { Text("选文件") }
         Text(file?.name ?: "还没选文件")
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -101,6 +101,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
             enabled = status.open && file != null
         ) { Text("播放") }
     }
+    if (status.ended) Text("放完了。")
     Text("手机上的 SoundMesh 在待命时会自动跟上。")
     Text(if (status.phones.isEmpty()) "还没有手机连上" else "已连上：" + status.phones.joinToString("、"))
     Diagnostics(
@@ -169,11 +170,13 @@ private fun <T> polled(read: () -> T): T? {
     return value
 }
 
-private fun pickWav(): File? {
-    val dialog = FileDialog(null as Frame?, "选一个 WAV 文件", FileDialog.LOAD)
+private val SONG_EXTENSIONS = listOf("mp3", "m4a", "aac", "flac", "wma", "wav")
+
+private fun pickSong(): File? {
+    val dialog = FileDialog(null as Frame?, "选一首歌", FileDialog.LOAD)
     // Windows ignores the filter; the pattern in the file name box is what filters there.
-    dialog.file = "*.wav"
-    dialog.filenameFilter = FilenameFilter { _, name -> name.endsWith(".wav", ignoreCase = true) }
+    dialog.file = SONG_EXTENSIONS.joinToString(";") { "*.$it" }
+    dialog.filenameFilter = FilenameFilter { _, name -> name.substringAfterLast(".").lowercase() in SONG_EXTENSIONS }
     dialog.isVisible = true
     return dialog.files.firstOrNull()
 }
