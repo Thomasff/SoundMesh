@@ -328,7 +328,7 @@ class FindingEachOtherTest {
         // while that handset is a host. Nothing else on this network answers on it.
         assertTrue(
             "the liveness question is asked of something other than the host's own port",
-            source("src/main/java/com/soundmesh/probe/sync/RoomCommandChannel.kt")
+            source("../core/src/main/java/com/soundmesh/probe/sync/RoomCommandChannel.kt")
                 .contains("it.connect(InetSocketAddress(address, COMMAND_PORT), timeoutMillis)")
         )
     }

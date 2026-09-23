@@ -3,27 +3,11 @@ package com.soundmesh.probe.sync
 import android.media.AudioManager
 import com.soundmesh.session.CAPTURING_HOST_STREAM
 import java.io.File
-import kotlin.math.roundToInt
 
 /** What a stream is set to at this moment, and how far it goes on this handset. */
 data class VolumeReading(val index: Int, val max: Int, val stream: String) {
     val percent: Int get() = percentOf(index, max)
 }
-
-/**
- * Where a percentage lands on a scale of [max] steps.
- *
- * A percentage is what travels between handsets, because they do not agree on how many steps a
- * stream has - fifteen on one, sixteen on the next - so an index set across a room is a different
- * loudness on every handset in it. The rounding is stated rather than left to integer division:
- * 60% of fifteen steps is nine and not eight, and the two are a step apart everywhere.
- */
-internal fun indexFor(percent: Int, max: Int): Int =
-    (percent.coerceIn(0, 100) * max / 100.0).roundToInt().coerceIn(0, max)
-
-/** The other direction, for saying on a screen what a handset actually landed on. */
-internal fun percentOf(index: Int, max: Int): Int =
-    if (max <= 0) 0 else (index * 100.0 / max).roundToInt().coerceIn(0, 100)
 
 /**
  * What each stream was set to before anything here first touched it.
