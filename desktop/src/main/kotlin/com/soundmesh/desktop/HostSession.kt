@@ -30,14 +30,37 @@ sealed interface HostProblem {
     data class PlayFailed(val detail: String) : HostProblem
 }
 
+/** One device standing by on the host's command port, as the roster shows it. */
+data class RoomPhone(
+    val peerId: String,
+    /** The name it gave, or the end of its id when it gave none. */
+    val name: String,
+    /** Its colour's place in the palette, or null before one is settled. */
+    val place: Int?,
+    /**
+     * It has stopped saying it is there. Not gone: a handset stops its heartbeat a minute after its
+     * screen goes off and still follows the next play - see `RoomCommandServer.quietPeerIds`.
+     */
+    val quiet: Boolean,
+    /**
+     * The room is playing and this one is not taking the audio, or has gone quiet - the handset
+     * host's `whoStopped`. Not said for the first [HostSession.STOPPED_GRACE_MILLIS] of a play,
+     * while every device is still dialling in.
+     */
+    val stopped: Boolean
+)
+
 data class HostStatus(
     val open: Boolean,
     val playing: Boolean,
     /** The last play ran to the end of its file and stopped the room itself, rather than being stopped. */
     val ended: Boolean,
     val file: String?,
-    /** Handsets standing by on the command port, by the name each gave. */
-    val phones: List<String>,
+    /** This machine's own id and colour place, for the first row of the roster. */
+    val selfId: String?,
+    val selfPlace: Int?,
+    /** Devices standing by on the command port, in the order they joined. */
+    val phones: List<RoomPhone>,
     val sinksOnAudio: Int,
     val droppedChunks: Int,
     val localBand: String?,
@@ -73,7 +96,8 @@ class HostSession(
      * What puts the record on the network. A parameter so a test can make it fail without
      * putting anything on the network - the one way to reach what [open] does when it does.
      */
-    private val advertiser: (serviceName: String, port: Int, hostId: String) -> AutoCloseable = PeerDiscovery::register
+    private val advertiser: (serviceName: String, port: Int, hostId: String) -> AutoCloseable = PeerDiscovery::register,
+    private val stoppedGraceMillis: Long = STOPPED_GRACE_MILLIS
 ) {
     private val lock = Any()
 
@@ -82,12 +106,14 @@ class HostSession(
     private var chunkServer: ChunkServer? = null
     private var record: AutoCloseable? = null
     private var teller: Thread? = null
+    private var selfId: String? = null
 
     @Volatile private var problem: HostProblem? = null
 
     @Volatile private var playing = false
     @Volatile private var ended = false
     @Volatile private var stream: HostStream? = null
+    @Volatile private var streamSinceNanos = 0L
     @Volatile private var file: String? = null
     private var player: Thread? = null
 
@@ -153,6 +179,7 @@ class HostSession(
         clockServer = clock
         chunkServer = chunks
         record = advertised
+        selfId = hostId
         teller = Thread({ tellWhileOpen() }, "host-tell").apply {
             isDaemon = true
             start()
@@ -178,12 +205,29 @@ class HostSession(
 
     fun status(): HostStatus = synchronized(lock) {
         val command = commandServer
+        val places = command?.places().orEmpty()
+        val quiet = command?.quietPeerIds().orEmpty().toSet()
+        // Only once the stream has run a while: before it exists nobody has been told to dial the
+        // audio, and for the first seconds after every device is still settling its clock - which
+        // would draw the whole room as dropped at the start of every song.
+        val settled = playing && stream != null && System.nanoTime() - streamSinceNanos >= stoppedGraceMillis * 1_000_000L
+        val onAudio = if (settled) chunkServer?.peerIds().orEmpty().toSet() else null
         HostStatus(
             open = command != null,
             playing = playing,
             ended = ended,
             file = file,
-            phones = command?.standingPeerIds()?.map { command.nameOf(it) ?: it.takeLast(4) }.orEmpty(),
+            selfId = selfId,
+            selfPlace = selfId?.let { places[it] },
+            phones = command?.standingPeerIds().orEmpty().map { peerId ->
+                RoomPhone(
+                    peerId = peerId,
+                    name = command?.nameOf(peerId) ?: peerId.takeLast(4),
+                    place = places[peerId],
+                    quiet = peerId in quiet,
+                    stopped = onAudio != null && (peerId !in onAudio || peerId in quiet)
+                )
+            },
             sinksOnAudio = chunkServer?.clientCount() ?: 0,
             droppedChunks = chunkServer?.droppedChunks() ?: 0,
             localBand = stream?.localSeamBand(),
@@ -273,7 +317,10 @@ class HostSession(
             }
             try {
                 val hostStream = HostStream(ports.chunk, source::fill, localOutput = speakers?.output, chunkServer = chunks)
-                if (current()) stream = hostStream
+                if (current()) {
+                    streamSinceNanos = System.nanoTime()
+                    stream = hostStream
+                }
                 // Once through and no more, the way the handset host plays a song: one with no end
                 // is one a person can only stop. The loop in the source stays for the command line,
                 // whose runs listen for the seam.
@@ -369,6 +416,13 @@ class HostSession(
          * playing - the handset host checks on its own screen's refresh, about this often.
          */
         const val RETELL_MILLIS = 200L
+
+        /**
+         * How long after a play starts before a device not taking the audio is said to have
+         * stopped. A standing handset hears "play", settles its clock - two seconds for its first
+         * estimate - and only then dials; five leaves room for a slow one. Picked, not measured.
+         */
+        const val STOPPED_GRACE_MILLIS = 5_000L
 
         /** Long enough for a stream sleeping to its next chunk to notice it was told to stop. */
         private const val JOIN_MILLIS = 2_000L

@@ -1,11 +1,16 @@
 package com.soundmesh.desktop.app
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -23,12 +28,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.soundmesh.core.BadgeHues
 import com.soundmesh.core.DiscoveryFailure
+import com.soundmesh.core.PeerBadge
 import com.soundmesh.desktop.HostPort
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
+import com.soundmesh.desktop.HostStatus
 import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.SinkStage
 import com.soundmesh.desktop.SinkStatus
@@ -108,7 +118,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     Text("手机上的 SoundMesh 在待命时会自动跟上。")
     val addresses = remember { ownAddresses() }
     if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、"))
-    Text(if (status.phones.isEmpty()) "还没有手机连上" else "已连上：" + status.phones.joinToString("、"))
+    Roster(status)
     Diagnostics(
         listOf(
             "音频口" to "${status.sinksOnAudio} 台在收",
@@ -148,6 +158,10 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
             ) { Text("连这个地址") }
         }
     }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Badge(status.selfId, status.selfPlace)
+        Text("本机在主机名单上是 ${PeerBadge.numberOf(status.selfId)} 号")
+    }
     Text(describe(status))
     status.hostName?.let { name -> Text("跟的是：$name" + (status.hostAddress?.let { "（$it）" } ?: "")) }
     Diagnostics(
@@ -159,6 +173,58 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
             "接缝拆分" to (status.shares ?: "—")
         )
     )
+}
+
+/**
+ * Every device in the room, one line each, this machine first - the handset host's roster. The
+ * badge is on every line here because this window has no drawing of the room to find a colour in.
+ */
+@Composable
+private fun Roster(status: HostStatus) {
+    Text("房间里 ${status.phones.size + 1} 台", style = MaterialTheme.typography.titleSmall)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        status.selfId?.let { Badge(it, status.selfPlace) }
+        Text("本机（主机）")
+    }
+    if (status.phones.isEmpty()) Text("还没有手机连上。手机选「当从机」就会自己连过来。")
+    for (phone in status.phones) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Badge(phone.peerId, phone.place, hollow = phone.quiet || phone.stopped)
+            Text(phone.name)
+        }
+        // Quiet first: a quiet one may still be taking the audio, and "not taking it" would be false.
+        val note = when {
+            phone.quiet -> "有一阵子没通信了，可能是息屏了"
+            phone.stopped -> "没在收音频，可能掉线了"
+            else -> null
+        }
+        note?.let { Text(it, Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+/**
+ * A device's number on its colour - the handsets' BadgeChip. Hollow and grey for one that has
+ * stopped, as the handset draws it: the colour is kept for devices that are there.
+ */
+@Composable
+private fun Badge(peerId: String, place: Int?, hollow: Boolean = false) {
+    val hue = place?.let { BadgeHues.argb.getOrNull(it) }?.let { Color(it) }
+    val grey = MaterialTheme.colorScheme.onSurfaceVariant
+    val fill = hue ?: MaterialTheme.colorScheme.primary
+    val label = when {
+        hollow -> grey
+        hue == null -> MaterialTheme.colorScheme.onPrimary
+        BadgeHues.whiteLabel[place!!] -> Color.White
+        else -> Color.Black
+    }
+    Box(
+        Modifier.size(24.dp).then(
+            if (hollow) Modifier.border(1.5.dp, grey, CircleShape) else Modifier.background(fill, CircleShape)
+        ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("${PeerBadge.numberOf(peerId)}", fontSize = 11.sp, color = label)
+    }
 }
 
 @Composable

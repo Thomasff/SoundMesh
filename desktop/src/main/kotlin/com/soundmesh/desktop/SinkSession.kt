@@ -45,7 +45,11 @@ data class SinkStatus(
      * What went wrong: why the session ended when [stage] is [SinkStage.FAILED], or why the last
      * play was not followed when this machine has gone back to standing by.
      */
-    val problem: String?
+    val problem: String?,
+    /** This machine's id, whose badge number is how the host's roster names it. */
+    val selfId: String,
+    /** Its colour's place as the host last said, or null before a host has said one. */
+    val selfPlace: Int?
 )
 
 /**
@@ -87,6 +91,10 @@ class SinkSession(
     @Volatile private var hostAddress: String? = null
     @Volatile private var problem: String? = null
     @Volatile private var stream: SinkStream? = null
+    @Volatile private var line: RoomCommandClient? = null
+
+    // Read once: status is asked twice a second, and the name on disk does not change under it.
+    private val selfId by lazy { HostIdentity(identityDirectory).current() }
 
     // What the host last said, set on the command line's thread and acted on by the worker's. A
     // count of plays rather than a flag, because a handset host says "play" again to anybody who
@@ -110,6 +118,8 @@ class SinkSession(
         hostName = null
         hostAddress = null
         stream = null
+        // The last host's colours are its own; the next one settles them again.
+        line = null
         playWanted = false
         worker = Thread({ follow(address, chunkPort, clockPort, commandPort, spatialPort) }, "sink-follow").apply {
             isDaemon = true
@@ -129,6 +139,8 @@ class SinkSession(
     fun status(): SinkStatus {
         val stream = stream
         return SinkStatus(
+            selfId = selfId,
+            selfPlace = line?.places?.get(selfId),
             stage = stage,
             failure = failure,
             hostName = hostName,
@@ -197,9 +209,9 @@ class SinkSession(
         spatialPort: Int,
         stored: PairingCode?
     ): PairingCode? {
-        // The same name the audio leg dials under, so the host sees one machine and not two.
-        val selfId = HostIdentity(identityDirectory).current()
+        // The same name the audio leg dials under ([selfId]), so the host sees one machine and not two.
         val line = RoomCommandClient(host, commandPort, selfId, carrying = null, called = called, onCommand = ::obey)
+        this.line = line
         line.start()
         try {
             // From now rather than zero: nanoTime's origin is arbitrary and may be negative, and the

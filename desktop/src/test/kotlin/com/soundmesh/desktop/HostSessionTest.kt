@@ -91,7 +91,7 @@ class HostSessionTest {
         host.open()
         val phone = standBy(ports.command, heard)
         try {
-            assertTrue("the handset never appeared", eventually { host.status().phones == listOf("书房") })
+            assertTrue("the handset never appeared", eventually { host.status().phones.map { it.name } == listOf("书房") })
             host.play(writeTestWav(folder.newFile("clip.wav")), alsoHere = false)
 
             assertEquals(RoomOrder(RoomCommand.PLAY), heard.poll(5, TimeUnit.SECONDS))
@@ -101,6 +101,37 @@ class HostSessionTest {
             host.stopPlaying()
             assertEquals(RoomOrder(RoomCommand.STOP), heard.poll(5, TimeUnit.SECONDS))
             assertFalse(host.status().playing)
+        } finally {
+            phone.close()
+            host.close()
+        }
+    }
+
+    /**
+     * The roster gives each device its own colour, apart from this machine's, and while the room
+     * plays it says which one is not taking the audio - here one that was told to play and never
+     * dialled it, the way a handset that dropped out looks from the host.
+     */
+    @Test
+    fun theRosterColoursEachDeviceAndSaysWhichIsNotTakingTheAudio() {
+        val ports = ports()
+        val host = session(ports)
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        host.open()
+        val phone = standBy(ports.command, heard)
+        try {
+            assertTrue(eventually { host.status().phones.singleOrNull()?.place != null })
+            val idle = host.status()
+            val row = idle.phones.single()
+            assertNotNull(idle.selfPlace)
+            assertTrue("the handset has the host's colour", row.place != idle.selfPlace)
+            assertFalse("stopped before anything played", row.stopped)
+
+            host.play(writeTestWav(folder.newFile("clip.wav")), alsoHere = false)
+            assertEquals(RoomOrder(RoomCommand.PLAY), heard.poll(5, TimeUnit.SECONDS))
+            // Not straight away: at the start of every song nobody has dialled in yet.
+            assertFalse("called stopped while still dialling in", host.status().phones.single().stopped)
+            assertTrue("never said to be off the audio", eventually { host.status().phones.single().stopped })
         } finally {
             phone.close()
             host.close()

@@ -45,8 +45,12 @@ class SinkSessionTest {
         try {
             sink.startOn(ports)
             assertTrue("never stood by: ${sink.status()}", eventually(10_000) { sink.status().stage == SinkStage.STANDING_BY })
-            assertTrue("not on the host's list: ${host.status().phones}", eventually(5_000) { host.status().phones == listOf("DESK") })
+            assertTrue("not on the host's list: ${host.status().phones}", eventually(5_000) { host.status().phones.map { it.name } == listOf("DESK") })
             assertEquals(0, sink.status().played)
+            // The colour this machine shows as its own is the one the host's roster draws it in.
+            assertTrue("no colour from the host", eventually(5_000) { sink.status().selfPlace != null })
+            assertEquals(host.status().phones.single().place, sink.status().selfPlace)
+            assertEquals(host.status().phones.single().peerId, sink.status().selfId)
         } finally {
             sink.stop()
             host.close()

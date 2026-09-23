@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
+import com.soundmesh.core.BadgeHues
 import com.soundmesh.core.PeerBadge
 import com.soundmesh.probe.R
 
@@ -38,27 +39,12 @@ import com.soundmesh.probe.R
  * table, which no theme is aiming at.
  */
 object BadgePalette {
-    private val colours = listOf(
-        Color(0xFFE53935), // red
-        Color(0xFFF57C00), // orange
-        Color(0xFFFDD835), // yellow
-        Color(0xFFAEEA00), // lime
-        Color(0xFF43A047), // green
-        Color(0xFF00897B), // teal
-        Color(0xFF00ACC1), // cyan
-        Color(0xFF1E88E5), // sky
-        Color(0xFF3949AB), // blue
-        Color(0xFF8E24AA), // purple
-        Color(0xFFD81B60), // magenta
-        Color(0xFFF48FB1)  // pink
-    )
+    // The values live in core, because a computer draws the same room and must call each place by
+    // the same colour.
+    private val colours = BadgeHues.argb.map { Color(it) }
 
     /** Black or white per colour, whichever the number on top of it can be read against. */
-    private val labels = listOf(
-        Color.White, Color.Black, Color.Black, Color.Black,
-        Color.White, Color.White, Color.Black, Color.White,
-        Color.White, Color.White, Color.White, Color.Black
-    )
+    private val labels = BadgeHues.whiteLabel.map { if (it) Color.White else Color.Black }
 
     @StringRes private val names = listOf(
         R.string.badge_red, R.string.badge_orange, R.string.badge_yellow, R.string.badge_lime,
