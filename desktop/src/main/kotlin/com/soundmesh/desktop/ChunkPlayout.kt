@@ -309,17 +309,6 @@ class ChunkPlayout(
         shareWidths.getValue(share).merge(kotlin.math.abs(frames).roundToInt(), 1, Int::plus)
     }
 
-    /** Little-endian pairs of bytes, which is what ChunkCodec puts on the wire, to samples. */
-    private fun samplesOf(pcm: ByteArray): ShortArray {
-        val samples = ShortArray(pcm.size / 2)
-        for (i in samples.indices) {
-            val low = pcm[i * 2].toInt() and 0xFF
-            val high = pcm[i * 2 + 1].toInt()
-            samples[i] = ((high shl 8) or low).toShort()
-        }
-        return samples
-    }
-
     companion object {
         /**
          * What the band answers before there is a join to measure.
@@ -346,4 +335,20 @@ class ChunkPlayout(
         /** The handset's product trim band (PRODUCT_TRIM_FRAMES), 5 ms, beyond which a reading is a move. */
         const val REPLACE_BEYOND_FRAMES = 240
     }
+}
+
+/**
+ * Little-endian pairs of bytes, which is what ChunkCodec puts on the wire, to samples.
+ *
+ * File scope rather than on the playout, so a measuring round that puts chunks on the same output
+ * reads them the same way.
+ */
+internal fun samplesOf(pcm: ByteArray): ShortArray {
+    val samples = ShortArray(pcm.size / 2)
+    for (i in samples.indices) {
+        val low = pcm[i * 2].toInt() and 0xFF
+        val high = pcm[i * 2 + 1].toInt()
+        samples[i] = ((high shl 8) or low).toShort()
+    }
+    return samples
 }
