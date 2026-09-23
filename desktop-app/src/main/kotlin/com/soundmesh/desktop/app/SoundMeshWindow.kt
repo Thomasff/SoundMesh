@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +45,7 @@ import com.soundmesh.desktop.HostStatus
 import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.SinkStage
 import com.soundmesh.desktop.SinkStatus
+import com.soundmesh.desktop.SoftwareVolume
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -53,6 +57,7 @@ import java.io.File
 import java.io.FilenameFilter
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import kotlin.math.roundToInt
 
 private enum class Role { HOST, SINK }
 
@@ -61,7 +66,8 @@ fun SoundMeshWindow(host: HostSession, sink: SinkSession, sessions: CoroutineDis
     var role by remember { mutableStateOf<Role?>(null) }
     val scope = rememberCoroutineScope()
     Column(
-        Modifier.fillMaxSize().padding(20.dp),
+        // Scrolls: a roster and a volume line per device outgrow the window in a room of a few.
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -119,6 +125,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     val addresses = remember { ownAddresses() }
     if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、"))
     Roster(status)
+    Volumes(host, status, sessions)
     Diagnostics(
         listOf(
             "音频口" to "${status.sinksOnAudio} 台在收",
@@ -162,6 +169,9 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
         Badge(status.selfId, status.selfPlace)
         Text("本机在主机名单上是 ${PeerBadge.numberOf(status.selfId)} 号")
     }
+    if (status.volumePercent != SoftwareVolume.FULL) {
+        Text("主机把这台的 SoundMesh 音量调到了 ${status.volumePercent}%（电脑的系统音量没动）。")
+    }
     Text(describe(status))
     status.hostName?.let { name -> Text("跟的是：$name" + (status.hostAddress?.let { "（$it）" } ?: "")) }
     Diagnostics(
@@ -199,6 +209,61 @@ private fun Roster(status: HostStatus) {
             else -> null
         }
         note?.let { Text(it, Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+/**
+ * Every device's volume, one line each, under a room slider that levels them all - the handset
+ * host's volume lines. Only SoundMesh's sound moves on a computer; a handset moves its own
+ * media volume, as it always has.
+ */
+@Composable
+private fun Volumes(host: HostSession, status: HostStatus, sessions: CoroutineDispatcher) {
+    val scope = rememberCoroutineScope()
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("音量", style = MaterialTheme.typography.titleSmall)
+        if (status.volumeTouched) {
+            TextButton(onClick = { scope.launch(sessions) { host.restoreVolume() } }) { Text("全部恢复") }
+        }
+    }
+    VolumeLine("全部", status.roomVolumePercent ?: status.volumePercent) { scope.launch(sessions) { host.setRoomVolume(it) } }
+    VolumeLine("本机", status.volumePercent) { scope.launch(sessions) { host.setOwnVolume(it) } }
+    for (phone in status.phones) {
+        VolumeLine(phone.name, phone.askedPercent ?: phone.volumePercent, reported = phone.volumePercent) {
+            scope.launch(sessions) { host.setDeviceVolume(phone.peerId, it) }
+        }
+    }
+}
+
+/**
+ * One slider. It says what it was set to and, where the device reported somewhere else - a
+ * handset's volume moves in fifteen coarse steps - where it actually came to.
+ */
+@Composable
+private fun VolumeLine(name: String, percent: Int?, reported: Int? = null, onSet: (Int) -> Unit) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(name, Modifier.width(96.dp))
+        Slider(
+            value = dragging ?: (percent ?: SoftwareVolume.FULL).toFloat(),
+            onValueChange = { dragging = it },
+            // Sent once on letting go rather than on every step of a drag, as the handset does.
+            onValueChangeFinished = {
+                dragging?.let { onSet(it.roundToInt()) }
+                dragging = null
+            },
+            valueRange = 0f..SoftwareVolume.FULL.toFloat(),
+            enabled = percent != null,
+            modifier = Modifier.width(240.dp)
+        )
+        Text(
+            when {
+                percent == null -> "还没报音量"
+                reported != null && reported != percent -> "$percent%（现在 $reported%）"
+                else -> "$percent%"
+            },
+            fontFamily = FontFamily.Monospace
+        )
     }
 }
 

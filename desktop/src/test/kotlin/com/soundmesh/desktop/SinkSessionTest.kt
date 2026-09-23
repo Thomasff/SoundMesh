@@ -61,6 +61,41 @@ class SinkSessionTest {
     }
 
     /**
+     * The room slider, one device's own slider and a restore each reach this machine, and each time
+     * it says back where it came to - which is what the host's row for it is drawn from.
+     */
+    @Test
+    fun aStandingSinkFollowsTheRoomsVolumeAndSaysWhereItCameTo() {
+        val ports = ports()
+        val host = hostOpen(ports)
+        val sink = SinkSession(folder.newFolder(), openSpeakers = FakeSpeakers()::open)
+        fun heard(percent: Int) = eventually(5_000) {
+            sink.status().volumePercent == percent && host.status().phones.singleOrNull()?.volumePercent == percent
+        }
+        try {
+            sink.startOn(ports)
+            assertTrue("never said its volume", heard(SoftwareVolume.FULL))
+
+            host.setRoomVolume(40)
+            assertTrue("room slider: ${sink.status().volumePercent}", heard(40))
+            assertEquals(40, host.status().volumePercent)
+
+            host.setDeviceVolume(host.status().phones.single().peerId, 70)
+            assertTrue("own slider: ${sink.status().volumePercent}", heard(70))
+            assertEquals(70, host.status().phones.single().askedPercent)
+            assertEquals("the host's own sound moved with one device", 40, host.status().volumePercent)
+
+            host.restoreVolume()
+            assertTrue("restore: ${sink.status().volumePercent}", heard(SoftwareVolume.FULL))
+            assertEquals(null, host.status().phones.single().askedPercent)
+            assertFalse(host.status().volumeTouched)
+        } finally {
+            sink.stop()
+            host.close()
+        }
+    }
+
+    /**
      * A standing sink says it is there on the handsets' cadence, or a handset host draws it as
      * gone quiet - a hollow mark on the list - while it is waiting perfectly well.
      */

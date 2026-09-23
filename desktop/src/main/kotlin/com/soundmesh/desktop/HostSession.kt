@@ -47,7 +47,15 @@ data class RoomPhone(
      * host's `whoStopped`. Not said for the first [HostSession.STOPPED_GRACE_MILLIS] of a play,
      * while every device is still dialling in.
      */
-    val stopped: Boolean
+    val stopped: Boolean,
+    /** Its volume as it last said, in per cent, or null before it has said. */
+    val volumePercent: Int?,
+    /**
+     * What it was last told to be on its own, or null since the room slider or a restore. Apart
+     * from [volumePercent] for the handset host's reason (VolumeRow.asked): drawn from the report
+     * alone, a slider let go of jumps back to where the device was until the report arrives.
+     */
+    val askedPercent: Int?
 )
 
 data class HostStatus(
@@ -61,6 +69,12 @@ data class HostStatus(
     val selfPlace: Int?,
     /** Devices standing by on the command port, in the order they joined. */
     val phones: List<RoomPhone>,
+    /** This machine's own volume, which is SoundMesh's only - see [SoftwareVolume]. */
+    val volumePercent: Int,
+    /** What the room slider was last set to, or null since a restore. */
+    val roomVolumePercent: Int?,
+    /** Something was set that a restore would put back. */
+    val volumeTouched: Boolean,
     val sinksOnAudio: Int,
     val droppedChunks: Int,
     val localBand: String?,
@@ -128,6 +142,11 @@ class HostSession(
     // Handsets already told the room is playing, by id rather than by count: one leaving as
     // another arrives leaves the count where it was, and the one that arrived would never hear it.
     private val told = HashSet<String>()
+
+    // This machine's own volume, and what the room and single devices were last told. See [setRoomVolume].
+    private val volume = SoftwareVolume()
+    private var roomVolume: Int? = null
+    private val asked = HashMap<String, Int>()
 
     // Until when a stop is said again, and when it was last said. See [echoStop].
     private var stopEchoUntilNanos = 0L
@@ -212,7 +231,11 @@ class HostSession(
         // would draw the whole room as dropped at the start of every song.
         val settled = playing && stream != null && System.nanoTime() - streamSinceNanos >= stoppedGraceMillis * 1_000_000L
         val onAudio = if (settled) chunkServer?.peerIds().orEmpty().toSet() else null
+        val volumes = command?.volumes().orEmpty()
         HostStatus(
+            volumePercent = volume.percent,
+            roomVolumePercent = roomVolume,
+            volumeTouched = roomVolume != null || asked.isNotEmpty() || volume.percent != SoftwareVolume.FULL,
             open = command != null,
             playing = playing,
             ended = ended,
@@ -225,7 +248,9 @@ class HostSession(
                     name = command?.nameOf(peerId) ?: peerId.takeLast(4),
                     place = places[peerId],
                     quiet = peerId in quiet,
-                    stopped = onAudio != null && (peerId !in onAudio || peerId in quiet)
+                    stopped = onAudio != null && (peerId !in onAudio || peerId in quiet),
+                    volumePercent = volumes[peerId]?.percent,
+                    askedPercent = asked[peerId]
                 )
             },
             sinksOnAudio = chunkServer?.clientCount() ?: 0,
@@ -268,6 +293,35 @@ class HostSession(
         player?.join(JOIN_MILLIS)
         player = null
         stream = null
+    }
+
+    /**
+     * Tells the whole room, this machine included, what volume to be - the handset host's room
+     * slider. Everybody, including devices set on their own a moment ago: the room slider levels
+     * the room.
+     */
+    fun setRoomVolume(percent: Int) = synchronized(lock) {
+        roomVolume = percent
+        asked.clear()
+        volume.set(percent)
+        commandServer?.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
+    }
+
+    /** One device on its own, for the one standing next to a wall. Answers whether the line to it was there. */
+    fun setDeviceVolume(peerId: String, percent: Int): Boolean = synchronized(lock) {
+        asked[peerId] = percent
+        commandServer?.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent)) == true
+    }
+
+    /** This machine's own sound on its own. */
+    fun setOwnVolume(percent: Int) = synchronized(lock) { volume.set(percent) }
+
+    /** Every device back to where it was before the room touched it, this machine included. */
+    fun restoreVolume() = synchronized(lock) {
+        roomVolume = null
+        asked.clear()
+        volume.restore()
+        commandServer?.send(RoomCommand.RESTORE_VOLUME)
     }
 
     /** The room's half of a stop: every handset told, and told again for a while. Under [lock]. */
@@ -316,7 +370,7 @@ class HostSession(
                 return
             }
             try {
-                val hostStream = HostStream(ports.chunk, source::fill, localOutput = speakers?.output, chunkServer = chunks)
+                val hostStream = HostStream(ports.chunk, source::fill, localOutput = speakers?.output?.let { GainOutput(it, volume) }, chunkServer = chunks)
                 if (current()) {
                     streamSinceNanos = System.nanoTime()
                     stream = hostStream

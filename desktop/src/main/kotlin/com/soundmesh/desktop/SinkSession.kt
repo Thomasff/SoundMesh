@@ -49,7 +49,9 @@ data class SinkStatus(
     /** This machine's id, whose badge number is how the host's roster names it. */
     val selfId: String,
     /** Its colour's place as the host last said, or null before a host has said one. */
-    val selfPlace: Int?
+    val selfPlace: Int?,
+    /** SoundMesh's own volume here, 0 to 100, as the host last set it. */
+    val volumePercent: Int
 )
 
 /**
@@ -96,6 +98,9 @@ class SinkSession(
     // Read once: status is asked twice a second, and the name on disk does not change under it.
     private val selfId by lazy { HostIdentity(identityDirectory).current() }
 
+    // Across starts and stops, as a handset's system volume is: a room turned down stays down.
+    private val volume = SoftwareVolume()
+
     // What the host last said, set on the command line's thread and acted on by the worker's. A
     // count of plays rather than a flag, because a handset host says "play" again to anybody who
     // stands by mid-song, and a repeat must not restart a stream that is fine - while a play that
@@ -141,6 +146,7 @@ class SinkSession(
         return SinkStatus(
             selfId = selfId,
             selfPlace = line?.places?.get(selfId),
+            volumePercent = volume.percent,
             stage = stage,
             failure = failure,
             hostName = hostName,
@@ -218,7 +224,17 @@ class SinkSession(
             // line says it is there on connecting anyway.
             var saidHereAt = System.nanoTime()
             var lastWent = true
+            // What the host was last told this machine's volume is, or null when it has not been
+            // told on this line - a line that drops and comes back is a host to tell again.
+            var saidVolume: Int? = null
             fun beat() {
+                if (!line.connected) {
+                    saidVolume = null
+                } else if (saidVolume != volume.percent) {
+                    val percent = volume.percent
+                    // Recorded only when it went out, for the reason RoomCommandClient.sayVolume gives.
+                    if (line.sayVolume(percent, SoftwareVolume.FULL, VOLUME_STREAM)) saidVolume = percent
+                }
                 val now = System.nanoTime()
                 if (now - saidHereAt < SAY_HERE_EVERY_NANOS) return
                 lastWent = line.sayHere()
@@ -290,8 +306,11 @@ class SinkSession(
                 playWanted = true
             }
             RoomCommand.STOP -> playWanted = false
-            // Measuring needs the calibration this side does not have, and volume is the handset's
-            // own system volume; neither is this machine's to act on.
+            // SoundMesh's own sound only, not the computer's system volume - see [SoftwareVolume].
+            // Said back to the host from the stand-by loop, as a handset says its own.
+            RoomCommand.SET_VOLUME -> order.value?.let { volume.set(it) }
+            RoomCommand.RESTORE_VOLUME -> volume.restore()
+            // Measuring needs the calibration this side does not have.
             else -> Unit
         }
     }
@@ -308,7 +327,7 @@ class SinkSession(
         }
         speakers.use {
             // Named, so a handset host can tell this machine coming back from a second machine arriving.
-            val sink = SinkStream(host, it.output, chunkPort, clockPort, HostIdentity(identityDirectory).current(), spatialPort)
+            val sink = SinkStream(host, GainOutput(it.output, volume), chunkPort, clockPort, HostIdentity(identityDirectory).current(), spatialPort)
             stream = sink
             try {
                 stage = SinkStage.SYNCING
@@ -395,6 +414,12 @@ class SinkSession(
 
         /** RoomCommands' own wait: a host accepts or refuses at once, and longer is a machine that left. */
         private const val SERVING_TIMEOUT_MILLIS = 900
+
+        /**
+         * What this machine calls the volume it reports, where a handset names its audio stream.
+         * Nothing reads it but a person looking at a log.
+         */
+        private const val VOLUME_STREAM = "soundmesh"
 
         /** Why a play was dropped when the host's clock never answered; the window says it in its own words. */
         const val NO_CLOCK_PROBLEM = "the host's clock never answered"
