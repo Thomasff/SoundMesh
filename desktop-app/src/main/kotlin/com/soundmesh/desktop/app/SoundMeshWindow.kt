@@ -189,6 +189,8 @@ private fun describe(problem: HostProblem): String = when (problem) {
     }
     is HostProblem.FileUnreadable -> "这个文件放不了：${problem.detail}"
     is HostProblem.SpeakersUnavailable -> "电脑的扬声器打不开：${problem.detail}"
+    is HostProblem.AdvertiseFailed -> "没法在局域网里广播这台主机，手机找不到它：${problem.detail}"
+    is HostProblem.PlayFailed -> "播放中断了：${problem.detail}"
 }
 
 private fun describe(status: SinkStatus): String = when (status.stage) {

@@ -11,9 +11,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class HostSessionTest {
     @get:Rule
@@ -164,6 +167,135 @@ class HostSessionTest {
             assertNotNull(host.status().localBand)
             host.stopPlaying()
             assertTrue("the speakers were left open", speakers.closed)
+        } finally {
+            host.close()
+        }
+    }
+
+    /**
+     * A stop is said again for a while, not once. Each command goes out on a write thread of its
+     * own, so a PLAY and a STOP can reach a handset in either order; and a handset that has just
+     * been told to play ignores a stop until its session is up. Said once, a quick stop can leave
+     * a handset playing a stream that has ended. A new play ends the echo.
+     */
+    @Test
+    fun aStopIsSaidAgainUntilANewPlay() {
+        val ports = ports()
+        val host = session(ports)
+        val heard = ArrayBlockingQueue<RoomOrder>(64)
+        host.open()
+        val phone = standBy(ports.command, heard)
+        try {
+            assertTrue("the handset never appeared", eventually { host.status().phones.size == 1 })
+            host.play(writeTestWav(folder.newFile("clip.wav")), alsoHere = false)
+            assertEquals(RoomOrder(RoomCommand.PLAY), heard.poll(5, TimeUnit.SECONDS))
+
+            host.stopPlaying()
+            assertEquals(RoomOrder(RoomCommand.STOP), heard.poll(5, TimeUnit.SECONDS))
+            assertEquals("the stop was said only once", RoomOrder(RoomCommand.STOP), heard.poll(2, TimeUnit.SECONDS))
+
+            host.play(writeTestWav(folder.newFile("again.wav")), alsoHere = false)
+            // A stop already on its way when play was pressed may still land; what matters is
+            // that nothing says stop after the handset has been told to play.
+            var order = heard.poll(5, TimeUnit.SECONDS)
+            while (order == RoomOrder(RoomCommand.STOP)) order = heard.poll(5, TimeUnit.SECONDS)
+            assertEquals(RoomOrder(RoomCommand.PLAY), order)
+            assertNull("told to stop while playing", heard.poll(1, TimeUnit.SECONDS))
+        } finally {
+            phone.close()
+            host.close()
+        }
+    }
+
+    /**
+     * A handset that opens a second command line under the same name replaces the first, and its
+     * id never leaves the roster - so the host has to hear about the replacement, or it goes on
+     * thinking the handset was told while the handset, back from out of range, stands by waiting.
+     */
+    @Test
+    fun aHandsetThatReplacesItsLineIsToldToPlayAgain() {
+        val ports = ports()
+        val host = session(ports)
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        val heardAgain = ArrayBlockingQueue<RoomOrder>(8)
+        host.open()
+        val first = standBy(ports.command, heard)
+        var second: RoomCommandClient? = null
+        try {
+            assertTrue(eventually { host.status().phones.size == 1 })
+            host.play(writeTestWav(folder.newFile("clip.wav")), alsoHere = false)
+            assertEquals(RoomOrder(RoomCommand.PLAY), heard.poll(5, TimeUnit.SECONDS))
+
+            second = standBy(ports.command, heardAgain)
+            // Closed only once the host has dropped it for the newer line, so the id is never
+            // absent from the roster - the case that matters. Before its own retry comes round.
+            assertTrue("the older line was never replaced", eventually(2_000L) { !first.connected })
+            first.close()
+
+            assertEquals(RoomOrder(RoomCommand.PLAY), heardAgain.poll(5, TimeUnit.SECONDS))
+        } finally {
+            first.close()
+            second?.close()
+            host.close()
+        }
+    }
+
+    /**
+     * A stop whose wait for the player ran out, then a play, must not leave the old player
+     * streaming beside the new one: two streams into one audio port, each counting from zero,
+     * reach a handset as a sequence that keeps going backwards.
+     */
+    @Test
+    fun aPlayerLeftBehindByAStopDoesNotStreamBesideTheNextOne() {
+        val ports = ports()
+        val stuck = FakeSpeakers()
+        val next = FakeSpeakers()
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger()
+        val host = HostSession(folder.root, ports, advertise = false, retellMillis = 50L, openSpeakers = {
+            if (calls.getAndIncrement() == 0) {
+                release.await()
+                stuck.open()
+            } else {
+                next.open()
+            }
+        })
+        host.open()
+        try {
+            host.play(writeTestWav(folder.newFile("clip.wav")), alsoHere = true)
+            assertTrue(eventually { calls.get() == 1 })
+            // Longer than the stop waits for a player, so it gives up on this one.
+            host.stopPlaying()
+            host.play(writeTestWav(folder.newFile("again.wav")), alsoHere = true)
+            assertTrue(eventually { next.output.scheduled.size >= 3 })
+
+            release.countDown()
+            assertTrue("the old player never let its speakers go", eventually { stuck.closed })
+            assertEquals("the old player streamed beside the new one", 0, stuck.output.scheduled.size)
+            assertTrue(host.status().playing)
+        } finally {
+            release.countDown()
+            host.close()
+        }
+    }
+
+    /**
+     * A record that cannot be put on the network leaves no host behind: nothing could find it,
+     * so a host that stayed open would stream to nobody with nothing on screen saying why. The
+     * ports are given back so trying again can work.
+     */
+    @Test
+    fun aRecordThatCannotBePutOnTheNetworkLeavesNoHostBehind() {
+        val ports = ports()
+        val host = HostSession(folder.root, ports, advertise = true, retellMillis = 50L,
+            advertiser = { _, _, _ -> throw IllegalStateException("the responder said no") })
+        try {
+            host.open()
+            val status = host.status()
+            assertFalse(status.open)
+            assertTrue("${status.problem}", status.problem is HostProblem.AdvertiseFailed)
+            ServerSocket(ports.command).close()
+            ServerSocket(ports.chunk).close()
         } finally {
             host.close()
         }

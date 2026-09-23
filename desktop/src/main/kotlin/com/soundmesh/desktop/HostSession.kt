@@ -26,6 +26,8 @@ sealed interface HostProblem {
     data class PortTaken(val port: HostPort, val number: Int) : HostProblem
     data class FileUnreadable(val detail: String) : HostProblem
     data class SpeakersUnavailable(val detail: String) : HostProblem
+    data class AdvertiseFailed(val detail: String) : HostProblem
+    data class PlayFailed(val detail: String) : HostProblem
 }
 
 data class HostStatus(
@@ -64,7 +66,12 @@ class HostSession(
     /** Off in tests: a record a test puts on the network is a host every handset in the room sees. */
     private val advertise: Boolean = true,
     private val openSpeakers: () -> Speakers = Speakers::open,
-    private val retellMillis: Long = RETELL_MILLIS
+    private val retellMillis: Long = RETELL_MILLIS,
+    /**
+     * What puts the record on the network. A parameter so a test can make it fail without
+     * putting anything on the network - the one way to reach what [open] does when it does.
+     */
+    private val advertiser: (serviceName: String, port: Int, hostId: String) -> AutoCloseable = PeerDiscovery::register
 ) {
     private val lock = Any()
 
@@ -81,9 +88,21 @@ class HostSession(
     @Volatile private var file: String? = null
     private var player: Thread? = null
 
+    /**
+     * Which press of play the running player belongs to. A stop gives up waiting for a player
+     * after [JOIN_MILLIS] - reading a large file or opening the speakers can take longer - and a
+     * play after that starts another. The old one, when it gets there, finds it is no longer the
+     * current press and stops rather than streaming beside the new one on the shared [playing].
+     */
+    @Volatile private var generation = 0
+
     // Handsets already told the room is playing, by id rather than by count: one leaving as
     // another arrives leaves the count where it was, and the one that arrived would never hear it.
     private val told = HashSet<String>()
+
+    // Until when a stop is said again, and when it was last said. See [echoStop].
+    private var stopEchoUntilNanos = 0L
+    private var stopSaidAtNanos = 0L
 
     /** Binds the three ports and advertises, or says which port was taken and holds none of them. */
     fun open() = synchronized(lock) {
@@ -109,11 +128,28 @@ class HostSession(
         if (!bind(HostPort.CLOCK, ports.clock, clock::start, clock::stop)) return
         if (!bind(HostPort.AUDIO, ports.chunk, chunks::start, chunks::stop)) return
 
+        // A handset that opens a second line under the same name replaces its first, and its id
+        // never leaves [RoomCommandServer.standingPeerIds] - so [tell] would go on counting it as
+        // told while the handset, back from out of range with its session long over, stands by
+        // waiting to hear it. The channel says so here, for a replaced line and for a failed
+        // write alike. Called outside the channel's own lock, and [tell] holds that one only for
+        // a moment inside [RoomCommandServer.sendTo], so taking ours here cannot deadlock.
+        command.onLeft = { peerId, _ -> synchronized(lock) { told.remove(peerId) } }
+
+        // After all three, so nothing that finds the record can dial a port not yet open. A
+        // record that will not go on leaves nothing open: nobody could find this host, and one
+        // that stayed open would stream to nobody while the button said it was the host.
+        val advertised = if (!advertise) null else try {
+            advertiser("$SERVICE_NAME_PREFIX-$hostId", ports.chunk, hostId)
+        } catch (e: Exception) {
+            for (undo in bound.asReversed()) undo()
+            problem = HostProblem.AdvertiseFailed(e.message ?: e.toString())
+            return
+        }
         commandServer = command
         clockServer = clock
         chunkServer = chunks
-        // After all three, so nothing that finds the record can dial a port not yet open.
-        if (advertise) record = PeerDiscovery.register("$SERVICE_NAME_PREFIX-$hostId", ports.chunk, hostId)
+        record = advertised
         teller = Thread({ tellWhileOpen() }, "host-tell").apply {
             isDaemon = true
             start()
@@ -162,57 +198,81 @@ class HostSession(
         problem = null
         this.file = file.name
         playing = true
-        player = Thread({ playOn(chunks, file, alsoHere) }, "host-play").apply {
+        stopEchoUntilNanos = 0L
+        val mine = ++generation
+        player = Thread({ playOn(chunks, file, alsoHere, mine) }, "host-play").apply {
             isDaemon = true
             start()
         }
     }
 
     /**
-     * Tells every handset to stop, then ends the stream.
+     * Tells every handset to stop, then ends the stream - and goes on saying stop for a while,
+     * see [echoStop].
      *
-     * Under the same lock as [tell], so a handset cannot be told to stop and then, a moment
-     * later, told to play by a round that had already read the room as playing.
+     * The player is waited for only so long. One still opening its file or its speakers when the
+     * wait runs out is let go of, and [generation] is what stops it streaming once it gets there.
      */
     fun stopPlaying() = synchronized(lock) {
         if (!playing && player == null) return
         playing = false
         commandServer?.send(RoomCommand.STOP)
+        val now = System.nanoTime()
+        stopSaidAtNanos = now
+        stopEchoUntilNanos = now + STOP_ECHO_NANOS
         told.clear()
         player?.join(JOIN_MILLIS)
         player = null
         stream = null
     }
 
-    private fun playOn(chunks: ChunkServer, file: File, alsoHere: Boolean) {
-        val source = try {
-            WavPcmSource.open(file)
-        } catch (e: Exception) {
-            problem = HostProblem.FileUnreadable(e.message ?: e.toString())
-            playing = false
-            return
-        }
-        val speakers = if (!alsoHere) null else try {
-            openSpeakers()
-        } catch (e: Exception) {
-            problem = HostProblem.SpeakersUnavailable(e.message ?: e.toString())
-            playing = false
-            return
-        }
+    private fun playOn(chunks: ChunkServer, file: File, alsoHere: Boolean, mine: Int) {
+        // Everything this thread says about the room is said only while it is still the current
+        // press of play: after that, [playing] and [problem] belong to the next one.
+        fun current() = generation == mine
         try {
-            val hostStream = HostStream(ports.chunk, source::fill, localOutput = speakers?.output, chunkServer = chunks)
-            stream = hostStream
-            hostStream.streamWhile { playing }
-        } finally {
-            // Straight away rather than after a tail: stop is a person asking for quiet, and the
-            // handsets are stopping at the same moment.
-            speakers?.close()
+            val source = try {
+                WavPcmSource.open(file)
+            } catch (e: Exception) {
+                if (current()) {
+                    problem = HostProblem.FileUnreadable(e.message ?: e.toString())
+                    playing = false
+                }
+                return
+            }
+            val speakers = if (!alsoHere) null else try {
+                openSpeakers()
+            } catch (e: Exception) {
+                if (current()) {
+                    problem = HostProblem.SpeakersUnavailable(e.message ?: e.toString())
+                    playing = false
+                }
+                return
+            }
+            try {
+                val hostStream = HostStream(ports.chunk, source::fill, localOutput = speakers?.output, chunkServer = chunks)
+                if (current()) stream = hostStream
+                hostStream.streamWhile { playing && current() }
+            } finally {
+                // Straight away rather than after a tail: stop is a person asking for quiet, and the
+                // handsets are stopping at the same moment.
+                speakers?.close()
+            }
+        } catch (e: Throwable) {
+            // Anything else - an OutOfMemoryError reading a very large file is the likely one -
+            // would otherwise end this thread with the button still saying stop and nothing on
+            // screen saying why.
+            if (current()) {
+                playing = false
+                problem = HostProblem.PlayFailed(e.toString())
+            }
         }
     }
 
     private fun tellWhileOpen() {
         while (!Thread.currentThread().isInterrupted) {
             tell()
+            echoStop()
             try {
                 Thread.sleep(retellMillis)
             } catch (_: InterruptedException) {
@@ -240,6 +300,34 @@ class HostSession(
         }
     }
 
+    /**
+     * Says "stop" again, every [STOP_ECHO_EVERY_NANOS] for [STOP_ECHO_NANOS] after a stop, until
+     * the next play.
+     *
+     * Once is not enough, for two reasons neither of which a lock on this end can fix. The
+     * channel writes every command on a thread of its own, so the lock orders the threads being
+     * started, not the writes: a "play" and the "stop" right after it can reach a handset in
+     * either order. And a handset told to play ignores a stop until its session is up, about a
+     * second later. Either way a quick stop is lost, and the handset opens a session on a stream
+     * that has ended and plays silence until it decides the host has gone.
+     *
+     * Repeating it is harmless: a handset standing by obeys "stop" only while it has a session,
+     * so to one that never started, or has already stopped, it says nothing. Under the same lock
+     * as [tell], so it never goes out once a new play has cleared it.
+     */
+    private fun echoStop() = synchronized(lock) {
+        val command = commandServer ?: return
+        if (playing || stopEchoUntilNanos == 0L) return
+        val now = System.nanoTime()
+        if (now - stopEchoUntilNanos >= 0) {
+            stopEchoUntilNanos = 0L
+            return
+        }
+        if (now - stopSaidAtNanos < STOP_ECHO_EVERY_NANOS) return
+        command.send(RoomCommand.STOP)
+        stopSaidAtNanos = now
+    }
+
     companion object {
         /**
          * How often the roster is checked for a handset that has not been told the room is
@@ -249,5 +337,14 @@ class HostSession(
 
         /** Long enough for a stream sleeping to its next chunk to notice it was told to stop. */
         private const val JOIN_MILLIS = 2_000L
+
+        /**
+         * How long a stop is said again for. Past the second or so a handset takes to open a
+         * session after being told to play, with room for a slow one.
+         */
+        private const val STOP_ECHO_NANOS = 4_000_000_000L
+
+        /** How often, within that. */
+        private const val STOP_ECHO_EVERY_NANOS = 500_000_000L
     }
 }

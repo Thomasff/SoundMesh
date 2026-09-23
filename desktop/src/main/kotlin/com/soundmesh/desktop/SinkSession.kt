@@ -124,6 +124,11 @@ class SinkSession(
             speakers.use { play(it, host, port, clockPort) }
         } catch (_: InterruptedException) {
             // stop() - the stage is its to set.
+        } catch (e: Throwable) {
+            // Anything else would end this thread with the stage left at whatever step it was on,
+            // and the window saying "working on it" for good.
+            problem = e.toString()
+            stage = SinkStage.FAILED
         }
     }
 
