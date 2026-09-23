@@ -18,3 +18,4 @@ rootProject.name = "SoundMesh"
 include(":app")
 include(":core")
 include(":desktop")
+include(":desktop-app")
