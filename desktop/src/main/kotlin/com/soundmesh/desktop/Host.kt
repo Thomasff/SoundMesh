@@ -1,8 +1,10 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.ChunkCodec
+import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncServer
+import java.io.File
 import java.lang.foreign.Arena
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -12,9 +14,12 @@ import java.net.NetworkInterface
  *
  * Everything before this in the desktop module measures something. This is the first thing here
  * that is a session - the two servers a sink dials, started together and left running - and it is
- * deliberately the smallest one that can be true. It streams the generated tone core already has,
- * because what is being shown is that a handset across the room plays what this machine sent it;
- * which file the bytes came from is a separate question and does not change the answer.
+ * deliberately the smallest one that can be true.
+ *
+ * Name a WAV file and it streams that, looping; name nothing and it streams the generated tone core
+ * already has. The tone is enough to prove a handset plays what this machine sent, but it is no use
+ * to an ear asked whether a room is hearing one sound or two - a steady 480 Hz from two places is a
+ * comb filter, not two sounds. Music has transients in it, and the loop's seam is one on purpose.
  *
  * Say `play` and it comes out of this machine's speakers too, on the same instants it sent.
  * Off by default, because a run that only has to prove the wire should not also need an output
@@ -24,9 +29,9 @@ import java.net.NetworkInterface
  * question this line is parked on. Being able to hear both at once is still worth having - a
  * room either hears one sound or two, and two is tens of milliseconds.
  *
- *   host [seconds] [chunkPort] [clockPort] [play]
+ *   host [seconds] [chunkPort] [clockPort] [play] [<file.wav>]
  *
- *   java --enable-native-access=ALL-UNNAMED -cp "<lib>" com.soundmesh.desktop.HostKt 60 play
+ *   java --enable-native-access=ALL-UNNAMED -cp "<lib>" com.soundmesh.desktop.HostKt 60 play song.wav
  *
  * Point a handset at the address printed below. On the probe build that is the sink role with
  * `host_address` set; discovery is not answered here, because mDNS on this side is its own piece
@@ -40,13 +45,21 @@ fun main(args: Array<String>) {
     val chunkPort = numbers.getOrNull(1)?.toInt() ?: ChunkCodec.DEFAULT_PORT
     val clockPort = numbers.getOrNull(2)?.toInt() ?: ClockPacket.DEFAULT_PORT
     val play = args.contains("play")
+    // Whatever is left is the file: a path is the one argument that cannot be confused with the
+    // others, and asking for a flag in front of it would only be something to forget.
+    val path = args.firstOrNull { it.toIntOrNull() == null && it != "play" }
+    val source = path?.let { WavPcmSource.open(File(it)) }
+    println(
+        if (source == null) "source : generated tone, 480 Hz"
+        else "source : $path, looping every ${source.frameCount / TonePcmSource.SAMPLE_RATE} s"
+    )
 
     Arena.ofShared().use { arena ->
         val renderer = if (play) WasapiRenderer() else null
         val output = renderer?.let { WasapiOutput(it, DesktopClock.measure(arena)) }
         renderer?.let { println("device : ${it.deviceName} at ${it.format.sampleRate} Hz, ${it.format.channels} ch") }
         try {
-            run(seconds, chunkPort, clockPort, output, renderer)
+            run(seconds, chunkPort, clockPort, output, renderer, source)
         } finally {
             renderer?.close()
         }
@@ -58,10 +71,15 @@ private fun run(
     chunkPort: Int,
     clockPort: Int,
     output: FrameOutput?,
-    renderer: WasapiRenderer?
+    renderer: WasapiRenderer?,
+    source: WavPcmSource?
 ) {
     val clockServer = ClockSyncServer(clockPort)
-    val stream = HostStream(chunkPort, localOutput = output)
+    val stream = HostStream(
+        chunkPort,
+        source?.let { it::fill } ?: TonePcmSource()::fill,
+        localOutput = output
+    )
     Runtime.getRuntime().addShutdownHook(Thread { stream.stop(); clockServer.stop() })
 
     // Before anything is scheduled on it: start() does not return until the engine is really

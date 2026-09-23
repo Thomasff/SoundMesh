@@ -68,7 +68,7 @@ class HostStreamTest {
     fun aHostWithSpeakersPlaysTheInstantsItSent() {
         val port = freePort()
         val output = FakeOutput()
-        val host = HostStream(port, TonePcmSource(), localOutput = output)
+        val host = HostStream(port, TonePcmSource()::fill, localOutput = output)
         val received = CopyOnWriteArrayList<AudioChunk>()
         val client = ChunkClient("127.0.0.1", port) { received.add(it) }
         try {
@@ -92,7 +92,7 @@ class HostStreamTest {
 
     private fun streamTo(chunks: Int): List<AudioChunk> {
         val port = freePort()
-        val host = HostStream(port, TonePcmSource())
+        val host = HostStream(port, TonePcmSource()::fill)
         val received = CopyOnWriteArrayList<AudioChunk>()
         val client = ChunkClient("127.0.0.1", port) { received.add(it) }
         try {

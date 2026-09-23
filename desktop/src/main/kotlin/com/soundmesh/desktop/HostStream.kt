@@ -7,7 +7,7 @@ import com.soundmesh.probe.sync.ChunkServer
 
 /**
  * The audio half of a desktop host: hands chunks to whatever sinks have connected, on the timeline
- * the tone is generated against.
+ * its source is read against.
  *
  * Nothing here plays anything. This machine has a renderer - [WasapiRenderer] - and will want to be
  * one of the things playing, but a host that streams and a host that also plays are two claims, and
@@ -20,7 +20,14 @@ import com.soundmesh.probe.sync.ChunkServer
  */
 class HostStream(
     private val port: Int = ChunkCodec.DEFAULT_PORT,
-    private val source: TonePcmSource = TonePcmSource(),
+    /**
+     * Frames by absolute index: a tone, or a file through [WavPcmSource].
+     *
+     * A function rather than a type because that is the whole of what the two sources have in
+     * common. Neither of them holds a position and neither knows this class exists, and an
+     * interface here would only be a name for an argument list.
+     */
+    private val source: (Long, Int) -> ByteArray = TonePcmSource()::fill,
     private val leadNanos: Long = DEFAULT_LEAD_NANOS,
     /**
      * This machine's own speakers, or null to send without playing.
@@ -73,7 +80,7 @@ class HostStream(
         var frameIndex = 0L
         for (sequence in 0 until chunks) {
             val playAt = anchor + sequence * CHUNK_NANOS
-            val chunk = AudioChunk(sequence, playAt, source.fill(frameIndex, ChunkCodec.FRAMES_PER_CHUNK))
+            val chunk = AudioChunk(sequence, playAt, source(frameIndex, ChunkCodec.FRAMES_PER_CHUNK))
             chunkServer.broadcast(chunk)
             // After the broadcast, so a slow local output cannot hold up the wire. The sinks are
             // across a room and this one is in the same process; whichever of them is behind, the
