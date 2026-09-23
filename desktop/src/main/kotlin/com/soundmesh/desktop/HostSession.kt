@@ -13,6 +13,7 @@ import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
 import com.soundmesh.probe.sync.SpatialFieldServer
+import com.soundmesh.product.CarriedSides
 import com.soundmesh.product.EffectKind
 import com.soundmesh.product.RoomIcon
 import com.soundmesh.core.SplitAxis
@@ -196,7 +197,7 @@ class HostSession(
 
     // Which devices not in the room just now were carrying the other half, and the file the
     // drawing outlives the window in - the handset's, see [keepTheDrawing].
-    private val sidesTheyCarried = HashSet<String>()
+    private val sidesTheyCarried = CarriedSides()
     private val drawing = StoredRoomDrawing(identityDirectory)
 
     // This machine's own part of the room while it plays aloud, or null - see [playOn].
@@ -263,7 +264,7 @@ class HostSession(
         selfId = hostId
         drawing.read()?.let { saved ->
             whereTheyWere.putAll(saved.placements.associateBy { it.peerId })
-            sidesTheyCarried.addAll(saved.room.otherHalfIds)
+            sidesTheyCarried.remember(saved.room.otherHalfIds)
             room = room.readBack(saved)
         }
         refreshRoom()
@@ -556,15 +557,10 @@ class HostSession(
             else listOf(self) + (commandServer?.standingPeerIds() ?: emptyList())
         if (roster.distinct() == room.icons.map { it.peerId }) return
         whereTheyWere.putAll(room.icons.associateBy { it.peerId })
-        // The handset's rememberedSides, read against who was here rather than who is: what a
-        // device present carries is whatever it carries now, and one that comes back is handed
-        // its half again instead of being struck from the memory as it arrives.
-        sidesTheyCarried.removeAll(room.icons.map { it.peerId }.toSet())
-        sidesTheyCarried.addAll(room.otherHalfIds)
         room = room.copy(
             icons = SpatialRoom.reconciled(room.icons, roster, whereTheyWere),
             selfId = self,
-            otherHalfIds = SpatialRoom.reconciledOtherHalf(room.otherHalfIds, roster, sidesTheyCarried)
+            otherHalfIds = sidesTheyCarried.reconciled(room.otherHalfIds, before = room.icons.map { it.peerId }, after = roster)
         )
         publishRoom()
     }
@@ -581,8 +577,8 @@ class HostSession(
     private fun keepTheDrawing() {
         val placed = LinkedHashMap(whereTheyWere)
         for (icon in room.icons) placed[icon.peerId] = icon
-        val present = room.icons.map { it.peerId }.toSet()
-        drawing.write(placed.values.toList(), room.copy(otherHalfIds = room.otherHalfIds + (sidesTheyCarried - present)))
+        val sides = sidesTheyCarried.toKeep(room.otherHalfIds, room.icons.map { it.peerId })
+        drawing.write(placed.values.toList(), room.copy(otherHalfIds = sides))
     }
 
     /**

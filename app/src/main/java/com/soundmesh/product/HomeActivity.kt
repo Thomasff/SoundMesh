@@ -230,14 +230,8 @@ class HomeActivity : ComponentActivity() {
      */
     private val whereTheyWere = HashMap<String, RoomIcon>()
 
-    /**
-     * Which handsets were carrying the sides, kept past their leaving for the drawing's reason.
-     *
-     * Owed one thing the drawing is not: a part can be taken away, so a handset that is in the
-     * room drops out of here and is put back from what it actually carries. Otherwise turning a
-     * part off would be undone a moment later by the memory of it having been on.
-     */
-    private val sidesTheyCarried = HashSet<String>()
+    /** Which handsets were carrying the sides, kept past their leaving for the drawing's reason. */
+    private val sidesTheyCarried = CarriedSides()
 
     /**
      * The room this phone was left with last time, read off disk once.
@@ -1122,10 +1116,10 @@ class HomeActivity : ComponentActivity() {
             fitted = false,
             colours = host.roomPlaces(),
             silentIds = silent,
-            otherHalfIds = SpatialRoom.reconciledOtherHalf(
+            otherHalfIds = sidesTheyCarried.reconciled(
                 previous.otherHalfIds,
-                icons.map { it.peerId },
-                remembered = rememberedSides(previous.otherHalfIds, icons.map { it.peerId })
+                before = previous.icons.map { it.peerId },
+                after = icons.map { it.peerId }
             )
         ).also(::publish)
     }
@@ -1175,10 +1169,10 @@ class HomeActivity : ComponentActivity() {
             fitted = false,
             colours = places,
             silentIds = silent,
-            otherHalfIds = SpatialRoom.reconciledOtherHalf(
+            otherHalfIds = sidesTheyCarried.reconciled(
                 kept.otherHalfIds,
-                icons.map { it.peerId },
-                remembered = rememberedSides(kept.otherHalfIds, icons.map { it.peerId })
+                before = kept.icons.map { it.peerId },
+                after = icons.map { it.peerId }
             )
         )
     }
@@ -1671,7 +1665,7 @@ class HomeActivity : ComponentActivity() {
     private fun readTheDrawing() {
         val saved = StoredRoomDrawing(filesDir).read() ?: return
         whereTheyWere.putAll(saved.placements.associateBy { it.peerId })
-        sidesTheyCarried.addAll(saved.room.otherHalfIds)
+        sidesTheyCarried.remember(saved.room.otherHalfIds)
         restored = saved.room
         state.room?.let { state = state.copy(room = it.readBack(saved)) }
     }
@@ -1683,20 +1677,8 @@ class HomeActivity : ComponentActivity() {
         // here.
         val placed = LinkedHashMap(whereTheyWere)
         for (icon in room.icons) placed[icon.peerId] = icon
-        StoredRoomDrawing(filesDir).write(placed.values.toList(), room)
-    }
-
-    /**
-     * What handsets not in the room just now were last carrying.
-     *
-     * Kept up to date here rather than in the drawing's own memory because the two are not the
-     * same shape: a position is replaced and a part is taken away, so what is remembered about a
-     * handset that is present has to come from what it is actually carrying and nowhere else.
-     */
-    private fun rememberedSides(otherHalfIds: Set<String>, peerIds: List<String>): Set<String> {
-        sidesTheyCarried.removeAll(peerIds.toSet())
-        sidesTheyCarried.addAll(otherHalfIds)
-        return sidesTheyCarried
+        val sides = sidesTheyCarried.toKeep(room.otherHalfIds, room.icons.map { it.peerId })
+        StoredRoomDrawing(filesDir).write(placed.values.toList(), room.copy(otherHalfIds = sides))
     }
 
     companion object {
