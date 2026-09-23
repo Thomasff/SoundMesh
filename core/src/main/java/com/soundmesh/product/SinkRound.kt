@@ -119,6 +119,18 @@ object RoundPorts {
 }
 
 /**
+ * The ports one round dials, which are [RoundPorts] and the command port unless somebody says
+ * otherwise - a desktop sink told to follow a host on other ports, or a test standing in for one.
+ */
+data class RoundDials(
+    val clock: Int = RoundPorts.CLOCK,
+    val result: Int = RoundPorts.RESULT,
+    val plan: Int = RoundPorts.PLAN,
+    val room: Int = RoundPorts.ROOM,
+    val command: Int = COMMAND_PORT
+)
+
+/**
  * One handset measuring as a sink: the clock, the chirps, and what it does with the answer.
  *
  * Moved here from [PeerCalibrateActivity] unchanged, which is the only reason it is worth having
@@ -140,6 +152,7 @@ class SinkRound(
     private val request: SinkRoundRequest,
     /** The host to measure against, or null when this device has none. */
     private val host: () -> RoundHost?,
+    private val dials: RoundDials = RoundDials(),
     /** Whether the radio lock was actually taken, for the run's own report. See `withRadioAwake`. */
     private val radioHeld: () -> Boolean,
     /**
@@ -189,7 +202,7 @@ class SinkRound(
         // name a host uses for itself: it is what this phone is called, not what role it is in.
         val sinkId = HostIdentity(filesDir).current()
         val estimator = ClockOffsetEstimator(keepFractionWhileFilling = keepFractionWhileFilling())
-        val clockClient = ClockSyncClient(paired.address, RoundPorts.CLOCK, estimator)
+        val clockClient = ClockSyncClient(paired.address, dials.clock, estimator)
         val clockThread =
             Thread({ clockClient.runFor(CLOCK_SECONDS, CLOCK_INTERVAL_MILLIS) }, "SoundMeshPeerClock")
         val clockStartedAt = System.nanoTime()
@@ -268,7 +281,7 @@ class SinkRound(
                 )
             }
             val plan = try {
-                CalibrationPlanClient(paired.address, RoundPorts.PLAN).request(caseId, sinkId)
+                CalibrationPlanClient(paired.address, dials.plan).request(caseId, sinkId)
             } catch (off: CalibrationPlanClient.RoomCalledOff) {
                 // Somebody pressed a button on the host. Said in those words rather than as the
                 // failure every unreadable answer shares, because there is nothing here to fix.
@@ -364,7 +377,7 @@ class SinkRound(
             // the run ends here: the field belongs to the host, which is the only handset that
             // ever holds the whole room. What comes back is what the room made of this one.
             if (ownSlot != null) {
-                val room = RoomResultClient(paired.address, RoundPorts.ROOM)
+                val room = RoomResultClient(paired.address, dials.room)
                     .exchange(RoomResultMessage(plan.caseId, sinkId, ownSlot, run.arrivalsByRepeat))
                 // The host offers this to everybody who delivered; whether to keep it is decided
                 // here, and only here, because only this handset knows what it already carries.
@@ -394,7 +407,7 @@ class SinkRound(
             }
             // Delivered even when there is nothing to deliver: the host waits on this message, so
             // an empty run and a dead sink look the same from an end of a socket that never opens.
-            val reply = AlignmentResultClient(paired.address, RoundPorts.RESULT)
+            val reply = AlignmentResultClient(paired.address, dials.result)
                 .exchange(plan.caseId, sinkId, appliedMicros, run.readings)
             // The experiment arm ends here, one step short of every arm that moves the constant.
             // That is what it is: the gate refuses these links because the offset a two-way
@@ -474,7 +487,7 @@ class SinkRound(
     private fun tellHost(excuse: RoomExcuse) {
         val paired = host() ?: return
         events.write("excuse-told ${excuse.name}")
-        tellHostWhy(paired.address, COMMAND_PORT, HostIdentity(filesDir).current(), excuse)
+        tellHostWhy(paired.address, dials.command, HostIdentity(filesDir).current(), excuse)
     }
 
     private fun fileAttempt(label: String, json: String) {

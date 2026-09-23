@@ -26,11 +26,18 @@ class SinkStream(
     private val chunkPort: Int = ChunkCodec.DEFAULT_PORT,
     private val clockPort: Int = ClockPacket.DEFAULT_PORT,
     private val peerId: String? = null,
-    private val spatialPort: Int = SPATIAL_PORT
+    private val spatialPort: Int = SPATIAL_PORT,
+    /**
+     * This machine's constant for the pair, subtracted from host time as a handset sink subtracts
+     * its own: measured if it has been, a room round's approximation if not, zero if neither.
+     */
+    val alignmentOffsetNanos: Long = 0L
 ) {
     private val estimator = ClockOffsetEstimator(CLOCK_WINDOW, CLOCK_BEST)
     private val clockClient = ClockSyncClient(hostAddress, clockPort, estimator)
-    private val playout = ChunkPlayout(output) { clockClient.currentEstimate()?.offsetNanos ?: 0L }
+    private val playout = ChunkPlayout(output, alignmentOffsetNanos = alignmentOffsetNanos) {
+        clockClient.currentEstimate()?.offsetNanos ?: 0L
+    }
 
     // Only a named sink can be on a handset host's drawing, so only a named one has a room to play.
     private val spatial = peerId?.let { SinkSpatial(it) }
