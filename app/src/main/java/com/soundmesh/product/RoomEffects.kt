@@ -1,7 +1,6 @@
 package com.soundmesh.product
 
 import androidx.annotation.StringRes
-import com.soundmesh.core.SpatialMode
 import com.soundmesh.probe.R
 
 /**
@@ -24,78 +23,16 @@ import com.soundmesh.probe.R
 enum class RoomEffect(
     @StringRes val title: Int,
     @StringRes val line: Int,
-    val settings: EffectSettings
+    // What each one sets lives in core, with why, because a computer host offers the same four.
+    kind: EffectKind
 ) {
-    /**
-     * Every handset playing the same thing, which is the control the other three are heard against.
-     *
-     * First in the list because that is where a comparison has to be: judging any of the others is
-     * two taps, and the music does not stop in between. It is also what a room should open on -
-     * several phones playing one song in step is the thing this project does, and everything below
-     * is an opinion about it.
-     */
-    UNISON(
-        R.string.room_effect_unison,
-        R.string.room_effect_unison_line,
-        EffectSettings(SpatialMode.UNISON)
-    ),
+    UNISON(R.string.room_effect_unison, R.string.room_effect_unison_line, EffectKind.UNISON),
+    STEREO(R.string.room_effect_stereo, R.string.room_effect_stereo_line, EffectKind.STEREO),
+    SPIN(R.string.room_effect_spin, R.string.room_effect_spin_line, EffectKind.SPIN),
+    PLACE(R.string.room_effect_place, R.string.room_effect_place_line, EffectKind.PLACE);
 
-    /** Two channels, placed by where the phones are standing. */
-    STEREO(
-        R.string.room_effect_stereo,
-        R.string.room_effect_stereo_line,
-        EffectSettings(SpatialMode.SPLIT)
-    ),
-
-    /**
-     * A source going round the room, with the room switched on underneath it.
-     *
-     * The reverberation comes with it rather than being a knob somebody finds later, and this is
-     * the decision of 2026-09-17: a source that moves is the only kind that has anywhere to move
-     * *to*, and without a room to move in, going further off is only going quieter. The two rows
-     * above do not move a source anywhere, so they get none of it and stay bit for bit what they
-     * were.
-     */
-    SPIN(
-        R.string.room_effect_spin,
-        R.string.room_effect_spin_line,
-        EffectSettings(SpatialMode.ROTATE, envelopment = DEFAULT_ENVELOPMENT, reverb = DEFAULT_REVERB)
-    ),
-
-    /** The same source, put where a finger says instead of where the clock says. */
-    PLACE(
-        R.string.room_effect_place,
-        R.string.room_effect_place_line,
-        EffectSettings(SpatialMode.PAN, reverb = DEFAULT_REVERB)
-    )
+    val settings: EffectSettings = kind.settings
 }
-
-/**
- * Everything one effect decides. Whatever is not in here survives being switched away from.
- *
- * Which is the whole reason the content split is not in here. Somebody who has told four phones
- * which of them carry the voice, then tries the rotation for a minute, has to find that assignment
- * where they left it - and an effect that reset it would make trying anything expensive. See
- * HomeActivity, where the split is dropped from the **rule** while a source is moving and the
- * screen goes on remembering it.
- */
-data class EffectSettings(
-    val mode: SpatialMode,
-    /**
-     * What to set the envelopment to, or null to leave whatever is there.
-     *
-     * Null for three of the four, and each for its own reason. 同步齐奏 and 双声道 never read it,
-     * so writing it would be a setter with no sound behind it. 自定义声音位置 reads it as **where
-     * the dot is** - how far in from the handsets it has been dragged - so an effect that set it
-     * would move the dot every time somebody chose that row, which is the assignment problem
-     * [EffectSettings] exists to avoid, in a second place.
-     */
-    val envelopment: Float? = null,
-    val reverb: Float = 0f
-)
-
-/** Where a room is put the moment somebody asks for a source that moves. The listener's number. */
-const val DEFAULT_REVERB = 0.8f
 
 /**
  * Which effect the room is set to. Always one of them.
