@@ -91,11 +91,15 @@ class HostStream(
      * The same 15.625 ms is why the pacing sleeps to an absolute instant instead of for a chunk's
      * worth of time: waking late is unavoidable and costs nothing at a lead of a second and a
      * half, but waking late repeatedly and adding up would walk the stream off its own timeline.
+     *
+     * Returns the instant the last chunk was stamped to play at, or null if none was sent - so a
+     * caller that ran out of song can wait until it has been heard.
      */
-    fun streamWhile(keepGoing: () -> Boolean) {
+    fun streamWhile(keepGoing: () -> Boolean): Long? {
         val anchor = System.nanoTime() + leadNanos
         var frameIndex = 0L
         var sequence = 0
+        var lastPlayAt: Long? = null
         while (keepGoing()) {
             val playAt = anchor + sequence * CHUNK_NANOS
             val chunk = AudioChunk(sequence, playAt, source(frameIndex, ChunkCodec.FRAMES_PER_CHUNK))
@@ -104,10 +108,12 @@ class HostStream(
             // across a room and this one is in the same process; whichever of them is behind, the
             // instant in the chunk is already fixed and neither is waiting on the other for it.
             localPlayout?.play(chunk)
+            lastPlayAt = playAt
             frameIndex += ChunkCodec.FRAMES_PER_CHUNK
             sequence++
             sleepUntil(playAt + CHUNK_NANOS - leadNanos)
         }
+        return lastPlayAt
     }
 
     fun stop() = chunkServer.stop()

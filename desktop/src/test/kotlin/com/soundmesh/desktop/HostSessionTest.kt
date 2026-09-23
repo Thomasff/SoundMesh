@@ -301,6 +301,62 @@ class HostSessionTest {
         }
     }
 
+    /**
+     * A song plays once and ends by itself: every chunk of it is played, the handsets are told to
+     * stop without anybody pressing anything - but not before the last chunk has been heard, which
+     * is a lead after it was sent - and the window can tell an ending from a stop.
+     */
+    @Test
+    fun aSongThatReachesItsEndStopsTheRoomByItself() {
+        val ports = ports()
+        val speakers = FakeSpeakers()
+        val host = session(ports, speakers)
+        val heard = ArrayBlockingQueue<RoomOrder>(64)
+        host.open()
+        val phone = standBy(ports.command, heard)
+        try {
+            assertTrue(eventually { host.status().phones.size == 1 })
+            val pressed = System.nanoTime()
+            host.play(writeTestWav(folder.newFile("short.wav"), seconds = 0.2), alsoHere = true)
+            assertEquals(RoomOrder(RoomCommand.PLAY), heard.poll(5, TimeUnit.SECONDS))
+
+            assertEquals(RoomOrder(RoomCommand.STOP), heard.poll(10, TimeUnit.SECONDS))
+            val tookMillis = (System.nanoTime() - pressed) / 1_000_000
+            assertTrue("stopped after $tookMillis ms, before the last chunk was heard", tookMillis >= 1_650)
+            val status = host.status()
+            assertFalse(status.playing)
+            assertTrue(status.ended)
+            assertEquals("every chunk of the song, and no more", 10, speakers.output.scheduled.size)
+            assertTrue("the speakers were left open", eventually { speakers.closed })
+
+            host.play(writeTestWav(folder.newFile("again.wav")), alsoHere = false)
+            assertFalse("a new play still says the last one ended", host.status().ended)
+        } finally {
+            phone.close()
+            host.close()
+        }
+    }
+
+    /** Stop pressed while the last chunks are still to be heard is a stop, not an ending. */
+    @Test
+    fun aStopInTheLastSecondsIsAStopNotAnEnding() {
+        val ports = ports()
+        val speakers = FakeSpeakers()
+        val host = session(ports, speakers)
+        host.open()
+        try {
+            host.play(writeTestWav(folder.newFile("short.wav"), seconds = 0.2), alsoHere = true)
+            assertTrue(eventually { speakers.output.scheduled.size == 10 })
+            host.stopPlaying()
+            val status = host.status()
+            assertFalse(status.playing)
+            assertFalse(status.ended)
+            assertTrue("the speakers were left open", speakers.closed)
+        } finally {
+            host.close()
+        }
+    }
+
     private companion object {
         const val PHONE = "a1b2c3d4e5f60718"
     }

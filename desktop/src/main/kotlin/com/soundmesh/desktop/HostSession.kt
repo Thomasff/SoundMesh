@@ -33,6 +33,8 @@ sealed interface HostProblem {
 data class HostStatus(
     val open: Boolean,
     val playing: Boolean,
+    /** The last play ran to the end of its file and stopped the room itself, rather than being stopped. */
+    val ended: Boolean,
     val file: String?,
     /** Handsets standing by on the command port, by the name each gave. */
     val phones: List<String>,
@@ -84,6 +86,7 @@ class HostSession(
     @Volatile private var problem: HostProblem? = null
 
     @Volatile private var playing = false
+    @Volatile private var ended = false
     @Volatile private var stream: HostStream? = null
     @Volatile private var file: String? = null
     private var player: Thread? = null
@@ -178,6 +181,7 @@ class HostSession(
         HostStatus(
             open = command != null,
             playing = playing,
+            ended = ended,
             file = file,
             phones = command?.standingPeerIds()?.map { command.nameOf(it) ?: it.takeLast(4) }.orEmpty(),
             sinksOnAudio = chunkServer?.clientCount() ?: 0,
@@ -198,6 +202,7 @@ class HostSession(
         problem = null
         this.file = file.name
         playing = true
+        ended = false
         stopEchoUntilNanos = 0L
         val mine = ++generation
         player = Thread({ playOn(chunks, file, alsoHere, mine) }, "host-play").apply {
@@ -215,13 +220,30 @@ class HostSession(
      */
     fun stopPlaying() = synchronized(lock) {
         if (!playing && player == null) return
+        sayStop()
+        player?.join(JOIN_MILLIS)
+        player = null
+        stream = null
+    }
+
+    /** The room's half of a stop: every handset told, and told again for a while. Under [lock]. */
+    private fun sayStop() {
         playing = false
         commandServer?.send(RoomCommand.STOP)
         val now = System.nanoTime()
         stopSaidAtNanos = now
         stopEchoUntilNanos = now + STOP_ECHO_NANOS
         told.clear()
-        player?.join(JOIN_MILLIS)
+    }
+
+    /**
+     * The song ran out on its own: the same stop a person asks for, said by this thread, which is
+     * why it leaves [player] rather than joining it. Nothing if a stop or a newer play got here first.
+     */
+    private fun endOfSong(mine: Int) = synchronized(lock) {
+        if (generation != mine || !playing) return
+        sayStop()
+        ended = true
         player = null
         stream = null
     }
@@ -252,7 +274,20 @@ class HostSession(
             try {
                 val hostStream = HostStream(ports.chunk, source::fill, localOutput = speakers?.output, chunkServer = chunks)
                 if (current()) stream = hostStream
-                hostStream.streamWhile { playing && current() }
+                // Once through and no more, the way the handset host plays a song: one with no end
+                // is one a person can only stop. The loop in the source stays for the command line,
+                // whose runs listen for the seam.
+                val songChunks = source.frameCount / ChunkCodec.FRAMES_PER_CHUNK
+                var sent = 0
+                val lastPlayAt = hostStream.streamWhile { playing && current() && sent++ < songChunks }
+                if (lastPlayAt != null && playing && current()) {
+                    // Every chunk is stamped a lead into its own future, so the song is over only
+                    // once the last one has been heard - the handset host's endOfSong. Stopping at
+                    // the last send would cut the final second and a half off every song.
+                    val over = lastPlayAt + HostStream.CHUNK_NANOS
+                    while (playing && current() && System.nanoTime() - over < 0) Thread.sleep(END_POLL_MILLIS)
+                    if (playing && current()) endOfSong(mine)
+                }
             } finally {
                 // Straight away rather than after a tail: stop is a person asking for quiet, and the
                 // handsets are stopping at the same moment.
@@ -337,6 +372,9 @@ class HostSession(
 
         /** Long enough for a stream sleeping to its next chunk to notice it was told to stop. */
         private const val JOIN_MILLIS = 2_000L
+
+        /** How often the wait for the last chunk to be heard looks to see whether stop was pressed. */
+        private const val END_POLL_MILLIS = 20L
 
         /**
          * How long a stop is said again for. Past the second or so a handset takes to open a

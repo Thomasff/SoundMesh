@@ -9,9 +9,14 @@ import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioInputStream
 import javax.sound.sampled.AudioSystem
 
-/** One second of a quiet ramp at the stream's own format, so nothing about it needs converting. */
-internal fun writeTestWav(file: File): File {
-    val frames = 48_000
+/**
+ * A quiet ramp at the stream's own format, so nothing about it needs converting.
+ *
+ * Thirty seconds by default: the host plays a file once and then stops the room, and most tests
+ * need a room that is still playing while they look at it.
+ */
+internal fun writeTestWav(file: File, seconds: Double = 30.0): File {
+    val frames = (48_000 * seconds).toInt()
     val pcm = ByteArray(frames * 2 * 2)
     for (sample in 0 until frames * 2) {
         val value = (sample % 200 - 100)
