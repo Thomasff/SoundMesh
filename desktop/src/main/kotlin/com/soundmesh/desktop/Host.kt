@@ -140,7 +140,7 @@ private fun serve(seconds: Int, stream: HostStream, output: FrameOutput?) {
  * Per user and local rather than roaming: the name is this machine's, and a copy that followed a
  * person to a second computer would make two machines one host to every sink that remembers it.
  */
-private fun identityDirectory(): File =
+fun identityDirectory(): File =
     File(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "SoundMesh").apply { mkdirs() }
 
 private fun awaitSink(stream: HostStream, seconds: Int): Boolean {
@@ -174,4 +174,4 @@ private const val POLL_MILLIS = 100L
 private const val TAIL_MILLIS = 2000L
 
 /** The handsets' prefix, so a record from this machine reads like one of theirs. */
-private const val SERVICE_NAME_PREFIX = "SoundMesh"
+internal const val SERVICE_NAME_PREFIX = "SoundMesh"
