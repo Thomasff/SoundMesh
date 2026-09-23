@@ -104,6 +104,11 @@ data class HostStatus(
     val heldDown: List<String>,
     val sinksOnAudio: Int,
     val droppedChunks: Int,
+    /** This machine's own playout while the room plays: chunks played, and dropped for being late. */
+    val localPlayed: Int?,
+    val localLate: Int?,
+    /** Times the room's timeline started again this play - a jump, a pause, or the source falling behind. */
+    val jumps: Int?,
     val localBand: String?,
     val localShares: String?,
     val problem: HostProblem?
@@ -323,6 +328,9 @@ class HostSession(
             },
             sinksOnAudio = chunkServer?.clientCount() ?: 0,
             droppedChunks = chunkServer?.droppedChunks() ?: 0,
+            localPlayed = stream?.playedLocally(),
+            localLate = stream?.lateLocally(),
+            jumps = stream?.jumps,
             localBand = stream?.localSeamBand(),
             localShares = stream?.localSeamShares(),
             problem = problem

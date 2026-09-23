@@ -212,6 +212,9 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
         listOf(
             "音频口" to "${status.sinksOnAudio} 台在收",
             "丢块" to "${status.droppedChunks}",
+            "本机放了" to (status.localPlayed?.let { "$it 块" } ?: "—"),
+            "本机迟到丢掉" to (status.localLate?.let { "$it 块" } ?: "—"),
+            "时间线重起" to (status.jumps?.let { "$it 次" } ?: "—"),
             "抓声垫静音" to (status.capturePadded?.let { "$it 块" } ?: "—"),
             "本机接缝" to (status.localBand ?: "—"),
             "接缝拆分" to (status.localShares ?: "—")
@@ -266,8 +269,12 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
         details,
         listOf(
             "时钟偏移" to (status.offsetMillis?.let { String.format("%.3f ms", it) } ?: "—"),
+            "收到" to "${status.arrived} 块",
+            "对时前丢掉" to "${status.beforeClock} 块",
             "放了" to "${status.played} 块",
             "迟到丢掉" to "${status.late} 块",
+            "时间线重起" to "${status.restarts} 次",
+            "被音效改过" to "${status.shaped} 块",
             "接缝" to (status.band ?: "—"),
             "接缝拆分" to (status.shares ?: "—")
         )

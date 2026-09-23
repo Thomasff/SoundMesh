@@ -68,6 +68,7 @@ class SinkStream(
     /** Chunks a handset host's spatial rule changed - see [SinkSpatial.shapedChunks]. */
     val shaped: Int get() = spatial?.shapedChunks ?: 0
     val droppedLate: Int get() = playout.droppedLate
+    val restarts: Int get() = playout.restarts
     val seams: Int get() = playout.seams
     val worstSeamFrames: Int get() = playout.worstSeamFrames
 

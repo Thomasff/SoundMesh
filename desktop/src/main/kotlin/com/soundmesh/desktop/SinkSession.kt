@@ -40,6 +40,12 @@ data class SinkStatus(
     val late: Int,
     /** Chunks a handset host's spatial rule changed; zero means its room never reached this machine. */
     val shaped: Int,
+    /** Chunks that came off the wire at all - standing still while playing is the host gone quiet. */
+    val arrived: Int,
+    /** Chunks thrown away because the clock had not answered yet: what a quiet start is made of. */
+    val beforeClock: Int,
+    /** Times the host started its timeline again and what was queued here was thrown away. */
+    val restarts: Int,
     val band: String?,
     val shares: String?,
     /**
@@ -159,6 +165,9 @@ class SinkSession(
             played = stream?.played ?: 0,
             late = stream?.droppedLate ?: 0,
             shaped = stream?.shaped ?: 0,
+            arrived = stream?.arrived ?: 0,
+            beforeClock = stream?.chunksBeforeTheClockAnswered ?: 0,
+            restarts = stream?.restarts ?: 0,
             band = stream?.seamBand(),
             shares = stream?.seamShares(),
             problem = problem

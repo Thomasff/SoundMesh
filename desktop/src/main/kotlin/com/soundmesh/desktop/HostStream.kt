@@ -68,6 +68,7 @@ class HostStream(
 
     /** What this machine played of what it sent, and how the two counts differ. */
     fun playedLocally(): Int = localPlayout?.played ?: 0
+    fun lateLocally(): Int = localPlayout?.droppedLate ?: 0
     fun localSeams(): Int = localPlayout?.seams ?: 0
     fun worstLocalSeamFrames(): Int = localPlayout?.worstSeamFrames ?: 0
     fun localSeamBand(): String = localPlayout?.seamBand() ?: "not playing locally"
