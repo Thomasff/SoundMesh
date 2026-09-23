@@ -51,7 +51,7 @@ fun main(args: Array<String>) {
     // Whatever is left is the file: a path is the one argument that cannot be confused with the
     // others, and asking for a flag in front of it would only be something to forget.
     val path = args.firstOrNull { it.toIntOrNull() == null && it != "play" }
-    val source = path?.let { WavPcmSource.open(File(it)) }
+    val source = path?.let { FilePcmSource.open(File(it)) }
     println(
         if (source == null) "source : generated tone, 480 Hz"
         else "source : $path, looping every ${source.frameCount / TonePcmSource.SAMPLE_RATE} s"
@@ -75,7 +75,7 @@ private fun run(
     clockPort: Int,
     output: FrameOutput?,
     renderer: WasapiRenderer?,
-    source: WavPcmSource?
+    source: FilePcmSource?
 ) {
     val clockServer = ClockSyncServer(clockPort)
     val stream = HostStream(

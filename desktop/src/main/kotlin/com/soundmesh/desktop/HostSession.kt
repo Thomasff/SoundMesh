@@ -232,7 +232,7 @@ class HostSession(
         fun current() = generation == mine
         try {
             val source = try {
-                WavPcmSource.open(file)
+                FilePcmSource.open(file)
             } catch (e: Exception) {
                 if (current()) {
                     problem = HostProblem.FileUnreadable(e.message ?: e.toString())

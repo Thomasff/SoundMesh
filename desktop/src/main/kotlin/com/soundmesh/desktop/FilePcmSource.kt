@@ -26,7 +26,7 @@ import javax.sound.sampled.UnsupportedAudioFileException
  * both machines emit that transient from the same chunk at the same instant, and a shared transient
  * is far easier to hear misalignment in than sustained music is.
  */
-class WavPcmSource private constructor(private val pcm: ByteArray) {
+class FilePcmSource private constructor(private val pcm: ByteArray) {
 
     /**
      * Frames in the loop, always a whole number of chunks.
@@ -73,7 +73,7 @@ class WavPcmSource private constructor(private val pcm: ByteArray) {
          * through [Resampler], the same call the handset makes, so a desktop run and a handset run
          * are made against the same conversion and stay comparable.
          */
-        fun open(file: File): WavPcmSource {
+        fun open(file: File): FilePcmSource {
             require(file.isFile) { "no file at ${file.absolutePath}" }
             val pcm = try {
                 AudioSystem.getAudioInputStream(file).use { opened ->
@@ -103,7 +103,7 @@ class WavPcmSource private constructor(private val pcm: ByteArray) {
                 "${file.name} is shorter than the 20 ms a chunk carries, so there is nothing to " +
                     "loop; the shortest usable file is ${ChunkCodec.FRAMES_PER_CHUNK} frames"
             }
-            return WavPcmSource(pcm.copyOf(whole))
+            return FilePcmSource(pcm.copyOf(whole))
         }
 
         /**

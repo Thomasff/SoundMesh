@@ -16,7 +16,7 @@ import javax.sound.sampled.AudioInputStream
 import javax.sound.sampled.AudioSystem
 
 
-class WavPcmSourceTest {
+class FilePcmSourceTest {
 
     @get:Rule
     val folder = TemporaryFolder()
@@ -27,7 +27,7 @@ class WavPcmSourceTest {
         // every archived measurement was made against 48 kHz stereo, and a file that is already
         // that must arrive at the wire as the bytes on disk.
         val pcm = ramp(frames = ChunkCodec.FRAMES_PER_CHUNK, channels = 2)
-        val source = WavPcmSource.open(write(pcm, rate = 48000, channels = 2))
+        val source = FilePcmSource.open(write(pcm, rate = 48000, channels = 2))
 
         assertEquals(ChunkCodec.FRAMES_PER_CHUNK, source.frameCount)
         assertArrayEquals(pcm, source.fill(0, ChunkCodec.FRAMES_PER_CHUNK))
@@ -38,7 +38,7 @@ class WavPcmSourceTest {
         // The host asks for one chunk at a time by absolute frame index and never says where it
         // is in the file. Two neighbouring asks have to come back as one run of audio.
         val pcm = ramp(frames = ChunkCodec.FRAMES_PER_CHUNK * 2, channels = 2)
-        val source = WavPcmSource.open(write(pcm, rate = 48000, channels = 2))
+        val source = FilePcmSource.open(write(pcm, rate = 48000, channels = 2))
 
         val first = source.fill(0, ChunkCodec.FRAMES_PER_CHUNK)
         val second = source.fill(ChunkCodec.FRAMES_PER_CHUNK.toLong(), ChunkCodec.FRAMES_PER_CHUNK)
@@ -53,7 +53,7 @@ class WavPcmSourceTest {
         // ends emit that transient from the same chunk at the same instant, which is far easier
         // to hear misalignment in than sustained music is.
         val pcm = ramp(frames = ChunkCodec.FRAMES_PER_CHUNK, channels = 2)
-        val source = WavPcmSource.open(write(pcm, rate = 48000, channels = 2))
+        val source = FilePcmSource.open(write(pcm, rate = 48000, channels = 2))
 
         val firstTimeRound = source.fill(0, ChunkCodec.FRAMES_PER_CHUNK)
         val secondTimeRound = source.fill(ChunkCodec.FRAMES_PER_CHUNK.toLong(), ChunkCodec.FRAMES_PER_CHUNK)
@@ -69,7 +69,7 @@ class WavPcmSourceTest {
         // the ear test relies on would be at a different offset in each run instead of at the
         // start of a chunk both machines were sent.
         val frames = ChunkCodec.FRAMES_PER_CHUNK * 2 + 5
-        val source = WavPcmSource.open(write(ramp(frames, channels = 2), rate = 48000, channels = 2))
+        val source = FilePcmSource.open(write(ramp(frames, channels = 2), rate = 48000, channels = 2))
 
         assertEquals(ChunkCodec.FRAMES_PER_CHUNK * 2, source.frameCount)
         assertArrayEquals(
@@ -82,7 +82,7 @@ class WavPcmSourceTest {
     fun aFileShorterThanOneChunkIsRefusedRatherThanLoopedFaster() {
         val short = write(ramp(frames = ChunkCodec.FRAMES_PER_CHUNK - 1, channels = 2), rate = 48000, channels = 2)
 
-        val thrown = runCatching { WavPcmSource.open(short) }.exceptionOrNull()
+        val thrown = runCatching { FilePcmSource.open(short) }.exceptionOrNull()
 
         assertTrue("expected a refusal, got $thrown", thrown is IllegalArgumentException)
         assertTrue("the message should name the length: ${thrown?.message}", thrown!!.message!!.contains("20 ms"))
@@ -93,7 +93,7 @@ class WavPcmSourceTest {
         // Both halves of the conversion at once, because they are one call into the resampler the
         // handset already uses: half the rate doubles the frames, and one channel becomes two.
         val frames = ChunkCodec.FRAMES_PER_CHUNK * 2
-        val source = WavPcmSource.open(write(ramp(frames, channels = 1), rate = 24000, channels = 1))
+        val source = FilePcmSource.open(write(ramp(frames, channels = 1), rate = 24000, channels = 1))
 
         assertEquals(frames * 2, source.frameCount)
         val filled = source.fill(0, ChunkCodec.FRAMES_PER_CHUNK)
@@ -106,7 +106,7 @@ class WavPcmSourceTest {
         // should have to know about here. What matters is that it opens and that silence at the
         // eight bit midpoint arrives as silence rather than as a large constant offset.
         val midpoint = ByteArray(ChunkCodec.FRAMES_PER_CHUNK * 2) { 0x80.toByte() }
-        val source = WavPcmSource.open(write(midpoint, rate = 48000, channels = 2, bits = 8))
+        val source = FilePcmSource.open(write(midpoint, rate = 48000, channels = 2, bits = 8))
 
         assertEquals(ChunkCodec.FRAMES_PER_CHUNK, source.frameCount)
         assertArrayEquals(ByteArray(ChunkCodec.FRAMES_PER_CHUNK * 2 * 2), source.fill(0, ChunkCodec.FRAMES_PER_CHUNK))
@@ -136,7 +136,7 @@ class WavPcmSourceTest {
     fun theSourceHandsTheHostTheSameShapeTheToneDoes() {
         // HostStream takes whichever of the two it was given, so the one thing that must not
         // differ is the shape of an answer: this many frames of stereo, at this frame index.
-        val source = WavPcmSource.open(
+        val source = FilePcmSource.open(
             write(ramp(ChunkCodec.FRAMES_PER_CHUNK, channels = 2), rate = 48000, channels = 2)
         )
 

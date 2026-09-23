@@ -21,7 +21,7 @@ import com.soundmesh.probe.sync.ChunkServer
 class HostStream(
     private val port: Int = ChunkCodec.DEFAULT_PORT,
     /**
-     * Frames by absolute index: a tone, or a file through [WavPcmSource].
+     * Frames by absolute index: a tone, or a file through [FilePcmSource].
      *
      * A function rather than a type because that is the whole of what the two sources have in
      * common. Neither of them holds a position and neither knows this class exists, and an
