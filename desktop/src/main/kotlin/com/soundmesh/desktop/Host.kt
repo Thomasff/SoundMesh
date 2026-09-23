@@ -1,9 +1,11 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.ChunkCodec
+import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncServer
+import com.soundmesh.probe.sync.HostIdentity
 import java.io.File
 import java.lang.foreign.Arena
 import java.net.Inet4Address
@@ -33,9 +35,10 @@ import java.net.NetworkInterface
  *
  *   java --enable-native-access=ALL-UNNAMED -cp "<lib>" com.soundmesh.desktop.HostKt 60 play song.wav
  *
- * Point a handset at the address printed below. On the probe build that is the sink role with
- * `host_address` set; discovery is not answered here, because mDNS on this side is its own piece
- * of work and typing an address is not what is being proved.
+ * A handset finds it without being told an address: the record it puts on the network is the one
+ * a handset host puts there, under a name this machine keeps across runs, so a sink files what it
+ * learns under the same name every time. On the probe build that is the sink role with `discover`
+ * set. The addresses are still printed, for a handset told one with `host_address` instead.
  */
 fun main(args: Array<String>) {
     // Positional for the numbers and a word for the switch, the way Listen takes `loopback`:
@@ -92,6 +95,20 @@ private fun run(
     println("audio  : serving on TCP $chunkPort")
     for (address in lanAddresses()) println("address: $address")
 
+    // After both servers are up, so nothing that finds the record can dial a port not yet open.
+    val hostId = HostIdentity(identityDirectory()).current()
+    val record = PeerDiscovery.register("$SERVICE_NAME_PREFIX-$hostId", chunkPort, hostId)
+    println("record : $SERVICE_NAME_PREFIX-$hostId, answering as ${PeerAdvertisement.SERVICE_TYPE}")
+    try {
+        serve(seconds, stream, output)
+    } finally {
+        record.close()
+        stream.stop()
+        clockServer.stop()
+    }
+}
+
+private fun serve(seconds: Int, stream: HostStream, output: FrameOutput?) {
     // Waited for rather than streamed past. The handset host does not wait, and does not need to:
     // there the two ends are started by the same run. Here somebody starts this and then walks to
     // a phone, and a run that streamed its whole length to nobody would end with every counter
@@ -99,8 +116,6 @@ private fun run(
     println("waiting: for a handset to connect, ${WAIT_SECONDS} s")
     if (!awaitSink(stream, WAIT_SECONDS)) {
         println("nothing connected - no audio was sent")
-        stream.stop()
-        clockServer.stop()
         return
     }
 
@@ -117,10 +132,16 @@ private fun run(
         // mid-chunk, which sounds exactly like the fault a run like this is looking for.
         Thread.sleep(TAIL_MILLIS)
     }
-
-    stream.stop()
-    clockServer.stop()
 }
+
+/**
+ * Where this machine keeps the name it answers to.
+ *
+ * Per user and local rather than roaming: the name is this machine's, and a copy that followed a
+ * person to a second computer would make two machines one host to every sink that remembers it.
+ */
+private fun identityDirectory(): File =
+    File(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "SoundMesh").apply { mkdirs() }
 
 private fun awaitSink(stream: HostStream, seconds: Int): Boolean {
     val deadline = System.nanoTime() + seconds * 1_000_000_000L
@@ -151,3 +172,6 @@ private const val DEFAULT_SECONDS = 60
 private const val WAIT_SECONDS = 60
 private const val POLL_MILLIS = 100L
 private const val TAIL_MILLIS = 2000L
+
+/** The handsets' prefix, so a record from this machine reads like one of theirs. */
+private const val SERVICE_NAME_PREFIX = "SoundMesh"

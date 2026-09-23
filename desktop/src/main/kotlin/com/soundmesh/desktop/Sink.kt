@@ -12,9 +12,13 @@ import java.lang.foreign.Arena
  * host can be a handset or another copy of [Host] - nothing here knows which, because nothing on
  * the wire says.
  *
- *   sink <host address> [seconds] [chunkPort] [clockPort]
+ *   sink [<host address>] [seconds] [chunkPort] [clockPort]
  *
  *   java --enable-native-access=ALL-UNNAMED -cp "<lib>" com.soundmesh.desktop.SinkKt 192.168.0.13 60
+ *
+ * With no address it looks for one the way a handset sink does, and refuses the same things: none
+ * answering, none speaking this protocol, and two hosts, because joining whichever answered first
+ * is joining a stranger's room on a shared network. The chunk port then comes from the record.
  *
  * **What a good run proves and what it does not.** It proves the session exists on this side: the
  * clock converges, chunks arrive, and they land on frames the device had not yet reached. It does
@@ -25,13 +29,25 @@ import java.lang.foreign.Arena
  * parked on.
  */
 fun main(args: Array<String>) {
-    val hostAddress = args.getOrNull(0) ?: run {
-        println("usage: sink <host address> [seconds] [chunkPort] [clockPort]")
-        return
+    // The address is the one argument that is not a number, so it can be left out without the
+    // numbers after it changing places - the way Host tells its file from its ports.
+    val numbers = args.filter { it.toIntOrNull() != null }
+    val seconds = numbers.getOrNull(0)?.toInt() ?: DEFAULT_SECONDS
+    val clockPort = numbers.getOrNull(2)?.toInt() ?: ClockPacket.DEFAULT_PORT
+    val typed = args.firstOrNull { it.toIntOrNull() == null }
+    val (hostAddress, chunkPort) = if (typed != null) {
+        typed to (numbers.getOrNull(1)?.toInt() ?: ChunkCodec.DEFAULT_PORT)
+    } else {
+        println("looking: for a host, ${DISCOVERY_WINDOW_MILLIS / 1000} s")
+        val outcome = PeerDiscovery.discover(DISCOVERY_WINDOW_MILLIS)
+        val peer = outcome.peer ?: run {
+            println("no host: ${outcome.failure}, ${outcome.seen} answered, ${outcome.compatible} usable")
+            for (host in outcome.hosts) println("         ${host.name} at ${host.hostAddress}:${host.port}")
+            return
+        }
+        println("found  : ${peer.name} at ${peer.hostAddress}:${peer.port}")
+        peer.hostAddress to peer.port
     }
-    val seconds = args.getOrNull(1)?.toInt() ?: DEFAULT_SECONDS
-    val chunkPort = args.getOrNull(2)?.toInt() ?: ChunkCodec.DEFAULT_PORT
-    val clockPort = args.getOrNull(3)?.toInt() ?: ClockPacket.DEFAULT_PORT
 
     Arena.ofShared().use { arena ->
         val clock = DesktopClock.measure(arena)
@@ -82,3 +98,6 @@ private const val DEFAULT_SECONDS = 60
 private const val CLOCK_WAIT_SECONDS = 30
 private const val REPORT_MILLIS = 5000L
 private const val TAIL_MILLIS = 500L
+
+/** The handset sink's window, for the reason it gives: mDNS never says that was all of them. */
+private const val DISCOVERY_WINDOW_MILLIS = 5_000
