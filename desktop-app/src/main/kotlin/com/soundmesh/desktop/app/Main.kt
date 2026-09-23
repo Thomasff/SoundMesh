@@ -11,6 +11,7 @@ import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.identityDirectory
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 fun main() = application {
     val host = remember { HostSession(identityDirectory()) }
@@ -24,8 +25,14 @@ fun main() = application {
     Window(
         onCloseRequest = {
             // Given back before the process goes, so the record is withdrawn and a handset
-            // standing by does not keep dialling a host that has left.
-            sessions.submit { host.close(); sink.stop() }.get()
+            // standing by does not keep dialling a host that has left. Bounded, and each call on
+            // its own: a session that throws or hangs on the way out must not keep the window up.
+            runCatching {
+                sessions.submit {
+                    runCatching { host.close() }
+                    runCatching { sink.stop() }
+                }.get(15, TimeUnit.SECONDS)
+            }
             exitApplication()
         },
         title = "SoundMesh",
