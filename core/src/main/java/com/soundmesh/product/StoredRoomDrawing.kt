@@ -23,7 +23,7 @@ data class SavedDrawing(val placements: List<RoomIcon>, val room: RoomState)
  * channel hands them out and only runs while something is playing, so between sessions the saved
  * ones are all there is, and during one the live ones are who actually holds which colour.
  */
-internal fun RoomState.readBack(saved: SavedDrawing): RoomState {
+fun RoomState.readBack(saved: SavedDrawing): RoomState {
     val placed = saved.placements.associateBy { it.peerId }
     return saved.room.copy(
         icons = icons.map { placed[it.peerId] ?: it },
