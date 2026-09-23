@@ -89,6 +89,9 @@ const MAX_CLOCK_INTERVAL_MS = 10_000;
 const MIN_ESTIMATOR_WINDOW = 8;
 const MAX_ESTIMATOR_WINDOW = 4096;
 const DEFAULT_ESTIMATOR_WINDOW = 64;
+// The reopen interval range the probe honours (SyncActivity.reopenTrackSecondsRequested).
+const MIN_REOPEN_TRACK_SECONDS = 10;
+const MAX_REOPEN_TRACK_SECONDS = 600;
 
 /**
  * Ceiling on the chirp repeat count, set by the probe's scheduler capacity.
@@ -697,6 +700,14 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (bestRaw !== undefined && (!Number.isInteger(estimatorBest) || estimatorBest < 1 || estimatorBest > bestCeiling)) {
     throw new Error(`--estimator-best takes a whole number of exchanges, 1 to the window (${bestCeiling}): keeping more than it holds is not a rule the probe runs.`);
   }
+  // Close the output and open a new one every N seconds inside one clock session, on both roles.
+  // Every run so far opened one AudioTrack per clock session, so a per-run level shift in the pair
+  // constant could be either; holding the clock and changing the output is what tells them apart.
+  const reopenRaw = value(args, '--reopen-track-s');
+  const reopenTrackSeconds = reopenRaw === undefined ? undefined : Number(reopenRaw);
+  if (reopenRaw !== undefined && (!Number.isInteger(reopenTrackSeconds) || reopenTrackSeconds < MIN_REOPEN_TRACK_SECONDS || reopenTrackSeconds > MAX_REOPEN_TRACK_SECONDS)) {
+    throw new Error(`--reopen-track-s takes a whole number of seconds, ${MIN_REOPEN_TRACK_SECONDS} to ${MAX_REOPEN_TRACK_SECONDS}. Leave it out to keep one output for the whole run.`);
+  }
   // Standing correction for the fixed part of the acoustic error, sink only - the host plays on
   // its own clock and has no host-time conversion to correct. Pass back the alignmentErrorMs a
   // previous run reported, verbatim and with its sign; the sink subtracts it from its view of host
@@ -789,12 +800,12 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // Before the run, not during it: a push that fails after the handsets have started would
   // leave them playing the tone under a run named for a song.
   const sourceFile = sourceFilePath === undefined ? undefined : await pushSourceFile({ serial: hostSerial, localPath: sourceFilePath, runAdbHost });
-  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode, playbackUsage: hostPlaybackUsage, markerStrideChunks });
+  await client.startSync({ serial: hostSerial, caseId, role: 'HOST', seconds, mode, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, capturePackage, sourceFile, networkMode, playbackUsage: hostPlaybackUsage, markerStrideChunks, reopenTrackSeconds });
   // A generated run keeps the stagger it always had: the host binds its ports immediately. A
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
   else await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, estimatorWindow, estimatorBest, alignmentOffsetMicros, networkMode, paired: pairedHost, markerStrideChunks });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, estimatorWindow, estimatorBest, alignmentOffsetMicros, networkMode, paired: pairedHost, markerStrideChunks, reopenTrackSeconds });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

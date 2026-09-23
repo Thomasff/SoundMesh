@@ -540,6 +540,15 @@ class SyncActivity : Activity() {
     }
 
     /**
+     * How often to replace the output inside one clock session, in nanoseconds; zero keeps one
+     * output for the run, as every run before this did. See SyncRenderer's reopenTrackEveryNanos.
+     */
+    private fun reopenTrackEveryNanosRequested(): Long {
+        val seconds = intent.getIntExtra("reopen_track_seconds", 0)
+        return if (seconds in MIN_REOPEN_TRACK_SECONDS..MAX_REOPEN_TRACK_SECONDS) seconds * 1_000_000_000L else 0L
+    }
+
+    /**
      * Chunks between one streamed marker and the next, or null to stream ordinary content.
      *
      * The pair constant is measured with chirp chunks, which are released exactly, and then spent
@@ -593,7 +602,8 @@ class SyncActivity : Activity() {
         val renderer = SyncRenderer(
             scheduler, DriftController(deadbandFramesRequested()), lowLatencyRequested(), reacquireThresholdRequested(),
             trimDeadbandFrames = trimFramesRequested(),
-            playbackUsage = playbackUsageRequested()
+            playbackUsage = playbackUsageRequested(),
+            reopenTrackEveryNanos = reopenTrackEveryNanosRequested()
         ) { System.nanoTime() - outputLead }
         val hostNanosNow: () -> Long = { System.nanoTime() }
         var capture: CaptureChunkSource? = null
@@ -951,6 +961,7 @@ class SyncActivity : Activity() {
             // already happened, and a release cannot have happened without an offset to convert it.
             offsetNanosNow = { latestEstimate()?.offsetNanos ?: 0L },
             playbackUsage = playbackUsageRequested(),
+            reopenTrackEveryNanos = reopenTrackEveryNanosRequested(),
             hostNanosNow = hostNanosNow
         )
         val lastPlayAt = AtomicLong(0L)
@@ -1532,6 +1543,9 @@ class SyncActivity : Activity() {
          * run, and an estimator whose window never fills is a different estimator.
          */
         private const val MAX_ESTIMATOR_WINDOW = 4096
+        // Mirrored in tools/src/cli/run-sync.mjs, which refuses what this would ignore.
+        private const val MIN_REOPEN_TRACK_SECONDS = 10
+        private const val MAX_REOPEN_TRACK_SECONDS = 600
         const val CHUNK_PORT = ChunkCodec.DEFAULT_PORT
 
         /** Where the host takes delivery of the sink's own reading of the run. */

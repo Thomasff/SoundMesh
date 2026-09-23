@@ -723,6 +723,28 @@ test('refuses an estimator the probe would silently replace with its default', a
   }
 });
 
+test('--reopen-track-s reaches both roles, and its absence leaves each on one output for the whole run', async () => {
+  // Both, never one: the pair constant is a difference between the two handsets, and the question
+  // is whether a new output moves it - a run that reopened one side only would answer half of it.
+  const reopening = await startSyncCalls(['--reopen-track-s', '60']);
+  assert.deepEqual(reopening.map(({ role, reopenTrackSeconds }) => [role, reopenTrackSeconds]), [['HOST', 60], ['SINK', 60]]);
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, reopenTrackSeconds }) => [role, reopenTrackSeconds]), [['HOST', undefined], ['SINK', undefined]]);
+});
+
+test('refuses a reopen interval the probe would not honour', async () => {
+  for (const bad of ['0', '5', '601', '60.5', '-60']) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', '--reopen-track-s', bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+      ),
+      /--reopen-track-s/
+    );
+  }
+});
+
 test('--alignment-offset-ms reaches the sink alone, in microseconds and with its sign intact', async () => {
   // Only the sink converts host time into local time, so only the sink has anything to correct -
   // the host plays on its own clock. The value is the alignmentErrorMs a previous run reported,

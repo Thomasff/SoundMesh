@@ -161,11 +161,11 @@ test('passes a denser clock cadence through only when one was asked for', async 
   // disagreement is the estimator's own noise with no model of the true clock in it.
   await client.startSync({ serial: 'device-1', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL', clockIntervalMs: 500 });
   await client.startSync({ serial: 'device-2', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL' });
-  await client.startSync({ serial: 'device-3', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL', estimatorWindow: 512, estimatorBest: 64 });
+  await client.startSync({ serial: 'device-3', caseId: 'S2', role: 'SINK', seconds: 90, mode: 'FULL', estimatorWindow: 512, estimatorBest: 64, reopenTrackSeconds: 60 });
   assert.deepEqual(calls.map(({ args }) => args), [
     ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--ei', 'clock_interval_ms', '500'],
     ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL'],
-    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--ei', 'estimator_window', '512', '--ei', 'estimator_best', '64']
+    ['shell', 'am', 'start', '-n', 'com.soundmesh.probe/.sync.SyncActivity', '--es', 'case_id', 'S2', '--es', 'role', 'SINK', '--ei', 'seconds', '90', '--es', 'mode', 'FULL', '--ei', 'estimator_window', '512', '--ei', 'estimator_best', '64', '--ei', 'reopen_track_seconds', '60']
   ]);
 });
 

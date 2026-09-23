@@ -133,6 +133,16 @@ class SyncRenderer(
      * what the measurement runs keep doing.
      */
     private val spatialPeerId: String? = null,
+    /**
+     * Close the output and open a new one this often, in nanoseconds, while the clock session
+     * carries on. Zero - the default - keeps one AudioTrack for the whole run, which is what every
+     * run before this existed did.
+     *
+     * An experiment arm, not a feature. Across runs the pair constant moves by about 0.4 ms as a
+     * whole, and every run opens both a new clock session and a new output, so the two cannot be
+     * told apart; this holds the first and changes the second. The instants are in [report].
+     */
+    private val reopenTrackEveryNanos: Long = 0L,
     private val hostNanosNow: () -> Long
 ) {
     private val silence = ByteArray(FRAMES_PER_CHUNK * CHANNELS * 2)
@@ -358,6 +368,9 @@ class SyncRenderer(
     private val watchedMarkers = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     /** What each watched marker was released against, keyed by sequence. See [watchedMarkers]. */
     private val markerReleases = java.util.concurrent.ConcurrentHashMap<Int, MarkerRelease>()
+
+    /** Host instants at which [reopenTrackEveryNanos] replaced the output. Read after the join. */
+    private val trackReopens = java.util.concurrent.CopyOnWriteArrayList<Long>()
     /**
      * The output depth this device was working from when it released the chirp's first chunk, or
      * null if no chirp chunk was ever played.
@@ -521,14 +534,15 @@ class SyncRenderer(
             // one of them being silently baked in. Off means the call is not made at all, which is
             // the behaviour every earlier measurement was taken on.
             if (lowLatency) builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-            track = builder.build()
-            trackBufferFrames = track.bufferSizeInFrames
+            var output = builder.build()
+            track = output
+            trackBufferFrames = output.bufferSizeInFrames
             trackMinBufferBytes = minimum
             trackRequestedBytes = maxOf(minimum, silence.size * 2)
-            trackCapacityFrames = track.bufferCapacityInFrames
-            trackPerformanceMode = track.performanceMode
-            trackSampleRate = track.sampleRate
-            track.play()
+            trackCapacityFrames = output.bufferCapacityInFrames
+            trackPerformanceMode = output.performanceMode
+            trackSampleRate = output.sampleRate
+            output.play()
             val timestamp = AudioTimestamp()
             var writtenFrames = 0L
             // Host instant at which the next frame to be written must be heard. Undefined until
@@ -536,15 +550,30 @@ class SyncRenderer(
             // carries it forward a chunk at a time, exactly as the write stream advances.
             var timelineNextHostNanos = UNDEFINED
             var nextDriftCheckHostNanos = UNDEFINED
+            var nextReopenHostNanos = UNDEFINED
             while (playHostNanos() < untilHostNanos) {
+                if (reopenTrackEveryNanos > 0 && nextReopenHostNanos != UNDEFINED && playHostNanos() >= nextReopenHostNanos) {
+                    // A new output under the same clock, begun as the first one was: nothing written,
+                    // and the timeline left for the next chunk to pin. The drift controller keeps its
+                    // history, as it does across a starvation gap. underrunCount starts again with it.
+                    runCatching { output.stop() }; runCatching { output.flush() }; runCatching { output.release() }
+                    output = builder.build()
+                    track = output
+                    output.play()
+                    writtenFrames = 0L
+                    timelineNextHostNanos = UNDEFINED
+                    nextDriftCheckHostNanos = UNDEFINED
+                    trackReopens.add(playHostNanos())
+                    nextReopenHostNanos = playHostNanos() + reopenTrackEveryNanos
+                }
                 if (timelineNextHostNanos != UNDEFINED && playHostNanos() >= nextDriftCheckHostNanos) {
-                    sampleDrift(track, timestamp, writtenFrames, timelineNextHostNanos)
+                    sampleDrift(output, timestamp, writtenFrames, timelineNextHostNanos)
                     nextDriftCheckHostNanos = playHostNanos() + driftIntervalNanos()
                 }
                 // Taken before poll on purpose: poll has already counted the chunk it returns, so
                 // this is the only reading that excludes the chirp's own first chunk.
                 val statsBeforePoll = scheduler.stats()
-                val depthNanos = outputDepthNanos(track, timestamp, writtenFrames)
+                val depthNanos = outputDepthNanos(output, timestamp, writtenFrames)
                 // Taken beside the depth, because the depth counts forward from here. The write
                 // below blocks while the output is full, so a clock read after it has that wait
                 // in it and the depth does not - and the two then double-count it.
@@ -555,7 +584,7 @@ class SyncRenderer(
                 val heardAtHostNanos = playHostNanos() + depthNanos
                 // Cumulative on the track, so the last read is the run's total. Polled here rather
                 // than once at the end because the track is released before report() is called.
-                runCatching { trackUnderruns = track.underrunCount }
+                runCatching { trackUnderruns = output.underrunCount }
                 when (val decision = scheduler.poll(heardAtHostNanos)) {
                     is PlaybackDecision.Play -> {
                         if (timelineNextHostNanos == UNDEFINED) {
@@ -563,6 +592,7 @@ class SyncRenderer(
                             // immediately rather than waiting a full DRIFT_INTERVAL_NANOS.
                             acquisitionStartHostNanos = playHostNanos()
                             nextDriftCheckHostNanos = playHostNanos()
+                            if (nextReopenHostNanos == UNDEFINED) nextReopenHostNanos = playHostNanos() + reopenTrackEveryNanos
                         }
                         // Shaped before the trim, not after: a trim shortens what is written
                         // without moving the instant any surviving frame lands on, so frame j of
@@ -630,10 +660,10 @@ class SyncRenderer(
                         }
                         if (faded != null) {
                             loudness = loudnessOf(faded, 0, faded.size)
-                            track.write(faded, 0, faded.size)
+                            output.write(faded, 0, faded.size)
                         } else {
                             loudness = loudnessOf(payload, offset, payload.size - offset)
-                            track.write(payload, offset, payload.size - offset)
+                            output.write(payload, offset, payload.size - offset)
                         }
                         writtenFrames += (payload.size - offset) / (CHANNELS * 2)
                         // A dropped or duplicated frame deliberately does not move the timeline:
@@ -657,7 +687,7 @@ class SyncRenderer(
                         // stream lands on it instead of stepping past it and making it late.
                         val bytes = decision.frames * CHANNELS * 2
                         loudness = 0f
-                        track.write(silence, 0, bytes)
+                        output.write(silence, 0, bytes)
                         writtenFrames += decision.frames.toLong()
                         if (timelineNextHostNanos != UNDEFINED) {
                             timelineNextHostNanos += decision.frames * 1_000_000_000L / SAMPLE_RATE
@@ -1050,6 +1080,8 @@ class SyncRenderer(
             "\"spatialPeerId\":${spatialPeerId?.let { "\"$it\"" } ?: "null"}," +
             "\"spatialChunks\":$spatialChunks," +
             "\"arrivalDelayNanos\":$arrivalDelayNanos," +
+            "\"reopenTrackEveryNanos\":$reopenTrackEveryNanos," +
+            "\"trackReopens\":${trackReopens.joinToString(",", "[", "]")}," +
             "\"trackProfile\":" + trackProfileJson(
                 trackMinBufferBytes, trackRequestedBytes, trackBufferFrames,
                 trackCapacityFrames, trackPerformanceMode, trackSampleRate, firstPendingFrames
