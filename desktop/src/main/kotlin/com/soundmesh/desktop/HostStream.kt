@@ -41,9 +41,19 @@ class HostStream(
      * instant to a frame and neither knows how far its own speaker sits behind that frame; the
      * two constants are unmeasured and they do not cancel.
      */
-    private val localOutput: FrameOutput? = null
+    private val localOutput: FrameOutput? = null,
+    /**
+     * The server the chunks go out on. Its own by default; one passed in stays the caller's to
+     * start and stop, so that one bound port can outlive many streams.
+     *
+     * That is what [HostSession] needs it for. A host in the window stops and plays again far
+     * more often than it stops being the host, and reopening a port a thread is still blocked in
+     * accept on is the step that can fail - the command channel measured one stop in two hundred
+     * leaving the port in LISTEN on Linux, and the chunk server has no guard against it. A port
+     * that is never closed between two plays cannot be caught out that way.
+     */
+    private val chunkServer: ChunkServer = ChunkServer(port)
 ) {
-    private val chunkServer = ChunkServer(port)
     private val localPlayout = localOutput?.let { ChunkPlayout(it) { 0L } }
 
     fun start() = chunkServer.start()
@@ -59,9 +69,16 @@ class HostStream(
     fun localSeams(): Int = localPlayout?.seams ?: 0
     fun worstLocalSeamFrames(): Int = localPlayout?.worstSeamFrames ?: 0
     fun localSeamBand(): String = localPlayout?.seamBand() ?: "not playing locally"
+    fun localSeamShares(): String = localPlayout?.seamShares() ?: "not playing locally"
+
+    /** Streams [chunks] chunks and returns once the last one has been handed over - see [streamWhile]. */
+    fun stream(chunks: Int) {
+        var sent = 0
+        streamWhile { sent++ < chunks }
+    }
 
     /**
-     * Streams [chunks] chunks and returns once the last one has been handed over.
+     * Streams until [keepGoing] answers false, which it is asked before every chunk.
      *
      * Every instant comes off one anchor rather than off the clock each time round the loop. The
      * handset does it the other way and gets away with it, drifting a millisecond or two per
@@ -75,10 +92,11 @@ class HostStream(
      * worth of time: waking late is unavoidable and costs nothing at a lead of a second and a
      * half, but waking late repeatedly and adding up would walk the stream off its own timeline.
      */
-    fun stream(chunks: Int) {
+    fun streamWhile(keepGoing: () -> Boolean) {
         val anchor = System.nanoTime() + leadNanos
         var frameIndex = 0L
-        for (sequence in 0 until chunks) {
+        var sequence = 0
+        while (keepGoing()) {
             val playAt = anchor + sequence * CHUNK_NANOS
             val chunk = AudioChunk(sequence, playAt, source(frameIndex, ChunkCodec.FRAMES_PER_CHUNK))
             chunkServer.broadcast(chunk)
@@ -87,6 +105,7 @@ class HostStream(
             // instant in the chunk is already fixed and neither is waiting on the other for it.
             localPlayout?.play(chunk)
             frameIndex += ChunkCodec.FRAMES_PER_CHUNK
+            sequence++
             sleepUntil(playAt + CHUNK_NANOS - leadNanos)
         }
     }

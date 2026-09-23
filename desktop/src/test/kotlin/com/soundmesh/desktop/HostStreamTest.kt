@@ -4,6 +4,7 @@ import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.sync.ChunkClient
+import com.soundmesh.probe.sync.ChunkServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -88,6 +89,62 @@ class HostStreamTest {
             output.scheduled.map { it.first }
         )
         assertEquals("a whole chunk apart leaves no seam", 0, host.worstLocalSeamFrames())
+    }
+
+    /**
+     * A stream the window is playing has no length: it runs until somebody presses stop, and has
+     * to stop within a chunk of being told rather than at the end of a count nobody chose.
+     */
+    @Test
+    fun aStreamRunsUntilItIsToldToStop() {
+        val port = freePort()
+        val host = HostStream(port, TonePcmSource()::fill)
+        val received = CopyOnWriteArrayList<AudioChunk>()
+        val client = ChunkClient("127.0.0.1", port) { received.add(it) }
+        val keepGoing = java.util.concurrent.atomic.AtomicBoolean(true)
+        try {
+            host.start()
+            client.start()
+            awaitSink(host)
+            val streaming = Thread { host.streamWhile { keepGoing.get() } }.apply { start() }
+            awaitDelivery(received, 5)
+            keepGoing.set(false)
+            streaming.join(1_000)
+            assertTrue("the stream was still going a second after it was told to stop", !streaming.isAlive)
+        } finally {
+            client.stop()
+            host.stop()
+        }
+        assertEquals((0 until received.size).toList(), received.map { it.sequence })
+    }
+
+    /**
+     * One bound port under many streams, which is what lets a host that stops and plays again
+     * never close and reopen its audio port - the step a server blocked in accept makes unsafe.
+     */
+    @Test
+    fun aServerPassedInOutlivesTheStreamsSentOnIt() {
+        val port = freePort()
+        val server = ChunkServer(port)
+        val received = CopyOnWriteArrayList<AudioChunk>()
+        val client = ChunkClient("127.0.0.1", port) { received.add(it) }
+        try {
+            server.start()
+            client.start()
+            val deadline = System.nanoTime() + ARRIVAL_TIMEOUT_NANOS
+            while (server.clientCount() < 1) {
+                if (System.nanoTime() > deadline) throw AssertionError("no sink connected")
+                Thread.sleep(POLL_MILLIS)
+            }
+            HostStream(port, TonePcmSource()::fill, chunkServer = server).stream(3)
+            HostStream(port, TonePcmSource()::fill, chunkServer = server).stream(3)
+            awaitDelivery(received, 6)
+            assertEquals("the sink is still connected after both streams", 1, server.clientCount())
+        } finally {
+            client.stop()
+            server.stop()
+        }
+        assertEquals(listOf(0, 1, 2, 0, 1, 2), received.map { it.sequence })
     }
 
     private fun streamTo(chunks: Int): List<AudioChunk> {
