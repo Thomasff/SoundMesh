@@ -67,6 +67,7 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
     val self = MaterialTheme.colorScheme.tertiary
     val source = MaterialTheme.colorScheme.secondary
     val frame = MaterialTheme.colorScheme.surfaceVariant
+    val english = LocalEnglish.current
     var modifier = Modifier
         .size(DRAWING_SIDE)
         .border(1.dp, frame, RoundedCornerShape(10.dp))
@@ -106,7 +107,7 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
     }
     Canvas(modifier) {
         drawCircle(outline, radius = size.minDimension / 2f, style = Stroke(width = 2f))
-        drawListener(listener, measurer)
+        drawListener(listener, Phrases.room_you.of(english), measurer)
         for (icon in room.icons) {
             val place = room.colours[icon.peerId]
             val hue = place?.let { BadgeHues.argb.getOrNull(it) }?.let { Color(it) } ?: fallback
@@ -121,7 +122,7 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
                 measurer = measurer
             )
             if (splitting(room)) {
-                drawPartWord(icon, partWord(room.splitAxis, icon.peerId in room.otherHalfIds), listener, measurer)
+                drawPartWord(icon, partWord(room.splitAxis, icon.peerId in room.otherHalfIds).of(english), listener, measurer)
             }
         }
         sourceSpotOf(room)?.let { drawSource(it, source) }
@@ -132,20 +133,20 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
 fun splitting(room: RoomState): Boolean = room.separation > 0f && !room.mode.movesASource
 
 /** The handset's words for the two halves. */
-fun partWord(axis: SplitAxis, farHalf: Boolean): String = when (axis) {
-    SplitAxis.MIDDLE_SIDES -> if (farHalf) "伴奏" else "人声"
-    SplitAxis.LOW_HIGH -> if (farHalf) "高音" else "低音"
+internal fun partWord(axis: SplitAxis, farHalf: Boolean): Phrase = when (axis) {
+    SplitAxis.MIDDLE_SIDES -> if (farHalf) Phrases.room_part_sides else Phrases.room_part_middle
+    SplitAxis.LOW_HIGH -> if (farHalf) Phrases.room_part_high else Phrases.room_part_low
 }
 
 /** Where the source is drawn, from the rule's own numbers; only 自定义声音位置 has one to drag. */
 private fun sourceSpotOf(room: RoomState): SourceSpot? =
     if (room.mode != SpatialMode.PAN) null else SpatialRoom.spotOf(room.pan, room.retreat, room.envelopment)
 
-private fun DrawScope.drawListener(colour: Color, measurer: TextMeasurer) {
+private fun DrawScope.drawListener(colour: Color, you: String, measurer: TextMeasurer) {
     val middle = Offset(size.width / 2f, size.height / 2f)
     val radius = size.minDimension * SpatialRoom.LISTENER_RADIUS
     drawCircle(colour, radius = radius, center = middle, style = Stroke(width = 2f))
-    val word = measurer.measure("你", TextStyle(fontSize = 11.sp, color = colour))
+    val word = measurer.measure(you, TextStyle(fontSize = 11.sp, color = colour))
     drawText(word, topLeft = Offset(middle.x - word.size.width / 2f, middle.y - word.size.height / 2f))
     // Which way is in front, which the ear cannot tell from behind on this system.
     val ahead = radius + size.minDimension * 0.035f

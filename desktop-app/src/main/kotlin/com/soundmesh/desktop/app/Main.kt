@@ -6,6 +6,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ fun main() = application {
     val prefs = remember { WindowPrefs(File(identityDirectory(), "window.properties")) }
     var theme by remember { mutableStateOf(themeChoiceOf(prefs.read("theme"))) }
     var details by remember { mutableStateOf(prefs.read("details") == "on") }
+    var language by remember { mutableStateOf(languageChoiceOf(prefs.read("language"))) }
     var settingsOpen by remember { mutableStateOf(false) }
 
     Window(
@@ -53,22 +55,27 @@ fun main() = application {
         title = "SoundMesh",
         state = rememberWindowState(width = 560.dp, height = 680.dp)
     ) {
-        Themed(theme) {
+        Themed(theme, language) {
             SoundMeshWindow(host, sink, dispatcher, details, onOpenSettings = { settingsOpen = true })
         }
     }
     if (settingsOpen) {
         Window(
             onCloseRequest = { settingsOpen = false },
-            title = "SoundMesh 设置",
-            state = rememberWindowState(width = 420.dp, height = 480.dp)
+            title = Phrases.pc_settings_window.of(language.english()),
+            state = rememberWindowState(width = 420.dp, height = 560.dp)
         ) {
-            Themed(theme) {
+            Themed(theme, language) {
                 SettingsPane(
                     theme,
                     onTheme = {
                         prefs.write("theme", it.name)
                         theme = it
+                    },
+                    language,
+                    onLanguage = {
+                        prefs.write("language", it.name)
+                        language = it
                     },
                     details,
                     onDetails = {
@@ -81,15 +88,20 @@ fun main() = application {
     }
 }
 
-/** Material's own light and dark, on a surface so the window's ground follows the theme too. */
+/**
+ * Material's own light and dark, on a surface so the window's ground follows the theme too, and
+ * the language every phrase below is said in.
+ */
 @Composable
-private fun Themed(theme: ThemeChoice, content: @Composable () -> Unit) {
+private fun Themed(theme: ThemeChoice, language: LanguageChoice, content: @Composable () -> Unit) {
     val dark = when (theme) {
         ThemeChoice.SYSTEM -> isSystemInDarkTheme()
         ThemeChoice.LIGHT -> false
         ThemeChoice.DARK -> true
     }
-    MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-        Surface(content = content)
+    CompositionLocalProvider(LocalEnglish provides language.english()) {
+        MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            Surface(content = content)
+        }
     }
 }

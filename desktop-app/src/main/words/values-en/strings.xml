@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pc_role_question">Is this computer the host, or does it play along with the host in the room?</string>
+    <string name="pc_settings_window">SoundMesh settings</string>
+
+    <string name="pc_pick_files">Choose files</string>
+    <string name="pc_pick_songs_title">Choose songs (several at once is fine)</string>
+    <string name="pc_pick_folder_title">Choose a folder of songs</string>
+    <string name="pc_songs_count">%1$d songs</string>
+    <string name="pc_folder_empty">Nothing in “%1$s” can be played</string>
+    <string name="pc_folder_songs">%2$d songs in “%1$s”</string>
+    <string name="pc_capture_app">Capture a program</string>
+    <string name="pc_no_programs">No program is making sound in the volume mixer right now. Start the one you want, then press again.</string>
+    <string name="pc_which_program">Which program\'s sound?</string>
+    <string name="pc_program_playing">%1$s (making sound)</string>
+    <string name="pc_never_mind">Never mind</string>
+    <string name="pc_program_sound">Sound from “%1$s”</string>
+    <string name="pc_play_here_too">This computer plays too</string>
+    <string name="pc_capturing">The room is playing “%1$s”. Its volume on this computer is turned down to a thousandth so it does not sound a second and a half ahead of the room; stopping puts it back.</string>
+    <string name="pc_held_down">“%1$s” is still turned down in the volume mixer. It is put back here the next time it runs, or turn it back up yourself in the Windows volume mixer.</string>
+    <string name="pc_skipped">Skipped, could not play: %1$s</string>
+    <string name="pc_ended">Finished.</string>
+    <string name="pc_phones_follow">SoundMesh on a phone that is standing by joins in by itself.</string>
+    <string name="pc_type_this">If another computer cannot find this one, type: %1$s</string>
+
+    <string name="pc_diag_audio_port">Audio port</string>
+    <string name="pc_diag_receiving">%1$d receiving</string>
+    <string name="pc_diag_dropped">Dropped chunks</string>
+    <string name="pc_diag_played_here">Played here</string>
+    <string name="pc_diag_late_here">Dropped late here</string>
+    <string name="pc_diag_restarts">Timeline restarts</string>
+    <string name="pc_diag_capture_pad">Capture padded</string>
+    <string name="pc_diag_seam_here">Seams here</string>
+    <string name="pc_diag_seam_split">Seam breakdown</string>
+    <string name="pc_diag_clock">Clock offset</string>
+    <string name="pc_diag_arrived">Arrived</string>
+    <string name="pc_diag_before_clock">Dropped before clock</string>
+    <string name="pc_diag_shaped">Shaped by effect</string>
+    <string name="pc_diag_seam">Seams</string>
+    <string name="pc_chunks">%1$d chunks</string>
+    <string name="pc_times">%1$d times</string>
+
+    <string name="pc_start">Start</string>
+    <string name="pc_host_address">Host address, if not found</string>
+    <string name="pc_address_example">e.g. 192.168.0.150</string>
+    <string name="pc_dial_address">Connect to it</string>
+    <string name="pc_address_elsewhere">%1$s is on none of this computer\'s networks (this computer: %2$s). If it will not connect, check first that the two are on the same network.</string>
+    <string name="pc_my_number">This computer is No. %1$d on the host\'s list</string>
+    <string name="pc_volume_set">The host set SoundMesh\'s volume here to %1$d%% (the computer\'s own volume is untouched).</string>
+    <string name="pc_following">Following: %1$s</string>
+    <string name="pc_following_at">Following: %1$s (%2$s)</string>
+    <string name="pc_room_readonly">The host arranges this drawing; here it can only be looked at. The one with the outer ring is this computer.</string>
+
+    <string name="pc_room_count">%1$d in the room</string>
+    <string name="pc_self_host">This computer (host)</string>
+    <string name="pc_no_phones">No phone has connected yet. A phone that picks Be a sink connects by itself.</string>
+    <string name="pc_not_receiving">Not receiving audio; it may have dropped</string>
+
+    <string name="pc_song_of">Song %1$d of %2$d: %3$s</string>
+    <string name="pc_progress">Position</string>
+    <string name="pc_drag_icons">Drag each icon to where that device really is. “You” is the listener, and up is the front.</string>
+
+    <string name="pc_stereo_line">Devices on the left play the left channel and those on the right the right, split by the layout above.</string>
+    <string name="pc_spin_line">The source circles around you; better with three devices or more.</string>
+    <string name="pc_place_line">Drag the ringed dot in the room drawing above to move the source.</string>
+    <string name="pc_reverb">Room reverb</string>
+    <string name="pc_envelopment">Envelopment</string>
+    <string name="pc_envelopment_line">How much each device keeps once the sound turns away.</string>
+    <string name="pc_crossover">Crossover</string>
+    <string name="pc_crossover_reading">below %1$d Hz is bass</string>
+    <string name="pc_parts_click">Click an icon in the room drawing to change which half it plays (it is written under the icon).</string>
+
+    <string name="pc_this_computer">This computer</string>
+    <string name="pc_no_volume_yet">Not reported</string>
+    <string name="pc_percent_now">%1$d%% (now %2$d%%)</string>
+
+    <string name="pc_no_network">This computer is not on a local network, so no phone or computer can reach it. Join a WiFi network or plug in a cable first.</string>
+    <string name="pc_networks_hint">Every device in the room has to be on one of these.</string>
+
+    <string name="pc_code_title">Code for phones to scan</string>
+    <string name="pc_code_nowhere">This computer has no local network address, so there is nothing for a phone to scan.</string>
+    <string name="pc_code_how">On a phone, pick Be a sink, and scan this code if it cannot find this computer.</string>
+    <string name="pc_code_address">The code holds %1$s (%2$s); the phone that scans it has to be on that network.</string>
+
+    <string name="pc_port_command">Command port TCP</string>
+    <string name="pc_port_clock">Clock port UDP</string>
+    <string name="pc_port_audio">Audio port TCP</string>
+    <string name="pc_port_spatial">Spatial port TCP</string>
+    <string name="pc_port_taken">%1$s %2$d is taken. Is the command-line host, or another SoundMesh, still open?</string>
+    <string name="pc_file_unreadable">This file cannot be played: %1$s</string>
+    <string name="pc_speakers">The computer\'s speakers will not open: %1$s</string>
+    <string name="pc_advertise">Cannot announce this host on the local network, so phones will not find it: %1$s</string>
+    <string name="pc_play_failed">Playback stopped: %1$s</string>
+    <string name="pc_capture_failed">Cannot capture “%1$s” (needs Windows 10 21H2 or later): %2$s</string>
+
+    <string name="pc_sink_idle">Press Start to look for the host in the room.</string>
+    <string name="pc_sink_finding">Looking for the host (5 s)…</string>
+    <string name="pc_sink_wrong_version">Found a host, but the versions do not match. Both sides need the same version.</string>
+    <string name="pc_sink_two_hosts">There are two hosts in the room. Close one first.</string>
+    <string name="pc_sink_no_answer">No host answered. Is the host running? Are both on the same network? You can also type the host\'s address below.</string>
+    <string name="pc_sink_reaching">Connecting to the host (trying every 3 s)…</string>
+    <string name="pc_sink_standing">Standing by: plays the moment the host does.</string>
+    <string name="pc_sink_no_clock_last">Last time the host did not answer the clock, so this one did not join in.</string>
+    <string name="pc_sink_missed_last">Last time this one did not join in: %1$s</string>
+    <string name="pc_sink_opening">Opening the speakers…</string>
+    <string name="pc_sink_syncing">Syncing the clock with the host…</string>
+    <string name="pc_sink_playing">Playing along.</string>
+    <string name="pc_sink_host_silent">The host has gone quiet and may have dropped. This one joins in by itself when it plays again.</string>
+    <string name="pc_sink_failed">Something went wrong: %1$s</string>
+
+    <string name="pc_details_hint">The counters, clock offset and seams in the main window. Not needed day to day; useful when something is wrong.</string>
+</resources>

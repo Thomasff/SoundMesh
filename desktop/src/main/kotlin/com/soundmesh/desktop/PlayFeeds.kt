@@ -21,7 +21,7 @@ internal interface Feed {
 /** A list of songs, one after another - see [SongList]. */
 internal class SongFeed(private val songs: SongList) : Feed {
     override fun prepare(): HostProblem? =
-        if (songs.prepare()) null else HostProblem.FileUnreadable(songs.skipped().joinToString("；"))
+        if (songs.prepare()) null else HostProblem.FileUnreadable(songs.skipped().joinToString("; "))
 
     override fun nextChunk(): ByteArray = songs.nextChunk() ?: ByteArray(HostStream.CHUNK_BYTES)
 

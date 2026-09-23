@@ -21,12 +21,15 @@ import androidx.compose.ui.unit.dp
 
 /**
  * The window behind 设置 - the handset's SettingsScreen, less what a computer has no use for:
- * no language (the window is Chinese only), no permissions (Windows asks for nothing here).
+ * no permissions (Windows asks for nothing here). The words are the handset's, read from its own
+ * string files.
  */
 @Composable
 internal fun SettingsPane(
     theme: ThemeChoice,
     onTheme: (ThemeChoice) -> Unit,
+    language: LanguageChoice,
+    onLanguage: (LanguageChoice) -> Unit,
     details: Boolean,
     onDetails: (Boolean) -> Unit
 ) {
@@ -34,29 +37,36 @@ internal fun SettingsPane(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("主题", style = MaterialTheme.typography.titleSmall)
+        Text(say(Phrases.settings_theme), style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for ((choice, name) in THEME_NAMES) {
-                FilterChip(selected = theme == choice, onClick = { onTheme(choice) }, label = { Text(name) })
+                FilterChip(selected = theme == choice, onClick = { onTheme(choice) }, label = { Text(say(name)) })
             }
         }
 
-        Text("诊断", style = MaterialTheme.typography.titleSmall)
+        Text(say(Phrases.settings_language), style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((choice, name) in LANGUAGE_NAMES) {
+                FilterChip(selected = language == choice, onClick = { onLanguage(choice) }, label = { Text(say(name)) })
+            }
+        }
+
+        Text(say(Phrases.settings_diagnostics), style = MaterialTheme.typography.titleSmall)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Switch(checked = details, onCheckedChange = onDetails)
-            Text("显示诊断细节")
+            Text(say(Phrases.settings_details))
         }
-        Text("主窗口里的计数、时钟偏移和接缝这些数。平时用不上，出问题时有用。")
+        Text(say(Phrases.pc_details_hint))
 
-        Text("关于", style = MaterialTheme.typography.titleSmall)
+        Text(say(Phrases.about_title), style = MaterialTheme.typography.titleSmall)
         // Always shown: the build mark is how two installs of one version are told apart.
-        Text("版本 ${About.VERSION} · 构建 ${About.BUILD_MARK}")
+        Text(say(Phrases.about_version, About.VERSION, About.BUILD_MARK))
         // An unset fact is an empty string and its row does not exist, as on the handset.
-        About.AUTHOR.ifEmpty { null }?.let { AboutRow("作者") { Link(it, About.AUTHOR_URL.ifEmpty { null }) } }
+        About.AUTHOR.ifEmpty { null }?.let { AboutRow(say(Phrases.about_author)) { Link(it, About.AUTHOR_URL.ifEmpty { null }) } }
         About.REPO_URL.ifEmpty { null }?.let { url ->
-            AboutRow("项目仓库") { Link(url.trimEnd('/').substringAfterLast('/'), url) }
+            AboutRow(say(Phrases.about_repo)) { Link(url.trimEnd('/').substringAfterLast('/'), url) }
         }
-        About.LICENCE.ifEmpty { null }?.let { AboutRow("许可") { Text(it) } }
+        About.LICENCE.ifEmpty { null }?.let { AboutRow(say(Phrases.about_licence)) { Text(it) } }
     }
 }
 
@@ -84,7 +94,14 @@ private fun Link(text: String, url: String?) {
 }
 
 private val THEME_NAMES = listOf(
-    ThemeChoice.SYSTEM to "跟随系统",
-    ThemeChoice.LIGHT to "浅色",
-    ThemeChoice.DARK to "深色"
+    ThemeChoice.SYSTEM to Phrases.settings_theme_system,
+    ThemeChoice.LIGHT to Phrases.settings_theme_light,
+    ThemeChoice.DARK to Phrases.settings_theme_dark
+)
+
+/** Each language named in itself, as on the handset: 中文 stays 中文 in an English window. */
+private val LANGUAGE_NAMES = listOf(
+    LanguageChoice.SYSTEM to Phrases.settings_language_system,
+    LanguageChoice.CHINESE to Phrases.settings_language_chinese,
+    LanguageChoice.ENGLISH to Phrases.settings_language_english
 )

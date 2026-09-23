@@ -125,7 +125,10 @@ class SongList(
                 frame = 0
                 return it
             }
-            skippedSongs.add("${file.name}：${opened.exceptionOrNull()?.message ?: "读不出来"}")
+            // No words of this module's own in it: the window draws in two languages and this
+            // does not know which, so the reason is the decoder's, as the other problems' are.
+            val failure = opened.exceptionOrNull()
+            skippedSongs.add("${file.name}: ${failure?.message ?: failure?.javaClass?.simpleName}")
             index++
         }
         finished = true

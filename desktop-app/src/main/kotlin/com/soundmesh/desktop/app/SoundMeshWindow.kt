@@ -98,7 +98,7 @@ fun SoundMeshWindow(
                     role = Role.HOST
                     scope.launch(sessions) { sink.stop(); host.open() }
                 },
-                label = { Text("当主机") }
+                label = { Text(say(Phrases.role_host)) }
             )
             FilterChip(
                 selected = role == Role.SINK,
@@ -106,15 +106,15 @@ fun SoundMeshWindow(
                     role = Role.SINK
                     scope.launch(sessions) { host.close() }
                 },
-                label = { Text("跟着放") }
+                label = { Text(say(Phrases.role_sink)) }
             )
-            TextButton(onClick = onOpenSettings) { Text("设置") }
+            TextButton(onClick = onOpenSettings) { Text(say(Phrases.settings_open)) }
         }
         when (role) {
             Role.HOST -> HostPane(host, sessions, details)
             Role.SINK -> SinkPane(sink, sessions, details)
             null -> {
-                Text("这台电脑当主机，还是跟着房间里的主机放？")
+                Text(say(Phrases.pc_role_question))
                 Networks()
             }
         }
@@ -128,36 +128,43 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
     // A program's sound instead of files; picking either one puts the other down.
     var app by remember { mutableStateOf<AudioSession?>(null) }
     var programs by remember { mutableStateOf<List<AudioSession>?>(null) }
-    var picked by remember { mutableStateOf("还没选歌") }
+    // Kept as how to say it rather than as what was said, so a change of language reaches it.
+    var picked by remember { mutableStateOf<(Boolean) -> String>({ Phrases.song_none.of(it) }) }
     var alsoHere by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
+    val english = LocalEnglish.current
 
     status.problem?.let { Text(describe(it), color = MaterialTheme.colorScheme.error) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedButton(onClick = {
-            pickSongs().takeIf { it.isNotEmpty() }?.let {
+            pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
                 files = it
                 app = null
-                picked = if (it.size == 1) it.single().name else "${it.size} 首"
+                val count = it.size
+                val only = if (count == 1) it.single().name else null
+                picked = { e -> only ?: Phrases.pc_songs_count.of(e, count) }
             }
-        }, enabled = !status.playing) { Text("选文件") }
+        }, enabled = !status.playing) { Text(say(Phrases.pc_pick_files)) }
         OutlinedButton(onClick = {
-            pickFolder()?.let { folder ->
+            pickFolder(Phrases.pc_pick_folder_title.of(english))?.let { folder ->
                 val songs = songsIn(folder)
                 files = songs
                 app = null
-                picked = if (songs.isEmpty()) "「${folder.name}」里没有能放的歌" else "「${folder.name}」里 ${songs.size} 首"
+                picked = { e ->
+                    if (songs.isEmpty()) Phrases.pc_folder_empty.of(e, folder.name)
+                    else Phrases.pc_folder_songs.of(e, folder.name, songs.size)
+                }
             }
-        }, enabled = !status.playing) { Text("选文件夹") }
+        }, enabled = !status.playing) { Text(say(Phrases.song_choose_folder)) }
         OutlinedButton(onClick = {
             // Asked afresh each time: the mixer's rows come and go with what is playing.
             scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
-        }, enabled = !status.playing) { Text("抓程序的声音") }
-        Text(picked)
+        }, enabled = !status.playing) { Text(say(Phrases.pc_capture_app)) }
+        Text(picked(english))
     }
     programs?.let { list ->
-        if (list.isEmpty()) Text("现在没有程序在音量合成器里出声。先让要抓的程序放起来，再点一次。")
-        else Text("抓哪个程序的声音？")
+        if (list.isEmpty()) Text(say(Phrases.pc_no_programs))
+        else Text(say(Phrases.pc_which_program))
         // One to a line: a browser, a player and a call can all be in the mixer at once.
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             for (program in list) {
@@ -165,22 +172,20 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
                     app = program
                     files = emptyList()
                     programs = null
-                    picked = "「${program.name}」的声音"
-                }) { Text(program.name + if (program.playing) "（正在出声）" else "") }
+                    picked = { e -> Phrases.pc_program_sound.of(e, program.name) }
+                }) { Text(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name) }
             }
-            TextButton(onClick = { programs = null }) { Text("算了") }
+            TextButton(onClick = { programs = null }) { Text(say(Phrases.pc_never_mind)) }
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Switch(checked = alsoHere, onCheckedChange = { alsoHere = it }, enabled = !status.playing)
-        Text("电脑自己也出声")
+        Text(say(Phrases.pc_play_here_too))
     }
     if (status.playing) {
-        Button(onClick = { scope.launch(sessions) { host.stopPlaying() } }) { Text("停止") }
+        Button(onClick = { scope.launch(sessions) { host.stopPlaying() } }) { Text(say(Phrases.play_stop)) }
         status.playhead?.let { Transport(host, it, status.paused, sessions) }
-        status.capturing?.let {
-            Text("房间在放「$it」的声音。它在这台电脑上的音量先调到了千分之一，免得比房间早一秒半响出来；停止后调回原样。")
-        }
+        status.capturing?.let { Text(say(Phrases.pc_capturing, it)) }
     } else {
         Button(
             onClick = {
@@ -189,22 +194,20 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
                 else files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
             },
             enabled = status.open && (files.isNotEmpty() || app != null)
-        ) { Text("播放") }
+        ) { Text(say(Phrases.play_start)) }
     }
+    // The handset's word for joining names in a sentence: 、 in Chinese, a comma in English.
+    val join = say(Phrases.room_volume_name_join)
     if (status.heldDown.isNotEmpty()) {
-        Text(
-            "「${status.heldDown.joinToString("、")}」在音量合成器里还被调低着，它再运行时这里会调回来；" +
-                "也可以在 Windows 音量合成器里自己调回。",
-            color = MaterialTheme.colorScheme.error
-        )
+        Text(say(Phrases.pc_held_down, status.heldDown.joinToString(join)), color = MaterialTheme.colorScheme.error)
     }
     if (status.skipped.isNotEmpty()) {
-        Text("跳过了放不了的：" + status.skipped.joinToString("；"), color = MaterialTheme.colorScheme.error)
+        Text(say(Phrases.pc_skipped, status.skipped.joinToString(join)), color = MaterialTheme.colorScheme.error)
     }
-    if (status.ended) Text("放完了。")
-    Text("手机上的 SoundMesh 在待命时会自动跟上。")
+    if (status.ended) Text(say(Phrases.pc_ended))
+    Text(say(Phrases.pc_phones_follow))
     val addresses = remember { LocalNetworks.list() }
-    if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、") { it.address })
+    if (addresses.isNotEmpty()) Text(say(Phrases.pc_type_this, addresses.joinToString(join) { it.address }))
     PairCode(host, status.open, addresses, sessions)
     Roster(status)
     HostDrawing(host, status.room, sessions)
@@ -213,14 +216,14 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
     Diagnostics(
         details,
         listOf(
-            "音频口" to "${status.sinksOnAudio} 台在收",
-            "丢块" to "${status.droppedChunks}",
-            "本机放了" to (status.localPlayed?.let { "$it 块" } ?: "—"),
-            "本机迟到丢掉" to (status.localLate?.let { "$it 块" } ?: "—"),
-            "时间线重起" to (status.jumps?.let { "$it 次" } ?: "—"),
-            "抓声垫静音" to (status.capturePadded?.let { "$it 块" } ?: "—"),
-            "本机接缝" to (status.localBand ?: "—"),
-            "接缝拆分" to (status.localShares ?: "—")
+            say(Phrases.pc_diag_audio_port) to say(Phrases.pc_diag_receiving, status.sinksOnAudio),
+            say(Phrases.pc_diag_dropped) to "${status.droppedChunks}",
+            say(Phrases.pc_diag_played_here) to (status.localPlayed?.let { say(Phrases.pc_chunks, it) } ?: "—"),
+            say(Phrases.pc_diag_late_here) to (status.localLate?.let { say(Phrases.pc_chunks, it) } ?: "—"),
+            say(Phrases.pc_diag_restarts) to (status.jumps?.let { say(Phrases.pc_times, it) } ?: "—"),
+            say(Phrases.pc_diag_capture_pad) to (status.capturePadded?.let { say(Phrases.pc_chunks, it) } ?: "—"),
+            say(Phrases.pc_diag_seam_here) to (status.localBand ?: "—"),
+            say(Phrases.pc_diag_seam_split) to (status.localShares ?: "—")
         )
     )
 }
@@ -234,9 +237,9 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
     var address by remember { mutableStateOf("") }
 
     if (going) {
-        Button(onClick = { scope.launch(sessions) { sink.stop() } }) { Text("停止") }
+        Button(onClick = { scope.launch(sessions) { sink.stop() } }) { Text(say(Phrases.play_stop)) }
     } else {
-        Button(onClick = { scope.launch(sessions) { sink.start() } }) { Text("开始") }
+        Button(onClick = { scope.launch(sessions) { sink.start() } }) { Text(say(Phrases.pc_start)) }
         // The way in when discovery finds nothing: the handset scans the host's code there, and
         // this machine has no camera to scan with. A host given this way is not looked for again
         // if it moves - it has no identity to be recognised by.
@@ -244,50 +247,51 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
             OutlinedTextField(
                 value = address,
                 onValueChange = { address = it.trim() },
-                label = { Text("找不到时填主机地址") },
-                placeholder = { Text("比如 192.168.0.150") },
+                label = { Text(say(Phrases.pc_host_address)) },
+                placeholder = { Text(say(Phrases.pc_address_example)) },
                 singleLine = true
             )
             OutlinedButton(
                 onClick = { scope.launch(sessions) { sink.start(address) } },
                 enabled = address.isNotEmpty()
-            ) { Text("连这个地址") }
+            ) { Text(say(Phrases.pc_dial_address)) }
         }
         val own = remember { LocalNetworks.list() }
         if (LocalNetworks.elsewhere(address, own)) {
             Text(
-                "$address 不在本机的网段里（本机：" + own.joinToString("、") { it.address } + "）。" +
-                    "连不上的话，先看两台是不是连着同一个网。",
+                say(Phrases.pc_address_elsewhere, address, own.joinToString(say(Phrases.room_volume_name_join)) { it.address }),
                 color = MaterialTheme.colorScheme.error
             )
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Badge(status.selfId, status.selfPlace)
-        Text("本机在主机名单上是 ${PeerBadge.numberOf(status.selfId)} 号")
+        Text(say(Phrases.pc_my_number, PeerBadge.numberOf(status.selfId)))
     }
     if (status.volumePercent != SoftwareVolume.FULL) {
-        Text("主机把这台的 SoundMesh 音量调到了 ${status.volumePercent}%（电脑的系统音量没动）。")
+        Text(say(Phrases.pc_volume_set, status.volumePercent))
     }
     Text(describe(status))
-    status.hostName?.let { name -> Text("跟的是：$name" + (status.hostAddress?.let { "（$it）" } ?: "")) }
+    status.hostName?.let { name ->
+        Text(status.hostAddress?.let { say(Phrases.pc_following_at, name, it) } ?: say(Phrases.pc_following, name))
+    }
     status.room?.let { room ->
-        Text("房间", style = MaterialTheme.typography.titleSmall)
+        Text(say(Phrases.tab_room), style = MaterialTheme.typography.titleSmall)
         RoomDrawing(room, actions = null)
-        Text("图是主机那边摆的，这里只能看。带外圈的是本机。")
+        Text(say(Phrases.pc_room_readonly))
     }
     Diagnostics(
         details,
         listOf(
-            "时钟偏移" to (status.offsetMillis?.let { String.format("%.3f ms", it) } ?: "—"),
-            "收到" to "${status.arrived} 块",
-            "对时前丢掉" to "${status.beforeClock} 块",
-            "放了" to "${status.played} 块",
-            "迟到丢掉" to "${status.late} 块",
-            "时间线重起" to "${status.restarts} 次",
-            "被音效改过" to "${status.shaped} 块",
-            "接缝" to (status.band ?: "—"),
-            "接缝拆分" to (status.shares ?: "—")
+            say(Phrases.pc_diag_clock) to (status.offsetMillis?.let { String.format("%.3f ms", it) } ?: "—"),
+            say(Phrases.pc_diag_arrived) to say(Phrases.pc_chunks, status.arrived),
+            say(Phrases.pc_diag_before_clock) to say(Phrases.pc_chunks, status.beforeClock),
+            say(Phrases.counter_played) to say(Phrases.pc_chunks, status.played),
+            say(Phrases.counter_dropped) to say(Phrases.pc_chunks, status.late),
+            say(Phrases.pc_diag_restarts) to say(Phrases.pc_times, status.restarts),
+            say(Phrases.pc_diag_shaped) to say(Phrases.pc_chunks, status.shaped),
+            say(Phrases.pc_diag_seam) to (status.band ?: "—"),
+            say(Phrases.pc_diag_seam_split) to (status.shares ?: "—")
         )
     )
 }
@@ -298,12 +302,12 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
  */
 @Composable
 private fun Roster(status: HostStatus) {
-    Text("房间里 ${status.phones.size + 1} 台", style = MaterialTheme.typography.titleSmall)
+    Text(say(Phrases.pc_room_count, status.phones.size + 1), style = MaterialTheme.typography.titleSmall)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         status.selfId?.let { Badge(it, status.selfPlace) }
-        Text("本机（主机）")
+        Text(say(Phrases.pc_self_host))
     }
-    if (status.phones.isEmpty()) Text("还没有手机连上。手机选「当从机」就会自己连过来。")
+    if (status.phones.isEmpty()) Text(say(Phrases.pc_no_phones))
     for (phone in status.phones) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Badge(phone.peerId, phone.place, hollow = phone.quiet || phone.stopped)
@@ -311,8 +315,8 @@ private fun Roster(status: HostStatus) {
         }
         // Quiet first: a quiet one may still be taking the audio, and "not taking it" would be false.
         val note = when {
-            phone.quiet -> "有一阵子没通信了，可能是息屏了"
-            phone.stopped -> "没在收音频，可能掉线了"
+            phone.quiet -> say(Phrases.roster_quiet)
+            phone.stopped -> say(Phrases.pc_not_receiving)
             else -> null
         }
         note?.let { Text(it, Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
@@ -327,17 +331,23 @@ private fun Roster(status: HostStatus) {
 @Composable
 private fun Transport(host: HostSession, playhead: Playhead, paused: Boolean, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
-    Text("第 ${playhead.song + 1}/${playhead.songs} 首：${playhead.name}")
+    Text(say(Phrases.pc_song_of, playhead.song + 1, playhead.songs, playhead.name))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(-1) } }, enabled = playhead.song > 0) { Text("上一首") }
-        OutlinedButton(onClick = { scope.launch(sessions) { host.setPaused(!paused) } }) { Text(if (paused) "继续" else "暂停") }
-        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(1) } }, enabled = playhead.song < playhead.songs - 1) { Text("下一首") }
+        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(-1) } }, enabled = playhead.song > 0) {
+            Text(say(Phrases.play_previous))
+        }
+        OutlinedButton(onClick = { scope.launch(sessions) { host.setPaused(!paused) } }) {
+            Text(say(if (paused) Phrases.play_resume else Phrases.play_pause))
+        }
+        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(1) } }, enabled = playhead.song < playhead.songs - 1) {
+            Text(say(Phrases.play_next))
+        }
     }
     KnobLine(
-        "进度",
+        say(Phrases.pc_progress),
         playhead.heardMillis.toFloat().coerceAtMost(playhead.durationMillis.toFloat()),
         0f..playhead.durationMillis.toFloat().coerceAtLeast(1f),
-        "${clock(playhead.heardMillis)} / ${clock(playhead.durationMillis)}"
+        say(Phrases.play_position, clock(playhead.heardMillis), clock(playhead.durationMillis))
     ) { scope.launch(sessions) { host.seekTo(it.toLong()) } }
 }
 
@@ -367,7 +377,7 @@ private fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineD
         scope.launch(sessions) { host.send() }
     }
     val shown = local?.copy(colours = room.colours, silentIds = room.silentIds) ?: room
-    Text("房间", style = MaterialTheme.typography.titleSmall)
+    Text(say(Phrases.tab_room), style = MaterialTheme.typography.titleSmall)
     RoomDrawing(
         shown,
         DrawingActions(
@@ -382,7 +392,7 @@ private fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineD
             togglePart = { peerId -> scope.launch(sessions) { host.togglePart(peerId) } }
         )
     )
-    Text("把图标拖到每台实际摆的位置，「你」是听的人，朝上是前方。")
+    Text(say(Phrases.pc_drag_icons))
 }
 
 /** The handset host's effect list. The words are the handset's. */
@@ -393,77 +403,85 @@ private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispa
         scope.launch(sessions) { host.change() }
     }
     val chosen = EffectKind.entries.first { it.settings.mode == room.mode }
-    Text("音效", style = MaterialTheme.typography.titleSmall)
+    Text(say(Phrases.room_effect_title), style = MaterialTheme.typography.titleSmall)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for (kind in EffectKind.entries) {
             val title = EFFECT_TITLES[kind] ?: continue
-            FilterChip(selected = kind == chosen, onClick = { send { setEffect(kind) } }, label = { Text(title) })
+            FilterChip(selected = kind == chosen, onClick = { send { setEffect(kind) } }, label = { Text(say(title)) })
         }
     }
     when (chosen) {
         EffectKind.UNISON -> {
-            Text("同步放相同的声音。")
+            Text(say(Phrases.room_effect_unison_line))
             ContentSplit(room, ::send)
         }
         EffectKind.STEREO -> {
-            Text("偏左的放左声道，偏右的放右声道，按上面图里的摆位分。")
+            Text(say(Phrases.pc_stereo_line))
             ContentSplit(room, ::send)
         }
         EffectKind.SPIN -> {
-            Text("声源环绕转动，三台以上效果更好。")
-            KnobLine("转一圈", room.periodSeconds.toFloat(), SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(), "${room.periodSeconds} 秒") {
-                send { setSpinSeconds(it.roundToInt()) }
-            }
+            Text(say(Phrases.pc_spin_line))
+            KnobLine(
+                say(Phrases.room_spin_period),
+                room.periodSeconds.toFloat(),
+                SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(),
+                say(Phrases.room_spin_seconds, room.periodSeconds)
+            ) { send { setSpinSeconds(it.roundToInt()) } }
         }
-        EffectKind.PLACE -> Text("在上面的房间图里拖那个带圈的点，改变声源位置。")
+        EffectKind.PLACE -> Text(say(Phrases.pc_place_line))
     }
     var open by remember { mutableStateOf(false) }
-    TextButton(onClick = { open = !open }) { Text(if (open) "收起细调" else "细调") }
+    TextButton(onClick = { open = !open }) { Text(say(if (open) Phrases.room_fine_hide else Phrases.room_fine)) }
     if (open) {
-        KnobLine("回声强度", room.reverb, 0f..1f, "${(room.reverb * 100).roundToInt()}%") { send { setReverb(it) } }
+        KnobLine(say(Phrases.pc_reverb), room.reverb, 0f..1f, percent(room.reverb)) { send { setReverb(it) } }
         // The rotation only, as on the handset: under 自定义声音位置 this number is how far in the
         // dot has been dragged, and a slider beside it would be a second control for one number.
         if (room.mode == SpatialMode.ROTATE) {
-            KnobLine("包裹感", room.envelopment, 0f..SpatialField.MAX_ENVELOPMENT.toFloat(), "${(room.envelopment * 100).roundToInt()}%") {
+            KnobLine(say(Phrases.pc_envelopment), room.envelopment, 0f..SpatialField.MAX_ENVELOPMENT.toFloat(), percent(room.envelopment)) {
                 send { setEnvelopment(it) }
             }
-            Text("声音转开之后，每台还留多少。往右拉包裹感更强、方向感更弱。")
+            Text(say(Phrases.pc_envelopment_line))
+            Text(say(Phrases.room_envelopment_hint))
         }
         if (splitting(room)) {
-            KnobLine("分得多彻底", room.separation, 0f..1f, "${(room.separation * 100).roundToInt()}%") { send { setSeparation(it) } }
+            KnobLine(say(Phrases.room_split_content), room.separation, 0f..1f, percent(room.separation)) { send { setSeparation(it) } }
         }
     }
 }
+
+/** A knob's 0-to-1 value as the handset writes it beside the knob. */
+@Composable
+private fun percent(fraction: Float): String = say(Phrases.room_knob_percent, (fraction * 100).roundToInt())
 
 /** 分开放 - the handset's three segments, and what goes with a split once one is chosen. */
 @Composable
 private fun ContentSplit(room: RoomState, send: (HostSession.() -> Unit) -> Unit) {
     val split = room.separation > 0f
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("分开放")
-        FilterChip(selected = !split, onClick = { send { setSplit(null) } }, label = { Text("不分开") })
+        Text(say(Phrases.room_split_label))
+        FilterChip(selected = !split, onClick = { send { setSplit(null) } }, label = { Text(say(Phrases.room_split_none)) })
         FilterChip(
             selected = split && room.splitAxis == SplitAxis.MIDDLE_SIDES,
             onClick = { send { setSplit(SplitAxis.MIDDLE_SIDES) } },
-            label = { Text("人声和伴奏") }
+            label = { Text(say(Phrases.room_split_voice)) }
         )
         FilterChip(
             selected = split && room.splitAxis == SplitAxis.LOW_HIGH,
             onClick = { send { setSplit(SplitAxis.LOW_HIGH) } },
-            label = { Text("低音和高音") }
+            label = { Text(say(Phrases.room_split_bass)) }
         )
     }
     if (!split) return
     if (room.splitAxis == SplitAxis.LOW_HIGH) {
         KnobLine(
-            "分界点",
+            say(Phrases.pc_crossover),
             room.crossoverHz,
             SpatialField.LOWEST_CROSSOVER_HZ.toFloat()..SpatialField.HIGHEST_CROSSOVER_HZ.toFloat(),
-            "${room.crossoverHz.roundToInt()} Hz 以下算低音"
+            say(Phrases.pc_crossover_reading, room.crossoverHz.roundToInt())
         ) { send { setCrossoverHz(it) } }
     }
-    Text("点房间图里的图标，换它放哪一半（图标下面写着）。")
-    Text("此功能仅对部分音乐效果好，取决于音频。")
+    Text(say(Phrases.pc_parts_click))
+    Text(say(Phrases.room_split_limits))
 }
 
 /** One knob, sent on letting go like the volume sliders. */
@@ -488,10 +506,10 @@ private fun KnobLine(name: String, value: Float, range: ClosedFloatingPointRange
 
 /** The handset's titles for the effects. */
 private val EFFECT_TITLES = mapOf(
-    EffectKind.UNISON to "同步齐奏",
-    EffectKind.STEREO to "双声道",
-    EffectKind.SPIN to "旋转",
-    EffectKind.PLACE to "自定义声音位置"
+    EffectKind.UNISON to Phrases.room_effect_unison,
+    EffectKind.STEREO to Phrases.room_effect_stereo,
+    EffectKind.SPIN to Phrases.room_effect_spin,
+    EffectKind.PLACE to Phrases.room_effect_place
 )
 
 /** How long the window draws its own drag before going back to the host's word for the room. */
@@ -510,13 +528,15 @@ private const val LONGEST_SPIN_SECONDS = 20
 private fun Volumes(host: HostSession, status: HostStatus, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("音量", style = MaterialTheme.typography.titleSmall)
+        Text(say(Phrases.tab_volume), style = MaterialTheme.typography.titleSmall)
         if (status.volumeTouched) {
-            TextButton(onClick = { scope.launch(sessions) { host.restoreVolume() } }) { Text("全部恢复") }
+            TextButton(onClick = { scope.launch(sessions) { host.restoreVolume() } }) { Text(say(Phrases.room_volume_restore)) }
         }
     }
-    VolumeLine("全部", status.roomVolumePercent ?: status.volumePercent) { scope.launch(sessions) { host.setRoomVolume(it) } }
-    VolumeLine("本机", status.volumePercent) { scope.launch(sessions) { host.setOwnVolume(it) } }
+    VolumeLine(say(Phrases.room_volume_all), status.roomVolumePercent ?: status.volumePercent) {
+        scope.launch(sessions) { host.setRoomVolume(it) }
+    }
+    VolumeLine(say(Phrases.pc_this_computer), status.volumePercent) { scope.launch(sessions) { host.setOwnVolume(it) } }
     for (phone in status.phones) {
         VolumeLine(phone.name, phone.askedPercent ?: phone.volumePercent, reported = phone.volumePercent) {
             scope.launch(sessions) { host.setDeviceVolume(phone.peerId, it) }
@@ -547,9 +567,9 @@ private fun VolumeLine(name: String, percent: Int?, reported: Int? = null, onSet
         )
         Text(
             when {
-                percent == null -> "还没报音量"
-                reported != null && reported != percent -> "$percent%（现在 $reported%）"
-                else -> "$percent%"
+                percent == null -> say(Phrases.pc_no_volume_yet)
+                reported != null && reported != percent -> say(Phrases.pc_percent_now, percent, reported)
+                else -> say(Phrases.room_knob_percent, percent)
             },
             fontFamily = FontFamily.Monospace
         )
@@ -585,7 +605,7 @@ private fun Badge(peerId: String, place: Int?, hollow: Boolean = false) {
 @Composable
 private fun Diagnostics(shown: Boolean, rows: List<Pair<String, String>>) {
     if (!shown) return
-    Text("诊断", style = MaterialTheme.typography.titleSmall)
+    Text(say(Phrases.settings_diagnostics), style = MaterialTheme.typography.titleSmall)
     for ((label, value) in rows) {
         Row {
             Text(label, Modifier.width(96.dp))
@@ -617,8 +637,8 @@ private val SONG_EXTENSIONS = listOf("mp3", "m4a", "aac", "flac", "wma", "wav")
 private fun isSong(name: String) = name.substringAfterLast(".").lowercase() in SONG_EXTENSIONS
 
 /** One song or several, played in the order picked. */
-private fun pickSongs(): List<File> {
-    val dialog = FileDialog(null as Frame?, "选歌（可以多选）", FileDialog.LOAD)
+private fun pickSongs(title: String): List<File> {
+    val dialog = FileDialog(null as Frame?, title, FileDialog.LOAD)
     // Windows ignores the filter; the pattern in the file name box is what filters there.
     dialog.file = SONG_EXTENSIONS.joinToString(";") { "*.$it" }
     dialog.filenameFilter = FilenameFilter { _, name -> isSong(name) }
@@ -628,10 +648,10 @@ private fun pickSongs(): List<File> {
 }
 
 /** A folder, through Swing's chooser: the AWT dialog cannot pick a folder on Windows. */
-private fun pickFolder(): File? {
+private fun pickFolder(title: String): File? {
     runCatching { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()) }
     val chooser = JFileChooser().apply {
-        dialogTitle = "选一个放歌的文件夹"
+        dialogTitle = title
         fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
     }
     return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
@@ -655,13 +675,13 @@ private fun Networks() {
         }
     }
     val list = addresses ?: return
-    Text("网络", style = MaterialTheme.typography.titleSmall)
+    Text(say(Phrases.network_title), style = MaterialTheme.typography.titleSmall)
     if (list.isEmpty()) {
-        Text("这台电脑现在没连局域网，手机和别的电脑都连不到它。先连上 WiFi 或网线。", color = MaterialTheme.colorScheme.error)
+        Text(say(Phrases.pc_no_network), color = MaterialTheme.colorScheme.error)
         return
     }
     for (own in list) Text("${own.adapter}  ${own.address}")
-    Text("房间里的每台都要连在其中一个网上。")
+    Text(say(Phrases.pc_networks_hint))
 }
 
 private const val NETWORKS_POLL_MILLIS = 3_000L
@@ -679,7 +699,7 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
     var payload by remember { mutableStateOf<String?>(null) }
     // Again once the role is open: the pane is drawn before the host has an id to put in it.
     LaunchedEffect(chosen, open) { payload = chosen?.let { withContext(sessions) { host.pairingCode(it.address) } } }
-    Text("给手机扫的码", style = MaterialTheme.typography.titleSmall)
+    Text(say(Phrases.pc_code_title), style = MaterialTheme.typography.titleSmall)
     if (addresses.size > 1) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             for (address in addresses) {
@@ -693,7 +713,7 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
     }
     val where = chosen
     if (where == null) {
-        Text("这台电脑现在没有局域网地址，手机扫不到。", color = MaterialTheme.colorScheme.error)
+        Text(say(Phrases.pc_code_nowhere), color = MaterialTheme.colorScheme.error)
         return
     }
     val code = payload ?: return
@@ -708,50 +728,52 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
             }
         }
     }
-    Text("手机选「当从机」，找不到这里时扫这个码。")
-    Text("码里是 ${where.address}（${where.adapter}），扫码的手机要连在这个网上。")
+    Text(say(Phrases.pc_code_how))
+    Text(say(Phrases.pc_code_address, where.address, where.adapter))
 }
 
 /** Scanned from arm's length off a laptop screen, and small enough to leave the pane readable. */
 private val PAIR_CODE_SIZE = 200.dp
 
+@Composable
 private fun describe(problem: HostProblem): String = when (problem) {
     is HostProblem.PortTaken -> {
         val which = when (problem.port) {
-            HostPort.COMMAND -> "命令口 TCP"
-            HostPort.CLOCK -> "时钟口 UDP"
-            HostPort.AUDIO -> "音频口 TCP"
-            HostPort.SPATIAL -> "空间口 TCP"
+            HostPort.COMMAND -> Phrases.pc_port_command
+            HostPort.CLOCK -> Phrases.pc_port_clock
+            HostPort.AUDIO -> Phrases.pc_port_audio
+            HostPort.SPATIAL -> Phrases.pc_port_spatial
         }
-        "$which ${problem.number} 被占用了。是不是命令行版的主机、或者另一个 SoundMesh 还开着？"
+        say(Phrases.pc_port_taken, say(which), problem.number)
     }
-    is HostProblem.FileUnreadable -> "这个文件放不了：${problem.detail}"
-    is HostProblem.SpeakersUnavailable -> "电脑的扬声器打不开：${problem.detail}"
-    is HostProblem.AdvertiseFailed -> "没法在局域网里广播这台主机，手机找不到它：${problem.detail}"
-    is HostProblem.PlayFailed -> "播放中断了：${problem.detail}"
-    is HostProblem.CaptureFailed -> "抓不到「${problem.app}」的声音（要 Windows 10 21H2 或更新）：${problem.detail}"
+    is HostProblem.FileUnreadable -> say(Phrases.pc_file_unreadable, problem.detail)
+    is HostProblem.SpeakersUnavailable -> say(Phrases.pc_speakers, problem.detail)
+    is HostProblem.AdvertiseFailed -> say(Phrases.pc_advertise, problem.detail)
+    is HostProblem.PlayFailed -> say(Phrases.pc_play_failed, problem.detail)
+    is HostProblem.CaptureFailed -> say(Phrases.pc_capture_failed, problem.app, problem.detail)
 }
 
+@Composable
 private fun describe(status: SinkStatus): String = when (status.stage) {
-    SinkStage.IDLE -> "按开始，自动找房间里的主机。"
-    SinkStage.FINDING -> "正在找主机（5 秒）…"
+    SinkStage.IDLE -> say(Phrases.pc_sink_idle)
+    SinkStage.FINDING -> say(Phrases.pc_sink_finding)
     SinkStage.NOT_FOUND -> when (status.failure) {
-        DiscoveryFailure.NO_COMPATIBLE_VERSION -> "找到了主机，但版本对不上，两边要装同一版。"
-        DiscoveryFailure.AMBIGUOUS -> "房间里同时有两台主机，先关掉一台。"
-        else -> "没有主机应答。主机那边开了吗？两边在同一个网络上吗？也可以在下面直接填主机地址。"
+        DiscoveryFailure.NO_COMPATIBLE_VERSION -> say(Phrases.pc_sink_wrong_version)
+        DiscoveryFailure.AMBIGUOUS -> say(Phrases.pc_sink_two_hosts)
+        else -> say(Phrases.pc_sink_no_answer)
     }
     // Not "found": a host typed in by address was never found, and may not be there at all.
-    SinkStage.REACHING -> "正在连主机（每 3 秒试一次）…"
-    SinkStage.STANDING_BY -> "待命中：主机一放就跟着放。" + when (status.problem) {
+    SinkStage.REACHING -> say(Phrases.pc_sink_reaching)
+    SinkStage.STANDING_BY -> say(Phrases.pc_sink_standing) + when (status.problem) {
         null -> ""
-        SinkSession.NO_CLOCK_PROBLEM -> "\n上一次主机没有应答时钟，没跟上。"
-        else -> "\n上一次没跟上：${status.problem}"
+        SinkSession.NO_CLOCK_PROBLEM -> "\n" + say(Phrases.pc_sink_no_clock_last)
+        else -> "\n" + say(Phrases.pc_sink_missed_last, status.problem)
     }
-    SinkStage.OPENING_SPEAKERS -> "正在打开扬声器…"
-    SinkStage.SYNCING -> "正在和主机对时…"
-    SinkStage.PLAYING -> "正在跟着放。"
-    SinkStage.HOST_SILENT -> "主机没在发声，可能断了。它再放的时候这台会自己跟上。"
-    SinkStage.FAILED -> "出错了：${status.problem}"
+    SinkStage.OPENING_SPEAKERS -> say(Phrases.pc_sink_opening)
+    SinkStage.SYNCING -> say(Phrases.pc_sink_syncing)
+    SinkStage.PLAYING -> say(Phrases.pc_sink_playing)
+    SinkStage.HOST_SILENT -> say(Phrases.pc_sink_host_silent)
+    SinkStage.FAILED -> say(Phrases.pc_sink_failed, status.problem)
 }
 
 private const val POLL_MILLIS = 500L
