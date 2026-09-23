@@ -31,9 +31,12 @@ class SinkStream(
     private val clockClient = ClockSyncClient(hostAddress, clockPort, estimator)
     private val playout = ChunkPlayout(output) { clockClient.currentEstimate()?.offsetNanos ?: 0L }
 
+    // Only a named sink can be on a handset host's drawing, so only a named one has a room to play.
+    private val spatial = peerId?.let { SinkSpatial(it) }
+
     private val chunkClient = ChunkClient(hostAddress, chunkPort, peerId) { chunk ->
         arrived++
-        if (clockClient.currentEstimate() == null) chunksBeforeTheClockAnswered++ else playout.play(chunk)
+        if (clockClient.currentEstimate() == null) chunksBeforeTheClockAnswered++ else playout.play(spatial?.shaped(chunk) ?: chunk)
     }
 
     @Volatile private var clockThread: Thread? = null
@@ -53,6 +56,9 @@ class SinkStream(
         private set
 
     val played: Int get() = playout.played
+
+    /** Chunks a handset host's spatial rule changed - see [SinkSpatial.shapedChunks]. */
+    val shaped: Int get() = spatial?.shapedChunks ?: 0
     val droppedLate: Int get() = playout.droppedLate
     val seams: Int get() = playout.seams
     val worstSeamFrames: Int get() = playout.worstSeamFrames
@@ -94,14 +100,14 @@ class SinkStream(
      *
      * The second is what keeps this machine on a handset host's room drawing while it plays: that
      * drawing is whoever has named themselves there, not whoever stands by (09-23). The rules that
-     * come down it are not applied - this side has no spatial shaping yet, so dragging this
-     * machine's icon moves nothing. Allowed to fail on its own, as it is on the handsets: a host
+     * come down it shape what this machine plays, as they do on a handset - see [SinkSpatial].
+     * Allowed to fail on its own, as it is on the handsets: a host
      * without the channel must not cost the room its sound.
      */
     fun dial() {
         chunkClient.start()
         spatialClient = peerId?.let { name ->
-            SpatialFieldClient(hostAddress, spatialPort, name) { }
+            SpatialFieldClient(hostAddress, spatialPort, name) { spatial?.apply(it) }
                 .takeIf { runCatching { it.start() }.isSuccess }
         }
     }

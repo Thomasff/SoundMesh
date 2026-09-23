@@ -37,6 +37,8 @@ data class SinkStatus(
     val offsetMillis: Double?,
     val played: Int,
     val late: Int,
+    /** Chunks a handset host's spatial rule changed; zero means its room never reached this machine. */
+    val shaped: Int,
     val band: String?,
     val shares: String?,
     /**
@@ -134,6 +136,7 @@ class SinkSession(
             offsetMillis = stream?.offsetNanos()?.let { it / 1_000_000.0 },
             played = stream?.played ?: 0,
             late = stream?.droppedLate ?: 0,
+            shaped = stream?.shaped ?: 0,
             band = stream?.seamBand(),
             shares = stream?.seamShares(),
             problem = problem

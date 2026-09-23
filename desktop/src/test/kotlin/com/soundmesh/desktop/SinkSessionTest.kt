@@ -5,6 +5,10 @@ import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.DiscoveryOutcome
 import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.RoomCommand
+import com.soundmesh.core.SpatialField
+import com.soundmesh.core.SpatialLayout
+import com.soundmesh.core.SpatialMode
+import com.soundmesh.core.SpatialPosition
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
 import com.soundmesh.probe.sync.SpatialFieldServer
@@ -131,6 +135,35 @@ class SinkSessionTest {
             assertTrue("not on the drawing: ${drawing.peerIds()}", eventually(15_000) {
                 drawing.peerIds() == listOf(HostIdentity(identity).current())
             })
+        } finally {
+            sink.stop()
+            drawing.stop()
+            orders.stop()
+            host.close()
+        }
+    }
+
+    /** And the room it draws is heard here, not only drawn: the rule shapes what this sink plays. */
+    @Test
+    fun aHandsetHostsRoomShapesWhatThisSinkPlays() {
+        val audio = ports()
+        val host = hostOpen(audio)
+        host.play(writeTestWav(folder.newFile()), alsoHere = false)
+        val commandPort = freeTcpPort()
+        val spatialPort = freeTcpPort()
+        val orders = RoomCommandServer(commandPort).apply { start() }
+        val drawing = SpatialFieldServer(spatialPort).apply { start() }
+        val identity = folder.newFolder()
+        val sink = SinkSession(identity, openSpeakers = FakeSpeakers()::open)
+        try {
+            sink.start("127.0.0.1", audio.chunk, audio.clock, commandPort, spatialPort)
+            assertTrue(eventually(10_000) { orders.standingBy() == 1 })
+            orders.send(RoomCommand.PLAY)
+            val me = HostIdentity(identity).current()
+            assertTrue(eventually(15_000) { drawing.peerIds() == listOf(me) })
+            assertEquals("shaped with no room drawn", 0, sink.status().shaped)
+            drawing.publish(SpatialField(SpatialMode.PAN, SpatialLayout(listOf(SpatialPosition(me, -1.0, 0.5))), pan = 0.3))
+            assertTrue("the room never reached what it plays: ${sink.status()}", eventually(10_000) { sink.status().shaped > 0 })
         } finally {
             sink.stop()
             drawing.stop()
