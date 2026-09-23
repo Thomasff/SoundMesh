@@ -92,8 +92,8 @@ private fun run(
     println("done   : ${stream.droppedChunks()} chunk(s) dropped, ${stream.sinkCount()} sink(s) still connected")
     if (output != null) {
         println(
-            "local  : played ${stream.playedLocally()}, seams ${stream.localSeams()} " +
-                "(worst ${stream.worstLocalSeamFrames()} frames)"
+            "local  : played ${stream.playedLocally()}, seams ${stream.localSeams()}, " +
+                stream.localSeamBand()
         )
         // Long enough for what is already on the timeline to be heard rather than cut off
         // mid-chunk, which sounds exactly like the fault a run like this is looking for.

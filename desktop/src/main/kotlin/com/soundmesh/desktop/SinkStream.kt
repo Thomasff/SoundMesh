@@ -44,6 +44,9 @@ class SinkStream(
     val seams: Int get() = playout.seams
     val worstSeamFrames: Int get() = playout.worstSeamFrames
 
+    /** How wide the joins are, as a level - see [ChunkPlayout.seamBand]. */
+    fun seamBand(): String = playout.seamBand()
+
     fun offsetNanos(): Long? = clockClient.currentEstimate()?.offsetNanos
 
     /** Starts the clock leg only. The audio leg is [dial], so a caller can wait in between. */

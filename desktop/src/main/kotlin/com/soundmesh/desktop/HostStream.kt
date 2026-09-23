@@ -51,6 +51,7 @@ class HostStream(
     fun playedLocally(): Int = localPlayout?.played ?: 0
     fun localSeams(): Int = localPlayout?.seams ?: 0
     fun worstLocalSeamFrames(): Int = localPlayout?.worstSeamFrames ?: 0
+    fun localSeamBand(): String = localPlayout?.seamBand() ?: "not playing locally"
 
     /**
      * Streams [chunks] chunks and returns once the last one has been handed over.

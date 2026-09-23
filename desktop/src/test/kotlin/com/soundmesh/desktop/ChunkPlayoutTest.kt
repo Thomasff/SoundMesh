@@ -117,5 +117,71 @@ class ChunkPlayoutTest {
         assertEquals(0, playout.seams)
     }
 
+    @Test
+    fun theBandSaysHowManyJoinsAreInsideItRatherThanHowBadTheWorstOneWas() {
+        // Eight joins land clean, one is three frames out and one is twelve. The worst of them
+        // is twelve either way; what the band adds is that nine joins in ten were within three,
+        // which is the difference between a run with one hiccup and a run that is coming apart.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+        val seams = listOf(0, 0, 0, 0, 0, 0, 0, 0, 3, 12)
+
+        playAJoinedRun(playout, seams)
+
+        assertEquals(10, playout.joins)
+        assertEquals(0, playout.seamFramesAtQuantile(0.5))
+        assertEquals(3, playout.seamFramesAtQuantile(0.9))
+        assertEquals(12, playout.seamFramesAtQuantile(1.0))
+        // A rank that lands between two joins takes the wider of them, so the band is never a
+        // promise the run did not keep. 0.85 of ten joins is the only one of these whose rank is
+        // not a whole number, which is what makes rounding it the wrong way visible.
+        assertEquals(3, playout.seamFramesAtQuantile(0.85))
+        assertEquals(12, playout.worstSeamFrames)
+    }
+
+    @Test
+    fun aGapAndAnOverlapOfTheSameWidthSitInTheSamePlaceInTheBand() {
+        // The band is about how wide the join was, and a hole four frames long costs what four
+        // frames of two signals summed costs. The sign is worstSeamFrames' job, not the band's.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+
+        playAJoinedRun(playout, listOf(4, -4))
+
+        assertEquals(2, playout.joins)
+        assertEquals(4, playout.seamFramesAtQuantile(1.0))
+        assertEquals(2, playout.seams)
+    }
+
+    @Test
+    fun aRunWithNoJoinsYetHasNoBandRatherThanAPerfectOne() {
+        // A quantile of nothing is not zero. Zero is the answer a clean run gives, and a report
+        // that prints it before the first join would be claiming a result it has not got.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+
+        playout.play(AudioChunk(0, 0L, stereo(960)))
+
+        assertEquals(0, playout.joins)
+        assertEquals(ChunkPlayout.NO_JOINS_YET, playout.seamFramesAtQuantile(0.5))
+    }
+
+    /**
+     * Plays one chunk per entry in [seamFrames], each landing that many frames from where its
+     * neighbour ran out. The first entry is the join between chunk 0 and chunk 1, so the run is
+     * one chunk longer than the list.
+     */
+    private fun playAJoinedRun(playout: ChunkPlayout, seamFrames: List<Int>) {
+        var frame = 0L
+        playout.play(AudioChunk(0, instantOfFrame(frame), stereo(960)))
+        seamFrames.forEachIndexed { index, seam ->
+            frame += 960 + seam
+            playout.play(AudioChunk(index + 1, instantOfFrame(frame), stereo(960)))
+        }
+    }
+
+    /** The host instant that lands exactly on [frame], rounding up so the output's floor agrees. */
+    private fun instantOfFrame(frame: Long) = (frame * 1_000_000_000L + 47_999L) / 48_000L
+
     private fun stereo(frames: Int) = ByteArray(frames * 2 * 2)
 }

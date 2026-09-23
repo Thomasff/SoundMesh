@@ -78,9 +78,60 @@ class ChunkPlayout(
     var seams: Int = 0
         private set
 
-    /** The widest of them, signed: positive is a gap, negative an overlap. */
+    /**
+     * The widest of them, signed: positive is a gap, negative an overlap.
+     *
+     * Kept, but read it next to the band below rather than on its own. An extremum has no
+     * denominator: one run of these measured two frames and the next three measured nine, eleven
+     * and thirty-five, which says nothing about whether the run was coming apart or had one bad
+     * join in a thousand. A number that can only grow with the length of the run is not a level.
+     */
     var worstSeamFrames: Int = 0
         private set
+
+    /** Consecutive pairs compared so far, which is what the band below is a fraction of. */
+    var joins: Int = 0
+        private set
+
+    /**
+     * How wide the joins are, as a level rather than a worst case.
+     *
+     * Answers the frame count that [quantile] of the joins came within, counting a gap and an
+     * overlap of the same width as the same width - the sign is [worstSeamFrames]' job. Clean
+     * joins are in the denominator, so a run whose median is zero is a run that mostly lands end
+     * to end, and the interesting reading is where the band stops being zero.
+     *
+     * Nearest-rank, so a quantile of 1.0 is the widest join and no value is invented between two
+     * that were measured.
+     */
+    fun seamFramesAtQuantile(quantile: Double): Int {
+        require(quantile > 0.0 && quantile <= 1.0) { "quantile must be in (0, 1], not $quantile" }
+        if (joins == 0) return NO_JOINS_YET
+        val rank = kotlin.math.ceil(quantile * joins).toInt()
+        var seen = 0
+        for (width in seamWidths.keys.sorted()) {
+            seen += seamWidths.getValue(width)
+            if (seen >= rank) return width
+        }
+        error("$rank of $joins joins is past the end of the histogram")
+    }
+
+    /**
+     * The band as one line, so the two places that report it cannot drift into saying it
+     * differently - a host's own playout and a sink's are the same measurement and have to be
+     * comparable across a run without anybody lining up two formats by hand.
+     */
+    fun seamBand(): String {
+        if (joins == 0) return "no joins yet"
+        val worst = if (worstSeamFrames > 0) "+$worstSeamFrames" else worstSeamFrames.toString()
+        return "p50 ${seamFramesAtQuantile(0.5)} / p90 ${seamFramesAtQuantile(0.9)} / " +
+            "p99 ${seamFramesAtQuantile(0.99)} / worst $worst frames of $joins joins"
+    }
+
+    // Widths seen and how often, unsigned. A histogram rather than the joins themselves because
+    // a run is minutes long and the widths are small integers, so this stays a handful of entries
+    // however long the run goes on - and unlike a reservoir it answers exactly.
+    private val seamWidths = HashMap<Int, Int>()
 
     // Where the chunk before this one ran out, and which one it was. Only consecutive
     // sequences are compared: a chunk the host or the network lost leaves a hole a whole chunk
@@ -101,6 +152,8 @@ class ChunkPlayout(
         }
         if (chunk.sequence == lastSequence + 1) {
             val seam = (frame - endOfLastChunk).toInt()
+            joins++
+            seamWidths.merge(kotlin.math.abs(seam), 1, Int::plus)
             if (seam != 0) {
                 seams++
                 if (kotlin.math.abs(seam) > kotlin.math.abs(worstSeamFrames)) worstSeamFrames = seam
@@ -123,9 +176,18 @@ class ChunkPlayout(
         return samples
     }
 
-    private companion object {
+    companion object {
+        /**
+         * What the band answers before there is a join to measure.
+         *
+         * Not zero. Zero is the answer a run with perfect joins gives, and the two readings must
+         * not print the same, or a report that runs before the second chunk arrives claims a
+         * result it has not got.
+         */
+        const val NO_JOINS_YET = -1
+
         // Not -1: a host is free to start its sequence anywhere, and -1 would make the first
         // chunk of a stream that starts at zero look like the neighbour of one that never came.
-        const val NO_CHUNK_YET = Int.MIN_VALUE
+        private const val NO_CHUNK_YET = Int.MIN_VALUE
     }
 }
