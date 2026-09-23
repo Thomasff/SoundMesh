@@ -5,6 +5,7 @@ import com.soundmesh.core.DiscoveryOutcome
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
+import com.soundmesh.probe.sync.SpatialFieldServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,7 +22,7 @@ class SinkSessionTest {
     private fun hostOpen(ports: HostPorts): HostSession =
         HostSession(folder.newFolder(), ports, advertise = false, openSpeakers = FakeSpeakers()::open).apply { open() }
 
-    private fun SinkSession.startOn(ports: HostPorts) = start("127.0.0.1", ports.chunk, ports.clock, ports.command)
+    private fun SinkSession.startOn(ports: HostPorts) = start("127.0.0.1", ports.chunk, ports.clock, ports.command, freeTcpPort())
 
     /**
      * Standing by is what puts this machine on the host's list: the handsets have always been
@@ -102,6 +103,37 @@ class SinkSessionTest {
             host.close()
         }
         assertEquals(SinkStage.IDLE, sink.status().stage)
+    }
+
+    /**
+     * While a handset host plays, its room drawing is whoever has named themselves on the spatial
+     * channel, not whoever stands by - so a sink that only dialled the audio vanished from the
+     * drawing the moment play was pressed, while playing perfectly well (09-23).
+     */
+    @Test
+    fun aPlayingSinkIsOnTheHandsetHostsRoomDrawing() {
+        val audio = ports()
+        val host = hostOpen(audio)
+        host.play(writeTestWav(folder.newFile()), alsoHere = false)
+        val commandPort = freeTcpPort()
+        val spatialPort = freeTcpPort()
+        val orders = RoomCommandServer(commandPort).apply { start() }
+        val drawing = SpatialFieldServer(spatialPort).apply { start() }
+        val identity = folder.newFolder()
+        val sink = SinkSession(identity, openSpeakers = FakeSpeakers()::open)
+        try {
+            sink.start("127.0.0.1", audio.chunk, audio.clock, commandPort, spatialPort)
+            assertTrue(eventually(10_000) { orders.standingBy() == 1 })
+            orders.send(RoomCommand.PLAY)
+            assertTrue("not on the drawing: ${drawing.peerIds()}", eventually(15_000) {
+                drawing.peerIds() == listOf(HostIdentity(identity).current())
+            })
+        } finally {
+            sink.stop()
+            drawing.stop()
+            orders.stop()
+            host.close()
+        }
     }
 
     /** A host already playing says "play" to whoever stands by late, so arriving mid-song works. */

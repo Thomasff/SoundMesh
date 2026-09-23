@@ -89,7 +89,8 @@ class SinkSession(
         address: String? = null,
         chunkPort: Int = ChunkCodec.DEFAULT_PORT,
         clockPort: Int = ClockPacket.DEFAULT_PORT,
-        commandPort: Int = COMMAND_PORT
+        commandPort: Int = COMMAND_PORT,
+        spatialPort: Int = SinkStream.SPATIAL_PORT
     ) = synchronized(lock) {
         if (worker?.isAlive == true) return
         running = true
@@ -99,7 +100,7 @@ class SinkSession(
         hostAddress = null
         stream = null
         playWanted = false
-        worker = Thread({ follow(address, chunkPort, clockPort, commandPort) }, "sink-follow").apply {
+        worker = Thread({ follow(address, chunkPort, clockPort, commandPort, spatialPort) }, "sink-follow").apply {
             isDaemon = true
             start()
         }
@@ -130,7 +131,7 @@ class SinkSession(
         )
     }
 
-    private fun follow(address: String?, chunkPort: Int, clockPort: Int, commandPort: Int) {
+    private fun follow(address: String?, chunkPort: Int, clockPort: Int, commandPort: Int, spatialPort: Int) {
         try {
             val (host, port) = if (address != null) {
                 hostName = address
@@ -148,7 +149,7 @@ class SinkSession(
             }
             hostAddress = host
             if (!running) return
-            standBy(host, port, clockPort, commandPort)
+            standBy(host, port, clockPort, commandPort, spatialPort)
         } catch (_: InterruptedException) {
             // stop() - the stage is its to set.
         } catch (e: Throwable) {
@@ -159,7 +160,7 @@ class SinkSession(
         }
     }
 
-    private fun standBy(host: String, chunkPort: Int, clockPort: Int, commandPort: Int) {
+    private fun standBy(host: String, chunkPort: Int, clockPort: Int, commandPort: Int, spatialPort: Int) {
         // The same name the audio leg dials under, so the host sees one machine and not two.
         val selfId = HostIdentity(identityDirectory).current()
         val line = RoomCommandClient(host, commandPort, selfId, carrying = null, called = called, onCommand = ::obey)
@@ -174,7 +175,7 @@ class SinkSession(
             }
             while (running) {
                 if (playWanted) {
-                    play(host, chunkPort, clockPort, ::beat)
+                    play(host, chunkPort, clockPort, spatialPort, ::beat)
                 } else {
                     stage = if (line.connected) SinkStage.STANDING_BY else SinkStage.REACHING
                     beat()
@@ -200,7 +201,7 @@ class SinkSession(
     }
 
     /** One stretch of following, from "play" until "stop" - or until it could not be followed. */
-    private fun play(host: String, chunkPort: Int, clockPort: Int, beat: () -> Unit) {
+    private fun play(host: String, chunkPort: Int, clockPort: Int, spatialPort: Int, beat: () -> Unit) {
         val playing = playsSaid
         problem = null
         stage = SinkStage.OPENING_SPEAKERS
@@ -211,7 +212,7 @@ class SinkSession(
         }
         speakers.use {
             // Named, so a handset host can tell this machine coming back from a second machine arriving.
-            val sink = SinkStream(host, it.output, chunkPort, clockPort, HostIdentity(identityDirectory).current())
+            val sink = SinkStream(host, it.output, chunkPort, clockPort, HostIdentity(identityDirectory).current(), spatialPort)
             stream = sink
             try {
                 stage = SinkStage.SYNCING

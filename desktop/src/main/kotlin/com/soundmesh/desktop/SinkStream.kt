@@ -5,11 +5,12 @@ import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.probe.sync.ChunkClient
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncClient
+import com.soundmesh.probe.sync.SpatialFieldClient
 
 /**
  * This machine following a host: the clock leg and the audio leg, joined by [ChunkPlayout].
  *
- * The mirror of [HostStream], and deliberately the same two sockets the handsets use, so a host
+ * The mirror of [HostStream], and deliberately the same sockets the handsets use, so a host
  * cannot tell this from a phone. Nothing here is new protocol.
  *
  * **Silent until the clock answers.** The estimator publishes nothing below its minimum sample
@@ -23,7 +24,8 @@ class SinkStream(
     output: FrameOutput,
     private val chunkPort: Int = ChunkCodec.DEFAULT_PORT,
     private val clockPort: Int = ClockPacket.DEFAULT_PORT,
-    private val peerId: String? = null
+    private val peerId: String? = null,
+    private val spatialPort: Int = SPATIAL_PORT
 ) {
     private val estimator = ClockOffsetEstimator(CLOCK_WINDOW, CLOCK_BEST)
     private val clockClient = ClockSyncClient(hostAddress, clockPort, estimator)
@@ -85,15 +87,36 @@ class SinkStream(
         return true
     }
 
-    fun dial() = chunkClient.start()
+    @Volatile private var spatialClient: SpatialFieldClient? = null
+
+    /**
+     * Dials the audio, and then the spatial channel under this machine's name.
+     *
+     * The second is what keeps this machine on a handset host's room drawing while it plays: that
+     * drawing is whoever has named themselves there, not whoever stands by (09-23). The rules that
+     * come down it are not applied - this side has no spatial shaping yet, so dragging this
+     * machine's icon moves nothing. Allowed to fail on its own, as it is on the handsets: a host
+     * without the channel must not cost the room its sound.
+     */
+    fun dial() {
+        chunkClient.start()
+        spatialClient = peerId?.let { name ->
+            SpatialFieldClient(hostAddress, spatialPort, name) { }
+                .takeIf { runCatching { it.start() }.isSuccess }
+        }
+    }
 
     fun stop() {
+        spatialClient?.stop()
         chunkClient.stop()
         clockThread?.interrupt()
         clockThread = null
     }
 
     companion object {
+        /** The handsets' spatial channel (SyncActivity.SPATIAL_PORT), which lives in the app module. */
+        const val SPATIAL_PORT = 45126
+
         /**
          * The cadence and window the handset sink settled on, named here for the same reason it is
          * named there: the core defaults have other readers that were never measured under this
