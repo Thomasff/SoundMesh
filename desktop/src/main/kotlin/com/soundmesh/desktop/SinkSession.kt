@@ -152,7 +152,10 @@ class SinkSession(
     }
 
     private fun watch(sink: SinkStream) {
-        var seen = -1
+        // Counted from zero, not from a sentinel: until a first chunk arrives nothing has been
+        // heard from the host, and that is not "playing" - the stage stays where dialling left it
+        // until the audio is really coming, or the wait runs out and the host is said to be quiet.
+        var seen = 0
         var changedAt = System.nanoTime()
         while (running) {
             val now = System.nanoTime()
@@ -161,7 +164,11 @@ class SinkSession(
                 seen = arrived
                 changedAt = now
             }
-            stage = if (now - changedAt > silentAfterNanos) SinkStage.HOST_SILENT else SinkStage.PLAYING
+            stage = when {
+                now - changedAt > silentAfterNanos -> SinkStage.HOST_SILENT
+                arrived == 0 -> SinkStage.SYNCING
+                else -> SinkStage.PLAYING
+            }
             Thread.sleep(WATCH_MILLIS)
         }
     }
