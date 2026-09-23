@@ -52,7 +52,9 @@ class HostStream(
      * leaving the port in LISTEN on Linux, and the chunk server has no guard against it. A port
      * that is never closed between two plays cannot be caught out that way.
      */
-    private val chunkServer: ChunkServer = ChunkServer(port)
+    private val chunkServer: ChunkServer = ChunkServer(port),
+    /** What this machine does to a chunk before playing it itself: its own part of the room. */
+    private val localShape: (AudioChunk) -> AudioChunk = { it }
 ) {
     private val localPlayout = localOutput?.let { ChunkPlayout(it) { 0L } }
 
@@ -107,7 +109,7 @@ class HostStream(
             // After the broadcast, so a slow local output cannot hold up the wire. The sinks are
             // across a room and this one is in the same process; whichever of them is behind, the
             // instant in the chunk is already fixed and neither is waiting on the other for it.
-            localPlayout?.play(chunk)
+            localPlayout?.play(localShape(chunk))
             lastPlayAt = playAt
             frameIndex += ChunkCodec.FRAMES_PER_CHUNK
             sequence++

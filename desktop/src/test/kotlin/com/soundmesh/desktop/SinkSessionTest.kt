@@ -12,6 +12,7 @@ import com.soundmesh.core.SpatialPosition
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
 import com.soundmesh.probe.sync.SpatialFieldServer
+import com.soundmesh.product.EffectKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -24,12 +25,12 @@ class SinkSessionTest {
     @get:Rule
     val folder = TemporaryFolder()
 
-    private fun ports() = HostPorts(chunk = freeTcpPort(), clock = freeUdpPort(), command = freeTcpPort())
+    private fun ports() = HostPorts(chunk = freeTcpPort(), clock = freeUdpPort(), command = freeTcpPort(), spatial = freeTcpPort())
 
     private fun hostOpen(ports: HostPorts): HostSession =
         HostSession(folder.newFolder(), ports, advertise = false, openSpeakers = FakeSpeakers()::open).apply { open() }
 
-    private fun SinkSession.startOn(ports: HostPorts) = start("127.0.0.1", ports.chunk, ports.clock, ports.command, freeTcpPort())
+    private fun SinkSession.startOn(ports: HostPorts) = start("127.0.0.1", ports.chunk, ports.clock, ports.command, ports.spatial)
 
     /**
      * Standing by is what puts this machine on the host's list: the handsets have always been
@@ -89,6 +90,27 @@ class SinkSessionTest {
             assertTrue("restore: ${sink.status().volumePercent}", heard(SoftwareVolume.FULL))
             assertEquals(null, host.status().phones.single().askedPercent)
             assertFalse(host.status().volumeTouched)
+        } finally {
+            sink.stop()
+            host.close()
+        }
+    }
+
+    /**
+     * An effect set on a desktop host shapes what a desktop sink plays: the rule goes down the
+     * spatial channel and the sink's chunks come out changed by it, as they would on a handset.
+     */
+    @Test
+    fun anEffectOnADesktopHostShapesADesktopSink() {
+        val ports = ports()
+        val host = hostOpen(ports)
+        val sink = SinkSession(folder.newFolder(), openSpeakers = FakeSpeakers()::open)
+        try {
+            sink.startOn(ports)
+            assertTrue(eventually(10_000) { host.status().phones.size == 1 })
+            host.setEffect(EffectKind.SPIN)
+            host.play(writeTestWav(folder.newFile()), alsoHere = false)
+            assertTrue("never shaped: ${sink.status()}", eventually(15_000) { sink.status().shaped > 0 })
         } finally {
             sink.stop()
             host.close()

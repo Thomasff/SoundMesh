@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.sp
 import com.soundmesh.core.BadgeHues
 import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.PeerBadge
+import com.soundmesh.core.SpatialField
+import com.soundmesh.product.EffectKind
+import com.soundmesh.product.RoomState
 import com.soundmesh.desktop.HostPort
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
@@ -125,6 +128,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     val addresses = remember { ownAddresses() }
     if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、"))
     Roster(status)
+    Effects(host, status.room, sessions)
     Volumes(host, status, sessions)
     Diagnostics(
         listOf(
@@ -211,6 +215,80 @@ private fun Roster(status: HostStatus) {
         note?.let { Text(it, Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
     }
 }
+
+/**
+ * The handset host's effect list, less 自定义声音位置: that one is a dot dragged on the room
+ * drawing, and this window has no drawing yet. The words are the handset's.
+ */
+@Composable
+private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
+    val scope = rememberCoroutineScope()
+    fun send(change: HostSession.() -> Unit) {
+        scope.launch(sessions) { host.change() }
+    }
+    val chosen = EffectKind.entries.first { it.settings.mode == room.mode }
+    Text("音效", style = MaterialTheme.typography.titleSmall)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (kind in EffectKind.entries) {
+            val title = EFFECT_TITLES[kind] ?: continue
+            FilterChip(selected = kind == chosen, onClick = { send { setEffect(kind) } }, label = { Text(title) })
+        }
+    }
+    when (chosen) {
+        EffectKind.UNISON -> Text("同步放相同的声音。")
+        // Not "by where they stand on the drawing above", as the handset says: there is no drawing
+        // here yet, so the sides come from the default arrangement.
+        EffectKind.STEREO -> Text("偏左的放左声道，偏右的放右声道。现在用的是默认摆位，要改摆位得等房间图。")
+        EffectKind.SPIN -> {
+            Text("声源环绕转动，三台以上效果更好。")
+            KnobLine("转一圈", room.periodSeconds.toFloat(), SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(), "${room.periodSeconds} 秒") {
+                send { setSpinSeconds(it.roundToInt()) }
+            }
+        }
+        // Not offered above; here because the list is exhaustive.
+        EffectKind.PLACE -> Text("自定义声音位置：要在房间图上拖，这个窗口还没有房间图。")
+    }
+    var open by remember { mutableStateOf(false) }
+    TextButton(onClick = { open = !open }) { Text(if (open) "收起细调" else "细调") }
+    if (open) {
+        KnobLine("回声强度", room.reverb, 0f..1f, "${(room.reverb * 100).roundToInt()}%") { send { setReverb(it) } }
+        KnobLine("包裹感", room.envelopment, 0f..SpatialField.MAX_ENVELOPMENT.toFloat(), "${(room.envelopment * 100).roundToInt()}%") {
+            send { setEnvelopment(it) }
+        }
+        Text("包裹感只对旋转起作用：声音转开之后，每台还留多少。往右拉包裹感更强、方向感更弱。")
+    }
+}
+
+/** One knob, sent on letting go like the volume sliders. */
+@Composable
+private fun KnobLine(name: String, value: Float, range: ClosedFloatingPointRange<Float>, reading: String, onSet: (Float) -> Unit) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(name, Modifier.width(96.dp))
+        Slider(
+            value = dragging ?: value,
+            onValueChange = { dragging = it },
+            onValueChangeFinished = {
+                dragging?.let(onSet)
+                dragging = null
+            },
+            valueRange = range,
+            modifier = Modifier.width(240.dp)
+        )
+        Text(reading, fontFamily = FontFamily.Monospace)
+    }
+}
+
+/** The handset's titles for the effects this window offers. */
+private val EFFECT_TITLES = mapOf(
+    EffectKind.UNISON to "同步齐奏",
+    EffectKind.STEREO to "双声道",
+    EffectKind.SPIN to "旋转"
+)
+
+/** The handset's range for one circuit (SpatialPanel's SHORTEST_ and LONGEST_SPIN_SECONDS). */
+private const val SHORTEST_SPIN_SECONDS = 2
+private const val LONGEST_SPIN_SECONDS = 20
 
 /**
  * Every device's volume, one line each, under a room slider that levels them all - the handset
@@ -355,6 +433,7 @@ private fun describe(problem: HostProblem): String = when (problem) {
             HostPort.COMMAND -> "命令口 TCP"
             HostPort.CLOCK -> "时钟口 UDP"
             HostPort.AUDIO -> "音频口 TCP"
+            HostPort.SPATIAL -> "空间口 TCP"
         }
         "$which ${problem.number} 被占用了。是不是命令行版的主机、或者另一个 SoundMesh 还开着？"
     }

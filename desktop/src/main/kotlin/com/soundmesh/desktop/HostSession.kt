@@ -9,17 +9,25 @@ import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
+import com.soundmesh.probe.sync.SpatialFieldServer
+import com.soundmesh.product.EffectKind
+import com.soundmesh.product.RoomIcon
+import com.soundmesh.product.RoomState
+import com.soundmesh.product.SpatialRoom
+import com.soundmesh.product.ruleOf
+import com.soundmesh.product.withEffect
 import java.io.File
 import java.net.BindException
 
-/** The three ports a handset dials, together so a test can move all of them. */
+/** The four ports a handset dials, together so a test can move all of them. */
 data class HostPorts(
     val chunk: Int = ChunkCodec.DEFAULT_PORT,
     val clock: Int = ClockPacket.DEFAULT_PORT,
-    val command: Int = COMMAND_PORT
+    val command: Int = COMMAND_PORT,
+    val spatial: Int = SinkStream.SPATIAL_PORT
 )
 
-enum class HostPort { COMMAND, CLOCK, AUDIO }
+enum class HostPort { COMMAND, CLOCK, AUDIO, SPATIAL }
 
 /** What stopped the host doing what it was asked, in terms the window can say. */
 sealed interface HostProblem {
@@ -75,6 +83,8 @@ data class HostStatus(
     val roomVolumePercent: Int?,
     /** Something was set that a restore would put back. */
     val volumeTouched: Boolean,
+    /** The room's effect and knobs, and who is drawn where - what the spatial rule is built from. */
+    val room: RoomState,
     val sinksOnAudio: Int,
     val droppedChunks: Int,
     val localBand: String?,
@@ -87,11 +97,11 @@ data class HostStatus(
  *
  * Split the way the handset host is split: the **room** belongs to the role and the **playing**
  * belongs to the button. Choosing host opens the command port a standing-by handset waits on,
- * the clock and the audio ports, and only then puts the record on the network - so nothing that
- * finds it can dial a port not yet open. Play and stop come and go inside that without touching
- * a port.
+ * the clock, the audio and the spatial ports, and only then puts the record on the network - so
+ * nothing that finds it can dial a port not yet open. Play and stop come and go inside that
+ * without touching a port.
  *
- * The handset opens its clock and audio ports per play instead. Here they live as long as the
+ * The handset opens its clock, audio and spatial ports per play instead. Here they live as long as the
  * role does, because stop-then-play is the pair of clicks a person makes most, and the two
  * servers under them have no guard for being reopened while a thread is still in accept. Not
  * reopening them is simpler than proving the reopen safe.
@@ -118,6 +128,7 @@ class HostSession(
     private var commandServer: RoomCommandServer? = null
     private var clockServer: ClockSyncServer? = null
     private var chunkServer: ChunkServer? = null
+    private var spatialServer: SpatialFieldServer? = null
     private var record: AutoCloseable? = null
     private var teller: Thread? = null
     private var selfId: String? = null
@@ -148,6 +159,14 @@ class HostSession(
     private var roomVolume: Int? = null
     private val asked = HashMap<String, Int>()
 
+    // The room as the window has set it, and where each device was last drawn. See [refreshRoom].
+    private var room = RoomState()
+    private val whereTheyWere = HashMap<String, RoomIcon>()
+
+    // This machine's own part of the room while it plays aloud, or null - see [playOn].
+    @Volatile private var localSpatial: SinkSpatial? = null
+    private var playingHere = false
+
     // Until when a stop is said again, and when it was last said. See [echoStop].
     private var stopEchoUntilNanos = 0L
     private var stopSaidAtNanos = 0L
@@ -160,6 +179,7 @@ class HostSession(
         val command = RoomCommandServer(ports.command, hostId)
         val clock = ClockSyncServer(ports.clock)
         val chunks = ChunkServer(ports.chunk)
+        val spatial = SpatialFieldServer(ports.spatial, hostId, command.places())
 
         val bound = ArrayList<() -> Unit>()
         fun bind(port: HostPort, number: Int, start: () -> Unit, stop: () -> Unit): Boolean =
@@ -175,6 +195,9 @@ class HostSession(
         if (!bind(HostPort.COMMAND, ports.command, command::start, command::stop)) return
         if (!bind(HostPort.CLOCK, ports.clock, clock::start, clock::stop)) return
         if (!bind(HostPort.AUDIO, ports.chunk, chunks::start, chunks::stop)) return
+        // With the role rather than per play, as the handset opens it per session: for the same
+        // reason as the other two, see the class comment.
+        if (!bind(HostPort.SPATIAL, ports.spatial, spatial::start, spatial::stop)) return
 
         // A handset that opens a second line under the same name replaces its first, and its id
         // never leaves [RoomCommandServer.standingPeerIds] - so [tell] would go on counting it as
@@ -197,8 +220,10 @@ class HostSession(
         commandServer = command
         clockServer = clock
         chunkServer = chunks
+        spatialServer = spatial
         record = advertised
         selfId = hostId
+        refreshRoom()
         teller = Thread({ tellWhileOpen() }, "host-tell").apply {
             isDaemon = true
             start()
@@ -213,9 +238,11 @@ class HostSession(
             teller = null
             runCatching { record?.close() }
             record = null
+            spatialServer?.stop()
             chunkServer?.stop()
             clockServer?.stop()
             commandServer?.stop()
+            spatialServer = null
             chunkServer = null
             clockServer = null
             commandServer = null
@@ -233,6 +260,7 @@ class HostSession(
         val onAudio = if (settled) chunkServer?.peerIds().orEmpty().toSet() else null
         val volumes = command?.volumes().orEmpty()
         HostStatus(
+            room = room,
             volumePercent = volume.percent,
             roomVolumePercent = roomVolume,
             volumeTouched = roomVolume != null || asked.isNotEmpty() || volume.percent != SoftwareVolume.FULL,
@@ -324,6 +352,62 @@ class HostSession(
         commandServer?.send(RoomCommand.RESTORE_VOLUME)
     }
 
+    /** Sets the room to one of the four effects - the handset host's effect list. */
+    fun setEffect(kind: EffectKind) = updateRoom { it.withEffect(kind) }
+
+    /** 房间回声, 0 to 1. */
+    fun setReverb(amount: Float) = updateRoom { it.copy(reverb = amount) }
+
+    /** 包裹感: how much each device keeps when a turning source faces away from it. */
+    fun setEnvelopment(amount: Float) = updateRoom { it.copy(envelopment = amount) }
+
+    /** How long one circuit of 旋转 takes. */
+    fun setSpinSeconds(seconds: Int) = updateRoom { it.copy(periodSeconds = seconds) }
+
+    private fun updateRoom(change: (RoomState) -> RoomState) = synchronized(lock) {
+        room = change(room)
+        publishRoom()
+    }
+
+    /**
+     * The drawing brought up to date with who is in the room, told to everybody if that changed.
+     * Under [lock]; run on every pass of the teller, as the handset host reads its room.
+     *
+     * Who is in it follows the handset host (HomeActivity.readRoom): while playing, whoever has
+     * named itself on the spatial channel - the devices actually taking part - with this machine
+     * first when it plays aloud; between songs, this machine and whoever stands by. A device that
+     * comes and goes keeps where it was drawn.
+     */
+    private fun refreshRoom() {
+        val self = selfId ?: return
+        val spatial = spatialServer ?: return
+        val roster =
+            if (playing && stream != null) listOfNotNull(self.takeIf { playingHere }) + spatial.peerIds()
+            else listOf(self) + (commandServer?.standingPeerIds() ?: emptyList())
+        if (roster.distinct() == room.icons.map { it.peerId }) return
+        whereTheyWere.putAll(room.icons.associateBy { it.peerId })
+        room = room.copy(
+            icons = SpatialRoom.reconciled(room.icons, roster, whereTheyWere),
+            selfId = self,
+            otherHalfIds = SpatialRoom.reconciledOtherHalf(room.otherHalfIds, roster)
+        )
+        publishRoom()
+    }
+
+    /**
+     * Makes the room's rule the one everybody plays under, this machine included, from a shared
+     * instant a little way off - the handset host's publishSpatialField. Under [lock].
+     *
+     * A room that cannot be drawn is not published, as on the handset: the next roster should
+     * still find it, and a host that stopped over it would be the room going silent.
+     */
+    private fun publishRoom() {
+        val field = runCatching { ruleOf(room) }.getOrNull() ?: return
+        val stamped = field.copy(effectiveAtHostNanos = System.nanoTime() + SPATIAL_LEAD_NANOS)
+        spatialServer?.publish(stamped)
+        localSpatial?.apply(stamped)
+    }
+
     /** The room's half of a stop: every handset told, and told again for a while. Under [lock]. */
     private fun sayStop() {
         playing = false
@@ -370,7 +454,22 @@ class HostSession(
                 return
             }
             try {
-                val hostStream = HostStream(ports.chunk, source::fill, localOutput = speakers?.output?.let { GainOutput(it, volume) }, chunkServer = chunks)
+                // This machine's own part of the room, shaped by the same functions a sink's is.
+                val here = if (speakers == null) null else synchronized(lock) { selfId }?.let { SinkSpatial(it) }
+                synchronized(lock) {
+                    if (current()) {
+                        playingHere = here != null
+                        localSpatial = here
+                        publishRoom()
+                    }
+                }
+                val hostStream = HostStream(
+                    ports.chunk,
+                    source::fill,
+                    localOutput = speakers?.output?.let { GainOutput(it, volume) },
+                    chunkServer = chunks,
+                    localShape = { chunk -> here?.shaped(chunk) ?: chunk }
+                )
                 if (current()) {
                     streamSinceNanos = System.nanoTime()
                     stream = hostStream
@@ -393,6 +492,13 @@ class HostSession(
                 // Straight away rather than after a tail: stop is a person asking for quiet, and the
                 // handsets are stopping at the same moment.
                 speakers?.close()
+                // Only this press's: a newer one has set its own.
+                synchronized(lock) {
+                    if (current()) {
+                        localSpatial = null
+                        playingHere = false
+                    }
+                }
             }
         } catch (e: Throwable) {
             // Anything else - an OutOfMemoryError reading a very large file is the likely one -
@@ -408,6 +514,7 @@ class HostSession(
     private fun tellWhileOpen() {
         while (!Thread.currentThread().isInterrupted) {
             tell()
+            synchronized(lock) { refreshRoom() }
             echoStop()
             try {
                 Thread.sleep(retellMillis)
@@ -477,6 +584,12 @@ class HostSession(
          * estimate - and only then dials; five leaves room for a slow one. Picked, not measured.
          */
         const val STOPPED_GRACE_MILLIS = 5_000L
+
+        /**
+         * How far ahead a new rule takes effect, so every device changes on the same chunk - the
+         * handset host's SPATIAL_LEAD_NANOS, with its reasoning.
+         */
+        private const val SPATIAL_LEAD_NANOS = 200_000_000L
 
         /** Long enough for a stream sleeping to its next chunk to notice it was told to stop. */
         private const val JOIN_MILLIS = 2_000L

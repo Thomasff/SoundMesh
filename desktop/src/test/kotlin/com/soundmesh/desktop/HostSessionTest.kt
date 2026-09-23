@@ -2,7 +2,12 @@ package com.soundmesh.desktop
 
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomOrder
+import com.soundmesh.core.SpatialField
+import com.soundmesh.core.SpatialMode
 import com.soundmesh.probe.sync.RoomCommandClient
+import com.soundmesh.probe.sync.SpatialFieldClient
+import com.soundmesh.product.DEFAULT_REVERB
+import com.soundmesh.product.EffectKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -15,6 +20,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -22,7 +28,7 @@ class HostSessionTest {
     @get:Rule
     val folder = TemporaryFolder()
 
-    private fun ports() = HostPorts(chunk = freeTcpPort(), clock = freeUdpPort(), command = freeTcpPort())
+    private fun ports() = HostPorts(chunk = freeTcpPort(), clock = freeUdpPort(), command = freeTcpPort(), spatial = freeTcpPort())
 
     private fun session(ports: HostPorts, speakers: FakeSpeakers = FakeSpeakers()) =
         HostSession(folder.root, ports, advertise = false, openSpeakers = speakers::open, retellMillis = 50L)
@@ -46,6 +52,7 @@ class HostSessionTest {
             assertTrue("round $round: not open", status.open)
             Socket("127.0.0.1", ports.command).close()
             Socket("127.0.0.1", ports.chunk).close()
+            Socket("127.0.0.1", ports.spatial).close()
             host.close()
             assertFalse("round $round: still open after close", host.status().open)
         }
@@ -133,6 +140,33 @@ class HostSessionTest {
             assertFalse("called stopped while still dialling in", host.status().phones.single().stopped)
             assertTrue("never said to be off the audio", eventually { host.status().phones.single().stopped })
         } finally {
+            phone.close()
+            host.close()
+        }
+    }
+
+    /**
+     * An effect chosen in the window reaches a device on the spatial channel as the handset host
+     * would send it, and the drawing it carries has the host and the device standing by in it.
+     */
+    @Test
+    fun aChosenEffectReachesADeviceOnTheSpatialChannel() {
+        val ports = ports()
+        val host = session(ports)
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        val rules = LinkedBlockingQueue<SpatialField>()
+        host.open()
+        val phone = standBy(ports.command, heard)
+        val drawing = SpatialFieldClient("127.0.0.1", ports.spatial, PHONE) { rules.offer(it) }.apply { start() }
+        try {
+            assertTrue(eventually { host.status().room.icons.size == 2 })
+            host.setEffect(EffectKind.SPIN)
+            val spun = generateSequence { rules.poll(5, TimeUnit.SECONDS) }.first { it.mode == SpatialMode.ROTATE }
+            assertEquals(DEFAULT_REVERB.toDouble(), spun.reverb, 1e-6)
+            assertTrue("the device is not in the drawing", spun.layout.contains(PHONE))
+            assertEquals(2, spun.layout.positions.size)
+        } finally {
+            drawing.stop()
             phone.close()
             host.close()
         }
