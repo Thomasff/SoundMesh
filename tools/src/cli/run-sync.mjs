@@ -85,6 +85,10 @@ const MIN_DEADBAND_FRAMES = 5;
 /** The clock cadence range the probe honours; outside it the probe clamps to its own default. */
 const MIN_CLOCK_INTERVAL_MS = 100;
 const MAX_CLOCK_INTERVAL_MS = 10_000;
+// The probe's estimator range (SyncActivity.estimatorWindowRequested) and its default window.
+const MIN_ESTIMATOR_WINDOW = 8;
+const MAX_ESTIMATOR_WINDOW = 4096;
+const DEFAULT_ESTIMATOR_WINDOW = 64;
 
 /**
  * Ceiling on the chirp repeat count, set by the probe's scheduler capacity.
@@ -678,6 +682,21 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   if (clockIntervalRaw !== undefined && (!Number.isInteger(clockIntervalMs) || clockIntervalMs < MIN_CLOCK_INTERVAL_MS || clockIntervalMs > MAX_CLOCK_INTERVAL_MS)) {
     throw new Error(`--clock-interval-ms takes a whole number of milliseconds, ${MIN_CLOCK_INTERVAL_MS} to ${MAX_CLOCK_INTERVAL_MS}. Leave it out for the production cadence every measurement so far was taken on.`);
   }
+  // The sink's offset estimator: how many exchanges it holds and how many of the quietest it keeps.
+  // Sink only, like the cadence. The probe defaults to 8 of 64, the product's playback session keeps
+  // 64 of 512 at 250 ms, and the probe replaces anything outside its range with its own default -
+  // so, as with the cadence, a value it would not honour is refused here rather than run.
+  const windowRaw = value(args, '--estimator-window');
+  const estimatorWindow = windowRaw === undefined ? undefined : Number(windowRaw);
+  if (windowRaw !== undefined && (!Number.isInteger(estimatorWindow) || estimatorWindow < MIN_ESTIMATOR_WINDOW || estimatorWindow > MAX_ESTIMATOR_WINDOW)) {
+    throw new Error(`--estimator-window takes a whole number of exchanges, ${MIN_ESTIMATOR_WINDOW} to ${MAX_ESTIMATOR_WINDOW}. Leave it out for the probe's own ${DEFAULT_ESTIMATOR_WINDOW}.`);
+  }
+  const bestRaw = value(args, '--estimator-best');
+  const estimatorBest = bestRaw === undefined ? undefined : Number(bestRaw);
+  const bestCeiling = estimatorWindow ?? DEFAULT_ESTIMATOR_WINDOW;
+  if (bestRaw !== undefined && (!Number.isInteger(estimatorBest) || estimatorBest < 1 || estimatorBest > bestCeiling)) {
+    throw new Error(`--estimator-best takes a whole number of exchanges, 1 to the window (${bestCeiling}): keeping more than it holds is not a rule the probe runs.`);
+  }
   // Standing correction for the fixed part of the acoustic error, sink only - the host plays on
   // its own clock and has no host-time conversion to correct. Pass back the alignmentErrorMs a
   // previous run reported, verbatim and with its sign; the sink subtracts it from its view of host
@@ -775,7 +794,7 @@ export async function main(args = process.argv.slice(2), { client = createProbeC
   // capture run has to wait for a person, so it waits on the port rather than on a clock.
   if (capturePackage) await awaitHostListening({ serial: hostSerial, runAdbHost, timeoutMs: consentTimeoutSeconds * 1000, log });
   else await wait(2000);
-  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, alignmentOffsetMicros, networkMode, paired: pairedHost, markerStrideChunks });
+  await client.startSync({ serial: sinkSerial, caseId, role: 'SINK', seconds, mode, hostAddress, lowLatency, discover, reacquireThresholdFrames, trimFrames, audioSource, chirpRepeats, chirpIntervalSeconds, deadbandFrames, sinkRecords, clockIntervalMs, estimatorWindow, estimatorBest, alignmentOffsetMicros, networkMode, paired: pairedHost, markerStrideChunks });
   log(`Both roles started for ${seconds}s on the ${lowLatency ? 'low latency' : 'default'} output path. Keep the room quiet and do not touch either phone.`);
   const reports = await awaitBothReports({
     client, hostSerial, sinkSerial, caseId,

@@ -699,6 +699,30 @@ test('--clock-interval-ms reaches the sink alone, and its absence leaves the run
   assert.deepEqual(plain.map(({ role, clockIntervalMs }) => [role, clockIntervalMs]), [['HOST', undefined], ['SINK', undefined]]);
 });
 
+test('--estimator-window and --estimator-best reach the sink alone, and their absence leaves the probe on its own estimator', async () => {
+  // Only the sink estimates the offset. The product's playback session keeps 64 of 512 at 250 ms;
+  // the probe defaults to 8 of 64, so a run measuring what the product plays has to ask for it.
+  const wide = await startSyncCalls(['--clock-interval-ms', '250', '--estimator-window', '512', '--estimator-best', '64']);
+  assert.deepEqual(wide.map(({ role, estimatorWindow, estimatorBest }) => [role, estimatorWindow, estimatorBest]), [['HOST', undefined, undefined], ['SINK', 512, 64]]);
+
+  const plain = await startSyncCalls([]);
+  assert.deepEqual(plain.map(({ role, estimatorWindow, estimatorBest }) => [role, estimatorWindow, estimatorBest]), [['HOST', undefined, undefined], ['SINK', undefined, undefined]]);
+});
+
+test('refuses an estimator the probe would silently replace with its default', async () => {
+  // The probe falls back to 8 of 64 on anything outside its range, so a refused run beats one whose
+  // notes claim a window it never used.
+  for (const bad of [['--estimator-window', '4'], ['--estimator-window', '5000'], ['--estimator-window', '512.5'], ['--estimator-window', '512', '--estimator-best', '0'], ['--estimator-window', '512', '--estimator-best', '600'], ['--estimator-best', '65']]) {
+    await assert.rejects(
+      () => main(
+        ['--host-serial', HOST_SERIAL, '--sink-serial', SINK_SERIAL, '--host-address', '192.168.1.7', '--separation-m', '1.2', '--network-mode', 'hotspot', ...bad],
+        { client: {}, runAdbHost: authorisedPairRunner(), log: () => {}, listStoredCases: async () => [] }
+      ),
+      /--estimator-/
+    );
+  }
+});
+
 test('--alignment-offset-ms reaches the sink alone, in microseconds and with its sign intact', async () => {
   // Only the sink converts host time into local time, so only the sink has anything to correct -
   // the host plays on its own clock. The value is the alignmentErrorMs a previous run reported,
