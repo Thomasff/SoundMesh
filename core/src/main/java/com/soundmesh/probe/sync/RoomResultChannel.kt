@@ -158,7 +158,7 @@ class RoomResultClient(private val hostAddress: String, private val port: Int) {
             RoomReplyCodec.decode(String(socket.getInputStream().readBytes(), Charsets.UTF_8))
         }
 
-    internal companion object {
+    companion object {
         /**
          * How long a handset waits for the room's answer.
          *
@@ -167,6 +167,6 @@ class RoomResultClient(private val hostAddress: String, private val port: Int) {
          * delivers first waits out the host's own correlation pass and then every handset that
          * delivers after it - two passes, where a pair's 120 s covers one.
          */
-        internal const val REPLY_TIMEOUT_MILLIS = 180_000
+        const val REPLY_TIMEOUT_MILLIS = 180_000
     }
 }

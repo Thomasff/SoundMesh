@@ -46,9 +46,8 @@ data class ProbeCase(
             "com.tencent.qqmusic"
         )
 
-        private val CASE_ID_PATTERN = Regex("[A-Z][0-9]+")
-
-        fun isSafeCaseId(caseId: String): Boolean = CASE_ID_PATTERN.matches(caseId)
+        // RunStore owns the pattern now that it lives in core, so the two cannot come apart.
+        fun isSafeCaseId(caseId: String): Boolean = RunStore.isSafeCaseId(caseId)
 
         fun fromIntent(intent: Intent): ProbeCase {
             val caseId = intent.getStringExtra(EXTRA_CASE_ID)

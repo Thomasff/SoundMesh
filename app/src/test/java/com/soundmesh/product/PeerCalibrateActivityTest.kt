@@ -36,10 +36,14 @@ class PeerCalibrateActivityTest {
      * a screen. Every rule below is about the run and not about either file, so the ruler is both
      * of them: a rule pointed at one file only would go quiet the next time a piece moved, and a
      * quiet rule and a satisfied one look exactly alike.
+     *
+     * The arms and their timings went to core's CalibrationArms.kt on 09-23 so a desktop sink runs
+     * the same schedule, which makes it the third file.
      */
     private val source =
         File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8) +
-            File("src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8)
+            File("src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8) +
+            File("../core/src/main/java/com/soundmesh/product/CalibrationArms.kt").readText(Charsets.UTF_8)
 
     /**
      * The screen is singleTask, so a second start is delivered to onNewIntent and never reaches

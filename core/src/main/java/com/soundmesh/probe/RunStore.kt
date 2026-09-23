@@ -87,9 +87,16 @@ class RunStore(private val filesDir: File) {
     }
 
     private fun requireSafeCaseId(caseId: String) {
-        require(ProbeCase.isSafeCaseId(caseId)) {
+        require(isSafeCaseId(caseId)) {
             "unsafe caseId"
         }
+    }
+
+    companion object {
+        private val CASE_ID_PATTERN = Regex("[A-Z][0-9]+")
+
+        /** Whether [caseId] can name a directory here. ProbeCase asks the same thing of an intent. */
+        fun isSafeCaseId(caseId: String): Boolean = CASE_ID_PATTERN.matches(caseId)
     }
 }
 

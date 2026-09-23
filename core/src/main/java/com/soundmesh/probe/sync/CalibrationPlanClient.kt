@@ -44,11 +44,11 @@ class CalibrationPlanClient(private val hostAddress: String, private val port: I
     /** The host called the round off while this handset was waiting to be given a schedule. */
     class RoomCalledOff : RuntimeException("the host called this round off")
 
-    internal companion object {
+    companion object {
         /**
          * The host answers with arithmetic on numbers it already holds. This bounds a host that
          * died between accepting and answering.
          */
-        internal const val REPLY_TIMEOUT_MILLIS = 30_000
+        const val REPLY_TIMEOUT_MILLIS = 30_000
     }
 }
