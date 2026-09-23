@@ -14,7 +14,7 @@ import com.soundmesh.core.SpatialMode
  * Null while there is nothing to draw. Throws for a room that could not exist, which is caught by
  * whoever publishes rather than softened here: the next bad roster should still be findable.
  */
-internal fun ruleOf(room: RoomState): SpatialField? {
+fun ruleOf(room: RoomState): SpatialField? {
     val layout = SpatialRoom.layoutOf(room.icons) ?: return null
     return SpatialField(
         room.mode,
@@ -64,5 +64,5 @@ internal fun ruleOf(room: RoomState): SpatialField? {
  * Asked in two places that have to agree - whether the content split reaches the rule, and whether
  * the envelopment counts towards which effect a room is on - so it is written once.
  */
-internal val SpatialMode.movesASource: Boolean
+val SpatialMode.movesASource: Boolean
     get() = this == SpatialMode.ROTATE || this == SpatialMode.PAN
