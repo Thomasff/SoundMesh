@@ -3,6 +3,9 @@ package com.soundmesh.desktop
 import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.DiscoveryOutcome
+import com.soundmesh.core.HostRepoint
+import com.soundmesh.core.PairingCode
+import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomOrder
 import com.soundmesh.probe.sync.COMMAND_PORT
@@ -10,6 +13,8 @@ import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandClient
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
 
 enum class SinkStage {
     IDLE, FINDING, NOT_FOUND,
@@ -54,8 +59,12 @@ data class SinkStatus(
  *
  * The playing half is the command-line sink's steps and refusals, run on this session's thread
  * and reported as a stage. What it does not do: take part in a room measurement (this side has no
- * calibration), and look for the host again if it moves to another address - both written down
- * in now.md as things for later.
+ * calibration) - written down in now.md as a thing for later.
+ *
+ * **A host it found is looked for again when it cannot be reached**, as a handset does: five
+ * seconds with the line down and it spends a discovery window, and a host that turned up at another
+ * address - a new lease, another network - is followed there. Until 09-23 this dialled the old
+ * address for ever, and only stop and start here brought it back.
  */
 class SinkSession(
     private val identityDirectory: File,
@@ -133,9 +142,15 @@ class SinkSession(
 
     private fun follow(address: String?, chunkPort: Int, clockPort: Int, commandPort: Int, spatialPort: Int) {
         try {
-            val (host, port) = if (address != null) {
+            var host: String
+            var port: Int
+            // Only a host that was found can be looked for again: one given by address has no
+            // identity to recognise it by somewhere else.
+            var stored: PairingCode? = null
+            if (address != null) {
                 hostName = address
-                address to chunkPort
+                host = address
+                port = chunkPort
             } else {
                 stage = SinkStage.FINDING
                 val outcome = discover(DISCOVERY_WINDOW_MILLIS)
@@ -145,11 +160,17 @@ class SinkSession(
                     return
                 }
                 hostName = peer.name
-                peer.hostAddress to peer.port
+                stored = PairingCode(PeerAdvertisement.hostIdOf(peer), peer.hostAddress, peer.port)
+                host = peer.hostAddress
+                port = peer.port
             }
-            hostAddress = host
-            if (!running) return
-            standBy(host, port, clockPort, commandPort, spatialPort)
+            while (running) {
+                hostAddress = host
+                val moved = standBy(host, port, clockPort, commandPort, spatialPort, stored) ?: return
+                stored = moved
+                host = moved.address
+                port = moved.chunkPort
+            }
         } catch (_: InterruptedException) {
             // stop() - the stage is its to set.
         } catch (e: Throwable) {
@@ -160,7 +181,19 @@ class SinkSession(
         }
     }
 
-    private fun standBy(host: String, chunkPort: Int, clockPort: Int, commandPort: Int, spatialPort: Int) {
+    /**
+     * Holds the host's command line until stopped - null - or until the host turns up somewhere
+     * else, when it returns where. [stored] is what that is judged against; without one this only
+     * ever holds the line.
+     */
+    private fun standBy(
+        host: String,
+        chunkPort: Int,
+        clockPort: Int,
+        commandPort: Int,
+        spatialPort: Int,
+        stored: PairingCode?
+    ): PairingCode? {
         // The same name the audio leg dials under, so the host sees one machine and not two.
         val selfId = HostIdentity(identityDirectory).current()
         val line = RoomCommandClient(host, commandPort, selfId, carrying = null, called = called, onCommand = ::obey)
@@ -169,23 +202,71 @@ class SinkSession(
             // From now rather than zero: nanoTime's origin is arbitrary and may be negative, and the
             // line says it is there on connecting anyway.
             var saidHereAt = System.nanoTime()
+            var lastWent = true
             fun beat() {
                 val now = System.nanoTime()
-                if (now - saidHereAt >= SAY_HERE_EVERY_NANOS && line.sayHere()) saidHereAt = now
+                if (now - saidHereAt < SAY_HERE_EVERY_NANOS) return
+                lastWent = line.sayHere()
+                if (lastWent) saidHereAt = now
             }
+            // Down means not carrying, as the handset reads it (StandbyService.carrying): a line
+            // whose far end left the network stays open, so "connected" alone would never start
+            // this clock in the one case it exists for.
+            var downSince: Long? = null
+            fun lost(): Boolean {
+                val now = System.nanoTime()
+                if (line.connected && lastWent) {
+                    downSince = null
+                    return false
+                }
+                val since = downSince ?: now.also { downSince = it }
+                return stored != null && now - since >= STALE_AFTER_NANOS
+            }
+            var lookedAt: Long? = null
             while (running) {
                 if (playWanted) {
-                    play(host, chunkPort, clockPort, spatialPort, ::beat)
+                    play(host, chunkPort, clockPort, spatialPort, ::beat, ::lost)
                 } else {
                     stage = if (line.connected) SinkStage.STANDING_BY else SinkStage.REACHING
                     beat()
+                    val now = System.nanoTime()
+                    if (lost() && lookedAt.let { it == null || now - it >= LOOK_GAP_NANOS }) {
+                        lookedAt = now
+                        // The other half of the same fault, as on the handset: an address that is
+                        // still right behind a socket that is dead is fixed by dialling again.
+                        line.dialAgain()
+                        lookAgain(stored!!, commandPort, selfId)?.let { return it }
+                    }
                     Thread.sleep(WATCH_MILLIS)
                 }
             }
+            return null
         } finally {
             line.close()
         }
     }
+
+    /**
+     * One look for a host this machine cannot reach, decided the way a handset decides it
+     * ([HostRepoint.ofUnreachable]): the same host somewhere else is followed, a different one only
+     * when the stored one is nowhere and exactly one other is here. Null for staying put.
+     */
+    private fun lookAgain(stored: PairingCode, commandPort: Int, selfId: String): PairingCode? {
+        stage = SinkStage.FINDING
+        // Its own record out first, for HostSearch.lookAgain's reason: a machine that has just
+        // stopped hosting goes on being answered for, and would count as the one other host.
+        val others = discover(DISCOVERY_WINDOW_MILLIS).hosts.filter { PeerAdvertisement.hostIdOf(it) != selfId }
+        val moved = HostRepoint.ofUnreachable(stored, others) { serving(it.address, commandPort) }.host
+            ?: return null
+        hostName = others.firstOrNull { PeerAdvertisement.hostIdOf(it) == moved.hostId }?.name ?: moved.address
+        return moved
+    }
+
+    /** RoomCommands.stillServing, asked on this session's command port rather than the fixed one. */
+    private fun serving(address: String, commandPort: Int): Boolean = runCatching {
+        Socket().use { it.connect(InetSocketAddress(address, commandPort), SERVING_TIMEOUT_MILLIS) }
+        true
+    }.getOrDefault(false)
 
     private fun obey(order: RoomOrder) {
         when (order.command) {
@@ -201,7 +282,7 @@ class SinkSession(
     }
 
     /** One stretch of following, from "play" until "stop" - or until it could not be followed. */
-    private fun play(host: String, chunkPort: Int, clockPort: Int, spatialPort: Int, beat: () -> Unit) {
+    private fun play(host: String, chunkPort: Int, clockPort: Int, spatialPort: Int, beat: () -> Unit, lost: () -> Boolean) {
         val playing = playsSaid
         problem = null
         stage = SinkStage.OPENING_SPEAKERS
@@ -226,7 +307,7 @@ class SinkSession(
                 } catch (e: java.io.IOException) {
                     return giveUp(e.message ?: e.toString())
                 }
-                watch(sink, playing, beat)
+                watch(sink, playing, beat, lost)
             } finally {
                 sink.stop()
             }
@@ -239,7 +320,7 @@ class SinkSession(
         playWanted = false
     }
 
-    private fun watch(sink: SinkStream, playing: Int, beat: () -> Unit) {
+    private fun watch(sink: SinkStream, playing: Int, beat: () -> Unit, lost: () -> Boolean) {
         // Counted from zero, not from a sentinel: until a first chunk arrives nothing has been
         // heard from the host, and that is not "playing" - the stage stays where dialling left it
         // until the audio is really coming, or the wait runs out and the host is said to be quiet.
@@ -256,6 +337,12 @@ class SinkSession(
             // A play said since this stretch began, while nothing is arriving: the host has started
             // again on an audio socket this stream is no longer on. Start over rather than wait.
             if (silent && playsSaid != playing) return
+            // Nothing arriving and no line to the host either: it has gone, or gone somewhere else.
+            // Back to standing by, which is where it is looked for.
+            if (silent && lost()) {
+                playWanted = false
+                return
+            }
             stage = when {
                 silent -> SinkStage.HOST_SILENT
                 arrived == 0 -> SinkStage.SYNCING
@@ -284,6 +371,15 @@ class SinkSession(
          * window a host waits before calling a standing sink quiet.
          */
         private const val SAY_HERE_EVERY_NANOS = 2_000_000_000L
+
+        /** The handset's wait (HostSearch.STALE_AFTER_MILLIS) before a line that is down sends it looking. */
+        private const val STALE_AFTER_NANOS = 5_000_000_000L
+
+        /** The handset's gap between looks (HostSearch.GAP_MILLIS): each one is a whole discovery window. */
+        private const val LOOK_GAP_NANOS = 10_000_000_000L
+
+        /** RoomCommands' own wait: a host accepts or refuses at once, and longer is a machine that left. */
+        private const val SERVING_TIMEOUT_MILLIS = 900
 
         /** Why a play was dropped when the host's clock never answered; the window says it in its own words. */
         const val NO_CLOCK_PROBLEM = "the host's clock never answered"

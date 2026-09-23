@@ -1,7 +1,9 @@
 package com.soundmesh.desktop
 
+import com.soundmesh.core.DiscoveredPeer
 import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.DiscoveryOutcome
+import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
@@ -12,6 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.util.concurrent.atomic.AtomicInteger
 
 class SinkSessionTest {
     @get:Rule
@@ -196,6 +199,78 @@ class SinkSessionTest {
             orders.stop()
             host.close()
         }
+    }
+
+    /**
+     * A host that turns up somewhere else - a new lease, another network - is looked for again once
+     * the line to the old address has been down a while, as a handset sink does. Until 09-23 this
+     * dialled the old address for ever and only stop and start here brought it back.
+     */
+    @Test
+    fun aHostThatMovedIsFoundAgainAtItsNewAddress() {
+        val commandPort = freeTcpPort()
+        val orders = RoomCommandServer(commandPort).apply { start() }
+        val looks = AtomicInteger()
+        // First somewhere nobody answers (TEST-NET-1), then where the host really is.
+        val sink = SinkSession(folder.newFolder(), openSpeakers = FakeSpeakers()::open, discover = {
+            advertisedAt(if (looks.getAndIncrement() == 0) "192.0.2.1" else "127.0.0.1", freeTcpPort())
+        })
+        try {
+            sink.start(commandPort = commandPort)
+            assertTrue(eventually(5_000) { sink.status().stage == SinkStage.REACHING })
+            assertTrue("never found it again: ${sink.status()}", eventually(20_000) { orders.standingBy() == 1 })
+            assertEquals("127.0.0.1", sink.status().hostAddress)
+        } finally {
+            sink.stop()
+            orders.stop()
+        }
+    }
+
+    /**
+     * A host that goes silent mid-song and cannot be reached either is looked for, not waited on.
+     *
+     * The order comes from a bare command server, as in the test above, so no "stop" reaches this
+     * sink when everything goes: the only way out of the song is noticing the line is gone too.
+     */
+    @Test
+    fun aHostLostMidSongIsLookedForAgain() {
+        val audio = ports()
+        val host = hostOpen(audio)
+        host.play(writeTestWav(folder.newFile()), alsoHere = false)
+        val commandPort = freeTcpPort()
+        val orders = RoomCommandServer(commandPort).apply { start() }
+        val looks = AtomicInteger()
+        val sink = SinkSession(folder.newFolder(), openSpeakers = FakeSpeakers()::open, silentAfterNanos = 500_000_000L, discover = {
+            looks.incrementAndGet()
+            advertisedAt("127.0.0.1", audio.chunk)
+        })
+        try {
+            sink.start(clockPort = audio.clock, commandPort = commandPort, spatialPort = freeTcpPort())
+            assertTrue(eventually(10_000) { orders.standingBy() == 1 })
+            orders.send(RoomCommand.PLAY)
+            assertTrue(eventually(15_000) { sink.status().stage == SinkStage.PLAYING })
+            orders.stop()
+            host.close()
+            assertTrue("never looked again: ${sink.status()}", eventually(20_000) { looks.get() >= 2 })
+        } finally {
+            sink.stop()
+            orders.stop()
+            host.close()
+        }
+    }
+
+    /** What discovery says when exactly one host at [address] answers. */
+    private fun advertisedAt(address: String, chunkPort: Int): DiscoveryOutcome {
+        val peer = DiscoveredPeer(
+            name = "SoundMesh-far",
+            hostAddress = address,
+            port = chunkPort,
+            attributes = mapOf(
+                PeerAdvertisement.VERSION_KEY to PeerAdvertisement.PROTOCOL_VERSION,
+                PeerAdvertisement.ID_KEY to "0123456789abcdef"
+            )
+        )
+        return DiscoveryOutcome(peer, null, 1, listOf(peer))
     }
 
     /** Nobody answering is said with the reason discovery gave, and the speakers are never opened. */
