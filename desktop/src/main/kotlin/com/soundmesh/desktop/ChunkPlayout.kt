@@ -109,7 +109,7 @@ class ChunkPlayout(
      * Nearest-rank, so a quantile of 1.0 is the widest join and no value is invented between two
      * that were measured.
      */
-    fun seamFramesAtQuantile(quantile: Double): Int = quantileOf(seamWidths, quantile)
+    fun seamFramesAtQuantile(quantile: Double): Int = synchronized(stats) { quantileOf(seamWidths, quantile) }
 
     /**
      * How wide one share of the joins is, as a band in the same sense as [seamFramesAtQuantile].
@@ -122,17 +122,19 @@ class ChunkPlayout(
      * can leave a frame of rounding in the device's share.
      */
     fun seamShareFramesAtQuantile(share: SeamShare, quantile: Double): Int =
-        quantileOf(shareWidths.getValue(share), quantile)
+        synchronized(stats) { quantileOf(shareWidths.getValue(share), quantile) }
 
     /** The shares as one line, beside [seamBand]; p90 and p99 because p50 is zero on a good run. */
-    fun seamShares(): String {
-        if (joins == 0) return "no joins yet"
-        return SeamShare.entries.joinToString(", ") { share ->
-            "${share.name.lowercase()} p90 ${seamShareFramesAtQuantile(share, 0.9)} / " +
-                "p99 ${seamShareFramesAtQuantile(share, 0.99)} / max ${seamShareFramesAtQuantile(share, 1.0)}"
+    fun seamShares(): String = synchronized(stats) {
+        if (joins == 0) return@synchronized "no joins yet"
+        SeamShare.entries.joinToString(", ") { share ->
+            "${share.name.lowercase()} p90 ${quantileOf(shareWidths.getValue(share), 0.9)} / " +
+                "p99 ${quantileOf(shareWidths.getValue(share), 0.99)} / max ${quantileOf(shareWidths.getValue(share), 1.0)}"
         }
     }
 
+    // Not synchronized itself: quantileOf only ever runs from callers that already hold stats
+    // (seamFramesAtQuantile, seamShareFramesAtQuantile, seamShares, seamBand).
     private fun quantileOf(widths: Map<Int, Int>, quantile: Double): Int {
         require(quantile > 0.0 && quantile <= 1.0) { "quantile must be in (0, 1], not $quantile" }
         if (joins == 0) return NO_JOINS_YET
@@ -150,11 +152,11 @@ class ChunkPlayout(
      * differently - a host's own playout and a sink's are the same measurement and have to be
      * comparable across a run without anybody lining up two formats by hand.
      */
-    fun seamBand(): String {
-        if (joins == 0) return "no joins yet"
+    fun seamBand(): String = synchronized(stats) {
+        if (joins == 0) return@synchronized "no joins yet"
         val worst = if (worstSeamFrames > 0) "+$worstSeamFrames" else worstSeamFrames.toString()
-        return "p50 ${seamFramesAtQuantile(0.5)} / p90 ${seamFramesAtQuantile(0.9)} / " +
-            "p99 ${seamFramesAtQuantile(0.99)} / worst $worst frames of $joins joins"
+        "p50 ${quantileOf(seamWidths, 0.5)} / p90 ${quantileOf(seamWidths, 0.9)} / " +
+            "p99 ${quantileOf(seamWidths, 0.99)} / worst $worst frames of $joins joins"
     }
 
     // Widths seen and how often, unsigned. A histogram rather than the joins themselves because
@@ -162,6 +164,12 @@ class ChunkPlayout(
     // however long the run goes on - and unlike a reservoir it answers exactly.
     private val seamWidths = HashMap<Int, Int>()
     private val shareWidths = SeamShare.entries.associateWith { HashMap<Int, Int>() }
+
+    // Guards joins, seams, worstSeamFrames, seamWidths and shareWidths: play() writes them on the
+    // chunk thread, while a status reader - the window's poll every 500 ms, the command-line
+    // sink's report loop - reads them from another thread. A read landing between joins++ and the
+    // histogram merge used to walk quantileOf off the end of the histogram.
+    private val stats = Any()
 
     // Where the chunk before this one ran out, and which one it was. Only consecutive
     // sequences are compared: a chunk the host or the network lost leaves a hole a whole chunk
@@ -188,20 +196,22 @@ class ChunkPlayout(
             return false
         }
         if (chunk.sequence == lastSequence + 1) {
-            val seam = (frame - endOfLastChunk).toInt()
-            joins++
-            seamWidths.merge(kotlin.math.abs(seam), 1, Int::plus)
-            if (seam != 0) {
-                seams++
-                if (kotlin.math.abs(seam) > kotlin.math.abs(worstSeamFrames)) worstSeamFrames = seam
+            synchronized(stats) {
+                val seam = (frame - endOfLastChunk).toInt()
+                joins++
+                seamWidths.merge(kotlin.math.abs(seam), 1, Int::plus)
+                if (seam != 0) {
+                    seams++
+                    if (kotlin.math.abs(seam) > kotlin.math.abs(worstSeamFrames)) worstSeamFrames = seam
+                }
+                val host = framesOf(chunk.playAtHostNanos - lastPlayAtHostNanos) - lastChunkFrames
+                // The offset is subtracted from the host instant, so an offset that grew moves the
+                // chunk earlier.
+                val offsetShare = -framesOf(offset - lastOffsetNanos)
+                countShare(SeamShare.HOST, host)
+                countShare(SeamShare.OFFSET, offsetShare)
+                countShare(SeamShare.DEVICE, seam - host - offsetShare)
             }
-            val host = framesOf(chunk.playAtHostNanos - lastPlayAtHostNanos) - lastChunkFrames
-            // The offset is subtracted from the host instant, so an offset that grew moves the
-            // chunk earlier.
-            val offsetShare = -framesOf(offset - lastOffsetNanos)
-            countShare(SeamShare.HOST, host)
-            countShare(SeamShare.OFFSET, offsetShare)
-            countShare(SeamShare.DEVICE, seam - host - offsetShare)
         }
         endOfLastChunk = frame + samples.size / channels
         lastSequence = chunk.sequence

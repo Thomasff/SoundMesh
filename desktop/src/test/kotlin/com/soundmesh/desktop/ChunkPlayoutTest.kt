@@ -1,6 +1,7 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.AudioChunk
+import com.soundmesh.core.ChunkCodec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -219,6 +220,43 @@ class ChunkPlayoutTest {
         assertEquals(0, playout.seamShareFramesAtQuantile(SeamShare.OFFSET, 1.0))
         assertEquals(11, playout.seamShareFramesAtQuantile(SeamShare.DEVICE, 1.0))
     }
+
+    /**
+     * The band is read by whoever is reporting - a window polling twice a second, a command-line
+     * loop - while the chunk thread is still counting. A read that landed between the count and
+     * the histogram walked off the end of it and threw.
+     */
+    @Test
+    fun theBandCanBeReadWhileChunksAreStillArriving() {
+        val playout = ChunkPlayout(FakeOutput()) { 0L }
+        val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val reader = Thread {
+            try {
+                while (!Thread.currentThread().isInterrupted) {
+                    playout.seamBand()
+                    playout.seamShares()
+                }
+            } catch (e: Throwable) {
+                failure.set(e)
+            }
+        }.apply { start() }
+        try {
+            // Alternating widths so the histogram keeps gaining keys, which is when a read can miss one.
+            // Reduced from the brief's 200 000: FakeOutput keeps every scheduled chunk, and that many
+            // 960-frame stereo buffers overruns the test JVM's default heap well before the race shows.
+            repeat(20_000) { sequence ->
+                playout.play(chunkAt(sequence, sequence * 20_000_000L + (sequence % 7) * 21_000L))
+            }
+        } finally {
+            reader.interrupt()
+            reader.join(2_000)
+        }
+        failure.get()?.let { throw AssertionError("reading the band while playing threw", it) }
+    }
+
+    /** A chunk of the standard size, landing at [playAtHostNanos]. */
+    private fun chunkAt(sequence: Int, playAtHostNanos: Long) =
+        AudioChunk(sequence, playAtHostNanos, ByteArray(ChunkCodec.FRAMES_PER_CHUNK * 2 * 2))
 
     /**
      * Plays one chunk per entry in [seamFrames], each landing that many frames from where its
