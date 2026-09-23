@@ -416,6 +416,188 @@ internal object Wasapi {
     fun getPosition(self: MemorySegment, outPosition: MemorySegment, outQpc: MemorySegment): Int =
         pp(self, 4, outPosition, outQpc)
 
+    // -------------------------------------------------------------- IUnknown
+
+    fun queryInterface(self: MemorySegment, iid: MemorySegment, out: MemorySegment): Int =
+        pp(self, 0, iid, out)
+
+    fun release(self: MemorySegment): Int = v(self, 2)
+
+    // ---------------------------------------------------------- audio sessions
+    //
+    // One session is one row of the volume mixer: a program's streams on one endpoint, with the
+    // level and mute the person sets there. IAudioSessionManager2 GetSessionEnumerator 5;
+    // IAudioSessionEnumerator GetCount 3, GetSession 4; IAudioSessionControl GetState 3;
+    // IAudioSessionControl2 GetProcessId 14; ISimpleAudioVolume SetMasterVolume 3,
+    // GetMasterVolume 4, SetMute 5, GetMute 6.
+
+    const val IID_IAUDIO_SESSION_MANAGER2 = "77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"
+    const val IID_IAUDIO_SESSION_CONTROL2 = "BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"
+    const val IID_ISIMPLE_AUDIO_VOLUME = "87CE5498-68D6-44E5-9215-6DA47EF883D8"
+
+    /** AudioSessionStateActive: the session has a stream that is playing right now. */
+    const val SESSION_STATE_ACTIVE = 1
+
+    /** HRESULT f(this, int, out*) */
+    private val CALL_I_P = LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, I32, PTR))
+
+    /** HRESULT SetMasterVolume(this, float, eventContext*) */
+    private val CALL_F_P = LINKER.downcallHandle(FunctionDescriptor.of(I32, PTR, F32, PTR))
+
+    fun sessionEnumerator(manager: MemorySegment, out: MemorySegment): Int = p(manager, 5, out)
+
+    fun sessionCount(enumerator: MemorySegment, out: MemorySegment): Int = p(enumerator, 3, out)
+
+    fun session(enumerator: MemorySegment, index: Int, out: MemorySegment): Int =
+        CALL_I_P.invokeExact(method(enumerator, 4), enumerator, index, out) as Int
+
+    fun sessionState(control: MemorySegment, out: MemorySegment): Int = p(control, 3, out)
+
+    fun sessionProcessId(control2: MemorySegment, out: MemorySegment): Int = p(control2, 14, out)
+
+    fun setSessionVolume(volume: MemorySegment, level: Float): Int =
+        CALL_F_P.invokeExact(method(volume, 3), volume, level, MemorySegment.NULL) as Int
+
+    fun sessionVolume(volume: MemorySegment, out: MemorySegment): Int = p(volume, 4, out)
+
+    fun setSessionMute(volume: MemorySegment, mute: Boolean): Int =
+        CALL_I_P.invokeExact(method(volume, 5), volume, if (mute) 1 else 0, MemorySegment.NULL) as Int
+
+    fun sessionMute(volume: MemorySegment, out: MemorySegment): Int = p(volume, 6, out)
+
+    // ------------------------------------------------------- process loopback
+    //
+    // One program's sound on its own, before it is mixed with anybody else's: Windows 10 21H2 and
+    // later. It is not a device the enumerator lists, so it is reached through
+    // ActivateAudioInterfaceAsync, which answers on another thread through a COM object the
+    // caller supplies - [ActivationHandler] is that object, built by hand like everything here.
+
+    private const val PROCESS_LOOPBACK_PATH = "VAD\\Process_Loopback"
+    private const val IID_IUNKNOWN = "00000000-0000-0000-C000-000000000046"
+    private const val IID_IAGILE_OBJECT = "94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90"
+    private const val IID_IACTIVATE_COMPLETION_HANDLER = "41D949AB-9862-444A-80F6-C261334DA5EB"
+
+    /** VT_BLOB: a PROPVARIANT carrying a length and a pointer. */
+    private const val VT_BLOB = 65
+
+    /** AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK. */
+    private const val ACTIVATION_TYPE_PROCESS_LOOPBACK = 1
+
+    /** PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE: the program and whatever it started. */
+    private const val LOOPBACK_MODE_INCLUDE_TREE = 0
+
+    private const val E_NOINTERFACE = 0x80004002.toInt()
+    private const val E_TIMEOUT = 0x800705B4.toInt()
+
+    private val ACTIVATE_AUDIO_INTERFACE_ASYNC = export(
+        "Mmdevapi.dll", "ActivateAudioInterfaceAsync",
+        FunctionDescriptor.of(I32, PTR, PTR, PTR, PTR, PTR)
+    )
+
+    /**
+     * An IAudioClient that hears the process [pid] and everything it started, and nothing else.
+     *
+     * Blocks until the system answers. Serialised, because the handler is one object with one
+     * slot for the answer.
+     */
+    fun activateProcessLoopback(arena: Arena, pid: Long, out: MemorySegment): Int =
+        synchronized(ActivationHandler) {
+            val params = arena.allocate(12, 4)
+            params.set(I32, 0, ACTIVATION_TYPE_PROCESS_LOOPBACK)
+            params.set(I32, 4, pid.toInt())
+            params.set(I32, 8, LOOPBACK_MODE_INCLUDE_TREE)
+            // PROPVARIANT: the type at 0, then a BLOB at 8 - its length, padding, its pointer.
+            val variant = arena.allocate(24, 8)
+            variant.set(I16, 0, VT_BLOB.toShort())
+            variant.set(I32, 8, 12)
+            variant.set(PTR, 16, params)
+
+            val latch = java.util.concurrent.CountDownLatch(1)
+            ActivationHandler.latch = latch
+            val operationOut = arena.allocate(8, 8)
+            val hr = ACTIVATE_AUDIO_INTERFACE_ASYNC.invokeExact(
+                arena.allocateFrom(PROCESS_LOOPBACK_PATH, java.nio.charset.StandardCharsets.UTF_16LE),
+                guid(arena, IID_IAUDIO_CLIENT),
+                variant,
+                ActivationHandler.self,
+                operationOut
+            ) as Int
+            if (hr < 0) return hr
+            if (!latch.await(ACTIVATION_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) return E_TIMEOUT
+            val operation = operationOut.get(PTR, 0)
+            // IActivateAudioInterfaceAsyncOperation::GetActivateResult, vtable 3: the activation's
+            // own result, then the interface. The call returning success says only that the
+            // question was answered.
+            val result = arena.allocate(4, 4)
+            val called = pp(operation, 3, result, out)
+            release(operation)
+            if (called < 0) called else result.get(I32, 0)
+        }
+
+    private const val ACTIVATION_TIMEOUT_SECONDS = 5L
+
+    /**
+     * IActivateAudioInterfaceCompletionHandler, as a vtable of four upcalls.
+     *
+     * Lives for the whole process, which is what lets AddRef and Release be constants: the system
+     * may let go of it after the call that used it has returned, and memory that outlived nothing
+     * cannot be released too early. Answers for IAgileObject too, because the system calls it
+     * from its own thread and refuses a handler that is not free-threaded.
+     */
+    private object ActivationHandler {
+        private val arena = Arena.global()
+        val self: MemorySegment
+
+        @Volatile var latch: java.util.concurrent.CountDownLatch? = null
+
+        private val answers: List<MemorySegment> =
+            listOf(IID_IUNKNOWN, IID_IAGILE_OBJECT, IID_IACTIVATE_COMPLETION_HANDLER).map { guid(arena, it) }
+
+        init {
+            val lookup = java.lang.invoke.MethodHandles.lookup()
+            val int = Int::class.javaPrimitiveType!!
+            val seg = MemorySegment::class.java
+            fun stub(name: String, vararg params: Class<*>, fd: FunctionDescriptor): MemorySegment =
+                LINKER.upcallStub(
+                    lookup.findStatic(ActivationHandler::class.java, name, java.lang.invoke.MethodType.methodType(int, params)),
+                    fd,
+                    arena
+                )
+            val vtable = arena.allocate(4 * 8L, 8)
+            vtable.set(PTR, 0, stub("queryInterface", seg, seg, seg, fd = FunctionDescriptor.of(I32, PTR, PTR, PTR)))
+            vtable.set(PTR, 8, stub("addRef", seg, fd = FunctionDescriptor.of(I32, PTR)))
+            vtable.set(PTR, 16, stub("release", seg, fd = FunctionDescriptor.of(I32, PTR)))
+            vtable.set(PTR, 24, stub("activateCompleted", seg, seg, fd = FunctionDescriptor.of(I32, PTR, PTR)))
+            self = arena.allocate(8, 8)
+            self.set(PTR, 0, vtable)
+        }
+
+        @JvmStatic
+        fun queryInterface(self: MemorySegment, riid: MemorySegment, ppv: MemorySegment): Int {
+            val asked = riid.reinterpret(16)
+            val slot = ppv.reinterpret(8)
+            return if (answers.any { it.mismatch(asked) == -1L }) {
+                slot.set(PTR, 0, self)
+                0
+            } else {
+                slot.set(PTR, 0, MemorySegment.NULL)
+                E_NOINTERFACE
+            }
+        }
+
+        @JvmStatic
+        fun addRef(self: MemorySegment): Int = 1
+
+        @JvmStatic
+        fun release(self: MemorySegment): Int = 1
+
+        @JvmStatic
+        fun activateCompleted(self: MemorySegment, operation: MemorySegment): Int {
+            latch?.countDown()
+            return 0
+        }
+    }
+
     // ------------------------------------------------------------------- plumbing
 
     fun check(hr: Int, what: String) {

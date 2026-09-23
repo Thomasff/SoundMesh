@@ -44,6 +44,8 @@ import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.EffectKind
 import com.soundmesh.product.RoomState
 import com.soundmesh.product.SpatialRoom
+import com.soundmesh.desktop.AudioSession
+import com.soundmesh.desktop.AudioSessions
 import com.soundmesh.desktop.HostPort
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
@@ -109,6 +111,9 @@ fun SoundMeshWindow(host: HostSession, sink: SinkSession, sessions: CoroutineDis
 private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     val status = polled { host.status() } ?: return
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
+    // A program's sound instead of files; picking either one puts the other down.
+    var app by remember { mutableStateOf<AudioSession?>(null) }
+    var programs by remember { mutableStateOf<List<AudioSession>?>(null) }
     var picked by remember { mutableStateOf("还没选歌") }
     var alsoHere by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
@@ -118,6 +123,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
         OutlinedButton(onClick = {
             pickSongs().takeIf { it.isNotEmpty() }?.let {
                 files = it
+                app = null
                 picked = if (it.size == 1) it.single().name else "${it.size} 首"
             }
         }, enabled = !status.playing) { Text("选文件") }
@@ -125,10 +131,31 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
             pickFolder()?.let { folder ->
                 val songs = songsIn(folder)
                 files = songs
+                app = null
                 picked = if (songs.isEmpty()) "「${folder.name}」里没有能放的歌" else "「${folder.name}」里 ${songs.size} 首"
             }
         }, enabled = !status.playing) { Text("选文件夹") }
+        OutlinedButton(onClick = {
+            // Asked afresh each time: the mixer's rows come and go with what is playing.
+            scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
+        }, enabled = !status.playing) { Text("抓程序的声音") }
         Text(picked)
+    }
+    programs?.let { list ->
+        if (list.isEmpty()) Text("现在没有程序在音量合成器里出声。先让要抓的程序放起来，再点一次。")
+        else Text("抓哪个程序的声音？")
+        // One to a line: a browser, a player and a call can all be in the mixer at once.
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (program in list) {
+                OutlinedButton(onClick = {
+                    app = program
+                    files = emptyList()
+                    programs = null
+                    picked = "「${program.name}」的声音"
+                }) { Text(program.name + if (program.playing) "（正在出声）" else "") }
+            }
+            TextButton(onClick = { programs = null }) { Text("算了") }
+        }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Switch(checked = alsoHere, onCheckedChange = { alsoHere = it }, enabled = !status.playing)
@@ -137,11 +164,25 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     if (status.playing) {
         Button(onClick = { scope.launch(sessions) { host.stopPlaying() } }) { Text("停止") }
         status.playhead?.let { Transport(host, it, status.paused, sessions) }
+        status.capturing?.let {
+            Text("房间在放「$it」的声音。它在这台电脑上的音量先调到了千分之一，免得比房间早一秒半响出来；停止后调回原样。")
+        }
     } else {
         Button(
-            onClick = { files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } } },
-            enabled = status.open && files.isNotEmpty()
+            onClick = {
+                val program = app
+                if (program != null) scope.launch(sessions) { host.playApp(program.pid, program.name, alsoHere) }
+                else files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
+            },
+            enabled = status.open && (files.isNotEmpty() || app != null)
         ) { Text("播放") }
+    }
+    if (status.heldDown.isNotEmpty()) {
+        Text(
+            "「${status.heldDown.joinToString("、")}」在音量合成器里还被调低着，它再运行时这里会调回来；" +
+                "也可以在 Windows 音量合成器里自己调回。",
+            color = MaterialTheme.colorScheme.error
+        )
     }
     if (status.skipped.isNotEmpty()) {
         Text("跳过了放不了的：" + status.skipped.joinToString("；"), color = MaterialTheme.colorScheme.error)
@@ -158,6 +199,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
         listOf(
             "音频口" to "${status.sinksOnAudio} 台在收",
             "丢块" to "${status.droppedChunks}",
+            "抓声垫静音" to (status.capturePadded?.let { "$it 块" } ?: "—"),
             "本机接缝" to (status.localBand ?: "—"),
             "接缝拆分" to (status.localShares ?: "—")
         )
@@ -596,6 +638,7 @@ private fun describe(problem: HostProblem): String = when (problem) {
     is HostProblem.SpeakersUnavailable -> "电脑的扬声器打不开：${problem.detail}"
     is HostProblem.AdvertiseFailed -> "没法在局域网里广播这台主机，手机找不到它：${problem.detail}"
     is HostProblem.PlayFailed -> "播放中断了：${problem.detail}"
+    is HostProblem.CaptureFailed -> "抓不到「${problem.app}」的声音（要 Windows 10 21H2 或更新）：${problem.detail}"
 }
 
 private fun describe(status: SinkStatus): String = when (status.stage) {

@@ -39,6 +39,7 @@ sealed interface HostProblem {
     data class SpeakersUnavailable(val detail: String) : HostProblem
     data class AdvertiseFailed(val detail: String) : HostProblem
     data class PlayFailed(val detail: String) : HostProblem
+    data class CaptureFailed(val app: String, val detail: String) : HostProblem
 }
 
 /** One device standing by on the host's command port, as the roster shows it. */
@@ -93,6 +94,12 @@ data class HostStatus(
     val volumeTouched: Boolean,
     /** The room's effect and knobs, and who is drawn where - what the spatial rule is built from. */
     val room: RoomState,
+    /** The program whose sound the room is playing, or null when it is playing songs or nothing. */
+    val capturing: String?,
+    /** Chunks of that sound made up with silence because the program handed over nothing. */
+    val capturePadded: Int?,
+    /** Programs this machine turned down in the mixer and has not yet been able to put back. */
+    val heldDown: List<String>,
     val sinksOnAudio: Int,
     val droppedChunks: Int,
     val localBand: String?,
@@ -129,9 +136,14 @@ class HostSession(
      * putting anything on the network - the one way to reach what [open] does when it does.
      */
     private val advertiser: (serviceName: String, port: Int, hostId: String) -> AutoCloseable = PeerDiscovery::register,
-    private val stoppedGraceMillis: Long = STOPPED_GRACE_MILLIS
+    private val stoppedGraceMillis: Long = STOPPED_GRACE_MILLIS,
+    /** The volume mixer, and a program's sound on its own - parameters so a test touches neither. */
+    mixer: AppMixer = AudioSessions,
+    private val openCapture: (pid: Long, onPcm: (ByteArray, Int) -> Unit) -> CaptureHandle =
+        { pid, onPcm -> AppCapture(pid, onPcm = onPcm) }
 ) {
     private val lock = Any()
+    private val turnDown = AppTurnDown(identityDirectory, mixer)
 
     private var commandServer: RoomCommandServer? = null
     private var clockServer: ClockSyncServer? = null
@@ -149,6 +161,7 @@ class HostSession(
     @Volatile private var streamSinceNanos = 0L
     @Volatile private var file: String? = null
     @Volatile private var songs: SongList? = null
+    @Volatile private var capture: AppFeed? = null
     private var player: Thread? = null
 
     /**
@@ -184,6 +197,8 @@ class HostSession(
     fun open() = synchronized(lock) {
         if (commandServer != null) return
         problem = null
+        // A program a host that died left turned down - see [AppTurnDown]. Not a reason to refuse the role.
+        runCatching { turnDown.putBack() }
         val hostId = HostIdentity(identityDirectory).current()
         val command = RoomCommandServer(ports.command, hostId)
         val clock = ClockSyncServer(ports.clock)
@@ -281,6 +296,9 @@ class HostSession(
             volumePercent = volume.percent,
             roomVolumePercent = roomVolume,
             volumeTouched = roomVolume != null || asked.isNotEmpty() || volume.percent != SoftwareVolume.FULL,
+            capturing = capture?.takeIf { playing }?.app,
+            capturePadded = capture?.takeIf { playing }?.padded(),
+            heldDown = if (playing && capture != null) emptyList() else turnDown.held(),
             open = command != null,
             playing = playing,
             ended = ended,
@@ -318,17 +336,39 @@ class HostSession(
      * the stream exists - see [tell].
      */
     fun play(files: List<File>, first: Int, alsoHere: Boolean) = synchronized(lock) {
+        if (files.isEmpty()) return
+        val list = SongList(files, first, leadFrames = HostStream.DEFAULT_LEAD_NANOS * TonePcmSource.SAMPLE_RATE / 1_000_000_000L)
+        startPlayer(SongFeed(list), files[first.coerceIn(0, files.size - 1)].name, alsoHere) {
+            songs = list
+            capture = null
+        }
+    }
+
+    /**
+     * Starts the room playing whatever [pid] - a program from [AudioSessions.list] - is playing,
+     * until stopped: the handset host's 抓取音频. The program is turned down in the mixer for as
+     * long as the room plays it, and put back at stop - see [AppTurnDown].
+     */
+    fun playApp(pid: Long, app: String, alsoHere: Boolean) = synchronized(lock) {
+        val feed = AppFeed(pid, app, openCapture, turnDown)
+        startPlayer(feed, app, alsoHere) {
+            songs = null
+            capture = feed
+        }
+    }
+
+    /** Under [lock]. [adopt] makes [feed] the one the window's controls act on. */
+    private fun startPlayer(feed: Feed, name: String, alsoHere: Boolean, adopt: () -> Unit) {
         val chunks = chunkServer ?: return
-        if (player?.isAlive == true || files.isEmpty()) return
+        if (player?.isAlive == true) return
         problem = null
-        this.file = files[first.coerceIn(0, files.size - 1)].name
+        this.file = name
         playing = true
         ended = false
         stopEchoUntilNanos = 0L
         val mine = ++generation
-        val list = SongList(files, first, leadFrames = HostStream.DEFAULT_LEAD_NANOS * TonePcmSource.SAMPLE_RATE / 1_000_000_000L)
-        songs = list
-        player = Thread({ playOn(chunks, list, alsoHere, mine) }, "host-play").apply {
+        adopt()
+        player = Thread({ playOn(chunks, feed, alsoHere, mine) }, "host-play").apply {
             isDaemon = true
             start()
         }
@@ -366,12 +406,23 @@ class HostSession(
      * The player is waited for only so long. One still opening its file or its speakers when the
      * wait runs out is let go of, and [generation] is what stops it streaming once it gets there.
      */
-    fun stopPlaying() = synchronized(lock) {
-        if (!playing && player == null) return
-        sayStop()
-        player?.join(JOIN_MILLIS)
-        player = null
-        stream = null
+    fun stopPlaying() {
+        val stopping = synchronized(lock) {
+            if (!playing && player == null) return
+            sayStop()
+            player
+        }
+        // Outside the lock: the player takes it on its way out, and waiting for it while holding
+        // it made every stop wait the whole [JOIN_MILLIS] - with the window's status, which
+        // takes the same lock, frozen for as long.
+        stopping?.join(JOIN_MILLIS)
+        synchronized(lock) {
+            // Only if no newer play has started in the meantime; its player is its own.
+            if (player === stopping) {
+                player = null
+                stream = null
+            }
+        }
     }
 
     /**
@@ -514,15 +565,16 @@ class HostSession(
         stream = null
     }
 
-    private fun playOn(chunks: ChunkServer, songs: SongList, alsoHere: Boolean, mine: Int) {
+    private fun playOn(chunks: ChunkServer, feed: Feed, alsoHere: Boolean, mine: Int) {
         // Everything this thread says about the room is said only while it is still the current
         // press of play: after that, [playing] and [problem] belong to the next one.
         fun current() = generation == mine
         try {
-            // A list with nothing playable in it is said before anybody is told to play.
-            if (!songs.prepare()) {
+            // A list with nothing playable in it, or a program that cannot be heard, is said
+            // before anybody is told to play.
+            feed.prepare()?.let {
                 if (current()) {
-                    problem = HostProblem.FileUnreadable(songs.skipped().joinToString("；"))
+                    problem = it
                     playing = false
                 }
                 return
@@ -551,8 +603,8 @@ class HostSession(
                 val hostStream = HostStream(
                     ports.chunk,
                     { _, _ ->
-                        val pcm = songs.nextChunk() ?: ByteArray(HostStream.CHUNK_BYTES)
-                        val name = songs.playhead()?.name
+                        val pcm = feed.nextChunk()
+                        val name = feed.name()
                         if (name != null && name != announced) {
                             announced = name
                             file = name
@@ -570,7 +622,7 @@ class HostSession(
                 }
                 // Once through the list and no more, the way the handset host plays a folder: one
                 // with no end is one a person can only stop.
-                val lastPlayAt = hostStream.streamWhile { playing && current() && songs.hasMore() }
+                val lastPlayAt = hostStream.streamWhile { playing && current() && feed.hasMore() }
                 if (lastPlayAt != null && playing && current()) {
                     // Every chunk is stamped a lead into its own future, so the song is over only
                     // once the last one has been heard - the handset host's endOfSong. Stopping at
@@ -599,6 +651,10 @@ class HostSession(
                 playing = false
                 problem = HostProblem.PlayFailed(e.toString())
             }
+        } finally {
+            // Whatever the way out: a program left turned down is the one thing here that outlives
+            // this process.
+            runCatching { feed.close() }
         }
     }
 

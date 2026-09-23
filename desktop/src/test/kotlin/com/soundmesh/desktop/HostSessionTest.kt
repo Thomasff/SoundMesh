@@ -488,7 +488,116 @@ class HostSessionTest {
         }
     }
 
+    /** A capture that hands over [SAMPLE] on every sample, a packet every ten milliseconds, until closed. */
+    private class FakeCapture(private val onPcm: (ByteArray, Int) -> Unit) : CaptureHandle {
+        @Volatile override var gain = 1f
+        @Volatile var closed = false
+
+        override fun start() {
+            Thread {
+                val packet = ByteArray(480 * 4)
+                for (i in packet.indices step 2) {
+                    packet[i] = (SAMPLE.toInt() and 0xFF).toByte()
+                    packet[i + 1] = (SAMPLE.toInt() shr 8).toByte()
+                }
+                while (!closed) {
+                    onPcm(packet, packet.size)
+                    Thread.sleep(10)
+                }
+            }.apply { isDaemon = true }.start()
+        }
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    private fun capturingSession(ports: HostPorts, mixer: FakeMixer, captures: MutableList<FakeCapture>, pid: Long = MUSIC) =
+        HostSession(
+            folder.root, ports, advertise = false, openSpeakers = FakeSpeakers()::open, retellMillis = 50L,
+            mixer = mixer,
+            openCapture = { asked, onPcm ->
+                if (asked != pid) error("no such process")
+                FakeCapture(onPcm).also { captures.add(it) }
+            }
+        )
+
+    /**
+     * 抓取音频 on the desktop: the room is sent what the program plays, the program is turned
+     * down here while it lasts with the gain that undoes it, and stop puts it back.
+     */
+    @Test
+    fun aProgramsSoundIsSentAndItIsTurnedDownUntilStop() {
+        val ports = ports()
+        val mixer = FakeMixer().apply { add(MUSIC, "music", 0.6f) }
+        val captures = java.util.concurrent.CopyOnWriteArrayList<FakeCapture>()
+        val host = capturingSession(ports, mixer, captures)
+        val received = java.util.concurrent.CopyOnWriteArrayList<com.soundmesh.core.AudioChunk>()
+        host.open()
+        val client = com.soundmesh.probe.sync.ChunkClient("127.0.0.1", ports.chunk) { received.add(it) }
+        try {
+            client.start()
+            host.playApp(MUSIC, "music", alsoHere = false)
+            assertTrue(eventually { host.status().capturing == "music" })
+            // On the play thread, once the capture has opened.
+            assertTrue("never turned down", eventually { mixer.level(MUSIC) == AppTurnDown.LEVEL })
+            assertTrue("the gain does not undo it", eventually { kotlin.math.abs(captures.single().gain - 600f) < 0.01f })
+
+            val heard = { chunk: com.soundmesh.core.AudioChunk ->
+                (chunk.pcm.indices step 2).all { chunk.pcm[it] == (SAMPLE.toInt() and 0xFF).toByte() && chunk.pcm[it + 1] == (SAMPLE.toInt() shr 8).toByte() }
+            }
+            assertTrue("the program's sound never reached the room", eventually { received.any(heard) })
+
+            host.stopPlaying()
+            assertTrue("the capture was left open", captures.single().closed)
+            assertEquals(0.6f, mixer.level(MUSIC))
+            assertNull(host.status().capturing)
+            assertTrue(host.status().heldDown.isEmpty())
+        } finally {
+            client.stop()
+            host.close()
+        }
+    }
+
+    /** A program that cannot be captured is said by name, and nothing about it is touched. */
+    @Test
+    fun aProgramThatCannotBeCapturedIsSaidAndLeftAlone() {
+        val ports = ports()
+        val mixer = FakeMixer().apply { add(MUSIC + 1, "other", 0.6f) }
+        val host = capturingSession(ports, mixer, java.util.concurrent.CopyOnWriteArrayList())
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        host.open()
+        val phone = standBy(ports.command, heard)
+        try {
+            assertTrue(eventually { host.status().phones.size == 1 })
+            host.playApp(MUSIC + 1, "other", alsoHere = false)
+            assertTrue(eventually { host.status().problem is HostProblem.CaptureFailed })
+            assertFalse(host.status().playing)
+            assertEquals(0.6f, mixer.level(MUSIC + 1))
+            assertNull(heard.poll(500, TimeUnit.MILLISECONDS))
+        } finally {
+            phone.close()
+            host.close()
+        }
+    }
+
+    /** A program a host that died left turned down is put back when this machine is host again. */
+    @Test
+    fun openingPutsBackWhatADeadHostLeftDown() {
+        val mixer = FakeMixer().apply { add(MUSIC, "music", 0.7f) }
+        AppTurnDown(folder.root, mixer).turnDown(MUSIC, "music")
+        val host = capturingSession(ports(), mixer, java.util.concurrent.CopyOnWriteArrayList())
+        try {
+            host.open()
+            assertEquals(0.7f, mixer.level(MUSIC))
+        } finally {
+            host.close()
+        }
+    }
+
     private companion object {
         const val PHONE = "a1b2c3d4e5f60718"
+        const val MUSIC = 4242L
+        const val SAMPLE: Short = 1234
     }
 }
