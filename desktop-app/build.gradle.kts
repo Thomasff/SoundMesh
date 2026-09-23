@@ -42,6 +42,7 @@ compose.desktop {
         nativeDistributions {
             packageName = "SoundMesh"
             packageVersion = "1.0.0"
+            modules("java.instrument", "jdk.unsupported")
         }
     }
 }
