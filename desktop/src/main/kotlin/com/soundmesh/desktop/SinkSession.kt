@@ -80,8 +80,6 @@ data class SinkStatus(
     val room: RoomState?,
     /** What the last measuring round said, in its own sentence; null before one has. */
     val round: RoundLine? = null,
-    /** Where that sentence is counting down to, on System.nanoTime's scale, or null. */
-    val roundUntilLocalNanos: Long? = null,
     /** Why the last round could not record here, or null when it could. */
     val microphone: MicrophoneProblem? = null,
     /** What opening the microphone said, beside [microphone]. */
@@ -168,7 +166,6 @@ class SinkSession(
     @Volatile private var roundCalledOff = false
     @Volatile private var roundEnded = false
     @Volatile private var round: RoundLine? = null
-    @Volatile private var roundUntil: Long? = null
     @Volatile private var microphone: MicrophoneProblem? = null
     @Volatile private var microphoneDetail: String? = null
 
@@ -191,7 +188,6 @@ class SinkSession(
         dials = RoundDials(clock = clockPort, result = resultPort, plan = planPort, room = roomPort, command = commandPort)
         reached = null
         round = null
-        roundUntil = null
         microphone = null
         failure = null
         problem = null
@@ -227,7 +223,6 @@ class SinkSession(
             room = stream?.rule?.let { drawnRoomOf(it, stream.badges, selfId) },
             stage = if (measuring) SinkStage.MEASURING else stage,
             round = round,
-            roundUntilLocalNanos = roundUntil,
             microphone = microphone,
             microphoneDetail = microphoneDetail,
             alignmentMillis = stream?.alignmentOffsetNanos?.let { it / 1_000_000.0 },
@@ -460,7 +455,6 @@ class SinkSession(
         measuring = true
         roundCalledOff = false
         round = null
-        roundUntil = null
         microphone = null
         Thread({
             try {
@@ -483,7 +477,6 @@ class SinkSession(
                     report = object : SinkRoundReport {
                         override fun say(line: RoundLine, untilLocalNanos: Long?) {
                             round = line
-                            roundUntil = untilLocalNanos
                         }
 
                         override fun hostIs(hostId: String) {

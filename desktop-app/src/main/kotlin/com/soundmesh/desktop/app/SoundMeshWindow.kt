@@ -776,7 +776,7 @@ private fun describe(status: SinkStatus): String = when (status.stage) {
     SinkStage.PLAYING -> say(Phrases.pc_sink_playing)
     SinkStage.HOST_SILENT -> say(Phrases.pc_sink_host_silent)
     SinkStage.FAILED -> say(Phrases.pc_sink_failed, status.problem)
-    SinkStage.MEASURING -> (status.round?.let { describe(it) } ?: say(Phrases.pc_sink_measuring)) + countdown(status)
+    SinkStage.MEASURING -> status.round?.let { describe(it) } ?: say(Phrases.pc_sink_measuring)
 }
 
 /**
@@ -816,14 +816,6 @@ private fun describe(problem: MicrophoneProblem, detail: String?): String = when
     MicrophoneProblem.DENIED -> say(Phrases.pc_mic_denied)
     MicrophoneProblem.NOT_48K -> say(Phrases.pc_mic_not_48k, detail)
     MicrophoneProblem.OTHER -> say(Phrases.pc_mic_other, detail)
-}
-
-/** The seconds left to what the round's line is counting down to, rounded up; nothing past it. */
-@Composable
-private fun countdown(status: SinkStatus): String {
-    val until = status.roundUntilLocalNanos ?: return ""
-    val seconds = ((until - System.nanoTime() + 999_999_999L) / 1_000_000_000L).toInt()
-    return if (seconds > 0) say(Phrases.pc_round_left, seconds) else ""
 }
 
 private const val POLL_MILLIS = 500L

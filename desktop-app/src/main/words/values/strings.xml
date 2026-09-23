@@ -118,7 +118,6 @@
     <string name="pc_round_room_done">送到了。房间里 %1$d 台，这台电脑有 %2$d 对量出来了。</string>
     <string name="pc_round_room_approximate">送到了。房间里 %1$d 台，这台电脑有 %2$d 对量出来了。这台还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f ms 先用着（是估的，误差大概 1–2 ms）。有空在主机的名单上点这台电脑做一次配对，测出来的会顶掉它。</string>
     <string name="pc_round_slow_link">网络太慢，没法对齐：和主机一来一回要 %1$.0f ms，超过 %2$.0f 就对不准了。</string>
-    <string name="pc_round_left">（还有 %1$d 秒）</string>
     <string name="pc_mic_no_device">这台电脑没有麦克风，测不了。主机那边会显示「没有麦克风」。</string>
     <string name="pc_mic_denied">麦克风被 Windows 挡住了：设置 → 隐私和安全性 → 麦克风，打开「让桌面应用访问麦克风」。</string>
     <string name="pc_mic_not_48k">麦克风的采样率是 %1$s，测量要 48 kHz：在「声音设置」里把麦克风改成 48000 Hz。</string>
