@@ -165,7 +165,9 @@ class SinkSession(
         val line = RoomCommandClient(host, commandPort, selfId, carrying = null, called = called, onCommand = ::obey)
         line.start()
         try {
-            var saidHereAt = 0L
+            // From now rather than zero: nanoTime's origin is arbitrary and may be negative, and the
+            // line says it is there on connecting anyway.
+            var saidHereAt = System.nanoTime()
             fun beat() {
                 val now = System.nanoTime()
                 if (now - saidHereAt >= SAY_HERE_EVERY_NANOS && line.sayHere()) saidHereAt = now
