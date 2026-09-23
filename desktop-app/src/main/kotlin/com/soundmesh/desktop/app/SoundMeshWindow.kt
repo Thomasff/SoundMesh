@@ -10,6 +10,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,6 +41,8 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
 import java.io.FilenameFilter
+import java.net.Inet4Address
+import java.net.NetworkInterface
 
 private enum class Role { HOST, SINK }
 
@@ -103,6 +106,8 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     }
     if (status.ended) Text("放完了。")
     Text("手机上的 SoundMesh 在待命时会自动跟上。")
+    val addresses = remember { ownAddresses() }
+    if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、"))
     Text(if (status.phones.isEmpty()) "还没有手机连上" else "已连上：" + status.phones.joinToString("、"))
     Diagnostics(
         listOf(
@@ -120,10 +125,28 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
     val going = status.stage !in setOf(SinkStage.IDLE, SinkStage.NOT_FOUND, SinkStage.FAILED)
 
+    var address by remember { mutableStateOf("") }
+
     if (going) {
         Button(onClick = { scope.launch(sessions) { sink.stop() } }) { Text("停止") }
     } else {
         Button(onClick = { scope.launch(sessions) { sink.start() } }) { Text("开始") }
+        // The way in when discovery finds nothing: the handset scans the host's code there, and
+        // this machine has no camera to scan with. A host given this way is not looked for again
+        // if it moves - it has no identity to be recognised by.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(
+                value = address,
+                onValueChange = { address = it.trim() },
+                label = { Text("找不到时填主机地址") },
+                placeholder = { Text("比如 192.168.0.150") },
+                singleLine = true
+            )
+            OutlinedButton(
+                onClick = { scope.launch(sessions) { sink.start(address) } },
+                enabled = address.isNotEmpty()
+            ) { Text("连这个地址") }
+        }
     }
     Text(describe(status))
     status.hostName?.let { name -> Text("跟的是：$name" + (status.hostAddress?.let { "（$it）" } ?: "")) }
@@ -181,6 +204,20 @@ private fun pickSong(): File? {
     return dialog.files.firstOrNull()
 }
 
+/**
+ * The addresses a sink on this network could type in, read once when the pane opens. Every
+ * interface that is up, a tunnel's included: which one the other machine shares is not something
+ * this side can tell.
+ */
+private fun ownAddresses(): List<String> = runCatching {
+    NetworkInterface.getNetworkInterfaces().toList()
+        .filter { it.isUp && !it.isLoopback }
+        .flatMap { it.inetAddresses.toList() }
+        .filterIsInstance<Inet4Address>()
+        .filter { it.isSiteLocalAddress }
+        .map { it.hostAddress }
+}.getOrDefault(emptyList())
+
 private fun describe(problem: HostProblem): String = when (problem) {
     is HostProblem.PortTaken -> {
         val which = when (problem.port) {
@@ -202,9 +239,10 @@ private fun describe(status: SinkStatus): String = when (status.stage) {
     SinkStage.NOT_FOUND -> when (status.failure) {
         DiscoveryFailure.NO_COMPATIBLE_VERSION -> "找到了主机，但版本对不上，两边要装同一版。"
         DiscoveryFailure.AMBIGUOUS -> "房间里同时有两台主机，先关掉一台。"
-        else -> "没有主机应答。主机那边开了吗？两边在同一个网络上吗？"
+        else -> "没有主机应答。主机那边开了吗？两边在同一个网络上吗？也可以在下面直接填主机地址。"
     }
-    SinkStage.REACHING -> "找到了主机，正在连它（每 3 秒试一次）…"
+    // Not "found": a host typed in by address was never found, and may not be there at all.
+    SinkStage.REACHING -> "正在连主机（每 3 秒试一次）…"
     SinkStage.STANDING_BY -> "待命中：主机一放就跟着放。" + when (status.problem) {
         null -> ""
         SinkSession.NO_CLOCK_PROBLEM -> "\n上一次主机没有应答时钟，没跟上。"
