@@ -19,6 +19,8 @@ import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.RoomState
 import com.soundmesh.product.SourceSpot
 import com.soundmesh.product.SpatialRoom
+import com.soundmesh.product.StoredRoomDrawing
+import com.soundmesh.product.readBack
 import com.soundmesh.product.ruleOf
 import com.soundmesh.product.withEffect
 import java.io.File
@@ -192,6 +194,11 @@ class HostSession(
     private var room = RoomState()
     private val whereTheyWere = HashMap<String, RoomIcon>()
 
+    // Which devices not in the room just now were carrying the other half, and the file the
+    // drawing outlives the window in - the handset's, see [keepTheDrawing].
+    private val sidesTheyCarried = HashSet<String>()
+    private val drawing = StoredRoomDrawing(identityDirectory)
+
     // This machine's own part of the room while it plays aloud, or null - see [playOn].
     @Volatile private var localSpatial: SinkSpatial? = null
     private var playingHere = false
@@ -254,6 +261,11 @@ class HostSession(
         spatialServer = spatial
         record = advertised
         selfId = hostId
+        drawing.read()?.let { saved ->
+            whereTheyWere.putAll(saved.placements.associateBy { it.peerId })
+            sidesTheyCarried.addAll(saved.room.otherHalfIds)
+            room = room.readBack(saved)
+        }
         refreshRoom()
         teller = Thread({ tellWhileOpen() }, "host-tell").apply {
             isDaemon = true
@@ -265,6 +277,9 @@ class HostSession(
     fun close() {
         stopPlaying()
         synchronized(lock) {
+            // Only a session that was open has a drawing of its own; a close without one would
+            // write the defaults over what the last one left.
+            if (commandServer != null) keepTheDrawing()
             teller?.interrupt()
             teller = null
             runCatching { record?.close() }
@@ -541,12 +556,33 @@ class HostSession(
             else listOf(self) + (commandServer?.standingPeerIds() ?: emptyList())
         if (roster.distinct() == room.icons.map { it.peerId }) return
         whereTheyWere.putAll(room.icons.associateBy { it.peerId })
+        // The handset's rememberedSides, read against who was here rather than who is: what a
+        // device present carries is whatever it carries now, and one that comes back is handed
+        // its half again instead of being struck from the memory as it arrives.
+        sidesTheyCarried.removeAll(room.icons.map { it.peerId }.toSet())
+        sidesTheyCarried.addAll(room.otherHalfIds)
         room = room.copy(
             icons = SpatialRoom.reconciled(room.icons, roster, whereTheyWere),
             selfId = self,
-            otherHalfIds = SpatialRoom.reconciledOtherHalf(room.otherHalfIds, roster)
+            otherHalfIds = SpatialRoom.reconciledOtherHalf(room.otherHalfIds, roster, sidesTheyCarried)
         )
         publishRoom()
+    }
+
+    /**
+     * Writes the drawing down when this machine stops being the host, by the handset's file and
+     * rules (StoredRoomDrawing): where every device was put, including ones not here just now,
+     * and how the rule was set. Under [lock].
+     *
+     * On leaving rather than on every change, as the handset writes it on pausing: a drag changes
+     * the room on every move of the mouse. What this does not cover is the process dying without
+     * closing, the same trade the handset makes.
+     */
+    private fun keepTheDrawing() {
+        val placed = LinkedHashMap(whereTheyWere)
+        for (icon in room.icons) placed[icon.peerId] = icon
+        val present = room.icons.map { it.peerId }.toSet()
+        drawing.write(placed.values.toList(), room.copy(otherHalfIds = room.otherHalfIds + (sidesTheyCarried - present)))
     }
 
     /**

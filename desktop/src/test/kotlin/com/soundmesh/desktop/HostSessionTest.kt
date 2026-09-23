@@ -214,6 +214,45 @@ class HostSessionTest {
     }
 
     /**
+     * The drawing outlives the window, as it outlives the handset host's screen: where a device
+     * was put and which half it carried come back the next time this machine is the host, for a
+     * device that was not in the room when it opened and only stood by afterwards.
+     */
+    @Test
+    fun theDrawingIsThereTheNextTimeThisIsTheHost() {
+        val ports = ports()
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        val first = session(ports)
+        first.open()
+        val phone = standBy(ports.command, heard)
+        try {
+            assertTrue(eventually { first.status().room.icons.size == 2 })
+            first.moveIcon(RoomIcon(PHONE, 0.8f, 0.5f))
+            first.setSplit(SplitAxis.LOW_HIGH)
+            first.togglePart(PHONE)
+        } finally {
+            phone.close()
+            first.close()
+        }
+
+        val again = session(ports)
+        again.open()
+        val back = standBy(ports.command, heard)
+        try {
+            assertTrue(eventually { again.status().room.icons.size == 2 })
+            val room = again.status().room
+            val icon = room.icons.single { it.peerId == PHONE }
+            assertEquals(0.8f, icon.x, 1e-6f)
+            assertEquals(0.5f, icon.y, 1e-6f)
+            assertEquals(SplitAxis.LOW_HIGH, room.splitAxis)
+            assertTrue("the half it carried was forgotten", PHONE in room.otherHalfIds)
+        } finally {
+            back.close()
+            again.close()
+        }
+    }
+
+    /**
      * 下一首 moves the list on and restarts the timeline, and what was queued of the old song is
      * thrown away - here on this machine's own output, which plays through the same playout a
      * sink does.
