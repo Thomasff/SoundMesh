@@ -11,6 +11,11 @@ package com.soundmesh.desktop
 internal class FakeOutput(private val sampleRate: Int = 48000) : FrameOutput {
     var firstSchedulableFrame: Long = 0
     val scheduled = ArrayList<Triple<Long, Int, ShortArray>>()
+    var drops = 0
+
+    override fun dropScheduled() {
+        drops++
+    }
 
     override fun frameAtLocalNanos(localNanos: Long): Long = localNanos * sampleRate / 1_000_000_000L
 

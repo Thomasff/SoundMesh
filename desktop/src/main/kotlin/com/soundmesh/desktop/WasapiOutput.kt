@@ -37,4 +37,8 @@ class WasapiOutput(
 
     override fun schedule(samples: ShortArray, channels: Int, atFrame: Long): Boolean =
         renderer.scheduleIfAhead(samples, channels, atFrame)
+
+    override fun dropScheduled() {
+        renderer.dropAhead()
+    }
 }

@@ -22,6 +22,27 @@ class ChunkPlayoutTest {
         assertEquals(1, playout.played)
     }
 
+    /**
+     * A host that jumps starts its sequence again, and what this machine had queued is the place
+     * it jumped from: thrown away once, on the restart, and never on an ordinary next chunk or a
+     * hole.
+     */
+    @Test
+    fun aSequenceThatStartsAgainDropsWhatWasQueued() {
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+        playout.play(AudioChunk(0, 1_000_000_000L, stereo(4)))
+        playout.play(AudioChunk(1, 1_020_000_000L, stereo(4)))
+        playout.play(AudioChunk(3, 1_060_000_000L, stereo(4)))
+        assertEquals(0, output.drops)
+
+        playout.play(AudioChunk(0, 2_500_000_000L, stereo(4)))
+        assertEquals(1, output.drops)
+        assertEquals(1, playout.restarts)
+        playout.play(AudioChunk(1, 2_520_000_000L, stereo(4)))
+        assertEquals(1, output.drops)
+    }
+
     @Test
     fun theClockOffsetMovesTheLandingFrameTheOtherWay() {
         // The host is a second ahead of this machine, so a host instant of two seconds is one

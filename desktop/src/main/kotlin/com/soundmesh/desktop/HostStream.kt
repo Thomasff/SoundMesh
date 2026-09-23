@@ -73,6 +73,26 @@ class HostStream(
     fun localSeamBand(): String = localPlayout?.seamBand() ?: "not playing locally"
     fun localSeamShares(): String = localPlayout?.seamShares() ?: "not playing locally"
 
+    @Volatile private var jumpWanted = false
+
+    /** Times the timeline started again, asked for or because the source fell behind it. */
+    @Volatile var jumps = 0
+        private set
+
+    /**
+     * Starts the timeline again a lead from now, sequence from zero, on the next chunk - a new
+     * song, a seek, a pause. Every sink throws away what it had queued when it sees the sequence
+     * go back (ChunkPlayout.play), as a handset does, so the room hears the new place a lead
+     * later rather than a lead of the old one first.
+     *
+     * The stream also does it by itself when the source took so long - a song being decoded -
+     * that the next chunk would reach the sinks too late to be played: a gap of a lead, where
+     * carrying on would be a run of chunks every sink throws away as late.
+     */
+    fun jump() {
+        jumpWanted = true
+    }
+
     /** Streams [chunks] chunks and returns once the last one has been handed over - see [streamWhile]. */
     fun stream(chunks: Int) {
         var sent = 0
@@ -98,13 +118,25 @@ class HostStream(
      * caller that ran out of song can wait until it has been heard.
      */
     fun streamWhile(keepGoing: () -> Boolean): Long? {
-        val anchor = System.nanoTime() + leadNanos
+        var anchor = System.nanoTime() + leadNanos
         var frameIndex = 0L
         var sequence = 0
         var lastPlayAt: Long? = null
         while (keepGoing()) {
+            val pcm = source(frameIndex, ChunkCodec.FRAMES_PER_CHUNK)
+            // After the read, so the jump lands on the first chunk read from the new place; the
+            // one a read already had in hand slips through as twenty milliseconds of the old one,
+            // as it does on the handset.
+            // A third of the lead left: room for the network and a sink's scheduling. Picked, not measured.
+            val late = anchor + sequence * CHUNK_NANOS - System.nanoTime() < leadNanos / 3
+            if (jumpWanted || (late && sequence > 0)) {
+                jumpWanted = false
+                anchor = System.nanoTime() + leadNanos
+                sequence = 0
+                jumps++
+            }
             val playAt = anchor + sequence * CHUNK_NANOS
-            val chunk = AudioChunk(sequence, playAt, source(frameIndex, ChunkCodec.FRAMES_PER_CHUNK))
+            val chunk = AudioChunk(sequence, playAt, pcm)
             chunkServer.broadcast(chunk)
             // After the broadcast, so a slow local output cannot hold up the wire. The sinks are
             // across a room and this one is in the same process; whichever of them is behind, the
@@ -137,5 +169,8 @@ class HostStream(
          * which machine it joined - the one difference nobody would look for.
          */
         const val DEFAULT_LEAD_NANOS = 1_500_000_000L
+
+        /** One chunk of 16-bit stereo, which is what silence is sent as. */
+        const val CHUNK_BYTES = ChunkCodec.FRAMES_PER_CHUNK * 4
     }
 }

@@ -198,6 +198,14 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
         }
 
     /**
+     * Forgets every clip that has not started to be handed to the engine. One already under way
+     * plays out: it is at most a chunk, and cutting it would be a click.
+     */
+    fun dropAhead() = synchronized(lock) {
+        clips.removeAll { it.startFrame >= written }
+    }
+
+    /**
      * Which frame the engine will be consuming at [qpcDeadline], given a fresh clock reading.
      *
      * The arithmetic is only as good as the reading, so callers that care take the reading

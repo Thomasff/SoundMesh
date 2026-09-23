@@ -3,6 +3,7 @@ package com.soundmesh.desktop
 import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomOrder
+import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.ChunkServer
 import com.soundmesh.probe.sync.ClockPacket
@@ -74,6 +75,11 @@ data class HostStatus(
     /** The last play ran to the end of its file and stopped the room itself, rather than being stopped. */
     val ended: Boolean,
     val file: String?,
+    /** Which song of how many, and how far in the room is hearing it; null when not playing. */
+    val playhead: Playhead?,
+    val paused: Boolean,
+    /** Songs in the list that could not be read and were passed over, each with why. */
+    val skipped: List<String>,
     /** This machine's own id and colour place, for the first row of the roster. */
     val selfId: String?,
     val selfPlace: Int?,
@@ -142,6 +148,7 @@ class HostSession(
     @Volatile private var stream: HostStream? = null
     @Volatile private var streamSinceNanos = 0L
     @Volatile private var file: String? = null
+    @Volatile private var songs: SongList? = null
     private var player: Thread? = null
 
     /**
@@ -278,6 +285,9 @@ class HostSession(
             playing = playing,
             ended = ended,
             file = file,
+            playhead = songs?.takeIf { playing }?.playhead(),
+            paused = songs?.paused == true,
+            skipped = songs?.skipped().orEmpty(),
             selfId = selfId,
             selfPlace = selfId?.let { places[it] },
             phones = command?.standingPeerIds().orEmpty().map { peerId ->
@@ -299,22 +309,53 @@ class HostSession(
         )
     }
 
+    /** One song - see the other [play]. */
+    fun play(file: File, alsoHere: Boolean) = play(listOf(file), 0, alsoHere)
+
     /**
-     * Starts the room playing [file], on a thread of its own because opening the speakers must
-     * not happen on the window's. The handsets are told once the stream exists - see [tell].
+     * Starts the room playing [files] from [first] on, one after another, on a thread of its own
+     * because opening the speakers must not happen on the window's. The handsets are told once
+     * the stream exists - see [tell].
      */
-    fun play(file: File, alsoHere: Boolean) = synchronized(lock) {
+    fun play(files: List<File>, first: Int, alsoHere: Boolean) = synchronized(lock) {
         val chunks = chunkServer ?: return
-        if (player?.isAlive == true) return
+        if (player?.isAlive == true || files.isEmpty()) return
         problem = null
-        this.file = file.name
+        this.file = files[first.coerceIn(0, files.size - 1)].name
         playing = true
         ended = false
         stopEchoUntilNanos = 0L
         val mine = ++generation
-        player = Thread({ playOn(chunks, file, alsoHere, mine) }, "host-play").apply {
+        val list = SongList(files, first, leadFrames = HostStream.DEFAULT_LEAD_NANOS * TonePcmSource.SAMPLE_RATE / 1_000_000_000L)
+        songs = list
+        player = Thread({ playOn(chunks, list, alsoHere, mine) }, "host-play").apply {
             isDaemon = true
             start()
+        }
+    }
+
+    /** [by] songs on or back in the list; the room hears the new one a lead later. */
+    fun stepSong(by: Int) = synchronized(lock) {
+        songs?.step(by)
+        stream?.jump()
+    }
+
+    /** To [millis] into the song playing. */
+    fun seekTo(millis: Long) = synchronized(lock) {
+        songs?.seekTo(millis)
+        stream?.jump()
+    }
+
+    /**
+     * Paused, the room is sent silence; the jump throws away what the sinks had queued, so it
+     * goes quiet at once rather than a lead later, and going on again starts from what was heard.
+     */
+    fun setPaused(wanted: Boolean) {
+        synchronized(lock) {
+            val list = songs ?: return
+            if (list.paused == wanted) return
+            list.setPaused(wanted)
+            stream?.jump()
         }
     }
 
@@ -473,16 +514,15 @@ class HostSession(
         stream = null
     }
 
-    private fun playOn(chunks: ChunkServer, file: File, alsoHere: Boolean, mine: Int) {
+    private fun playOn(chunks: ChunkServer, songs: SongList, alsoHere: Boolean, mine: Int) {
         // Everything this thread says about the room is said only while it is still the current
         // press of play: after that, [playing] and [problem] belong to the next one.
         fun current() = generation == mine
         try {
-            val source = try {
-                FilePcmSource.open(file)
-            } catch (e: Exception) {
+            // A list with nothing playable in it is said before anybody is told to play.
+            if (!songs.prepare()) {
                 if (current()) {
-                    problem = HostProblem.FileUnreadable(e.message ?: e.toString())
+                    problem = HostProblem.FileUnreadable(songs.skipped().joinToString("；"))
                     playing = false
                 }
                 return
@@ -506,9 +546,20 @@ class HostSession(
                         publishRoom()
                     }
                 }
+                // Which song the room was last told of, so it is told once per song.
+                var announced: String? = null
                 val hostStream = HostStream(
                     ports.chunk,
-                    source::fill,
+                    { _, _ ->
+                        val pcm = songs.nextChunk() ?: ByteArray(HostStream.CHUNK_BYTES)
+                        val name = songs.playhead()?.name
+                        if (name != null && name != announced) {
+                            announced = name
+                            file = name
+                            synchronized(lock) { spatialServer?.publishNowPlaying(name) }
+                        }
+                        pcm
+                    },
                     localOutput = speakers?.output?.let { GainOutput(it, volume) },
                     chunkServer = chunks,
                     localShape = { chunk -> here?.shaped(chunk) ?: chunk }
@@ -517,12 +568,9 @@ class HostSession(
                     streamSinceNanos = System.nanoTime()
                     stream = hostStream
                 }
-                // Once through and no more, the way the handset host plays a song: one with no end
-                // is one a person can only stop. The loop in the source stays for the command line,
-                // whose runs listen for the seam.
-                val songChunks = source.frameCount / ChunkCodec.FRAMES_PER_CHUNK
-                var sent = 0
-                val lastPlayAt = hostStream.streamWhile { playing && current() && sent++ < songChunks }
+                // Once through the list and no more, the way the handset host plays a folder: one
+                // with no end is one a person can only stop.
+                val lastPlayAt = hostStream.streamWhile { playing && current() && songs.hasMore() }
                 if (lastPlayAt != null && playing && current()) {
                     // Every chunk is stamped a lead into its own future, so the song is over only
                     // once the last one has been heard - the handset host's endOfSong. Stopping at

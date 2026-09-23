@@ -26,6 +26,13 @@ interface FrameOutput {
      * must keep playing. Same arithmetic, opposite right answer.
      */
     fun schedule(samples: ShortArray, channels: Int, atFrame: Long): Boolean
+
+    /**
+     * Forgets everything scheduled that has not started to play. What a host jumping - a new
+     * song, a seek, a pause - asks of every sink: the next second and a half already queued is
+     * the old place, and the handsets throw theirs away too (PlaybackScheduler.clear).
+     */
+    fun dropScheduled() {}
 }
 
 /** The three things a seam is made of - see [ChunkPlayout.seamShareFramesAtQuantile]. */
@@ -73,6 +80,10 @@ class ChunkPlayout(
 
     /** Chunks whose instant had already gone out by the time they got here. */
     var droppedLate: Int = 0
+        private set
+
+    /** Times the host started its sequence again, and what was queued was thrown away. */
+    var restarts: Int = 0
         private set
 
     /**
@@ -202,6 +213,12 @@ class ChunkPlayout(
     private var lastChunkFrames: Int = 0
 
     fun play(chunk: AudioChunk): Boolean {
+        // The host starts its sequence again whenever it jumps, and only then: what is queued
+        // from before is the place it jumped away from.
+        if (lastSequence != NO_CHUNK_YET && chunk.sequence < lastSequence) {
+            output.dropScheduled()
+            restarts++
+        }
         // Read once, so the share below is the offset this chunk was actually placed with.
         val offset = offsetNanos()
         // hostNanos = localNanos + offset - alignment, which is the sink session's own arithmetic

@@ -48,6 +48,7 @@ import com.soundmesh.desktop.HostPort
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
 import com.soundmesh.desktop.HostStatus
+import com.soundmesh.desktop.Playhead
 import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.SinkStage
 import com.soundmesh.desktop.SinkStatus
@@ -63,6 +64,8 @@ import java.io.File
 import java.io.FilenameFilter
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import javax.swing.JFileChooser
+import javax.swing.UIManager
 import kotlin.math.roundToInt
 
 private enum class Role { HOST, SINK }
@@ -105,14 +108,27 @@ fun SoundMeshWindow(host: HostSession, sink: SinkSession, sessions: CoroutineDis
 @Composable
 private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     val status = polled { host.status() } ?: return
-    var file by remember { mutableStateOf<File?>(null) }
+    var files by remember { mutableStateOf<List<File>>(emptyList()) }
+    var picked by remember { mutableStateOf("还没选歌") }
     var alsoHere by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
 
     status.problem?.let { Text(describe(it), color = MaterialTheme.colorScheme.error) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = { pickSong()?.let { file = it } }, enabled = !status.playing) { Text("选文件") }
-        Text(file?.name ?: "还没选文件")
+        OutlinedButton(onClick = {
+            pickSongs().takeIf { it.isNotEmpty() }?.let {
+                files = it
+                picked = if (it.size == 1) it.single().name else "${it.size} 首"
+            }
+        }, enabled = !status.playing) { Text("选文件") }
+        OutlinedButton(onClick = {
+            pickFolder()?.let { folder ->
+                val songs = songsIn(folder)
+                files = songs
+                picked = if (songs.isEmpty()) "「${folder.name}」里没有能放的歌" else "「${folder.name}」里 ${songs.size} 首"
+            }
+        }, enabled = !status.playing) { Text("选文件夹") }
+        Text(picked)
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Switch(checked = alsoHere, onCheckedChange = { alsoHere = it }, enabled = !status.playing)
@@ -120,11 +136,15 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     }
     if (status.playing) {
         Button(onClick = { scope.launch(sessions) { host.stopPlaying() } }) { Text("停止") }
+        status.playhead?.let { Transport(host, it, status.paused, sessions) }
     } else {
         Button(
-            onClick = { file?.let { chosen -> scope.launch(sessions) { host.play(chosen, alsoHere) } } },
-            enabled = status.open && file != null
+            onClick = { files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } } },
+            enabled = status.open && files.isNotEmpty()
         ) { Text("播放") }
+    }
+    if (status.skipped.isNotEmpty()) {
+        Text("跳过了放不了的：" + status.skipped.joinToString("；"), color = MaterialTheme.colorScheme.error)
     }
     if (status.ended) Text("放完了。")
     Text("手机上的 SoundMesh 在待命时会自动跟上。")
@@ -223,6 +243,33 @@ private fun Roster(status: HostStatus) {
         }
         note?.let { Text(it, Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
     }
+}
+
+/**
+ * 上一首 / 暂停 / 下一首 and where in the song the room is - the handset host's transport row and
+ * playhead. Every one of them lands a lead later in the room: the queued audio is thrown away and
+ * the new place starts a second and a half on.
+ */
+@Composable
+private fun Transport(host: HostSession, playhead: Playhead, paused: Boolean, sessions: CoroutineDispatcher) {
+    val scope = rememberCoroutineScope()
+    Text("第 ${playhead.song + 1}/${playhead.songs} 首：${playhead.name}")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(-1) } }, enabled = playhead.song > 0) { Text("上一首") }
+        OutlinedButton(onClick = { scope.launch(sessions) { host.setPaused(!paused) } }) { Text(if (paused) "继续" else "暂停") }
+        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(1) } }, enabled = playhead.song < playhead.songs - 1) { Text("下一首") }
+    }
+    KnobLine(
+        "进度",
+        playhead.heardMillis.toFloat().coerceAtMost(playhead.durationMillis.toFloat()),
+        0f..playhead.durationMillis.toFloat().coerceAtLeast(1f),
+        "${clock(playhead.heardMillis)} / ${clock(playhead.durationMillis)}"
+    ) { scope.launch(sessions) { host.seekTo(it.toLong()) } }
+}
+
+private fun clock(millis: Long): String {
+    val seconds = millis / 1_000
+    return "%d:%02d".format(seconds / 60, seconds % 60)
 }
 
 /**
@@ -494,14 +541,32 @@ private fun <T> polled(read: () -> T): T? {
 
 private val SONG_EXTENSIONS = listOf("mp3", "m4a", "aac", "flac", "wma", "wav")
 
-private fun pickSong(): File? {
-    val dialog = FileDialog(null as Frame?, "选一首歌", FileDialog.LOAD)
+private fun isSong(name: String) = name.substringAfterLast(".").lowercase() in SONG_EXTENSIONS
+
+/** One song or several, played in the order picked. */
+private fun pickSongs(): List<File> {
+    val dialog = FileDialog(null as Frame?, "选歌（可以多选）", FileDialog.LOAD)
     // Windows ignores the filter; the pattern in the file name box is what filters there.
     dialog.file = SONG_EXTENSIONS.joinToString(";") { "*.$it" }
-    dialog.filenameFilter = FilenameFilter { _, name -> name.substringAfterLast(".").lowercase() in SONG_EXTENSIONS }
+    dialog.filenameFilter = FilenameFilter { _, name -> isSong(name) }
+    dialog.isMultipleMode = true
     dialog.isVisible = true
-    return dialog.files.firstOrNull()
+    return dialog.files.toList()
 }
+
+/** A folder, through Swing's chooser: the AWT dialog cannot pick a folder on Windows. */
+private fun pickFolder(): File? {
+    runCatching { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()) }
+    val chooser = JFileChooser().apply {
+        dialogTitle = "选一个放歌的文件夹"
+        fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+    }
+    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
+}
+
+/** The songs directly in [folder], by name. Not the folders inside it. */
+private fun songsIn(folder: File): List<File> =
+    folder.listFiles { file -> file.isFile && isSong(file.name) }.orEmpty().sortedBy { it.name.lowercase() }
 
 /**
  * The addresses a sink on this network could type in, read once when the pane opens. Every

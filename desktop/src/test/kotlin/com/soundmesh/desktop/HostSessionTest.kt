@@ -214,6 +214,31 @@ class HostSessionTest {
     }
 
     /**
+     * 下一首 moves the list on and restarts the timeline, and what was queued of the old song is
+     * thrown away - here on this machine's own output, which plays through the same playout a
+     * sink does.
+     */
+    @Test
+    fun theNextSongThrowsAwayWhatWasQueuedOfTheLast() {
+        val ports = ports()
+        val speakers = FakeSpeakers()
+        val host = session(ports, speakers)
+        host.open()
+        try {
+            val songs = listOf(writeTestWav(folder.newFile("a.wav")), writeTestWav(folder.newFile("b.wav")))
+            host.play(songs, 0, alsoHere = true)
+            assertTrue(eventually { host.status().playhead?.song == 0 && speakers.output.scheduled.size > 10 })
+            assertEquals(0, speakers.output.drops)
+            host.stepSong(1)
+            assertTrue("never moved on: ${host.status().playhead}", eventually { host.status().playhead?.song == 1 })
+            assertTrue("the old song's queue was kept", eventually { speakers.output.drops == 1 })
+            assertEquals("b.wav", host.status().file)
+        } finally {
+            host.close()
+        }
+    }
+
+    /**
      * The channel remembers nothing, so a handset that arrives while the room is playing hears
      * "play" only because the host says it again - once, not every time round.
      */

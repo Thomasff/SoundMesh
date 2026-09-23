@@ -48,6 +48,8 @@ class GainOutput(private val inner: FrameOutput, private val volume: SoftwareVol
 
     override fun frameAtLocalNanos(localNanos: Long): Long = inner.frameAtLocalNanos(localNanos)
 
+    override fun dropScheduled() = inner.dropScheduled()
+
     override fun schedule(samples: ShortArray, channels: Int, atFrame: Long): Boolean {
         val target = volume.gain()
         val from = lastGain
