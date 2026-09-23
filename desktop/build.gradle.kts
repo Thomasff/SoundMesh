@@ -28,6 +28,8 @@ tasks.withType<JavaCompile>().configureEach {
 
 dependencies {
     implementation(project(":core"))
+    // The handset's own QR encoder and version, so the two hosts draw the same code.
+    implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
 }
 

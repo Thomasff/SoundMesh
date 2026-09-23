@@ -1,5 +1,6 @@
 package com.soundmesh.desktop.app
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +32,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -47,6 +50,7 @@ import com.soundmesh.product.SpatialRoom
 import com.soundmesh.desktop.AudioSession
 import com.soundmesh.desktop.AudioSessions
 import com.soundmesh.desktop.HostPort
+import com.soundmesh.desktop.PairingCodeModules
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
 import com.soundmesh.desktop.HostStatus
@@ -190,7 +194,8 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
     if (status.ended) Text("放完了。")
     Text("手机上的 SoundMesh 在待命时会自动跟上。")
     val addresses = remember { ownAddresses() }
-    if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、"))
+    if (addresses.isNotEmpty()) Text("另一台电脑找不到这里时，填：" + addresses.joinToString("、") { it.address })
+    PairCode(host, status.open, addresses, sessions)
     Roster(status)
     HostDrawing(host, status.room, sessions)
     Effects(host, status.room, sessions)
@@ -615,14 +620,68 @@ private fun songsIn(folder: File): List<File> =
  * interface that is up, a tunnel's included: which one the other machine shares is not something
  * this side can tell.
  */
-private fun ownAddresses(): List<String> = runCatching {
+private fun ownAddresses(): List<OwnAddress> = runCatching {
     NetworkInterface.getNetworkInterfaces().toList()
         .filter { it.isUp && !it.isLoopback }
-        .flatMap { it.inetAddresses.toList() }
-        .filterIsInstance<Inet4Address>()
-        .filter { it.isSiteLocalAddress }
-        .map { it.hostAddress }
+        .flatMap { nic ->
+            nic.inetAddresses.toList()
+                .filterIsInstance<Inet4Address>()
+                .filter { it.isSiteLocalAddress }
+                .map { OwnAddress(it.hostAddress, nic.displayName ?: nic.name) }
+        }
 }.getOrDefault(emptyList())
+
+/** One of this machine's addresses, with the name Windows gives the adapter it is on. */
+private data class OwnAddress(val address: String, val adapter: String)
+
+/**
+ * The code a handset scans when it cannot find this host by itself - the handset host's
+ * PairCodeSection. The code can carry one address and this machine often has several (WiFi, a
+ * cable, a tunnel), with no way to tell from here which one the handset shares; so with more than
+ * one they are offered by adapter, and the one in the code is written under it, which is what
+ * makes a wrong pick visible.
+ */
+@Composable
+private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddress>, sessions: CoroutineDispatcher) {
+    var chosen by remember { mutableStateOf(addresses.firstOrNull()) }
+    var payload by remember { mutableStateOf<String?>(null) }
+    // Again once the role is open: the pane is drawn before the host has an id to put in it.
+    LaunchedEffect(chosen, open) { payload = chosen?.let { withContext(sessions) { host.pairingCode(it.address) } } }
+    Text("给手机扫的码", style = MaterialTheme.typography.titleSmall)
+    if (addresses.size > 1) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (address in addresses) {
+                FilterChip(
+                    selected = address == chosen,
+                    onClick = { chosen = address },
+                    label = { Text("${address.adapter}  ${address.address}") }
+                )
+            }
+        }
+    }
+    val where = chosen
+    if (where == null) {
+        Text("这台电脑现在没有局域网地址，手机扫不到。", color = MaterialTheme.colorScheme.error)
+        return
+    }
+    val code = payload ?: return
+    val modules = remember(code) { PairingCodeModules.of(code) }
+    Canvas(Modifier.size(PAIR_CODE_SIZE).background(Color.White)) {
+        val cell = size.width / modules.size
+        for (y in modules.indices) {
+            for (x in modules[y].indices) {
+                if (modules[y][x]) {
+                    drawRect(Color.Black, Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f))
+                }
+            }
+        }
+    }
+    Text("手机选「当从机」，找不到这里时扫这个码。")
+    Text("码里是 ${where.address}（${where.adapter}），扫码的手机要连在这个网上。")
+}
+
+/** Scanned from arm's length off a laptop screen, and small enough to leave the pane readable. */
+private val PAIR_CODE_SIZE = 200.dp
 
 private fun describe(problem: HostProblem): String = when (problem) {
     is HostProblem.PortTaken -> {

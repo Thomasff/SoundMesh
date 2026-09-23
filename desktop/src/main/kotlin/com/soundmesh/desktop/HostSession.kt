@@ -1,6 +1,8 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.ChunkCodec
+import com.soundmesh.core.PairingCode
+import com.soundmesh.core.PairingCodeCodec
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.TonePcmSource
@@ -325,6 +327,16 @@ class HostSession(
             localShares = stream?.localSeamShares(),
             problem = problem
         )
+    }
+
+    /**
+     * What the code a handset scans says - this host's id, [address], and the audio port - or null
+     * before the role is open. Spelled by core's codec, the one the handset host and the handset
+     * that scans both use; which of this machine's addresses to put in it is the window's to ask.
+     */
+    fun pairingCode(address: String): String? = synchronized(lock) {
+        val id = selfId?.takeIf { commandServer != null } ?: return null
+        PairingCodeCodec.encode(PairingCode(id, address, ports.chunk))
     }
 
     /** One song - see the other [play]. */

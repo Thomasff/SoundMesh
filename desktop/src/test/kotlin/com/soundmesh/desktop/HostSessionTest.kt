@@ -581,6 +581,24 @@ class HostSessionTest {
         }
     }
 
+    /** The code a handset scans names this host, the address the window chose, and the audio port. */
+    @Test
+    fun thePairingCodeNamesThisHostAndItsAudioPort() {
+        val ports = ports()
+        val host = session(ports)
+        assertNull("a code before there is a host", host.pairingCode("192.168.0.150"))
+        host.open()
+        try {
+            val code = com.soundmesh.core.PairingCodeCodec.decode(host.pairingCode("192.168.0.150")!!)
+            assertEquals(host.status().selfId, code.hostId)
+            assertEquals("192.168.0.150", code.address)
+            assertEquals(ports.chunk, code.chunkPort)
+        } finally {
+            host.close()
+        }
+        assertNull("a code for a host that has gone", host.pairingCode("192.168.0.150"))
+    }
+
     /** A program a host that died left turned down is put back when this machine is host again. */
     @Test
     fun openingPutsBackWhatADeadHostLeftDown() {
