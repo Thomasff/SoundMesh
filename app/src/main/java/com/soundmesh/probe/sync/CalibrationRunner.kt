@@ -50,7 +50,7 @@ class CalibrationRunner(
     private val caseId: String,
     private val requestedSource: CalibrationAudioSource = CalibrationAudioSource.MIC,
     private val hostNanosNow: (() -> Long)? = null
-) {
+) : RoundRecorder {
     /**
      * The host instant the recording opened at, once [record] has started it.
      *
@@ -65,7 +65,7 @@ class CalibrationRunner(
      * no capture timestamp API has to be trusted for it.
      */
     @Volatile
-    var startedAtHostNanos: Long? = null
+    override var startedAtHostNanos: Long? = null
         private set
     /**
      * The source that actually opened, once [record] has run. Not the same as the requested one:
@@ -84,7 +84,7 @@ class CalibrationRunner(
      * scheduled: the recording runs to an instant worked out before anything opened, and until
      * this existed there was nothing anywhere to ask whether the run was still wanted.
      */
-    fun record(seconds: Int, stopped: () -> Boolean = { false }) {
+    override fun record(seconds: Int, stopped: () -> Boolean) {
         val minimum = AudioRecord.getMinBufferSize(ChirpGenerator.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufferBytes = maxOf(minimum, 65536)
         val record = open(requestedSource, bufferBytes)
@@ -130,7 +130,7 @@ class CalibrationRunner(
      * A few megabytes per case, held until the next run of the same case writes over it, which
      * for the handful of cases the product itself uses is until the handset is wiped.
      */
-    fun discardRecording() {
+    override fun discardRecording() {
         runCatching {
             val directory = runStore.prepareRun(caseId)
             File(directory, "calibration.wav").delete()

@@ -1147,8 +1147,9 @@ class SyncRenderer(
          * session gives repeat n the band starting at [CHIRP_SEQUENCE_BASE] + n * this, which is
          * how [recordPlayedBoundary] keeps the reported chirp window on the first repeat alone.
          * Far wider than the six chunks a sweep occupies, so the bands cannot run into each other.
+         * Read from core, where a round that is not played through this renderer needs it too.
          */
-        const val CHIRP_REPEAT_STRIDE = 1_000
+        const val CHIRP_REPEAT_STRIDE = RoundChunks.CHIRP_REPEAT_STRIDE
 
         private const val DEFAULT_DEPTH_NANOS = 200_000_000L
 

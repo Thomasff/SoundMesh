@@ -1,9 +1,5 @@
 package com.soundmesh.product
 
-import android.content.Context
-import android.content.Intent
-import android.os.SystemClock
-import android.util.Log
 import com.soundmesh.core.AlignmentAnalysis
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.CalibrationUpdate
@@ -14,29 +10,22 @@ import com.soundmesh.core.LinkQuality
 import com.soundmesh.core.LinkSurvey
 import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.RoomResultMessage
-import com.soundmesh.probe.R
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.AlignmentResultClient
 import com.soundmesh.probe.sync.COMMAND_PORT
-import com.soundmesh.probe.sync.CalibrationAudioSource
 import com.soundmesh.probe.sync.CalibrationPlanClient
+import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncClient
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.HostIdentity
-import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.PeerCalibrationRunner
 import com.soundmesh.probe.sync.PeerRunLog
 import com.soundmesh.probe.sync.RoomResultClient
-import com.soundmesh.probe.sync.RouterPoke
+import com.soundmesh.probe.sync.RoundRecorder
+import com.soundmesh.probe.sync.RoundSpeaker
 import com.soundmesh.probe.sync.StoredApproximateCalibration
 import com.soundmesh.probe.sync.StoredCalibration
-import com.soundmesh.probe.sync.SyncActivity
-import com.soundmesh.probe.sync.holdingRadio
-import com.soundmesh.probe.sync.keepingAwake
-import com.soundmesh.probe.sync.radioHoldOf
-import com.soundmesh.probe.sync.routerPokeOf
 import com.soundmesh.probe.sync.tellHostWhy
-import com.soundmesh.session.SessionService
 import java.io.File
 import java.util.Locale
 
@@ -52,13 +41,16 @@ import java.util.Locale
  * arms keeps its shipped default: a caller that names nothing gets the run a listener's handset
  * does. See that screen's `timingFor` for why the schedule arrives as a function - the arm's own
  * defaults with anything a command line asked for already folded in.
+ *
+ * [audioSource] is a capture path's name rather than the handset's enum of them, since 09-23 when
+ * this moved to core: the recorder a platform hands in is what reads it. A desktop has one path.
  */
-internal data class SinkRoundRequest(
+data class SinkRoundRequest(
     val verifying: Boolean = false,
     val allowSlowLink: Boolean = false,
     val distanceOnly: Boolean = false,
     val room: Boolean = false,
-    val audioSource: CalibrationAudioSource = CalibrationAudioSource.parse(null),
+    val audioSource: String = "MIC",
     val keepFractionWhileFilling: Boolean = true,
     val timingFor: (String?) -> ArmSchedule = ::defaultTimingFor
 )
@@ -67,18 +59,19 @@ internal data class SinkRoundRequest(
  * Where a round's words go, and the one fact its caller cannot work out for itself.
  *
  * Two implementations and they want different things from it. A screen puts [say] in front of
- * somebody and counts down to [untilElapsedMillis]; a service puts it in the notification that is
+ * somebody and counts down to [untilLocalNanos]; a service puts it in the notification that is
  * already there. Neither can be assumed, so the run below says what happened and lets the caller
- * decide where it lands.
+ * decide where it lands - and, since the round is one copy for a handset and a desktop, in which
+ * words: it names the sentence and the caller spells it.
  */
-internal interface SinkRoundReport {
+interface SinkRoundReport {
     /**
      * One line about where the round is, with the instant it is counting down to.
      *
-     * [untilElapsedMillis] is on [SystemClock.elapsedRealtime]'s scale, and null means there is
-     * nothing to count down to - the round has either finished or is waiting on somebody else.
+     * [untilLocalNanos] is on [System.nanoTime]'s scale, and null means there is nothing to count
+     * down to - the round has either finished or is waiting on somebody else.
      */
-    fun say(text: String, untilElapsedMillis: Long? = null)
+    fun say(line: RoundLine, untilLocalNanos: Long? = null)
 
     /**
      * The host called the round off while this handset was waiting for its plan.
@@ -87,109 +80,43 @@ internal interface SinkRoundReport {
      * should leave at once, where one that merely failed lingers so its sentence can be read.
      */
     fun calledOff() {}
+
+    /**
+     * Who the host is, once a plan has said, for a caller that dialled an address without knowing.
+     *
+     * A handset always knows - it scanned the host's code - and ignores this. A desktop given an
+     * address by hand does not, and the constant this round stores is filed under the host's id, so
+     * that caller keeps it to find the constant again next time.
+     */
+    fun hostIs(hostId: String) {}
 }
 
 /**
- * How far off an instant on the host's clock is, on the scale a screen counts down in.
+ * The host a round is run against: where to reach it, and who it is if that is known.
  *
- * File scope rather than on either caller: the activity and the service both hand this to their
- * own [SinkRoundReport], and two copies of a subtraction is two places for a sign to be wrong.
+ * [hostId] is null only for a desktop that was given an address by hand and has never measured
+ * against it; the round then takes the id the host's plan names. See [SinkRoundReport.hostIs].
  */
-internal fun whenItReaches(instantNanos: Long, now: () -> Long): Long =
-    SystemClock.elapsedRealtime() + (instantNanos - now()) / 1_000_000L
+data class RoundHost(val address: String, val hostId: String?)
 
 /**
- * Runs [body] with this handset's radio held out of power save, saying whether it worked.
+ * The ports a round dials on the host, each the one the handset host has always listened on.
  *
- * Lifted out of [PeerCalibrateActivity.start] when the sink half stopped needing a screen. Both
- * roles need it and both need it recorded the same way - an access point buffers frames for a
- * station that is asleep, and the reply half of an exchange is as much of the round trip as the
- * request half, so a host dozing costs the sink exactly the same milliseconds.
- *
- * [held] is called with whether the lock was actually taken. On the record rather than assumed:
- * the lock is best effort, and a run whose lock quietly did nothing looks exactly like a run that
- * proves power save is irrelevant.
+ * Here since the round moved to core, which is also where the handset's own constants now read
+ * them from, so a desktop sink cannot dial a different port from the one a handset host opened.
  */
-internal fun withRadioAwake(
-    context: Context,
-    events: EventLog,
-    held: (Boolean) -> Unit,
-    body: () -> Unit
-) {
-    holdingRadio(radioHoldOf(context), held = held) {
-        // The lock above is not enough on its own; what keeps a radio awake is having something to
-        // receive. See keepingAwake for the three numbers that say so.
-        val poke: RouterPoke? = routerPokeOf(context)
-        // Said out loud because a poke that reaches nobody measures exactly like no poke at all:
-        // the first version of this aimed at an unreachable gateway and a whole round went by
-        // looking like evidence that power save does not matter.
-        keepingAwake(poke, answered = { answered ->
-            events.write(
-                when {
-                    poke == null || answered == null ->
-                        "radio-awake: this handset named no IPv4 router, so nothing is keeping it awake"
-                    answered -> "radio-awake: " + poke.router.hostAddress + " answered"
-                    else -> "radio-awake: " + poke.router.hostAddress + " did not answer"
-                }
-            )
-        }, body = body)
-    }
+object RoundPorts {
+    const val CLOCK = ClockPacket.DEFAULT_PORT
+
+    /** Where the host takes delivery of the sink's own reading of the run. */
+    const val RESULT = 45125
+
+    /** Next after the result's 45125. */
+    const val PLAN = 45126
+
+    /** Next after the plan's 45126, and held only while a room is being measured. */
+    const val ROOM = 45127
 }
-
-/**
- * Stops whatever this handset is playing, because a round is about to record it.
- *
- * Not a courtesy, and not a sink's problem alone - every handset in a round records, the one that
- * gathered it included. A round measures when a chirp arrived by correlating against the chirp,
- * and a recording with music over the top of it still produces a number. So the cost of skipping
- * this is not a failed round: it is a confident wrong answer, applied to every session afterwards
- * with nothing anywhere to notice it by.
- *
- * Not restarted at the end. The rest of the room is still measuring, and a handset that started
- * playing on its own in the middle of their window would be the next thing over their microphones.
- * Somebody presses play when the room is done, which is where that decision belongs.
- */
-internal fun hushWhateverIsPlaying(context: Context, events: EventLog) {
-    if (SessionService.ACTIVE == null) return
-    events.write("round-hush: stopping playback, a chirp measured through music measures the music")
-    context.startService(
-        Intent(context, SessionService::class.java).setAction(SessionService.ACTION_STOP)
-    )
-    // Bounded, and short against the sixteen seconds of clock a round opens with. A session that
-    // will not let go is worth a round measured over it far less than it is worth saying so, and
-    // the wait ending is not the same as the session having stopped.
-    val until = SystemClock.elapsedRealtime() + HUSH_WAIT_MILLIS
-    while (SessionService.ACTIVE != null && SystemClock.elapsedRealtime() < until) {
-        runCatching { Thread.sleep(HUSH_POLL_MILLIS) }
-    }
-    if (SessionService.ACTIVE != null) {
-        events.write("round-hush: the session was still up when the round began")
-    }
-}
-
-/**
- * Stops the music because somebody has walked onto a screen that measures, rather than because a
- * round has started.
- *
- * The round already hushes, and that was late by exactly the part a person notices. A round opens
- * with sixteen seconds of clock before the first chirp, so the music used to keep playing through
- * the reading of the page, stop at the press, and then leave the room in silence with nothing
- * apparently happening. Arriving is the moment the decision is actually made - nobody opens this
- * screen to keep listening - so the stop happens then and the wait for it happens while the page
- * is being read.
- *
- * Off the main thread because the stop below waits for the session to let go. Cheap when there is
- * nothing playing: it returns before starting anything.
- */
-internal fun hushOnArrival(context: Context, events: EventLog) {
-    if (SessionService.ACTIVE == null) return
-    Thread({ hushWhateverIsPlaying(context, events) }, "SoundMeshArrivalHush").start()
-}
-
-/** How long [hushWhateverIsPlaying] waits for playback to actually stop. */
-private const val HUSH_WAIT_MILLIS = 3_000L
-
-private const val HUSH_POLL_MILLIS = 50L
 
 /**
  * One handset measuring as a sink: the clock, the chirps, and what it does with the answer.
@@ -202,11 +129,18 @@ private const val HUSH_POLL_MILLIS = 50L
  *
  * The caller owns the thread, the radio hold and the busy flag. This runs on whatever thread it is
  * called on and blocks for the length of the round, which is a minute or two.
+ *
+ * In core since 09-23, so a desktop sink runs this same round rather than a copy of it. What a
+ * platform hands in is only what differs: where the round's files live, who the host is, where the
+ * sound goes out and the recording comes from, and how its sentences are spelled.
  */
-internal class SinkRound(
-    private val context: Context,
+class SinkRound(
+    /** Where this device keeps its identity, its constants and its runs. */
+    private val filesDir: File,
     private val request: SinkRoundRequest,
-    /** Whether the radio lock was actually taken, for the run's own report. See [withRadioAwake]. */
+    /** The host to measure against, or null when this device has none. */
+    private val host: () -> RoundHost?,
+    /** Whether the radio lock was actually taken, for the run's own report. See `withRadioAwake`. */
     private val radioHeld: () -> Boolean,
     /**
      * Whether the host has called this round off since it started. See [MeasuringNow.calledOff].
@@ -217,10 +151,16 @@ internal class SinkRound(
      * it is the only one where this handset is waiting on the host for something.
      */
     private val calledOff: () -> Boolean = { false },
-    private val report: SinkRoundReport
+    private val report: SinkRoundReport,
+    /** Whether the recording stays once it has been read. See [PeerCalibrationRunner]. */
+    private val keepsRecording: Boolean,
+    /** Where the lines a person reading the device's own log would want go. */
+    private val log: (String) -> Unit = {},
+    /** The recording, given the run store, the case, host time and the capture path's name. */
+    private val recorder: (RunStore, String, () -> Long, String) -> RoundRecorder,
+    /** The output, given the clock offset in force and host time. */
+    private val speaker: (offsetNanosNow: () -> Long, hostNanosNow: () -> Long) -> RoundSpeaker
 ) {
-    private val filesDir: File get() = context.filesDir
-
     /** One timeline, shared with every other part of the app. See [EventLog]. */
     private val events: EventLog by lazy { EventLog(filesDir) }
 
@@ -241,26 +181,21 @@ internal class SinkRound(
         // say which one it would have been - and so that the one combination that names no run is
         // turned away here rather than two minutes of clock later.
         val caseId = calibrationCase(verifying, allowSlowLink, distanceOnly(), roomAsked())
-            ?: return show(string(R.string.pair_calibrate_failed, "ARMS_COMBINED"))
+            ?: return show(RoundLine.Failed("ARMS_COMBINED"))
         timing = timingFor(caseId)
-        val paired = PairedHost(filesDir).read()
-            ?: return show(string(R.string.pair_calibrate_no_pairing))
+        val paired = host()
+            ?: return show(RoundLine.NoPairing)
         // The name this handset answers to, which it signs both of its messages with. The same
         // name a host uses for itself: it is what this phone is called, not what role it is in.
         val sinkId = HostIdentity(filesDir).current()
-        val stored = StoredCalibration(filesDir, paired.hostId).read()
-        val appliedMicros = stored?.micros ?: 0L
         val estimator = ClockOffsetEstimator(keepFractionWhileFilling = keepFractionWhileFilling())
-        val clockClient = ClockSyncClient(paired.address, SyncActivity.CLOCK_PORT, estimator)
+        val clockClient = ClockSyncClient(paired.address, RoundPorts.CLOCK, estimator)
         val clockThread =
             Thread({ clockClient.runFor(CLOCK_SECONDS, CLOCK_INTERVAL_MILLIS) }, "SoundMeshPeerClock")
         val clockStartedAt = System.nanoTime()
         clockThread.start()
         try {
-            show(
-                string(R.string.pair_calibrate_clock),
-                whenItReaches(clockStartedAt + timing.clockFillNanos) { System.nanoTime() }
-            )
+            show(RoundLine.Clock, clockStartedAt + timing.clockFillNanos)
             val deadline = clockStartedAt + CONVERGENCE_TIMEOUT_NANOS
             while (clockClient.currentEstimate() == null && System.nanoTime() < deadline &&
                 !calledOff()
@@ -270,7 +205,7 @@ internal class SinkRound(
             if (calledOff()) return calledOffHere()
             if (clockClient.currentEstimate() == null) {
                 tellHost(RoomExcuse.CLOCK_NOT_CONVERGED)
-                return show(string(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
+                return show(RoundLine.Failed("CLOCK_NOT_CONVERGED"))
             }
             // Having an estimate is not the same as having a settled one, and the first run on
             // hardware cost exactly that difference. MIN_SAMPLES is the point the estimator will
@@ -287,7 +222,7 @@ internal class SinkRound(
             if (calledOff()) return calledOffHere()
             val converged = clockClient.currentEstimate() ?: run {
                 tellHost(RoomExcuse.CLOCK_NOT_CONVERGED)
-                return show(string(R.string.pair_calibrate_failed, "CLOCK_NOT_CONVERGED"))
+                return show(RoundLine.Failed("CLOCK_NOT_CONVERGED"))
             }
             // Read before the chirps rather than after, because that is the only point at which
             // knowing costs nothing. A link this slow cannot be aligned by any estimator - the bias
@@ -326,32 +261,38 @@ internal class SinkRound(
                 )
                 tellHost(RoomExcuse.SLOW_LINK)
                 return show(
-                    string(
-                        R.string.pair_calibrate_slow_link,
+                    RoundLine.SlowLink(
                         it.medianRoundTripNanos / 1_000_000.0,
                         LinkSurvey.MAX_MEDIAN_ROUND_TRIP_NANOS / 1_000_000.0
                     )
                 )
             }
             val plan = try {
-                CalibrationPlanClient(paired.address, PeerCalibrateActivity.PLAN_PORT).request(caseId, sinkId)
+                CalibrationPlanClient(paired.address, RoundPorts.PLAN).request(caseId, sinkId)
             } catch (off: CalibrationPlanClient.RoomCalledOff) {
                 // Somebody pressed a button on the host. Said in those words rather than as the
                 // failure every unreadable answer shares, because there is nothing here to fix.
                 events.write("room-called-off by the host while this handset was waiting")
                 report.calledOff()
-                return show(string(R.string.pair_calibrate_room_called_off))
+                return show(RoundLine.CalledOff)
             }
             // The host id is the file name the correction is stored under. A plan from somebody
             // this handset never scanned would file the answer against the wrong peer, and every
             // later session would apply it with nothing in the result to notice it by.
-            if (plan.hostId != paired.hostId) {
-                return show(string(R.string.pair_calibrate_failed, "PLAN_FROM_ANOTHER_HOST"))
+            //
+            // A desktop dialling an address by hand has scanned nobody and knows no id to check
+            // against, so for it the plan is what says who the host is - and it is told, to find
+            // the constant filed under that id again next time. See SinkRoundReport.hostIs.
+            val expectedHostId = paired.hostId
+            if (expectedHostId != null && plan.hostId != expectedHostId) {
+                return show(RoundLine.Failed("PLAN_FROM_ANOTHER_HOST"))
             }
+            val hostId = plan.hostId
+            if (expectedHostId == null) report.hostIs(hostId)
             // Both sides file under the plan's case. A host that answered with a different one
             // would split one run across two directories with nothing in either saying so.
             if (plan.caseId != caseId) {
-                return show(string(R.string.pair_calibrate_failed, "PLAN_FOR_ANOTHER_CASE"))
+                return show(RoundLine.Failed("PLAN_FOR_ANOTHER_CASE"))
             }
             // Which chirp of the window is this handset's, straight out of the plan that named
             // it. A room the host built without this handset in it is not a room this handset
@@ -360,10 +301,15 @@ internal class SinkRound(
             if (plan.caseId == CASE_ROOM) {
                 val slot = plan.slotIds.indexOf(sinkId)
                 if (slot < 0) {
-                    return show(string(R.string.pair_calibrate_failed, "ROOM_WITHOUT_THIS_HANDSET"))
+                    return show(RoundLine.Failed("ROOM_WITHOUT_THIS_HANDSET"))
                 }
                 ownSlot = slot
             }
+            // Read once the host is certain rather than when the round began: until the plan, a
+            // desktop given an address by hand does not know which file is its. Nothing reads it
+            // before this point, so on a handset it is the same read at a later moment.
+            val stored = StoredCalibration(filesDir, hostId).read()
+            val appliedMicros = stored?.micros ?: 0L
             // The correction is subtracted from this handset's view of host time, exactly as
             // SinkSession applies it, so a verification tests it where the product puts it.
             val hostNanosNow = {
@@ -371,6 +317,7 @@ internal class SinkRound(
                     (clockClient.currentEstimate() ?: converged).offsetNanos -
                     appliedMicros * 1_000L
             }
+            val offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos }
             val runner = PeerCalibrationRunner(
                 runStore = RunStore(filesDir),
                 caseId = caseId,
@@ -378,19 +325,18 @@ internal class SinkRound(
                 plan = plan,
                 ownSlot = ownSlot,
                 hostNanosNow = hostNanosNow,
-                offsetNanosNow = { (clockClient.currentEstimate() ?: converged).offsetNanos },
+                offsetNanosNow = offsetNanosNow,
                 audioSource = audioSource(),
                 edgeShares = AlignmentAnalysis.DISTANCE_EDGE_SHARES,
                 calledOff = calledOff,
-                keepsRecording = keepsRecordings(filesDir)
+                keepsRecording = keepsRecording,
+                recorder = recorder(RunStore(filesDir), caseId, hostNanosNow, audioSource()),
+                speaker = { speaker(offsetNanosNow, hostNanosNow) }
             )
             // Counted to the instant the recording closes rather than to the last chirp: the
             // sound still has to leave the output buffer and cross the room, and somebody who
             // stands up at the last chirp has moved during the part being measured.
-            show(
-                string(R.string.pair_calibrate_running),
-                whenItReaches(runner.timing().recordUntilHostNanos, hostNanosNow)
-            )
+            show(RoundLine.Running, localNanosOf(runner.timing().recordUntilHostNanos, hostNanosNow))
             val run = runner.run()
             // Before anything is filed or delivered. A round that was called off has no answer,
             // and the one thing that must not happen here is the constant being folded from half
@@ -413,19 +359,19 @@ internal class SinkRound(
             )
             File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(json)
             fileAttempt("SINK-$caseId", json)
-            Log.i(LOG_TAG, json)
+            log(json)
             // A room's delivery is this handset's hearing rather than a pair's arithmetic, and
             // the run ends here: the field belongs to the host, which is the only handset that
             // ever holds the whole room. What comes back is what the room made of this one.
             if (ownSlot != null) {
-                val room = RoomResultClient(paired.address, PeerCalibrateActivity.ROOM_PORT)
+                val room = RoomResultClient(paired.address, RoundPorts.ROOM)
                     .exchange(RoomResultMessage(plan.caseId, sinkId, ownSlot, run.arrivalsByRepeat))
                 // The host offers this to everybody who delivered; whether to keep it is decided
                 // here, and only here, because only this handset knows what it already carries.
                 // A measurement outranks the offer and is left alone - the offer is what stands
                 // in for one until somebody has a minute to walk to this phone.
                 val kept = room.approximateOffsetMicros?.takeIf { stored == null }?.also {
-                    runCatching { StoredApproximateCalibration(filesDir, paired.hostId).write(it) }
+                    runCatching { StoredApproximateCalibration(filesDir, hostId).write(it) }
                 }
                 // Written down as well as shown, and that is not belt and braces: the screen says
                 // it once to whoever is looking, and the next proper calibration deletes the file
@@ -442,17 +388,13 @@ internal class SinkRound(
                     }
                 )
                 return show(
-                    if (kept == null) string(
-                        R.string.pair_calibrate_room_sink_done, room.handsets, room.ownPairsReadable
-                    ) else string(
-                        R.string.pair_calibrate_room_sink_approximate,
-                        room.handsets, room.ownPairsReadable, kept / 1000.0
-                    )
+                    if (kept == null) RoundLine.RoomSinkDone(room.handsets, room.ownPairsReadable)
+                    else RoundLine.RoomSinkApproximate(room.handsets, room.ownPairsReadable, kept / 1000.0)
                 )
             }
             // Delivered even when there is nothing to deliver: the host waits on this message, so
             // an empty run and a dead sink look the same from an end of a socket that never opens.
-            val reply = AlignmentResultClient(paired.address, SyncActivity.RESULT_PORT)
+            val reply = AlignmentResultClient(paired.address, RoundPorts.RESULT)
                 .exchange(plan.caseId, sinkId, appliedMicros, run.readings)
             // The experiment arm ends here, one step short of every arm that moves the constant.
             // That is what it is: the gate refuses these links because the offset a two-way
@@ -461,35 +403,42 @@ internal class SinkRound(
             // it is for is measuring that bias acoustically, and the readings are already filed.
             if (allowSlowLink) return show(
                 reply.measuredOffsetMicros?.let {
-                    string(R.string.pair_calibrate_measured_only, it / 1000.0)
-                } ?: string(R.string.pair_calibrate_kept, run.refusal ?: "NOT_USABLE")
+                    RoundLine.MeasuredOnly(it / 1000.0)
+                } ?: RoundLine.Kept(run.refusal ?: "NOT_USABLE")
             )
             // A verification measures the residual left after the stored constant is applied.
             // Writing a residual where the constant lives would halve the correction every time.
             if (verifying) return show(
-                string(R.string.pair_calibrate_verified, (reply.clusterMeanMicros ?: 0L) / 1000.0)
+                RoundLine.Verified((reply.clusterMeanMicros ?: 0L) / 1000.0)
             )
             val observed = reply.measuredOffsetMicros
-                ?: return show(string(R.string.pair_calibrate_kept, run.refusal ?: "NOT_USABLE"))
+                ?: return show(RoundLine.Kept(run.refusal ?: "NOT_USABLE"))
             val observations = stored?.observations ?: 0
             if (!foldsIntoStoredCalibration(observations, observed, appliedMicros)) {
-                return show(
-                    string(R.string.pair_calibrate_not_folded, (observed - appliedMicros) / 1000.0)
-                )
+                return show(RoundLine.NotFolded((observed - appliedMicros) / 1000.0))
             }
             val folded = CalibrationUpdate.fold(appliedMicros, observations, observed)
-                ?: return show(string(R.string.pair_calibrate_kept, "OFFSET_OUT_OF_RANGE"))
-            StoredCalibration(filesDir, paired.hostId).write(folded, observations + 1)
+                ?: return show(RoundLine.Kept("OFFSET_OUT_OF_RANGE"))
+            StoredCalibration(filesDir, hostId).write(folded, observations + 1)
             // The measurement is here now, so the guess goes. Read order alone would hide it
             // rather than remove it, and a guess nothing reads is a guess nothing checks either.
-            runCatching { StoredApproximateCalibration(filesDir, paired.hostId).forget() }
-            show(string(R.string.pair_calibrate_done, folded / 1000.0, observations + 1))
+            runCatching { StoredApproximateCalibration(filesDir, hostId).forget() }
+            show(RoundLine.Done(folded / 1000.0, observations + 1))
         } finally {
             clockThread.interrupt()
         }
     }
 
-    private fun show(text: String, until: Long? = null) = report.say(text, until)
+    private fun show(line: RoundLine, untilLocalNanos: Long? = null) = report.say(line, untilLocalNanos)
+
+    /**
+     * Where an instant on the host's clock falls on this device's own, for a countdown.
+     *
+     * Read at the moment of asking, which is what the handset's whenItReaches always did: the
+     * offset moves as the exchange runs, and a countdown only needs to be right when it is shown.
+     */
+    private fun localNanosOf(hostNanos: Long, hostNanosNow: () -> Long): Long =
+        hostNanos - hostNanosNow() + System.nanoTime()
 
     /**
      * Leaves the round because the host said to, in the one sentence that is true of it.
@@ -501,7 +450,7 @@ internal class SinkRound(
     private fun calledOffHere() {
         events.write("round-called-off by the host; nothing of it is kept")
         report.calledOff()
-        show(string(R.string.pair_calibrate_room_called_off))
+        show(RoundLine.CalledOff)
     }
 
     /** The next four stand in for what the screen read off its intent, spelled the same way. */
@@ -511,11 +460,9 @@ internal class SinkRound(
 
     private fun keepFractionWhileFilling(): Boolean = request.keepFractionWhileFilling
 
-    private fun audioSource(): CalibrationAudioSource = request.audioSource
+    private fun audioSource(): String = request.audioSource
 
     private fun timingFor(caseId: String?): ArmSchedule = request.timingFor(caseId)
-
-    private fun string(id: Int, vararg args: Any?): String = context.getString(id, *args)
 
     /**
      * Tells the host why this handset is not going to measure.
@@ -525,14 +472,14 @@ internal class SinkRound(
      * reach it. The role check the screen makes is not needed: this class only ever runs as a sink.
      */
     private fun tellHost(excuse: RoomExcuse) {
-        val paired = PairedHost(filesDir).read() ?: return
+        val paired = host() ?: return
         events.write("excuse-told ${excuse.name}")
         tellHostWhy(paired.address, COMMAND_PORT, HostIdentity(filesDir).current(), excuse)
     }
 
     private fun fileAttempt(label: String, json: String) {
         runCatching { PeerRunLog(filesDir).write(label, json, System.currentTimeMillis()) }
-            .onFailure { Log.e(LOG_TAG, "this attempt could not be filed under $label", it) }
+            .onFailure { log("this attempt could not be filed under $label: $it") }
     }
 
     /** The run's own report, with the clock it was scheduled against spliced beside it. */
@@ -552,8 +499,6 @@ internal class SinkRound(
     )
 
     private companion object {
-        const val LOG_TAG = "SoundMeshSinkRound"
-
         /** The same name the screen filed a finished run under; read by whatever reads runs. */
         const val ARTIFACT = "peer-calibration.json"
 

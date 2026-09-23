@@ -15,7 +15,8 @@ import org.junit.Test
  */
 class PeerCalibrationRunnerTest {
     private val source =
-        File("src/main/java/com/soundmesh/probe/sync/PeerCalibrationRunner.kt").readText(Charsets.UTF_8)
+        File("../core/src/main/java/com/soundmesh/probe/sync/PeerCalibrationRunner.kt").readText(Charsets.UTF_8) +
+            File("src/main/java/com/soundmesh/probe/sync/HandsetRoundSpeaker.kt").readText(Charsets.UTF_8)
 
     /**
      * A recording that would not open has to stop the run before it plays a chirp. Without the
@@ -41,8 +42,12 @@ class PeerCalibrationRunnerTest {
      */
     @Test
     fun theChirpTravelsTheSamePathTheMusicDoes() {
+        // The runner hands its chunks to a speaker since 09-23; on a handset that speaker is the
+        // scheduler and renderer the music plays through, and the handset's runner is built with it.
+        assertTrue(source.contains("speaker.submit(AudioChunk("))
+        assertTrue(source.contains("scheduler.submit(chunk)"))
         assertTrue(source.contains("SyncRenderer("))
-        assertTrue(source.contains("scheduler.submit(AudioChunk("))
+        assertTrue(source.contains("speaker = { HandsetRoundSpeaker("))
     }
 
     /**

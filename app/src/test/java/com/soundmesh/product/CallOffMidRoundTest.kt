@@ -23,7 +23,7 @@ class CallOffMidRoundTest {
     private fun source(path: String) =
         File(path).readText(Charsets.UTF_8).replace("\r\n", "\n")
 
-    private val runner get() = source("src/main/java/com/soundmesh/probe/sync/PeerCalibrationRunner.kt")
+    private val runner get() = source("../core/src/main/java/com/soundmesh/probe/sync/PeerCalibrationRunner.kt")
 
     private val lead get() = source("src/main/java/com/soundmesh/probe/sync/OutputLeadRunner.kt")
 
@@ -47,7 +47,9 @@ class CallOffMidRoundTest {
         )
         assertTrue(
             "the renderer plays on to the instant the schedule named",
-            runner.contains("if (calledOff()) renderer.stopNow()")
+            runner.contains("if (calledOff()) speaker.stopNow()") &&
+                source("src/main/java/com/soundmesh/probe/sync/HandsetRoundSpeaker.kt")
+                    .contains("override fun stopNow() = renderer.stopNow()")
         )
         assertTrue(
             "the renderer has no way to be ended early",
@@ -80,7 +82,7 @@ class CallOffMidRoundTest {
         // The sixteen silent seconds of clock filling, which is where somebody who pressed start
         // by mistake presses stop. Both loops, because the first one ends as soon as there is any
         // estimate at all and the second is the one that actually takes the time.
-        val sink = source("src/main/java/com/soundmesh/product/SinkRound.kt")
+        val sink = source("../core/src/main/java/com/soundmesh/product/SinkRound.kt")
         assertTrue(
             "the clock convergence wait cannot be interrupted",
             sink.contains("System.nanoTime() < deadline &&\n                !calledOff()")
@@ -106,7 +108,7 @@ class CallOffMidRoundTest {
             runner.contains("if (calledOff()) return refused(CALLED_OFF)")
         )
 
-        val sink = source("src/main/java/com/soundmesh/product/SinkRound.kt")
+        val sink = source("../core/src/main/java/com/soundmesh/product/SinkRound.kt")
         val afterRun = sink.substringAfter("val run = runner.run()")
         assertTrue(
             "the sink files and delivers a round that was called off",

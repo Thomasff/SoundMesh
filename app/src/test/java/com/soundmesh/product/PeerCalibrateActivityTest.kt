@@ -42,7 +42,7 @@ class PeerCalibrateActivityTest {
      */
     private val source =
         File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8) +
-            File("src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8) +
+            File("../core/src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8) +
             File("../core/src/main/java/com/soundmesh/product/CalibrationArms.kt").readText(Charsets.UTF_8)
 
     /**
@@ -585,7 +585,7 @@ class PeerCalibrateActivityTest {
     @Test
     fun theExperimentArmStopsShortOfTheConstant() {
         val ending = source.indexOf("if (allowSlowLink) return show(")
-        val fold = source.indexOf("StoredCalibration(filesDir, paired.hostId).write(")
+        val fold = source.indexOf("StoredCalibration(filesDir, hostId).write(")
 
         assertTrue("the experiment arm does not end before the fold", ending in 1 until fold)
     }

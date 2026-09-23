@@ -1549,7 +1549,7 @@ class SyncActivity : Activity() {
         const val CHUNK_PORT = ChunkCodec.DEFAULT_PORT
 
         /** Where the host takes delivery of the sink's own reading of the run. */
-        const val RESULT_PORT = 45125
+        const val RESULT_PORT = com.soundmesh.product.RoundPorts.RESULT
 
         /** Where the host publishes the spatial rule the room is playing under. */
         const val SPATIAL_PORT = 45126

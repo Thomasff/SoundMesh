@@ -61,7 +61,7 @@ import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.handsetName
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.CalibrationAudioSource
-import com.soundmesh.probe.sync.PeerCalibrationRunner
+import com.soundmesh.probe.sync.handsetPeerCalibrationRunner
 import com.soundmesh.probe.sync.PeerRunLog
 import com.soundmesh.probe.sync.RoomResultClient
 import com.soundmesh.probe.sync.RoomResultServer
@@ -867,7 +867,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             // beside the same button - see [StopOffer].
             handler.post { state = state.copy(stopOffer = StopOffer.UNDER_WAY) }
             val ownSlot = plan.slotIds.indexOf(hostId)
-            val runner = PeerCalibrationRunner(
+            val runner = handsetPeerCalibrationRunner(
                 runStore = RunStore(filesDir),
                 caseId = plan.caseId,
                 role = CalibrationRole.HOST,
@@ -1095,7 +1095,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         // the schedule out, after it it says so over the standing channel the other handset never
         // left - see [StopOffer] and [RoomCommand.CALL_OFF].
         handler.post { state = state.copy(stopOffer = StopOffer.UNDER_WAY) }
-        val runner = PeerCalibrationRunner(
+        val runner = handsetPeerCalibrationRunner(
             runStore = RunStore(filesDir),
             caseId = plan.caseId,
             role = CalibrationRole.HOST,
@@ -1211,22 +1211,22 @@ class PeerCalibrateActivity : ComponentActivity() {
      * onto this screen.
      */
     private fun measureAsSink(verifying: Boolean, allowSlowLink: Boolean) {
-        SinkRound(
+        handsetSinkRound(
             context = this,
             request = SinkRoundRequest(
                 verifying = verifying,
                 allowSlowLink = allowSlowLink,
                 distanceOnly = distanceOnly(),
                 room = roomAsked(),
-                audioSource = audioSource(),
+                audioSource = audioSource().name,
                 keepFractionWhileFilling = keepFractionWhileFilling(),
                 timingFor = ::timingFor
             ),
             radioHeld = { radioHeld },
             calledOff = { MeasuringNow.calledOff },
             report = object : SinkRoundReport {
-                override fun say(text: String, untilElapsedMillis: Long?) =
-                    show(text, untilElapsedMillis)
+                override fun say(line: RoundLine, untilLocalNanos: Long?) =
+                    show(line.text(this@PeerCalibrateActivity), untilLocalNanos?.let(::elapsedAtLocalNanos))
 
                 override fun calledOff() {
                     roundCalledOff = true
@@ -1525,7 +1525,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             (intervalNanos * ChirpGenerator.SAMPLE_RATE / 1_000_000_000L).toInt()
 
         /** Next after AlignmentResultServer's 45125. */
-        const val PLAN_PORT = 45126
+        const val PLAN_PORT = RoundPorts.PLAN
 
         /** How long the host holds the screen open waiting for somebody to pick up the other phone. */
         const val PLAN_WAIT_MILLIS = 300_000
@@ -1540,7 +1540,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         const val ROOM_RETURN_GRACE_MILLIS = 2_000L
 
         /** Next after the plan's 45126, and held only while a room is being measured. */
-        const val ROOM_PORT = 45127
+        const val ROOM_PORT = RoundPorts.ROOM
 
         /**
          * How long a round started by the host stays on screen before it puts itself away.

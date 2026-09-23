@@ -8,8 +8,6 @@ import com.soundmesh.core.CalibrationSchedule
 import com.soundmesh.core.CalibrationTiming
 import com.soundmesh.core.ChirpArrival
 import com.soundmesh.core.ChirpGenerator
-import com.soundmesh.core.DriftController
-import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.WavFileReader
@@ -50,6 +48,10 @@ data class PeerCalibrationRun(
  * of them had a real stream behind the chirp. The first job of this class is therefore to agree
  * with the constant the harness already measured for the pair in this room; a disagreement means
  * this arrangement is wrong rather than that something new has been found.
+ *
+ * In core since 09-23, so a desktop sink runs this same round. What differs by platform is where
+ * the sound goes and where the recording comes from, and those are handed in as a [RoundSpeaker]
+ * and a [RoundRecorder]; the handset's are its renderer and its AudioRecord, unchanged.
  */
 class PeerCalibrationRunner(
     private val runStore: RunStore,
@@ -68,7 +70,11 @@ class PeerCalibrationRunner(
     private val hostNanosNow: () -> Long,
     /** The clock offset in force, for the renderer's report. Zero on the host. */
     private val offsetNanosNow: () -> Long = { 0L },
-    private val audioSource: CalibrationAudioSource = CalibrationAudioSource.MIC,
+    /**
+     * The capture path asked for, by name, for the report only. What actually opens is the
+     * [recorder]'s business; the handset's names are CalibrationAudioSource's.
+     */
+    private val audioSource: String = "MIC",
     /** What counts as an arrival on this arm. See [OnDeviceAlignment.readRun]. */
     private val edgeShares: List<Double> = emptyList(),
     /**
@@ -89,7 +95,11 @@ class PeerCalibrationRunner(
      * product passes false for an ordinary listener, whose phone otherwise carries a few
      * megabytes of audio per case that nothing on it will ever open.
      */
-    private val keepsRecording: Boolean = true
+    private val keepsRecording: Boolean = true,
+    /** Records the whole window into the run's `calibration.wav`. One per run. */
+    private val recorder: RoundRecorder,
+    /** Where the warm-up and the chirps are played. Asked for once, when the playing starts. */
+    private val speaker: () -> RoundSpeaker
 ) {
     private val tone = TonePcmSource()
 
@@ -104,6 +114,9 @@ class PeerCalibrationRunner(
 
     @Volatile private var rendererReport: String? = null
 
+    /** What the speaker said it could not vouch for, read once the playing is over. */
+    @Volatile private var speakerFailure: String? = null
+
     /**
      * Every instant this run will act on, available before it starts.
      *
@@ -117,7 +130,7 @@ class PeerCalibrationRunner(
 
     fun run(): PeerCalibrationRun {
         val timing = timing()
-        val calibration = CalibrationRunner(runStore, caseId, audioSource, hostNanosNow)
+        val calibration = recorder
         val recording = Thread({
             runCatching {
                 awaitHostInstant(timing.recordFromHostNanos)
@@ -150,46 +163,33 @@ class PeerCalibrationRunner(
      * nothing else would still be acquiring, which is a different question wearing the same units.
      */
     private fun play(timing: CalibrationTiming) {
-        val scheduler = PlaybackScheduler(
-            SyncRenderer.FRAMES_PER_CHUNK,
-            SCHEDULER_CAPACITY_CHUNKS,
-            earlyReleaseNanos = SyncRenderer.earlyReleaseNanos(SyncRenderer.TRIM_DEADBAND_FRAMES),
-            exactReleaseFromSequence = SyncRenderer.CHIRP_SEQUENCE_BASE
-        )
-        val renderer = SyncRenderer(
-            scheduler,
-            DriftController(),
-            trimDeadbandFrames = SyncRenderer.TRIM_DEADBAND_FRAMES,
-            offsetNanosNow = offsetNanosNow,
-            hostNanosNow = hostNanosNow
-        )
-        renderer.endAt(timing.recordUntilHostNanos)
-        val thread = Thread({ renderer.run() }, "SoundMeshPeerRender").also { it.start() }
-        warmUp(scheduler, timing)
-        submitChirps(scheduler, timing)
+        val speaker = speaker()
+        speaker.start(timing.recordUntilHostNanos)
+        warmUp(speaker, timing)
+        submitChirps(speaker, timing)
         // Ends the render loop here rather than at the instant the schedule named. Without it a
         // called-off handset stands playing silence to the end of a round nobody is measuring any
         // more, and from the room that is indistinguishable from a button that did nothing.
-        if (calledOff()) renderer.stopNow()
-        thread.join()
-        rendererReport = renderer.report(null)
+        if (calledOff()) speaker.stopNow()
+        rendererReport = speaker.finish()
+        speakerFailure = speaker.failure
     }
 
     /**
      * Feeds tone chunks from the warm-up's start until the gap before the first chirp.
      *
-     * Paced rather than queued in one go: the scheduler holds only [SCHEDULER_CAPACITY_CHUNKS] and
+     * Paced rather than queued in one go: the handset's scheduler holds only three seconds and
      * drops the oldest beyond that, so a whole warm-up submitted at once would throw away its own
      * beginning.
      */
-    private fun warmUp(scheduler: PlaybackScheduler, timing: CalibrationTiming) {
+    private fun warmUp(speaker: RoundSpeaker, timing: CalibrationTiming) {
         val chunks =
-            ((timing.warmUpUntilHostNanos - timing.warmUpFromHostNanos) / SyncRenderer.CHUNK_NANOS).toInt()
+            ((timing.warmUpUntilHostNanos - timing.warmUpFromHostNanos) / RoundChunks.CHUNK_NANOS).toInt()
         for (sequence in 0 until chunks) {
             if (calledOff()) return
-            val playAt = timing.warmUpFromHostNanos + sequence * SyncRenderer.CHUNK_NANOS
-            val frameIndex = sequence.toLong() * SyncRenderer.FRAMES_PER_CHUNK
-            scheduler.submit(AudioChunk(sequence, playAt, tone.fill(frameIndex, SyncRenderer.FRAMES_PER_CHUNK)))
+            val playAt = timing.warmUpFromHostNanos + sequence * RoundChunks.CHUNK_NANOS
+            val frameIndex = sequence.toLong() * RoundChunks.FRAMES_PER_CHUNK
+            speaker.submit(AudioChunk(sequence, playAt, tone.fill(frameIndex, RoundChunks.FRAMES_PER_CHUNK)))
             awaitHostInstant(playAt - SUBMIT_LEAD_NANOS)
         }
     }
@@ -201,14 +201,14 @@ class PeerCalibrationRunner(
      * is what leaves a place to notice a recording that died: without one the handset plays its
      * whole schedule out into a quiet room nothing is listening to.
      */
-    private fun submitChirps(scheduler: PlaybackScheduler, timing: CalibrationTiming) {
-        val chunks = ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK)
+    private fun submitChirps(speaker: RoundSpeaker, timing: CalibrationTiming) {
+        val chunks = ChirpGenerator.generateStereoChunks(RoundChunks.FRAMES_PER_CHUNK)
         timing.ownChirpAtHostNanos.forEachIndexed { repeat, at ->
             awaitHostInstant(at - SUBMIT_LEAD_NANOS)
             if (recordingFailure != null || calledOff()) return
-            val base = SyncRenderer.CHIRP_SEQUENCE_BASE + repeat * SyncRenderer.CHIRP_REPEAT_STRIDE
+            val base = RoundChunks.CHIRP_SEQUENCE_BASE + repeat * RoundChunks.CHIRP_REPEAT_STRIDE
             chunks.forEachIndexed { index, pcm ->
-                scheduler.submit(AudioChunk(base + index, at + index * SyncRenderer.CHUNK_NANOS, pcm))
+                speaker.submit(AudioChunk(base + index, at + index * RoundChunks.CHUNK_NANOS, pcm))
             }
         }
     }
@@ -219,8 +219,11 @@ class PeerCalibrationRunner(
      * Refused rather than thrown: the recording is on the device either way, and a run that played
      * correctly and could not be analysed has to be told apart from one that never played.
      */
-    private fun analyse(calibration: CalibrationRunner): PeerCalibrationRun {
+    private fun analyse(calibration: RoundRecorder): PeerCalibrationRun {
         recordingFailure?.let { return refused("the recording failed: $it") }
+        // Before anything is read: a chirp that went out at the wrong instant correlates as well
+        // as one that went out at the right one, and only the output could tell them apart.
+        speakerFailure?.let { return refused("the sound could not be placed: $it") }
         val startedAt = calibration.startedAtHostNanos
             ?: return refused("the recording never reported when it opened")
         val recorded = runCatching {
@@ -341,7 +344,7 @@ class PeerCalibrationRunner(
             } + "],\"renderer\":${rendererReport ?: "null"}}"
 
     private fun chirpNanos(): Long =
-        ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK).size * SyncRenderer.CHUNK_NANOS
+        ChirpGenerator.generateStereoChunks(RoundChunks.FRAMES_PER_CHUNK).size * RoundChunks.CHUNK_NANOS
 
     private fun secondsUntil(hostNanos: Long): Int =
         maxOf(1, ((hostNanos - hostNanosNow()) / 1_000_000_000L).toInt() + 1)
@@ -364,9 +367,6 @@ class PeerCalibrationRunner(
     }
 
     private companion object {
-        /** ~3s of audio at 20ms/chunk, matching the sessions and the harness. */
-        const val SCHEDULER_CAPACITY_CHUNKS = 150
-
         /** How far ahead of a chunk's instant it is handed to the scheduler. */
         const val SUBMIT_LEAD_NANOS = 1_000_000_000L
 

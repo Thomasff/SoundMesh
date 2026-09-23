@@ -517,14 +517,14 @@ class StandbyService : Service() {
             runCatching {
                 hushWhateverIsPlaying(this, events)
                 withRadioAwake(this, events, held = { heldForTheRound = it }) {
-                    SinkRound(
+                    handsetSinkRound(
                         context = this,
                         request = SinkRoundRequest(room = room),
                         radioHeld = { heldForTheRound },
                         calledOff = { MeasuringNow.calledOff },
                         report = object : SinkRoundReport {
-                            override fun say(text: String, untilElapsedMillis: Long?) {
-                                measuring = text
+                            override fun say(line: RoundLine, untilLocalNanos: Long?) {
+                                measuring = line.text(this@StandbyService)
                                 handler.post { showTheRound() }
                             }
                         }

@@ -83,7 +83,7 @@ class StandbyServiceTest {
             started.indexOf("hushWhateverIsPlaying(") in 1 until started.indexOf("withRadioAwake(")
         )
 
-        val helper = File("src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8)
+        val helper = File("src/main/java/com/soundmesh/product/SinkRoundOnHandset.kt").readText(Charsets.UTF_8)
         assertTrue(
             "the hush asks the session to stop rather than assuming it has",
             helper.contains("SessionService.ACTION_STOP")
