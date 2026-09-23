@@ -46,6 +46,7 @@ import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.EffectKind
 import com.soundmesh.product.RoomState
+import com.soundmesh.product.RoundLine
 import com.soundmesh.product.SpatialRoom
 import com.soundmesh.desktop.AudioSession
 import com.soundmesh.desktop.AudioSessions
@@ -58,6 +59,7 @@ import com.soundmesh.desktop.LocalNetworks
 import com.soundmesh.desktop.OwnAddress
 import com.soundmesh.desktop.Playhead
 import com.soundmesh.desktop.SinkSession
+import com.soundmesh.desktop.MicrophoneProblem
 import com.soundmesh.desktop.SinkStage
 import com.soundmesh.desktop.SinkStatus
 import com.soundmesh.desktop.SoftwareVolume
@@ -768,12 +770,60 @@ private fun describe(status: SinkStatus): String = when (status.stage) {
         null -> ""
         SinkSession.NO_CLOCK_PROBLEM -> "\n" + say(Phrases.pc_sink_no_clock_last)
         else -> "\n" + say(Phrases.pc_sink_missed_last, status.problem)
-    }
+    } + roundLines(status)
     SinkStage.OPENING_SPEAKERS -> say(Phrases.pc_sink_opening)
     SinkStage.SYNCING -> say(Phrases.pc_sink_syncing)
     SinkStage.PLAYING -> say(Phrases.pc_sink_playing)
     SinkStage.HOST_SILENT -> say(Phrases.pc_sink_host_silent)
     SinkStage.FAILED -> say(Phrases.pc_sink_failed, status.problem)
+    SinkStage.MEASURING -> (status.round?.let { describe(it) } ?: say(Phrases.pc_sink_measuring)) + countdown(status)
+}
+
+/**
+ * What the last round came to, and why this machine could not record one, each on a line of its
+ * own under the standing-by one - kept there after the round, so it lives until somebody reads it.
+ */
+@Composable
+private fun roundLines(status: SinkStatus): String =
+    (status.round?.let { "\n" + describe(it) } ?: "") +
+        (status.microphone?.let { "\n" + describe(it, status.microphoneDetail) } ?: "")
+
+/**
+ * A round's sentence in the handset's words, except the few whose handset wording names a phone or
+ * a button this machine does not have - those are the pc_round_ ones beside them.
+ */
+@Composable
+private fun describe(line: RoundLine): String = when (line) {
+    is RoundLine.Failed -> say(Phrases.pair_calibrate_failed, line.code)
+    RoundLine.NoPairing -> say(Phrases.pair_calibrate_no_pairing)
+    RoundLine.Clock -> say(Phrases.pair_calibrate_clock)
+    is RoundLine.SlowLink -> say(Phrases.pc_round_slow_link, line.medianMs, line.maxMs)
+    RoundLine.CalledOff -> say(Phrases.pair_calibrate_room_called_off)
+    RoundLine.Running -> say(Phrases.pc_round_running)
+    is RoundLine.RoomSinkDone -> say(Phrases.pc_round_room_done, line.handsets, line.readable)
+    is RoundLine.RoomSinkApproximate ->
+        say(Phrases.pc_round_room_approximate, line.handsets, line.readable, line.keptMs)
+    is RoundLine.MeasuredOnly -> say(Phrases.pair_calibrate_measured_only, line.ms)
+    is RoundLine.Kept -> say(Phrases.pair_calibrate_kept, line.reason)
+    is RoundLine.Verified -> say(Phrases.pair_calibrate_verified, line.ms)
+    is RoundLine.NotFolded -> say(Phrases.pair_calibrate_not_folded, line.ms)
+    is RoundLine.Done -> say(Phrases.pair_calibrate_done, line.ms, line.observations)
+}
+
+@Composable
+private fun describe(problem: MicrophoneProblem, detail: String?): String = when (problem) {
+    MicrophoneProblem.NO_DEVICE -> say(Phrases.pc_mic_no_device)
+    MicrophoneProblem.DENIED -> say(Phrases.pc_mic_denied)
+    MicrophoneProblem.NOT_48K -> say(Phrases.pc_mic_not_48k, detail)
+    MicrophoneProblem.OTHER -> say(Phrases.pc_mic_other, detail)
+}
+
+/** The seconds left to what the round's line is counting down to, rounded up; nothing past it. */
+@Composable
+private fun countdown(status: SinkStatus): String {
+    val until = status.roundUntilLocalNanos ?: return ""
+    val seconds = ((until - System.nanoTime() + 999_999_999L) / 1_000_000_000L).toInt()
+    return if (seconds > 0) say(Phrases.pc_round_left, seconds) else ""
 }
 
 private const val POLL_MILLIS = 500L

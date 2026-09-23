@@ -84,6 +84,8 @@ data class SinkStatus(
     val roundUntilLocalNanos: Long? = null,
     /** Why the last round could not record here, or null when it could. */
     val microphone: MicrophoneProblem? = null,
+    /** What opening the microphone said, beside [microphone]. */
+    val microphoneDetail: String? = null,
     /** The pair's constant the playing is shifted by, in milliseconds, while following; null otherwise. */
     val alignmentMillis: Double? = null
 )
@@ -168,6 +170,7 @@ class SinkSession(
     @Volatile private var round: RoundLine? = null
     @Volatile private var roundUntil: Long? = null
     @Volatile private var microphone: MicrophoneProblem? = null
+    @Volatile private var microphoneDetail: String? = null
 
     // Whether the speakers are held for playing, which a round has to wait to be let go of.
     @Volatile private var speakersOpen = false
@@ -226,6 +229,7 @@ class SinkSession(
             round = round,
             roundUntilLocalNanos = roundUntil,
             microphone = microphone,
+            microphoneDetail = microphoneDetail,
             alignmentMillis = stream?.alignmentOffsetNanos?.let { it / 1_000_000.0 },
             failure = failure,
             hostName = hostName,
@@ -463,7 +467,7 @@ class SinkSession(
                 val trouble = microphoneProblem()
                 if (trouble != null) {
                     microphone = trouble.first
-                    problem = trouble.second
+                    microphoneDetail = trouble.second
                     runCatching { tellHostWhy(host.address, dials.command, selfId, RoomExcuse.NO_MICROPHONE) }
                     return@Thread
                 }
@@ -492,7 +496,9 @@ class SinkSession(
                     speaker = { _, hostNanosNow -> FrameRoundSpeaker(openSpeakers, volume, hostNanosNow) }
                 ).run()
             } catch (e: Throwable) {
-                problem = e.toString()
+                // Said as the round's own last line, where a person looking at this machine reads
+                // what the round came to; the playing's problem line would call it a missed play.
+                round = RoundLine.Failed(e.message ?: e.toString())
             } finally {
                 measuring = false
                 roundEnded = true

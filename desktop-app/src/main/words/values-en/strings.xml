@@ -108,5 +108,16 @@
     <string name="pc_sink_host_silent">The host has gone quiet and may have dropped. This one joins in by itself when it plays again.</string>
     <string name="pc_sink_failed">Something went wrong: %1$s</string>
 
+    <string name="pc_sink_measuring">The host is measuring, and this computer is taking part…</string>
+    <string name="pc_round_running">Measuring: leave the devices alone and keep it quiet.</string>
+    <string name="pc_round_room_done">Delivered. %1$d in the room, %2$d pairs measured for this computer.</string>
+    <string name="pc_round_room_approximate">Delivered. %1$d in the room, %2$d pairs measured for this computer. This computer has never been properly synced with the host, so the %3$.3f ms this round worked out has been kept to be going on with. It is an estimate, out by 1–2 ms. When there is time, pick this computer on the host\'s list and sync the pair; a real measurement will replace it.</string>
+    <string name="pc_round_slow_link">This network is too slow to align on: a round trip to the host takes %1$.0f ms, and past %2$.0f nothing lines up.</string>
+    <string name="pc_round_left">(%1$d s left)</string>
+    <string name="pc_mic_no_device">This computer has no microphone, so it cannot measure. The host will say \"no microphone\".</string>
+    <string name="pc_mic_denied">Windows is keeping the microphone from this app: Settings → Privacy &amp; security → Microphone, and turn on \"Let desktop apps access your microphone\".</string>
+    <string name="pc_mic_not_48k">The microphone runs at %1$s and measuring needs 48 kHz: set it to 48000 Hz in Sound settings.</string>
+    <string name="pc_mic_other">The microphone would not open: %1$s</string>
+
     <string name="pc_details_hint">The counters, clock offset and seams in the main window. Not needed day to day; useful when something is wrong.</string>
 </resources>

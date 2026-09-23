@@ -25,7 +25,13 @@ import java.util.concurrent.TimeUnit
 
 fun main() = application {
     val host = remember { HostSession(identityDirectory()) }
-    val sink = remember { SinkSession(identityDirectory()) }
+    // A measuring round's recording stays on disk only while the details switch is on, as the
+    // handset keeps its own (keepsRecordings = wantsDetails). Read from the file at each round.
+    val sink = remember {
+        SinkSession(identityDirectory(), keepsRecordings = {
+            WindowPrefs(File(identityDirectory(), "window.properties")).read("details") == "on"
+        })
+    }
     // Every call into a session goes through this one thread, in order. Two clicks in quick
     // succession would otherwise open and close the same ports from two threads at once, and
     // nothing in the sessions is written to be driven that way.
