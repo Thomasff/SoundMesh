@@ -29,6 +29,13 @@ object ChunkCodec {
      */
     const val FRAMES_PER_CHUNK = 960
 
+    /**
+     * Where the sequence numbers of locally generated chirp chunks start, so a played chunk can be
+     * told apart from streamed audio. Here since the spatial shaping moved into core and has to
+     * leave chirps alone on both platforms.
+     */
+    const val CHIRP_SEQUENCE_BASE = 1_000_000
+
     fun encode(chunk: AudioChunk): ByteArray {
         val frame = ByteArray(HEADER_BYTES + chunk.pcm.size)
         writeInt(frame, 0, frame.size - LENGTH_PREFIX_BYTES)
