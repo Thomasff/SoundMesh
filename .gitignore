@@ -10,6 +10,8 @@
 
 # Source audio for listening tests - licensed stock music, not ours to redistribute
 *.mp3
+# Except test fixtures: tones generated here, by Windows' own encoder, and ours to publish
+!/desktop/src/test/resources/*.mp3
 
 # One-off analysis of archived runs. They read artifacts/, which is not published, so a
 # clone cannot run them. Kept locally, out of the tree.
