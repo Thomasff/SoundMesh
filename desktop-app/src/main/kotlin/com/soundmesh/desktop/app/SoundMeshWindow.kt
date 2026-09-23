@@ -118,7 +118,7 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher) {
 private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher) {
     val status = polled { sink.status() } ?: return
     val scope = rememberCoroutineScope()
-    val going = status.stage !in setOf(SinkStage.IDLE, SinkStage.NOT_FOUND, SinkStage.NO_CLOCK, SinkStage.FAILED)
+    val going = status.stage !in setOf(SinkStage.IDLE, SinkStage.NOT_FOUND, SinkStage.FAILED)
 
     if (going) {
         Button(onClick = { scope.launch(sessions) { sink.stop() } }) { Text("停止") }
@@ -204,11 +204,16 @@ private fun describe(status: SinkStatus): String = when (status.stage) {
         DiscoveryFailure.AMBIGUOUS -> "房间里同时有两台主机，先关掉一台。"
         else -> "没有主机应答。主机那边开了吗？两边在同一个网络上吗？"
     }
+    SinkStage.REACHING -> "找到了主机，正在连它（每 3 秒试一次）…"
+    SinkStage.STANDING_BY -> "待命中：主机一放就跟着放。" + when (status.problem) {
+        null -> ""
+        SinkSession.NO_CLOCK_PROBLEM -> "\n上一次主机没有应答时钟，没跟上。"
+        else -> "\n上一次没跟上：${status.problem}"
+    }
     SinkStage.OPENING_SPEAKERS -> "正在打开扬声器…"
     SinkStage.SYNCING -> "正在和主机对时…"
-    SinkStage.NO_CLOCK -> "主机没有应答时钟，什么都没放。"
     SinkStage.PLAYING -> "正在跟着放。"
-    SinkStage.HOST_SILENT -> "主机没在发声，可能停了或者断了。要重新跟，按停止再按开始。"
+    SinkStage.HOST_SILENT -> "主机没在发声，可能断了。它再放的时候这台会自己跟上。"
     SinkStage.FAILED -> "出错了：${status.problem}"
 }
 

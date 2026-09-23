@@ -72,11 +72,14 @@ class SinkStream(
         }
     }
 
-    /** Blocks until the estimator has published, or until [timeoutMillis] is up. */
-    fun awaitClock(timeoutMillis: Long): Boolean {
+    /**
+     * Blocks until the estimator has published, until [timeoutMillis] is up, or until [keepWaiting]
+     * says the wait is no longer wanted - a host that says stop while this is still settling.
+     */
+    fun awaitClock(timeoutMillis: Long, keepWaiting: () -> Boolean = { true }): Boolean {
         val giveUpAt = System.nanoTime() + timeoutMillis * 1_000_000L
         while (clockClient.currentEstimate() == null) {
-            if (System.nanoTime() > giveUpAt) return false
+            if (System.nanoTime() > giveUpAt || !keepWaiting()) return false
             Thread.sleep(POLL_MILLIS)
         }
         return true
