@@ -30,10 +30,21 @@ class SinkStream(
     private val playout = ChunkPlayout(output) { clockClient.currentEstimate()?.offsetNanos ?: 0L }
 
     private val chunkClient = ChunkClient(hostAddress, chunkPort, peerId) { chunk ->
+        arrived++
         if (clockClient.currentEstimate() == null) chunksBeforeTheClockAnswered++ else playout.play(chunk)
     }
 
     @Volatile private var clockThread: Thread? = null
+
+    /**
+     * Chunks that came off the wire at all, played or not - what says the host is still sending.
+     *
+     * The chunk client says nothing when its socket ends; the thread reading it just stops. So
+     * "the host went quiet" is read from this count standing still, the way the handset sink reads
+     * it from the time since its last chunk.
+     */
+    @Volatile var arrived: Int = 0
+        private set
 
     /** Chunks that arrived before the estimator had an answer, and so were not played. */
     @Volatile var chunksBeforeTheClockAnswered: Int = 0
