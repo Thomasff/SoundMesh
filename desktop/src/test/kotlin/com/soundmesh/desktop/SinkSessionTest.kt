@@ -48,6 +48,30 @@ class SinkSessionTest {
         assertTrue(HostIdentity(identity).current().isNotEmpty())
     }
 
+    /**
+     * A standing sink says it is there on the handsets' cadence, or a handset host draws it as
+     * gone quiet - a hollow mark on the list - while it is waiting perfectly well.
+     */
+    @Test
+    fun aStandingSinkKeepsSayingItIsThere() {
+        val commandPort = freeTcpPort()
+        // Wider than the two-second beat, narrower than the six seconds watched below.
+        val orders = RoomCommandServer(commandPort, quietAfterMillis = 3_000L).apply { start() }
+        val sink = SinkSession(folder.newFolder(), openSpeakers = FakeSpeakers()::open)
+        try {
+            sink.start("127.0.0.1", freeTcpPort(), freeUdpPort(), commandPort)
+            assertTrue(eventually(10_000) { orders.standingBy() == 1 })
+            val until = System.nanoTime() + 6_000_000_000L
+            while (System.nanoTime() < until) {
+                assertTrue("called quiet while standing by", orders.quietPeerIds().isEmpty())
+                Thread.sleep(250)
+            }
+        } finally {
+            sink.stop()
+            orders.stop()
+        }
+    }
+
     /** Play, stop, play again - and nobody touches this machine in between. */
     @Test
     fun aStandingSinkFollowsEveryPlayAndStandsByAgainAfterEveryStop() {
