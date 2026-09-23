@@ -37,6 +37,32 @@ class PeerDiscoveryTest {
         }
     }
 
+    /**
+     * Two hosts is the answer discovery exists to refuse, and it can only refuse what it saw. If
+     * the browse stopped listening at the first answer, the second host would never be counted
+     * and the sink would join whichever replied first - which is a stranger's room.
+     */
+    @Test
+    fun aHostThatAppearsPartWayThroughTheWindowIsStillCounted() {
+        val early = HostId.generate()
+        val late = HostId.generate()
+        PeerDiscovery.register("SoundMesh-$early", PORT, early).use {
+            var lateRecord: AutoCloseable? = null
+            val registrar = Thread {
+                Thread.sleep(WINDOW_MILLIS / 2L)
+                lateRecord = PeerDiscovery.register("SoundMesh-$late", PORT, late)
+            }.apply { start() }
+            try {
+                val found = PeerDiscovery.discover(WINDOW_MILLIS).hosts.map { PeerAdvertisement.hostIdOf(it) }
+                assertTrue("early missing from $found", early in found)
+                assertTrue("late missing from $found", late in found)
+            } finally {
+                registrar.join()
+                lateRecord?.close()
+            }
+        }
+    }
+
     @Test
     fun aRecordIsGoneOnceItsRegistrationIsClosed() {
         val id = HostId.generate()
