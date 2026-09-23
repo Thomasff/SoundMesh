@@ -87,7 +87,8 @@ private fun report(sink: SinkStream, seconds: Int) {
         val offset = sink.offsetNanos()?.let { micros(it) } ?: "none"
         println(
             "       : played ${sink.played}, late ${sink.droppedLate}, offset $offset ms\n" +
-                "         seams ${sink.seams}, ${sink.seamBand()}"
+                "         seams ${sink.seams}, ${sink.seamBand()}\n" +
+                "         split ${sink.seamShares()}"
         )
     }
 }

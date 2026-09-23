@@ -1,6 +1,8 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.AudioChunk
+import com.soundmesh.core.TonePcmSource
+import kotlin.math.roundToInt
 
 /**
  * An output with a timeline in frames, which is all the playout below needs one to be.
@@ -24,6 +26,9 @@ interface FrameOutput {
      */
     fun schedule(samples: ShortArray, channels: Int, atFrame: Long): Boolean
 }
+
+/** The three things a seam is made of - see [ChunkPlayout.seamShareFramesAtQuantile]. */
+enum class SeamShare { HOST, OFFSET, DEVICE }
 
 /**
  * Puts a chunk stream on a local output at the instants the host asked for.
@@ -104,13 +109,37 @@ class ChunkPlayout(
      * Nearest-rank, so a quantile of 1.0 is the widest join and no value is invented between two
      * that were measured.
      */
-    fun seamFramesAtQuantile(quantile: Double): Int {
+    fun seamFramesAtQuantile(quantile: Double): Int = quantileOf(seamWidths, quantile)
+
+    /**
+     * How wide one share of the joins is, as a band in the same sense as [seamFramesAtQuantile].
+     *
+     * A seam is three things added: how far the host's two instants sat from a chunk apart, how
+     * far the clock offset moved between the two readings, and what is left once those two are
+     * taken out - the device's clock, read once per chunk. The seam alone cannot say which of the
+     * three moved, and on 09-23 one bad run in six could not be put on any of them because nothing
+     * was keeping this. Each share is rounded on its own, so a join made of fractions of a frame
+     * can leave a frame of rounding in the device's share.
+     */
+    fun seamShareFramesAtQuantile(share: SeamShare, quantile: Double): Int =
+        quantileOf(shareWidths.getValue(share), quantile)
+
+    /** The shares as one line, beside [seamBand]; p90 and p99 because p50 is zero on a good run. */
+    fun seamShares(): String {
+        if (joins == 0) return "no joins yet"
+        return SeamShare.entries.joinToString(", ") { share ->
+            "${share.name.lowercase()} p90 ${seamShareFramesAtQuantile(share, 0.9)} / " +
+                "p99 ${seamShareFramesAtQuantile(share, 0.99)} / max ${seamShareFramesAtQuantile(share, 1.0)}"
+        }
+    }
+
+    private fun quantileOf(widths: Map<Int, Int>, quantile: Double): Int {
         require(quantile > 0.0 && quantile <= 1.0) { "quantile must be in (0, 1], not $quantile" }
         if (joins == 0) return NO_JOINS_YET
         val rank = kotlin.math.ceil(quantile * joins).toInt()
         var seen = 0
-        for (width in seamWidths.keys.sorted()) {
-            seen += seamWidths.getValue(width)
+        for (width in widths.keys.sorted()) {
+            seen += widths.getValue(width)
             if (seen >= rank) return width
         }
         error("$rank of $joins joins is past the end of the histogram")
@@ -132,6 +161,7 @@ class ChunkPlayout(
     // a run is minutes long and the widths are small integers, so this stays a handful of entries
     // however long the run goes on - and unlike a reservoir it answers exactly.
     private val seamWidths = HashMap<Int, Int>()
+    private val shareWidths = SeamShare.entries.associateWith { HashMap<Int, Int>() }
 
     // Where the chunk before this one ran out, and which one it was. Only consecutive
     // sequences are compared: a chunk the host or the network lost leaves a hole a whole chunk
@@ -140,10 +170,17 @@ class ChunkPlayout(
     private var endOfLastChunk: Long = 0
     private var lastSequence: Int = NO_CHUNK_YET
 
+    // What the chunk before this one was placed with, so a seam can be split into shares.
+    private var lastPlayAtHostNanos: Long = 0
+    private var lastOffsetNanos: Long = 0
+    private var lastChunkFrames: Int = 0
+
     fun play(chunk: AudioChunk): Boolean {
+        // Read once, so the share below is the offset this chunk was actually placed with.
+        val offset = offsetNanos()
         // hostNanos = localNanos + offset - alignment, which is the sink session's own arithmetic
         // read the other way round.
-        val localNanos = chunk.playAtHostNanos - offsetNanos() + alignmentOffsetNanos
+        val localNanos = chunk.playAtHostNanos - offset + alignmentOffsetNanos
         val frame = output.frameAtLocalNanos(localNanos)
         val samples = samplesOf(chunk.pcm)
         if (!output.schedule(samples, channels, frame)) {
@@ -158,11 +195,28 @@ class ChunkPlayout(
                 seams++
                 if (kotlin.math.abs(seam) > kotlin.math.abs(worstSeamFrames)) worstSeamFrames = seam
             }
+            val host = framesOf(chunk.playAtHostNanos - lastPlayAtHostNanos) - lastChunkFrames
+            // The offset is subtracted from the host instant, so an offset that grew moves the
+            // chunk earlier.
+            val offsetShare = -framesOf(offset - lastOffsetNanos)
+            countShare(SeamShare.HOST, host)
+            countShare(SeamShare.OFFSET, offsetShare)
+            countShare(SeamShare.DEVICE, seam - host - offsetShare)
         }
         endOfLastChunk = frame + samples.size / channels
         lastSequence = chunk.sequence
+        lastPlayAtHostNanos = chunk.playAtHostNanos
+        lastOffsetNanos = offset
+        lastChunkFrames = samples.size / channels
         played++
         return true
+    }
+
+    // At the stream's rate, which WasapiOutput refuses to run at anything other than.
+    private fun framesOf(nanos: Long): Double = nanos * TonePcmSource.SAMPLE_RATE / 1e9
+
+    private fun countShare(share: SeamShare, frames: Double) {
+        shareWidths.getValue(share).merge(kotlin.math.abs(frames).roundToInt(), 1, Int::plus)
     }
 
     /** Little-endian pairs of bytes, which is what ChunkCodec puts on the wire, to samples. */

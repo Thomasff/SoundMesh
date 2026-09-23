@@ -47,6 +47,9 @@ class SinkStream(
     /** How wide the joins are, as a level - see [ChunkPlayout.seamBand]. */
     fun seamBand(): String = playout.seamBand()
 
+    /** Which of host, offset and device the seams came from - see [ChunkPlayout.seamShares]. */
+    fun seamShares(): String = playout.seamShares()
+
     fun offsetNanos(): Long? = clockClient.currentEstimate()?.offsetNanos
 
     /** Starts the clock leg only. The audio leg is [dial], so a caller can wait in between. */

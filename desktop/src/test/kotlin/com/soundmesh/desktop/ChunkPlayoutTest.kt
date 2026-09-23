@@ -166,6 +166,60 @@ class ChunkPlayoutTest {
         assertEquals(ChunkPlayout.NO_JOINS_YET, playout.seamFramesAtQuantile(0.5))
     }
 
+    @Test
+    fun aHostInstantThatMovedShowsUpAsTheHostsShareOfTheSeam() {
+        // 125 µs is six frames exactly, so no share has a rounding frame to hide behind.
+        val output = FakeOutput()
+        val playout = ChunkPlayout(output) { 0L }
+
+        playout.play(AudioChunk(0, 0L, stereo(960)))
+        playout.play(AudioChunk(1, 20_125_000L, stereo(960)))
+
+        assertEquals(6, playout.worstSeamFrames)
+        assertEquals(6, playout.seamShareFramesAtQuantile(SeamShare.HOST, 1.0))
+        assertEquals(0, playout.seamShareFramesAtQuantile(SeamShare.OFFSET, 1.0))
+        assertEquals(0, playout.seamShareFramesAtQuantile(SeamShare.DEVICE, 1.0))
+    }
+
+    @Test
+    fun anOffsetThatMovedBetweenTwoChunksShowsUpAsTheOffsetsShare() {
+        val output = FakeOutput()
+        var offset = 0L
+        val playout = ChunkPlayout(output) { offset }
+
+        playout.play(AudioChunk(0, 0L, stereo(960)))
+        offset = 125_000L
+        playout.play(AudioChunk(1, 20_000_000L, stereo(960)))
+
+        assertEquals(-6, playout.worstSeamFrames)
+        assertEquals(0, playout.seamShareFramesAtQuantile(SeamShare.HOST, 1.0))
+        assertEquals(6, playout.seamShareFramesAtQuantile(SeamShare.OFFSET, 1.0))
+        assertEquals(0, playout.seamShareFramesAtQuantile(SeamShare.DEVICE, 1.0))
+    }
+
+    @Test
+    fun aDeviceReadingThatMovedOnItsOwnIsWhatIsLeftForTheDevice() {
+        // The host instants are a clean chunk apart and the offset holds still, so the only thing
+        // left to put the second chunk eleven frames out is the reading of the device's clock -
+        // the case the one unexplained bad run on 09-23 could not be told apart from.
+        val calls = intArrayOf(0)
+        val output = object : FrameOutput {
+            override fun frameAtLocalNanos(localNanos: Long): Long =
+                localNanos * 48_000L / 1_000_000_000L + if (++calls[0] == 2) 11 else 0
+
+            override fun schedule(samples: ShortArray, channels: Int, atFrame: Long) = true
+        }
+        val playout = ChunkPlayout(output) { 0L }
+
+        playout.play(AudioChunk(0, 0L, stereo(960)))
+        playout.play(AudioChunk(1, 20_000_000L, stereo(960)))
+
+        assertEquals(11, playout.worstSeamFrames)
+        assertEquals(0, playout.seamShareFramesAtQuantile(SeamShare.HOST, 1.0))
+        assertEquals(0, playout.seamShareFramesAtQuantile(SeamShare.OFFSET, 1.0))
+        assertEquals(11, playout.seamShareFramesAtQuantile(SeamShare.DEVICE, 1.0))
+    }
+
     /**
      * Plays one chunk per entry in [seamFrames], each landing that many frames from where its
      * neighbour ran out. The first entry is the join between chunk 0 and chunk 1, so the run is
