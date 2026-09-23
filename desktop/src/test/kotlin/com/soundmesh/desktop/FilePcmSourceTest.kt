@@ -145,4 +145,28 @@ class FilePcmSourceTest {
 
         assertEquals(fromTone.size, fromFile.size)
     }
+
+    /** What javax.sound cannot open goes to the decoders Windows ships, and arrives as the stream's format. */
+    @Test
+    fun anMp3OpensAsStereoAtTheRendererRate() {
+        val mp3 = File(javaClass.getResource("/tone-44k-mono-440.mp3")!!.toURI())
+        val source = FilePcmSource.open(mp3)
+        assertEquals(0, source.frameCount % ChunkCodec.FRAMES_PER_CHUNK)
+        assertTrue("${source.frameCount}", source.frameCount in 96_000..100_800)
+    }
+
+    @Test
+    fun aFileThatIsNotSoundSaysWhatCanBeOpened() {
+        val junk = folder.newFile("junk.wav").apply { writeText("not a song") }
+        val thrown = runCatching { FilePcmSource.open(junk) }.exceptionOrNull()
+        assertTrue("$thrown", thrown is IllegalArgumentException && thrown.message!!.contains("not in a format"))
+    }
+
+    /** The limit holds on the WAV path too: a long WAV is held whole in memory just the same. */
+    @Test
+    fun aWavLongerThanTheLimitIsRefused() {
+        val wav = write(ramp(96_000, channels = 2), rate = 48000, channels = 2)
+        val thrown = runCatching { FilePcmSource.open(wav, maxSeconds = 1) }.exceptionOrNull()
+        assertTrue("$thrown", thrown is IllegalArgumentException && thrown.message!!.contains("longer than"))
+    }
 }

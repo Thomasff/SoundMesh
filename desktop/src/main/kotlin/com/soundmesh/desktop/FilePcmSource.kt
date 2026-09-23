@@ -16,11 +16,10 @@ import javax.sound.sampled.UnsupportedAudioFileException
  * rather than a position that a caller could get out of step with. Decoding up front also keeps
  * every decoder call out of the streaming loop.
  *
- * **WAV only, deliberately.** What this exists to do is let a run play something with a tune in it
- * instead of a 480 Hz tone, and a WAV does that with nothing bundled and nothing to go stale. When
- * the product has to open whatever a person actually has, the decoder to reach for is the one
- * Windows already ships - Media Foundation, through the same foreign-function route as
- * [WasapiRenderer] - and only the [open] half of this changes.
+ * **WAV through javax.sound, everything else through Media Foundation.** A WAV stays on the path it
+ * has always taken, so the runs the archive compares are made against the same bytes they always
+ * were; what javax.sound cannot open - MP3, AAC, FLAC, WMA - goes to the decoders Windows ships,
+ * see [MediaFoundation]. Either way the rate and channels are converted by the one [Resampler].
  *
  * **The loop's seam is left in on purpose**, which is the handset source's reasoning carried over:
  * both machines emit that transient from the same chunk at the same instant, and a shared transient
@@ -65,6 +64,13 @@ class FilePcmSource private constructor(private val pcm: ByteArray) {
         private const val FRAME_BYTES = CHANNELS * BYTES_PER_SAMPLE
 
         /**
+         * Longer than this is refused before it is held whole. An estimate of memory, not a
+         * measurement: half an hour of 48 kHz stereo is 345 MB, and reading and converting it
+         * holds a few copies at once against a default heap of a quarter of the machine.
+         */
+        const val MAX_SECONDS = 30 * 60
+
+        /**
          * Reads [file] and converts it to the one format everything downstream plays.
          *
          * Two steps, and which does what matters. The sound library normalises how a sample is
@@ -73,7 +79,7 @@ class FilePcmSource private constructor(private val pcm: ByteArray) {
          * through [Resampler], the same call the handset makes, so a desktop run and a handset run
          * are made against the same conversion and stay comparable.
          */
-        fun open(file: File): FilePcmSource {
+        fun open(file: File, maxSeconds: Int = MAX_SECONDS): FilePcmSource {
             require(file.isFile) { "no file at ${file.absolutePath}" }
             val pcm = try {
                 AudioSystem.getAudioInputStream(file).use { opened ->
@@ -81,6 +87,11 @@ class FilePcmSource private constructor(private val pcm: ByteArray) {
                     require(source.channels == 1 || source.channels == 2) {
                         "${source.channels} channels is more than a stereo pipeline can place; " +
                             "export it as mono or stereo"
+                    }
+                    // An unknown length is -1 and passes; only a file that says it is too long is held back here.
+                    require(opened.frameLength <= maxSeconds * source.sampleRate.toLong()) {
+                        "${file.name} is longer than ${maxSeconds / 60} minutes, and a song is held whole " +
+                            "in memory before it plays; pick a shorter one"
                     }
                     val samples = AudioSystem.getAudioInputStream(signedSixteenBit(source), opened)
                         .use { it.readBytes() }
@@ -91,12 +102,9 @@ class FilePcmSource private constructor(private val pcm: ByteArray) {
                         samples, source.sampleRate.toInt(), source.channels, TonePcmSource.SAMPLE_RATE
                     )
                 }
-            } catch (e: UnsupportedAudioFileException) {
-                throw IllegalArgumentException(
-                    "${file.name} is not a sound file this can open - it reads WAV, AIFF and AU; " +
-                        "export the song as a 48 kHz stereo WAV",
-                    e
-                )
+            } catch (_: UnsupportedAudioFileException) {
+                val decoded = MediaFoundation.decode(file, maxSeconds)
+                Resampler.toStereo(decoded.pcm, decoded.sampleRate, decoded.channels, TonePcmSource.SAMPLE_RATE)
             }
             val whole = pcm.size - pcm.size % (ChunkCodec.FRAMES_PER_CHUNK * FRAME_BYTES)
             require(whole > 0) {
