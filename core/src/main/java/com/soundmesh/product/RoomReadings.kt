@@ -32,7 +32,7 @@ data class RoomReading(
  * written for; a no, while the numbers are plainly moving, is worth much more than another evening
  * of turning a slider up.
  */
-internal fun roomReadings(field: SpatialField, hostNanos: Long): List<RoomReading> {
+fun roomReadings(field: SpatialField, hostNanos: Long): List<RoomReading> {
     return field.layout.peerIds.map { peerId ->
         val gain = field.gainAt(peerId, hostNanos)
         RoomReading(
