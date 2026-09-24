@@ -23,6 +23,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +44,7 @@ import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
+import com.soundmesh.product.BadgeEdges
 import com.soundmesh.product.BoxTitle
 import com.soundmesh.product.Chip
 import com.soundmesh.product.ChoiceCard
@@ -67,6 +69,7 @@ import com.soundmesh.product.Transport
 import com.soundmesh.product.TransportIcon
 import com.soundmesh.product.VolumeLine
 import com.soundmesh.product.badgeColour
+import com.soundmesh.product.rememberEdgeGlow
 import com.soundmesh.desktop.AudioSession
 import com.soundmesh.desktop.AudioSessions
 import com.soundmesh.desktop.HostPort
@@ -100,6 +103,19 @@ import kotlin.math.roundToInt
 private enum class Role { HOST, SINK }
 
 /**
+ * What the window's edge light is saying - the handset HomeScreen's edge: this machine's colour,
+ * whether it is a sink that has dropped off its host, and whether it is playing. Said by whichever
+ * pane is open, from the status it already reads.
+ */
+private data class EdgeLook(val place: Int?, val disconnected: Boolean, val playing: Boolean)
+
+/** The sink stages in which it is on its host's list, as a handset standing by is. */
+private val ON_THE_LIST = setOf(
+    SinkStage.STANDING_BY, SinkStage.OPENING_SPEAKERS, SinkStage.SYNCING, SinkStage.PLAYING,
+    SinkStage.HOST_SILENT, SinkStage.MEASURING
+)
+
+/**
  * The one window, drawn out of the handset's own pieces (ui-shared's Look.kt and ThinSlider.kt):
  * small grey labels over hairline rows, one or two solid buttons, notes in small grey type, and
  * colour only where a device is meant.
@@ -115,40 +131,59 @@ fun SoundMeshWindow(
     onMeasure: (MeasureJob, String?) -> Unit
 ) {
     var role by remember { mutableStateOf<Role?>(null) }
+    var look by remember { mutableStateOf<EdgeLook?>(null) }
     val scope = rememberCoroutineScope()
-    Column(
-        // Scrolls: a roster and a volume line per device outgrow the window in a room of a few.
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(top = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+    // Dimmed rather than only stilled for a sink off its host, as on the handset: from across the
+    // room it should read as grey, not as a quieter version of its own colour.
+    val edge = look?.place?.let { badgeColour(it, MaterialTheme.colorScheme.primary) }
+        ?.let { if (look?.disconnected == true) it.copy(alpha = 0.3f) else it }
+    // Told whether there is a colour: with none nothing draws an edge, and nothing wakes every
+    // frame to work out how bright it is not.
+    val glow = rememberEdgeGlow(
+        lit = edge != null,
+        disconnected = look?.disconnected == true,
+        playing = look?.playing == true
+    ) { if (role == Role.SINK) sink.loudness() else host.loudness() }
+    // The edge is laid over the window rather than wrapped round it, so the bands are nodes of
+    // their own and the page under them is not redrawn for the light - the handset's layout.
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            // Scrolls: a roster and a volume line per device outgrow the window in a room of a few.
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Segmented(
-                listOf(
-                    Segment(say(Phrases.role_host), role == Role.HOST) {
-                        role = Role.HOST
-                        scope.launch(sessions) { sink.stop(); host.open() }
-                    },
-                    Segment(say(Phrases.role_sink), role == Role.SINK) {
-                        role = Role.SINK
-                        scope.launch(sessions) { host.close() }
-                    }
-                ),
-                Modifier.weight(1f)
-            )
-            Chip(say(Phrases.settings_open), onOpenSettings)
-        }
-        when (role) {
-            Role.HOST -> HostPane(host, sessions, details, onMeasure)
-            Role.SINK -> SinkPane(sink, sessions, details)
-            null -> {
-                Text(say(Phrases.pc_role_question), Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium)
-                Networks()
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Segmented(
+                    listOf(
+                        Segment(say(Phrases.role_host), role == Role.HOST) {
+                            role = Role.HOST
+                            scope.launch(sessions) { sink.stop(); host.open() }
+                        },
+                        Segment(say(Phrases.role_sink), role == Role.SINK) {
+                            role = Role.SINK
+                            scope.launch(sessions) { host.close() }
+                        }
+                    ),
+                    Modifier.weight(1f)
+                )
+                Chip(say(Phrases.settings_open), onOpenSettings)
+            }
+            when (role) {
+                Role.HOST -> HostPane(host, sessions, details, onMeasure) { look = it }
+                Role.SINK -> SinkPane(sink, sessions, details) { look = it }
+                null -> {
+                    SideEffect { look = null }
+                    Text(say(Phrases.pc_role_question), Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium)
+                    Networks()
+                }
             }
         }
+        // Last, so it is over the page, which scrolls. A computer's window is square-cornered.
+        if (edge != null) BadgeEdges(edge, glow, round = 0f)
     }
 }
 
@@ -157,9 +192,12 @@ private fun HostPane(
     host: HostSession,
     sessions: CoroutineDispatcher,
     details: Boolean,
-    onMeasure: (MeasureJob, String?) -> Unit
+    onMeasure: (MeasureJob, String?) -> Unit,
+    onLook: (EdgeLook) -> Unit
 ) {
     val status = polled { host.status() } ?: return
+    // Equal looks change nothing, so this settles after the first composition that says it.
+    SideEffect { onLook(EdgeLook(status.selfPlace, disconnected = false, playing = status.playing)) }
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     // A program's sound instead of files; picking either one puts the other down.
     var app by remember { mutableStateOf<AudioSession?>(null) }
@@ -285,8 +323,17 @@ private fun HostPane(
 }
 
 @Composable
-private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: Boolean) {
+private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: Boolean, onLook: (EdgeLook) -> Unit) {
     val status = polled { sink.status() } ?: return
+    SideEffect {
+        onLook(
+            EdgeLook(
+                status.selfPlace,
+                disconnected = status.stage !in ON_THE_LIST,
+                playing = status.stage == SinkStage.PLAYING || status.stage == SinkStage.HOST_SILENT
+            )
+        )
+    }
     val scope = rememberCoroutineScope()
     val going = status.stage !in setOf(SinkStage.IDLE, SinkStage.NOT_FOUND, SinkStage.FAILED)
 
