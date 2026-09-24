@@ -6,24 +6,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableDoubleState
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.soundmesh.session.SessionService
+import androidx.compose.runtime.rememberUpdatedState
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.log10
 import kotlin.math.max
-
-/**
- * Whether this handset is a sink that has dropped off its standing line while nothing is playing.
- *
- * Shared between [rememberEdgeGlow] (which picks the flat, unbreathing amplitude for this state)
- * and [HomeScreen] (which dims the edge colour itself for it) so the two cannot disagree about
- * which state they are drawing.
- */
-internal fun disconnectedSink(state: HomeState): Boolean = !state.onStandby && state.role == Role.SINK
 
 /**
  * What the edge is doing right now. One of four, and the one thing a frame loop is keyed on.
@@ -93,16 +85,20 @@ internal interface EdgeGlow {
  * Three lit regimes, checked in order:
  * - **disconnected** - a sink whose standing line is down. Fixed and low: the breathing stops
  *   rather than keeps miming a room this handset is no longer part of.
- * - **playing** - read off [SessionService.ACTIVE]'s own loudness every frame, smoothed so the
- *   edge follows the music rather than flickering with every 20ms chunk.
+ * - **playing** - read off [loudness] every frame, smoothed so the edge follows the music rather
+ *   than flickering with every 20ms chunk.
  * - **standing by, not playing** - a slow, even breath, so a phone left in a corner still reads
  *   as alive from across the room.
  *
- * Deliberately not read off [HomeState] itself: the screen's own state is polled five times a
- * second, which is far too slow for something meant to move with the music, and lifting that
- * whole poll to a frame rate to carry one float would put the cost of this decoration on a path
- * that has to stay cheap for reasons that have nothing to do with it. This reads the renderer's
- * volatile directly instead - see [com.soundmesh.probe.sync.SyncRenderer.loudness].
+ * Deliberately not read off the screen's own state: that is polled five times a second on the
+ * handset and twice on a computer, which is far too slow for something meant to move with the
+ * music, and lifting that whole poll to a frame rate to carry one float would put the cost of this
+ * decoration on a path that has to stay cheap for reasons that have nothing to do with it.
+ * [loudness] reads the renderer's volatile directly instead - the handset's SyncRenderer.loudness,
+ * the computer's WasapiRenderer.loudness.
+ *
+ * [disconnected] and [playing] are the caller's: on the handset a sink off its standing line and a
+ * running session, on a computer the same two said by its own sessions.
  *
  * ────────────────────────────────────────────────────────────────────────────
  * Why this hands back a function instead of a Float, and why [lit] exists
@@ -126,15 +122,16 @@ internal interface EdgeGlow {
  *   nothing reads, which is the same waste in a cheaper suit.
  */
 @Composable
-internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
+internal fun rememberEdgeGlow(lit: Boolean, disconnected: Boolean, playing: Boolean, loudness: () -> Float): EdgeGlow {
+    val heard by rememberUpdatedState(loudness)
     val glow = remember { mutableFloatStateOf(STANDBY_GLOW_MIN) }
     val punch = remember { mutableFloatStateOf(0f) }
     val travel = remember { mutableDoubleStateOf(0.0) }
     val mood: MutableState<WaveMood> = remember { mutableStateOf(QUIET_MOOD) }
     val regime = when {
         !lit -> Glow.DARK
-        disconnectedSink(state) -> Glow.DISCONNECTED
-        state.running -> Glow.PLAYING
+        disconnected -> Glow.DISCONNECTED
+        playing -> Glow.PLAYING
         else -> Glow.STANDBY
     }
     LaunchedEffect(regime) {
@@ -150,7 +147,7 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
             // No loop here either, so the waves hold still where they were - which is the same
             // statement the flat amplitude is making.
             Glow.DISCONNECTED -> glow.floatValue = DISCONNECTED_GLOW
-            Glow.PLAYING -> followLoudness(glow, punch, travel, PLAYING_MOOD.speed)
+            Glow.PLAYING -> followLoudness(glow, punch, travel, PLAYING_MOOD.speed) { heard() }
             Glow.STANDBY -> breathe(glow, travel, QUIET_MOOD.speed)
         }
     }
@@ -165,7 +162,7 @@ internal fun rememberEdgeGlow(state: HomeState, lit: Boolean): EdgeGlow {
 }
 
 /**
- * Follows [SessionService.ACTIVE]'s own loudness, two exponential steps per frame.
+ * Follows the renderer's own [loudness], two exponential steps per frame.
  *
  * ★ Both steps are time constants, not per-frame fractions. The first of them used to be
  * `smoothed += 0.25f * (target - smoothed)`, which is a different amount of smoothing on every
@@ -231,6 +228,7 @@ private suspend fun followLoudness(
     punch: MutableFloatState,
     travel: MutableDoubleState,
     speed: Float,
+    loudness: () -> Float,
 ) {
     glow.floatValue = 0f
     punch.floatValue = 0f
@@ -243,7 +241,7 @@ private suspend fun followLoudness(
         withInfiniteAnimationFrameNanos { now ->
             val last = previous
             previous = now
-            val heard = heardAs(SessionService.ACTIVE?.loudness() ?: 0f)
+            val heard = heardAs(loudness())
             if (last != null) {
                 val dt = (now - last) * 1e-9f
                 travel.doubleValue += dt.toDouble() * speed

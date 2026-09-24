@@ -1,8 +1,5 @@
 package com.soundmesh.product
 
-import android.os.Build
-import android.view.RoundedCorner
-import android.view.View
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
@@ -25,9 +22,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
 import kotlin.math.ceil
@@ -55,6 +49,9 @@ private fun Edge.isSide() = this == Edge.LEFT || this == Edge.RIGHT
  * Called only where there is a colour to draw. A handset before its host has a room to hand
  * colours out in draws no edge at all, and a default colour would be worse than none: two handsets
  * sharing one is exactly the confusion the colours exist to end.
+ *
+ * [round] is the radius of the screen's own corner in pixels: the handset asks its glass
+ * (screenCornerPx), and a computer's window and screen are square.
  *
  * ────────────────────────────────────────────────────────────────────────────
  * The waves are not synchronised between handsets, on purpose
@@ -120,10 +117,7 @@ private fun Edge.isSide() = this == Edge.LEFT || this == Edge.RIGHT
  * longer, so both cost something; how much is not known to better than the noise.
  */
 @Composable
-internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow) {
-    // Read fresh rather than remembered: on the first composition the view may not be attached to a
-    // window yet, and a remembered null would keep the fallback radius for the life of the screen.
-    val round = screenCornerPx(LocalView.current, LocalDensity.current)
+internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow, round: Float) {
     // The one thing about the page the waves have to know: whether there is room above this
     // ground to add light to. See [WaveInk].
     val ink = WaveInk(MaterialTheme.colorScheme.background.luminance() < HALF_LIT)
@@ -279,29 +273,6 @@ private fun samplePoints(along: Float, round: Float, density: Float): FloatArray
     for (k in 0..middle) marks[corner + k] = bend + straight * k / middle
     for (k in 1..corner) marks[corner + middle + k] = along - bend + bend * k / corner
     return marks
-}
-
-/**
- * The radius of this screen's own rounded corner, in pixels.
- *
- * Android has only known its own corner radius since API 31, and it is not a number that can be
- * derived from anything else - it is a property of the glass. So: ask when there is something to
- * ask, and otherwise use a radius typical of the handsets this runs on. Getting it wrong by a few
- * dp costs nothing visible; the light is 10dp in from the edge and its own bend is that much
- * gentler than the glass's.
- *
- * Clamped at the top because [EDGE_NODE] has to contain the deepest point of the arc, which sits
- * where the two bands meet, at `round - (round - restingDepth)/√2` in from the edge.
- */
-private fun screenCornerPx(view: View, density: Density): Float {
-    val asked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        view.rootWindowInsets?.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius?.toFloat()
-    } else {
-        null
-    }
-    return with(density) {
-        (asked ?: CORNER_FALLBACK_DP.toPx()).coerceIn(0f, CORNER_MOST_DP.toPx())
-    }
 }
 
 /**
@@ -628,17 +599,6 @@ private const val HALF_LIT = 0.5f
  * waves rest about 12dp in with their skirt, and at [CORNER_MOST_DP] that is 22.5dp.
  */
 private val EDGE_NODE = 24.dp
-
-/**
- * What to assume the glass is rounded by when the platform will not say, and how round it is
- * allowed to claim to be.
- *
- * The fallback is the middle of the range handsets of this generation actually use. The ceiling is
- * what [EDGE_NODE] can hold; a phone rounder than this gets a slightly tighter bend than its glass,
- * which is invisible next to the sharp corner it replaces.
- */
-private val CORNER_FALLBACK_DP = 32.dp
-private val CORNER_MOST_DP = 48.dp
 
 private const val QUARTER_TURN = (PI / 2.0).toFloat()
 

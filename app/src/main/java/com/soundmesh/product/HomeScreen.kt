@@ -33,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.clickable
@@ -430,7 +432,10 @@ fun HomeScreen(
         }
         // Last, so they are over the content: the screen scrolls, and an edge drawn beneath
         // whatever happens to be at the top of the list is an edge that comes and goes.
-        if (edge != null) BadgeEdges(edge, glow)
+        // The corner is read fresh rather than remembered: on the first composition the view may
+        // not be attached to a window yet, and a remembered null would keep the fallback radius for
+        // the life of the screen.
+        if (edge != null) BadgeEdges(edge, glow, screenCornerPx(LocalView.current, LocalDensity.current))
     }
 }
 
