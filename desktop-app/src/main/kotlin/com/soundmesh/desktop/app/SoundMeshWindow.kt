@@ -265,7 +265,7 @@ private fun HostPane(
             Solid(say(Phrases.goto_room_go), enabled = status.open) { onMeasure(MeasureJob.ROOM, null) }
         }
     }
-    HostDrawing(host, status.room, sessions)
+    HostDrawing(host, status.room, sessions, rememberRipple(status.playing))
     MeasuredLines(host, status.room, details, sessions)
     Effects(host, status.room, sessions)
     Volumes(host, status, sessions)
@@ -330,9 +330,12 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
     status.hostName?.let { name ->
         Note(status.hostAddress?.let { say(Phrases.pc_following_at, name, it) } ?: say(Phrases.pc_following, name))
     }
+    // Outside the room's own block: the host's rule can land a moment after the speakers open,
+    // and the ring starts from when this machine started playing, as the handset's does.
+    val ripple = rememberRipple(status.stage == SinkStage.PLAYING)
     status.room?.let { room ->
         Label(say(Phrases.tab_room))
-        RoomDrawing(room, actions = null)
+        RoomDrawing(room, actions = null, ripple = ripple)
         Note(say(Phrases.pc_room_readonly))
     }
     Diagnostics(
@@ -473,7 +476,7 @@ private fun clock(millis: Long): String {
  * a second, and an icon that followed the mouse only that often would lag a drag by half a second.
  */
 @Composable
-internal fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
+internal fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineDispatcher, ripple: Float? = null) {
     val scope = rememberCoroutineScope()
     var local by remember { mutableStateOf<RoomState?>(null) }
     var touchedAt by remember { mutableStateOf(0L) }
@@ -500,7 +503,8 @@ internal fun HostDrawing(host: HostSession, room: RoomState, sessions: Coroutine
                 }
             },
             togglePart = { peerId -> scope.launch(sessions) { host.togglePart(peerId) } }
-        )
+        ),
+        ripple
     )
     Note(say(Phrases.pc_drag_icons))
 }

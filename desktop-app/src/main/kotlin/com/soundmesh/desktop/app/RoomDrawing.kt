@@ -1,5 +1,7 @@
 package com.soundmesh.desktop.app
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -9,7 +11,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -51,9 +55,12 @@ class DrawingActions(
  * With [actions], a device is dragged to where it stands and the dot to where the sound should be.
  * A click on a device swaps which half of the split it carries, where the handset opens two
  * buttons: a mouse has no finger covering the icon, and the word under it already says which half.
+ *
+ * [ripple] is the handset's just-started ring round this machine's own icon, 0..1 while it spreads
+ * - see [rememberRipple].
  */
 @Composable
-fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
+fun RoomDrawing(room: RoomState, actions: DrawingActions?, ripple: Float? = null) {
     // Read through here rather than keyed on: the gesture outlives the recompositions that move
     // the icons, and would otherwise pick up whatever was nearest where the icons used to be -
     // the handset drawing's reason, word for word.
@@ -127,7 +134,29 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
             }
         }
         sourceSpotOf(room)?.let { drawSource(it, source) }
+        if (ripple != null) {
+            room.icons.firstOrNull { it.peerId == room.selfId }?.let { own ->
+                val place = room.colours[own.peerId]
+                drawRipple(own, ripple, place?.let { BadgeHues.argb.getOrNull(it) }?.let { Color(it) } ?: fallback)
+            }
+        }
     }
+}
+
+/**
+ * The handset's PlayingScreen ripple: 0..1 over [RIPPLE_MILLIS] each time [running] turns true,
+ * and null while nothing is playing, when "just started" has nothing to be said beside. Keyed on
+ * the state rather than on a click, so a sink ripples when its host starts the room.
+ */
+@Composable
+fun rememberRipple(running: Boolean): Float? {
+    val ripple = remember { Animatable(0f) }
+    LaunchedEffect(running) {
+        if (!running) return@LaunchedEffect
+        ripple.snapTo(0f)
+        ripple.animateTo(1f, animationSpec = tween(RIPPLE_MILLIS))
+    }
+    return ripple.value.takeIf { running }
 }
 
 /**
@@ -226,6 +255,18 @@ private fun DrawScope.drawSource(spot: SourceSpot, colour: Color) {
     drawCircle(colour, radius = radius, center = centre)
     drawCircle(colour.copy(alpha = 0.55f), radius = radius * 1.7f, center = centre, style = Stroke(width = 2f))
 }
+
+/** The handset's drawRipple: the ring grows and fades together, so nothing is left behind. */
+private fun DrawScope.drawRipple(icon: RoomIcon, progress: Float, colour: Color) {
+    val centre = Offset(icon.x * size.width, icon.y * size.height)
+    val radius = size.minDimension * (DEVICE_RADIUS + RIPPLE_SPREAD * progress)
+    drawCircle(colour.copy(alpha = (1f - progress) * RIPPLE_MAX_ALPHA), radius = radius, center = centre, style = Stroke(width = 3f))
+}
+
+/** The handset's ripple, unchanged: how long, how far out as a share of the side, how strong. */
+private const val RIPPLE_MILLIS = 600
+private const val RIPPLE_SPREAD = 0.3f
+private const val RIPPLE_MAX_ALPHA = 0.8f
 
 /** The handset drawing's icon radius, as a share of the side. */
 private const val DEVICE_RADIUS = 0.06f
