@@ -4,35 +4,56 @@ import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.PairingCodeCodec
 import com.soundmesh.core.RoomCommand
+import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.RoomOrder
 import com.soundmesh.core.TonePcmSource
+import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.COMMAND_PORT
+import com.soundmesh.probe.sync.Carried
 import com.soundmesh.probe.sync.ChunkServer
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
+import com.soundmesh.probe.sync.RoundRecorder
+import com.soundmesh.probe.sync.RoundSpeaker
 import com.soundmesh.probe.sync.SpatialFieldServer
+import com.soundmesh.probe.sync.StoredListenerDistance
+import com.soundmesh.product.ArmSchedule
 import com.soundmesh.product.CarriedSides
 import com.soundmesh.product.EffectKind
+import com.soundmesh.product.HostCommands
+import com.soundmesh.product.HostPlace
+import com.soundmesh.product.HostRound
+import com.soundmesh.product.HostRoundReport
 import com.soundmesh.product.RoomIcon
 import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.RoomState
+import com.soundmesh.product.RoundDials
+import com.soundmesh.product.RoundLine
+import com.soundmesh.product.RoundPorts
 import com.soundmesh.product.SourceSpot
 import com.soundmesh.product.SpatialRoom
 import com.soundmesh.product.StoredRoomDrawing
+import com.soundmesh.product.defaultTimingFor
+import com.soundmesh.product.fitOffer
+import com.soundmesh.product.measuredDistances
 import com.soundmesh.product.readBack
 import com.soundmesh.product.ruleOf
 import com.soundmesh.product.withEffect
 import java.io.File
 import java.net.BindException
 
-/** The four ports a handset dials, together so a test can move all of them. */
+/** The ports a handset dials, together so a test can move all of them. */
 data class HostPorts(
     val chunk: Int = ChunkCodec.DEFAULT_PORT,
     val clock: Int = ClockPacket.DEFAULT_PORT,
     val command: Int = COMMAND_PORT,
-    val spatial: Int = SinkStream.SPATIAL_PORT
+    val spatial: Int = SinkStream.SPATIAL_PORT,
+    // A measuring round's own three, held only while one runs - the handset host's.
+    val result: Int = RoundPorts.RESULT,
+    val plan: Int = RoundPorts.PLAN,
+    val room: Int = RoundPorts.ROOM
 )
 
 enum class HostPort { COMMAND, CLOCK, AUDIO, SPATIAL }
@@ -72,7 +93,37 @@ data class RoomPhone(
      * from [volumePercent] for the handset host's reason (VolumeRow.asked): drawn from the report
      * alone, a slider let go of jumps back to where the device was until the report arrives.
      */
-    val askedPercent: Int?
+    val askedPercent: Int?,
+    /** What constant it said it plays by, as the handset host's roster line reads it. */
+    val carrying: Carried = Carried.UNSAID,
+    /** Why it kept out of the last measuring round, or null when it did not. */
+    val excuse: RoomExcuse? = null
+)
+
+/** The two jobs a measuring round can be - the handset's calibration screen's two. */
+enum class MeasureJob { ROOM, PAIR }
+
+/**
+ * Where a measuring round has got to and what it came to, the handset calibration screen's state.
+ *
+ * Outlives the round, as that screen's does: the answer is read after the chirps have stopped.
+ */
+data class MeasureStatus(
+    val running: Boolean = false,
+    val job: MeasureJob? = null,
+    /** The chirps have started: calling it off now silences the room rather than refusing to answer. */
+    val underWay: Boolean = false,
+    /** Where the round has got to, or what it came to; null once a device's own line replaces it. */
+    val line: RoundLine? = null,
+    /** When the recording ends, on [System.nanoTime]'s scale, while the chirps are going. */
+    val untilLocalNanos: Long? = null,
+    /** What each device's part came to, one line each, in the order they said it. */
+    val heard: List<Pair<String, RoundLine>> = emptyList(),
+    /** Why this machine could not record, when that is what kept the round from starting. */
+    val microphone: MicrophoneProblem? = null,
+    val microphoneDetail: String? = null,
+    /** The last room round finished with an answer, which is when measuring again is offered beside it. */
+    val roomMeasured: Boolean = false
 )
 
 data class HostStatus(
@@ -114,7 +165,8 @@ data class HostStatus(
     val jumps: Int?,
     val localBand: String?,
     val localShares: String?,
-    val problem: HostProblem?
+    val problem: HostProblem?,
+    val measure: MeasureStatus = MeasureStatus()
 )
 
 /**
@@ -133,6 +185,11 @@ data class HostStatus(
  *
  * Not the command-line [main] in Host.kt, which stays what the on-device queue runs: a counted
  * run that waits for a sink and prints as it goes.
+ *
+ * **It measures the room and pairs, the way a handset host does** - core's one copy of the host's
+ * round ([HostRound]), on this machine's speakers and microphone, since 09-24. The one difference is
+ * where it stands: a person is sitting at the computer, so the computer is the listener's seat as
+ * well as a speaker, and there is no step of holding it over anybody's head. See [HostPlace.LISTENING].
  */
 class HostSession(
     private val identityDirectory: File,
@@ -150,7 +207,18 @@ class HostSession(
     /** The volume mixer, and a program's sound on its own - parameters so a test touches neither. */
     mixer: AppMixer = AudioSessions,
     private val openCapture: (pid: Long, onPcm: (ByteArray, Int) -> Unit) -> CaptureHandle =
-        { pid, onPcm -> AppCapture(pid, onPcm = onPcm) }
+        { pid, onPcm -> AppCapture(pid, onPcm = onPcm) },
+    /** Why a round could not record here, or null when it could. See [MicrophoneCheck]. */
+    private val microphoneProblem: () -> Pair<MicrophoneProblem, String>? = { MicrophoneCheck.problem() },
+    /** A round's recording, given the run store, the case and host time. */
+    private val roundRecorder: (RunStore, String, () -> Long) -> RoundRecorder =
+        { store, caseId, hostNanosNow -> WasapiRoundRecorder(store, caseId, hostNanosNow) },
+    /** A round's sound, given host time; null for this machine's speakers at SoundMesh's volume. */
+    private val roundSpeaker: ((() -> Long) -> RoundSpeaker)? = null,
+    /** What a round's schedule is; a test shortens it here. */
+    private val timingFor: (String?) -> ArmSchedule = ::defaultTimingFor,
+    /** Whether a round's recording stays once read, which the window ties to its details switch. */
+    private val keepsRecordings: () -> Boolean = { false }
 ) {
     private val lock = Any()
     private val turnDown = AppTurnDown(identityDirectory, mixer)
@@ -207,6 +275,14 @@ class HostSession(
     // Until when a stop is said again, and when it was last said. See [echoStop].
     private var stopEchoUntilNanos = 0L
     private var stopSaidAtNanos = 0L
+
+    // A measuring round: what it has said, the round itself while it runs, and whether it has been
+    // called off. Changed only through [noteMeasure], because the round's thread and the thread an
+    // excuse arrives on both write it.
+    private val measureLock = Any()
+    @Volatile private var measure = MeasureStatus()
+    @Volatile private var roundInFlight: HostRound? = null
+    @Volatile private var callingOff = false
 
     /** Binds the three ports and advertises, or says which port was taken and holds none of them. */
     fun open() = synchronized(lock) {
@@ -268,6 +344,7 @@ class HostSession(
             room = room.readBack(saved)
         }
         refreshRoom()
+        rereadDistances()
         teller = Thread({ tellWhileOpen() }, "host-tell").apply {
             isDaemon = true
             start()
@@ -276,6 +353,8 @@ class HostSession(
 
     /** Withdraws the record first, the mirror of [open], then gives every port back. */
     fun close() {
+        // Nobody is at the window a round was started from any more - the handset's onDestroy.
+        callOffMeasuring()
         stopPlaying()
         synchronized(lock) {
             // Only a session that was open has a drawing of its own; a close without one would
@@ -306,6 +385,8 @@ class HostSession(
         val settled = playing && stream != null && System.nanoTime() - streamSinceNanos >= stoppedGraceMillis * 1_000_000L
         val onAudio = if (settled) chunkServer?.peerIds().orEmpty().toSet() else null
         val volumes = command?.volumes().orEmpty()
+        val carrying = command?.carrying().orEmpty()
+        val excuses = command?.excuses().orEmpty()
         // The drawing's colours are whichever channel is holding the room just now, as on the
         // handset: the spatial channel's while playing, the standing channel's between songs.
         val colours = if (playing && stream != null) spatialServer?.places().orEmpty() else places
@@ -339,7 +420,9 @@ class HostSession(
                     quiet = peerId in quiet,
                     stopped = onAudio != null && (peerId !in onAudio || peerId in quiet),
                     volumePercent = volumes[peerId]?.percent,
-                    askedPercent = asked[peerId]
+                    askedPercent = asked[peerId],
+                    carrying = carrying[peerId] ?: Carried.UNSAID,
+                    excuse = excuses[peerId]
                 )
             },
             sinksOnAudio = chunkServer?.clientCount() ?: 0,
@@ -349,7 +432,8 @@ class HostSession(
             jumps = stream?.jumps,
             localBand = stream?.localSeamBand(),
             localShares = stream?.localSeamShares(),
-            problem = problem
+            problem = problem,
+            measure = measure
         )
     }
 
@@ -397,6 +481,8 @@ class HostSession(
     private fun startPlayer(feed: Feed, name: String, alsoHere: Boolean, adopt: () -> Unit) {
         val chunks = chunkServer ?: return
         if (player?.isAlive == true) return
+        // A round is recording the room, and music played now is what it would measure.
+        if (measure.running) return
         problem = null
         this.file = name
         playing = true
@@ -490,6 +576,146 @@ class HostSession(
         commandServer?.send(RoomCommand.RESTORE_VOLUME)
     }
 
+    /** 位置同步校准: every device standing by measured in one window, this machine among them. */
+    fun measureRoom() = startMeasuring(MeasureJob.ROOM, null)
+
+    /** One device's constant, measured against this machine - the handset host's per-row calibrate. */
+    fun measurePair(peerId: String) = startMeasuring(MeasureJob.PAIR, peerId)
+
+    /**
+     * Ends the round in flight on every device in it, or does nothing when none is running. Said
+     * in the round's own words at once, as the handset's stop button does.
+     */
+    fun callOffMeasuring() {
+        if (!measure.running) return
+        callingOff = true
+        noteMeasure {
+            it.copy(line = if (it.job == MeasureJob.ROOM) RoundLine.RoomCalledOffHere else RoundLine.Stopping, untilLocalNanos = null)
+        }
+        runCatching { roundInFlight?.callOff() }
+    }
+
+    /**
+     * Starts a round on a thread of its own, as the handset's calibration screen does - one at a
+     * time, since two would share the microphone and the ports.
+     *
+     * The microphone is asked first, as the desktop sink asks it: a round that cannot record is
+     * one where every device is told to chirp for a host that will hear none of it.
+     */
+    private fun startMeasuring(job: MeasureJob, aimedAt: String?) {
+        val command: RoomCommandServer
+        val self: String
+        synchronized(lock) {
+            command = commandServer ?: return
+            self = selfId ?: return
+            if (measure.running) return
+            callingOff = false
+            noteMeasure {
+                it.copy(
+                    running = true,
+                    job = job,
+                    underWay = false,
+                    line = RoundLine.Waiting,
+                    untilLocalNanos = null,
+                    microphone = null,
+                    microphoneDetail = null,
+                    roomMeasured = false
+                )
+            }
+        }
+        Thread({ measureOn(job, aimedAt, command, self) }, "host-measure").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun measureOn(job: MeasureJob, aimedAt: String?, command: RoomCommandServer, self: String) {
+        try {
+            microphoneProblem()?.let { (trouble, detail) ->
+                noteMeasure { it.copy(line = null, microphone = trouble, microphoneDetail = detail) }
+                return
+            }
+            // A chirp measured through music measures the music - the handset host's
+            // hushWhateverIsPlaying. Not started again afterwards, as on the handset.
+            stopPlaying()
+            val round = HostRound(
+                filesDir = identityDirectory,
+                hostId = self,
+                commands = StandingLine(command),
+                dials = RoundDials(
+                    clock = ports.clock,
+                    result = ports.result,
+                    plan = ports.plan,
+                    room = ports.room,
+                    command = ports.command
+                ),
+                // Served for as long as this machine is the host; see the class comment.
+                servesClock = false,
+                place = HostPlace.LISTENING,
+                timingFor = timingFor,
+                calledOff = { callingOff },
+                report = object : HostRoundReport {
+                    override fun say(line: RoundLine, untilLocalNanos: Long?) =
+                        noteMeasure { it.copy(line = line, untilLocalNanos = untilLocalNanos) }
+
+                    // The line that described the work does not survive the work, as on the
+                    // handset: a device's answer replaces it (PeerCalibrateActivity.record).
+                    override fun heard(peerId: String, line: RoundLine) = noteMeasure {
+                        it.copy(
+                            line = null,
+                            untilLocalNanos = null,
+                            heard = it.heard.filterNot { (id, _) -> id == peerId } + (peerId to line)
+                        )
+                    }
+
+                    override fun forgetHeard() = noteMeasure { it.copy(heard = emptyList()) }
+
+                    override fun underWay() = noteMeasure { it.copy(underWay = true) }
+
+                    override fun measured(peerIds: List<String>) {}
+                },
+                keepsRecording = keepsRecordings(),
+                recorder = { store, caseId, hostNanosNow, _ -> roundRecorder(store, caseId, hostNanosNow) },
+                speaker = { _, hostNanosNow ->
+                    roundSpeaker?.invoke(hostNanosNow) ?: FrameRoundSpeaker(openSpeakers, volume, hostNanosNow)
+                }
+            )
+            roundInFlight = round
+            // Called off while the microphone was being asked or the music stopped: nothing has
+            // been said to the room yet, so there is nothing to take back.
+            if (callingOff) return
+            when (job) {
+                MeasureJob.ROOM -> if (round.room()) noteMeasure { it.copy(roomMeasured = true) }
+                MeasureJob.PAIR -> round.pair(aimedAt)
+            }
+        } catch (e: Throwable) {
+            noteMeasure { it.copy(line = RoundLine.Failed(e.message ?: e.toString())) }
+        } finally {
+            roundInFlight = null
+            noteMeasure { it.copy(running = false, underWay = false, untilLocalNanos = null) }
+            synchronized(lock) { rereadDistances() }
+        }
+    }
+
+    private fun noteMeasure(change: (MeasureStatus) -> MeasureStatus) = synchronized(measureLock) {
+        measure = change(measure)
+    }
+
+    /** This host's standing line, as the round asks for it. */
+    private class StandingLine(private val server: RoomCommandServer) : HostCommands {
+        override fun send(command: RoomCommand): Int = server.send(command)
+
+        override fun sendTo(peerId: String, order: RoomOrder): Boolean = server.sendTo(peerId, order)
+
+        override fun standingBy(): Int = server.standingBy()
+
+        override fun forgetExcuses() = server.forgetExcuses()
+
+        override fun listenForExcuses(listener: ((String, RoomExcuse) -> Unit)?) {
+            server.onExcuse = listener
+        }
+    }
+
     /** Sets the room to one of the four effects - the handset host's effect list. */
     fun setEffect(kind: EffectKind) = updateRoom { it.withEffect(kind) }
 
@@ -502,10 +728,24 @@ class HostSession(
     /** How long one circuit of 旋转 takes. */
     fun setSpinSeconds(seconds: Int) = updateRoom { it.copy(periodSeconds = seconds) }
 
-    /** One device dragged somewhere else on the drawing. */
+    /**
+     * One device dragged somewhere else on the drawing - a person saying where it is, which is a
+     * fresh opinion for the fit to answer, as the handset's withIconMoved says.
+     */
     fun moveIcon(icon: RoomIcon) = updateRoom { room ->
-        room.copy(icons = room.icons.map { if (it.peerId == icon.peerId) SpatialRoom.clamped(icon) else it })
+        room.copy(
+            icons = room.icons.map { if (it.peerId == icon.peerId) SpatialRoom.clamped(icon) else it },
+            fitted = false
+        )
     }
+
+    /** 吸附到实测位置: the drawing moved onto what was measured, when there is anything to offer. */
+    fun fitRoom() = updateRoom { room ->
+        fitOffer(room)?.let { room.copy(icons = it.icons, metresPerUnit = it.metresPerUnit, fitted = true) } ?: room
+    }
+
+    /** Whether the near devices are held back for the far ones - the handset's switch beside the delays. */
+    fun setDelayCompensation(on: Boolean) = updateRoom { it.copy(delayCompensation = on) }
 
     /** 自定义声音位置's dot dragged to [spot]: which way, how far off, how far in - the handset's moveSource. */
     fun moveSource(spot: SourceSpot) = updateRoom {
@@ -560,9 +800,40 @@ class HostSession(
         room = room.copy(
             icons = SpatialRoom.reconciled(room.icons, roster, whereTheyWere),
             selfId = self,
-            otherHalfIds = sidesTheyCarried.reconciled(room.otherHalfIds, before = room.icons.map { it.peerId }, after = roster)
+            otherHalfIds = sidesTheyCarried.reconciled(room.otherHalfIds, before = room.icons.map { it.peerId }, after = roster),
+            // Off disk only when the roster changed, as the handset host reads them: this runs five
+            // times a second. A new device is a fresh reason to offer the fit; the scale stays,
+            // since somebody joining does not change how big the room is.
+            measuredMetres = measuredDistances(identityDirectory, self, roster),
+            listenerMetres = listenerMetres(self),
+            fitted = false
         )
         publishRoom()
+    }
+
+    /**
+     * The distances brought up to date after a round, the handset host's rereadDistances. Under
+     * [lock]. A fresh measurement is a fresh room, so the old scale goes with it; a reading that
+     * came back the same is dropped, so a fit somebody already took is not offered again.
+     */
+    private fun rereadDistances() {
+        val self = selfId ?: return
+        val measured = measuredDistances(identityDirectory, self, room.icons.map { it.peerId })
+        val listener = listenerMetres(self)
+        if (measured == room.measuredMetres && listener == room.listenerMetres) return
+        room = room.copy(measuredMetres = measured, listenerMetres = listener, fitted = false, metresPerUnit = 0.0)
+        publishRoom()
+    }
+
+    /**
+     * How far the listener is from each device: what this machine's rounds measured to each of
+     * them, and [LISTENER_METRES] to this machine itself - which a round cannot measure, since it is
+     * the machine doing the listening. Nothing at all until something has been measured, so an
+     * unmeasured room is not told the listener sits beside a computer and nowhere else.
+     */
+    private fun listenerMetres(self: String): Map<String, Double> {
+        val measured = StoredListenerDistance.all(identityDirectory)
+        return if (measured.isEmpty()) measured else measured + (self to LISTENER_METRES)
     }
 
     /**
@@ -804,5 +1075,16 @@ class HostSession(
 
         /** How often, within that. */
         private const val STOP_ECHO_EVERY_NANOS = 500_000_000L
+
+        /**
+         * How far the person at the computer is taken to be from its speakers, in metres.
+         *
+         * Guessed, not measured: somebody sitting at a laptop, its speakers about an arm's length
+         * away (09-24, the user's choice). A round cannot measure it - the computer is the one
+         * listening. What it moves is how far this machine's own sound is held back for the far
+         * devices, and how much it is turned down as the nearest: half a metre wrong is about
+         * 1.5 ms.
+         */
+        const val LISTENER_METRES = 0.5
     }
 }

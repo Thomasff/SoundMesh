@@ -248,7 +248,9 @@ class HostRoundTest {
         joinSinks()
 
         assertTrue("the room was not measured: ${report.lines}", measured)
-        assertEquals(listOf(one, two, hostId), report.measured)
+        // In the order the sinks happened to ask, with the host last - the slot convention.
+        assertEquals(setOf(one, two), report.measured?.dropLast(1)?.toSet())
+        assertEquals(hostId, report.measured?.last())
         assertEquals(RoundLine.RoomDone(3, 3, 3), report.lines.last())
 
         val field = StoredRoomField(hostDir).read()
