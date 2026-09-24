@@ -107,7 +107,7 @@ internal fun ScreenEdges(look: EdgeLook?, loudness: () -> Float, screen: Rectang
                             .offset((screen.x - strip.x).dp, (screen.y - strip.y).dp)
                             .requiredSize(screen.width.dp, screen.height.dp)
                     ) {
-                        BadgeEdges(colour, glow, round = 0f)
+                        BadgeEdges(colour, glow, round = 0f, keepHandsetWavelength = true)
                     }
                 }
             }

@@ -53,6 +53,8 @@ private fun Edge.isSide() = this == Edge.LEFT || this == Edge.RIGHT
  * [round] is the radius of the screen's own corner in pixels: the handset asks its glass
  * (screenCornerPx), and a computer's window and screen are square.
  *
+ * [keepHandsetWavelength] is a computer's: see [waveTiming].
+ *
  * ────────────────────────────────────────────────────────────────────────────
  * The waves are not synchronised between handsets, on purpose
  * ────────────────────────────────────────────────────────────────────────────
@@ -117,7 +119,12 @@ private fun Edge.isSide() = this == Edge.LEFT || this == Edge.RIGHT
  * longer, so both cost something; how much is not known to better than the noise.
  */
 @Composable
-internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow, round: Float) {
+internal fun BoxScope.BadgeEdges(
+    colour: Color,
+    glow: EdgeGlow,
+    round: Float,
+    keepHandsetWavelength: Boolean = false,
+) {
     // The one thing about the page the waves have to know: whether there is room above this
     // ground to add light to. See [WaveInk].
     val ink = WaveInk(MaterialTheme.colorScheme.background.luminance() < HALF_LIT)
@@ -143,7 +150,10 @@ internal fun BoxScope.BadgeEdges(colour: Color, glow: EdgeGlow, round: Float) {
                         // Everything here depends on the size and on nothing that moves, so it is
                         // built once per layout rather than sixty times a second. Only the paths
                         // are rebuilt per frame, and even those reuse their storage.
-                        val shape = bandShape(edge, size, wide.toPx(), tall.toPx(), density, round)
+                        val shape = bandShape(
+                            edge, size, wide.toPx(), tall.toPx(), density, round,
+                            waveTiming(2f * (wide.value + tall.value), keepHandsetWavelength)
+                        )
                         onDrawBehind { edgeWaves(shape, colour, glow, ink) }
                     }
             )
@@ -186,6 +196,7 @@ private class BandShape(
     val points: FloatArray,
     /** One per wave, plus one holding them all for the shared skirt. */
     val paths: List<Path>,
+    val timing: WaveTiming,
 )
 
 private fun bandShape(
@@ -195,6 +206,7 @@ private fun bandShape(
     tall: Float,
     density: Float,
     round: Float,
+    timing: WaveTiming,
 ): BandShape {
     val flat = edge == Edge.TOP || edge == Edge.BOTTOM
     val node = if (flat) size.height else size.width
@@ -246,8 +258,36 @@ private fun bandShape(
         samples = points.size - 1,
         points = points,
         paths = List(WAVE_SHOWN.size + 1) { Path() },
+        timing = timing,
     )
 }
+
+/** Each wave's crests per lap and laps per second, as [waveTiming] hands them to a screen. */
+internal class WaveTiming(val m: FloatArray, val cyc: DoubleArray)
+
+/**
+ * The wave table's crest counts and speeds for a ring [lapDp] round.
+ *
+ * On a handset, the table as it is: crests per lap, whatever the lap. A computer's ring is two to
+ * three times a handset's, and round the whole of one on 09-24 that stretched every crest by as
+ * much - the waves read as long slow swells rather than the handset's ripple. With
+ * [keepHandsetWavelength] the crest counts grow with the lap instead, rounded to whole crests so a
+ * lap still closes on itself, and the speed in laps shrinks by the same factor, so a crest passes a
+ * point as often as on a handset and moves as many dp a second.
+ */
+internal fun waveTiming(lapDp: Float, keepHandsetWavelength: Boolean): WaveTiming {
+    if (!keepHandsetWavelength) return WaveTiming(WAVE_M, WAVE_CYC)
+    val k = lapDp / HANDSET_LAP_DP
+    val m = FloatArray(WAVE_M.size) { i -> Math.round(WAVE_M[i] * k).coerceAtLeast(1).toFloat() }
+    return WaveTiming(m, DoubleArray(WAVE_M.size) { i -> WAVE_M[i] * WAVE_CYC[i] / m[i] })
+}
+
+/**
+ * The lap the wave table's crest counts are taken to be spread over when a computer keeps a
+ * handset's wavelength: a phone held upright, about 400 by 800dp. Not measured off the phone the
+ * table was tuned on - its preview's size was not kept - so this is a phone of the usual size.
+ */
+internal const val HANDSET_LAP_DP = 2400f
 
 /**
  * Where along the band to put the polylines' vertices.
@@ -267,7 +307,9 @@ private fun samplePoints(along: Float, round: Float, density: Float): FloatArray
     val bend = round.coerceIn(0f, along / 3f)
     val straight = along - 2f * bend
     val corner = ceil(bend * QUARTER_TURN / (6f * density)).toInt().coerceIn(1, 24)
-    val middle = (straight / (12f * density)).toInt().coerceIn(2, 120)
+    // The cap is only ever reached round a computer's screen, which keeps a handset's wavelength
+    // (see [waveTiming]) and so wants the handset's 12dp along the whole of a 2500dp side.
+    val middle = (straight / (12f * density)).toInt().coerceIn(2, 240)
     val marks = FloatArray(2 * corner + middle + 1)
     for (k in 0 until corner) marks[k] = bend * k / corner
     for (k in 0..middle) marks[corner + k] = bend + straight * k / middle
@@ -307,15 +349,17 @@ private fun DrawScope.edgeWaves(band: BandShape, colour: Color, glow: EdgeGlow, 
         // Reduced into one period of this wave before it ever reaches a Float. A whole period is
         // an exact multiple of 2π·M[i] of phase because M is a whole number of crests per lap, so
         // this is not an approximation - it is the same angle, computed small.
-        val period = 1.0 / WAVE_CYC[i]
-        val travel = WAVE_DIR[i] * WAVE_CYC[i] * (seconds % period)
+        val crests = band.timing.m[i]
+        val laps = band.timing.cyc[i]
+        val period = 1.0 / laps
+        val travel = WAVE_DIR[i] * laps * (seconds % period)
         val base = band.bandPx + WAVE_OFF[i] * band.geoK
         val reach = WAVE_AMP[i] * band.geoK * swing
         val path = band.paths[shown].also { it.reset() }
         for (s in 0..band.samples) {
             val at = band.points[s]
             val u = (band.uBase + band.uSign * at) / band.perimeter
-            val angle = 2.0 * PI * WAVE_M[i] * (u - travel) + WAVE_PHASE[i]
+            val angle = 2.0 * PI * crests * (u - travel) + WAVE_PHASE[i]
             val deep = base + reach * sin(angle).toFloat() * taper(at, band)
             val point = bend(band, at, deep)
             if (s == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)

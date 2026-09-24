@@ -172,7 +172,7 @@ internal fun SoundMeshWindow(
             }
         }
         // Last, so it is over the page, which scrolls. A computer's window is square-cornered.
-        if (edge != null) BadgeEdges(edge, glow, round = 0f)
+        if (edge != null) BadgeEdges(edge, glow, round = 0f, keepHandsetWavelength = true)
     }
 }
 
