@@ -23,7 +23,7 @@ const val QUIET_FLOOR_PERCENT = 10
  * the instruction would wave through the one handset that is actually silent. That is also why the
  * answer is names rather than a count: what a person does about it is walk to one particular phone.
  */
-internal fun tooQuietFor(rows: List<VolumeRow>, floor: Int = QUIET_FLOOR_PERCENT): List<String> =
+fun tooQuietFor(rows: List<VolumeRow>, floor: Int = QUIET_FLOOR_PERCENT): List<String> =
     rows.filter { it.percent < floor }.map { it.name }
 
 /**
@@ -37,5 +37,5 @@ internal fun tooQuietFor(rows: List<VolumeRow>, floor: Int = QUIET_FLOOR_PERCENT
  * [changedBefore] is what `HandsetVolume.changed` said as this screen opened, [changedNow] what it
  * says as it closes.
  */
-internal fun restoresOnLeaving(changedBefore: Boolean, changedNow: Boolean): Boolean =
+fun restoresOnLeaving(changedBefore: Boolean, changedNow: Boolean): Boolean =
     !changedBefore && changedNow

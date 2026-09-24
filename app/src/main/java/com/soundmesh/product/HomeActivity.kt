@@ -1713,40 +1713,6 @@ class HomeActivity : ComponentActivity() {
     }
 }
 
-/**
- * Every distance this handset holds about a room, keyed by the two handsets it is between.
- *
- * Two files behind it, one fact each. A distance [self] is an end of comes from the per-peer
- * file, which every arm that measures a distance writes and which is therefore the freshest
- * thing there is about that pair. A distance between two other handsets can only have come from
- * a room measuring the lot in one window, and has nowhere else it could live.
- *
- * Both files can hold the same pair - a room measures the ones this handset is in no
- * differently - and neither records when it was written, so which one answers has to be
- * decided here rather than by whichever is read second. The per-peer file answers: it is the
- * one every arm that measures a distance writes, the room included, so for a pair they share
- * it cannot be the staler of the two. Which is why the room is read first and written over,
- * and not the other way round.
- *
- * File scope so it can be judged on what it produces. Inside the screen it would be reachable
- * only by standing in a room with three phones in it.
- */
-internal fun measuredDistances(
-    directory: File,
-    self: String?,
-    room: List<String>
-): Map<Pair<String, String>, Double> {
-    val distances = LinkedHashMap<Pair<String, String>, Double>()
-    for (entry in StoredRoomField(directory).read()) distances[entry.key] = entry.value
-    if (self == null) return distances
-    for (peerId in room) {
-        if (peerId == self) continue
-        val metres = StoredSeparation(directory, peerId).read() ?: continue
-        distances[self to peerId] = metres
-        distances[peerId to self] = metres
-    }
-    return distances
-}
 
 /**
  * One instruction to one handset: what it was told to be, and when.
