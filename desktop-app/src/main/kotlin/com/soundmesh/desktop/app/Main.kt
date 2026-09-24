@@ -3,8 +3,6 @@ package com.soundmesh.desktop.app
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -19,6 +17,7 @@ import com.soundmesh.desktop.HostSession
 import com.soundmesh.desktop.MeasureJob
 import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.identityDirectory
+import com.soundmesh.product.soundMeshColours
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.io.File
 import java.util.concurrent.Executors
@@ -124,8 +123,8 @@ fun main() = application {
 }
 
 /**
- * Material's own light and dark, on a surface so the window's ground follows the theme too, and
- * the language every phrase below is said in.
+ * The handset's colours, on its ground so the window's ground follows the theme too, and the
+ * language every phrase below is said in.
  */
 @Composable
 private fun Themed(theme: ThemeChoice, language: LanguageChoice, content: @Composable () -> Unit) {
@@ -135,8 +134,8 @@ private fun Themed(theme: ThemeChoice, language: LanguageChoice, content: @Compo
         ThemeChoice.DARK -> true
     }
     CompositionLocalProvider(LocalEnglish provides language.english()) {
-        MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-            Surface(content = content)
+        MaterialTheme(colorScheme = soundMeshColours(dark)) {
+            Surface(color = MaterialTheme.colorScheme.background, content = content)
         }
     }
 }

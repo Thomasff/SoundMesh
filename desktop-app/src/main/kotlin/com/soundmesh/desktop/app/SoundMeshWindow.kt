@@ -8,21 +8,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,10 +42,27 @@ import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
+import com.soundmesh.product.BoxTitle
+import com.soundmesh.product.Chip
 import com.soundmesh.product.EffectKind
+import com.soundmesh.product.FilledChip
+import com.soundmesh.product.Framed
+import com.soundmesh.product.Ghost
+import com.soundmesh.product.Knob
+import com.soundmesh.product.Label
+import com.soundmesh.product.Line
+import com.soundmesh.product.LineName
+import com.soundmesh.product.Note
 import com.soundmesh.product.RoomState
 import com.soundmesh.product.RoundLine
+import com.soundmesh.product.Segment
+import com.soundmesh.product.Segmented
+import com.soundmesh.product.Solid
 import com.soundmesh.product.SpatialRoom
+import com.soundmesh.product.Tag
+import com.soundmesh.product.Tone
+import com.soundmesh.product.VolumeLine
+import com.soundmesh.product.badgeColour
 import com.soundmesh.desktop.AudioSession
 import com.soundmesh.desktop.AudioSessions
 import com.soundmesh.desktop.HostPort
@@ -81,6 +95,11 @@ import kotlin.math.roundToInt
 
 private enum class Role { HOST, SINK }
 
+/**
+ * The one window, drawn out of the handset's own pieces (ui-shared's Look.kt and ThinSlider.kt):
+ * small grey labels over hairline rows, one or two solid buttons, notes in small grey type, and
+ * colour only where a device is meant.
+ */
 @Composable
 fun SoundMeshWindow(
     host: HostSession,
@@ -95,33 +114,34 @@ fun SoundMeshWindow(
     val scope = rememberCoroutineScope()
     Column(
         // Scrolls: a roster and a volume line per device outgrow the window in a room of a few.
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = role == Role.HOST,
-                onClick = {
-                    role = Role.HOST
-                    scope.launch(sessions) { sink.stop(); host.open() }
-                },
-                label = { Text(say(Phrases.role_host)) }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Segmented(
+                listOf(
+                    Segment(say(Phrases.role_host), role == Role.HOST) {
+                        role = Role.HOST
+                        scope.launch(sessions) { sink.stop(); host.open() }
+                    },
+                    Segment(say(Phrases.role_sink), role == Role.SINK) {
+                        role = Role.SINK
+                        scope.launch(sessions) { host.close() }
+                    }
+                ),
+                Modifier.weight(1f)
             )
-            FilterChip(
-                selected = role == Role.SINK,
-                onClick = {
-                    role = Role.SINK
-                    scope.launch(sessions) { host.close() }
-                },
-                label = { Text(say(Phrases.role_sink)) }
-            )
-            TextButton(onClick = onOpenSettings) { Text(say(Phrases.settings_open)) }
+            Chip(say(Phrases.settings_open), onOpenSettings)
         }
         when (role) {
             Role.HOST -> HostPane(host, sessions, details, onMeasure)
             Role.SINK -> SinkPane(sink, sessions, details)
             null -> {
-                Text(say(Phrases.pc_role_question))
+                Text(say(Phrases.pc_role_question), Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium)
                 Networks()
             }
         }
@@ -146,88 +166,95 @@ private fun HostPane(
     val scope = rememberCoroutineScope()
     val english = LocalEnglish.current
 
-    status.problem?.let { Text(describe(it), color = MaterialTheme.colorScheme.error) }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = {
-            pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
-                files = it
-                app = null
-                val count = it.size
-                val only = if (count == 1) it.single().name else null
-                picked = { e -> only ?: Phrases.pc_songs_count.of(e, count) }
-            }
-        }, enabled = !status.playing) { Text(say(Phrases.pc_pick_files)) }
-        OutlinedButton(onClick = {
-            pickFolder(Phrases.pc_pick_folder_title.of(english))?.let { folder ->
-                val songs = songsIn(folder)
-                files = songs
-                app = null
-                picked = { e ->
-                    if (songs.isEmpty()) Phrases.pc_folder_empty.of(e, folder.name)
-                    else Phrases.pc_folder_songs.of(e, folder.name, songs.size)
+    status.problem?.let { Note(describe(it), Tone.WRONG) }
+    Label(say(Phrases.song_title))
+    Line(first = true) {
+        LineName(picked(english))
+        // Not while the room plays: what is playing is not changed from here, as on the handset,
+        // whose source picker belongs to the stage before the music.
+        if (!status.playing) {
+            Chip(say(Phrases.pc_pick_files)) {
+                pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
+                    files = it
+                    app = null
+                    val count = it.size
+                    val only = if (count == 1) it.single().name else null
+                    picked = { e -> only ?: Phrases.pc_songs_count.of(e, count) }
                 }
             }
-        }, enabled = !status.playing) { Text(say(Phrases.song_choose_folder)) }
-        OutlinedButton(onClick = {
-            // Asked afresh each time: the mixer's rows come and go with what is playing.
-            scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
-        }, enabled = !status.playing) { Text(say(Phrases.pc_capture_app)) }
-        Text(picked(english))
+            Chip(say(Phrases.song_choose_folder)) {
+                pickFolder(Phrases.pc_pick_folder_title.of(english))?.let { folder ->
+                    val songs = songsIn(folder)
+                    files = songs
+                    app = null
+                    picked = { e ->
+                        if (songs.isEmpty()) Phrases.pc_folder_empty.of(e, folder.name)
+                        else Phrases.pc_folder_songs.of(e, folder.name, songs.size)
+                    }
+                }
+            }
+            Chip(say(Phrases.pc_capture_app)) {
+                // Asked afresh each time: the mixer's rows come and go with what is playing.
+                scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
+            }
+        }
     }
     programs?.let { list ->
-        if (list.isEmpty()) Text(say(Phrases.pc_no_programs))
-        else Text(say(Phrases.pc_which_program))
+        Note(say(if (list.isEmpty()) Phrases.pc_no_programs else Phrases.pc_which_program))
         // One to a line: a browser, a player and a call can all be in the mixer at once.
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (program in list) {
-                OutlinedButton(onClick = {
+        for (program in list) {
+            Line {
+                LineName(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name)
+                Chip(say(Phrases.pc_use_program)) {
                     app = program
                     files = emptyList()
                     programs = null
                     picked = { e -> Phrases.pc_program_sound.of(e, program.name) }
-                }) { Text(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name) }
+                }
             }
-            TextButton(onClick = { programs = null }) { Text(say(Phrases.pc_never_mind)) }
         }
+        Tag(say(Phrases.pc_never_mind), onClick = { programs = null })
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Line {
+        LineName(say(Phrases.pc_play_here_too))
         Switch(checked = alsoHere, onCheckedChange = { alsoHere = it }, enabled = !status.playing)
-        Text(say(Phrases.pc_play_here_too))
     }
     if (status.playing) {
-        Button(onClick = { scope.launch(sessions) { host.stopPlaying() } }) { Text(say(Phrases.play_stop)) }
+        Solid(say(Phrases.play_stop)) { scope.launch(sessions) { host.stopPlaying() } }
         status.playhead?.let { Transport(host, it, status.paused, sessions) }
-        status.capturing?.let { Text(say(Phrases.pc_capturing, it)) }
+        status.capturing?.let { Note(say(Phrases.pc_capturing, it)) }
     } else {
-        Button(
-            onClick = {
-                val program = app
-                if (program != null) scope.launch(sessions) { host.playApp(program.pid, program.name, alsoHere) }
-                else files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
-            },
+        Solid(
+            say(Phrases.play_start),
             enabled = status.open && !status.measure.running && (files.isNotEmpty() || app != null)
-        ) { Text(say(Phrases.play_start)) }
-        if (status.measure.running) Text(say(Phrases.pc_measuring_now))
+        ) {
+            val program = app
+            if (program != null) scope.launch(sessions) { host.playApp(program.pid, program.name, alsoHere) }
+            else files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
+        }
+        if (status.measure.running) Note(say(Phrases.pc_measuring_now))
     }
     // The handset's word for joining names in a sentence: 、 in Chinese, a comma in English.
     val join = say(Phrases.room_volume_name_join)
-    if (status.heldDown.isNotEmpty()) {
-        Text(say(Phrases.pc_held_down, status.heldDown.joinToString(join)), color = MaterialTheme.colorScheme.error)
-    }
-    if (status.skipped.isNotEmpty()) {
-        Text(say(Phrases.pc_skipped, status.skipped.joinToString(join)), color = MaterialTheme.colorScheme.error)
-    }
-    if (status.ended) Text(say(Phrases.pc_ended))
-    Text(say(Phrases.pc_phones_follow))
+    if (status.heldDown.isNotEmpty()) Note(say(Phrases.pc_held_down, status.heldDown.joinToString(join)), Tone.WRONG)
+    if (status.skipped.isNotEmpty()) Note(say(Phrases.pc_skipped, status.skipped.joinToString(join)), Tone.WRONG)
+    if (status.ended) Note(say(Phrases.pc_ended))
+    Note(say(Phrases.pc_phones_follow))
     val addresses = remember { LocalNetworks.list() }
-    if (addresses.isNotEmpty()) Text(say(Phrases.pc_type_this, addresses.joinToString(join) { it.address }))
+    if (addresses.isNotEmpty()) Note(say(Phrases.pc_type_this, addresses.joinToString(join) { it.address }))
     PairCode(host, status.open, addresses, sessions)
     Roster(status) { peerId -> onMeasure(MeasureJob.PAIR, peerId) }
     // The handset home screen's 位置同步校准, which opens the calibration screen rather than
     // starting anything: a minute of chirps is asked for there, with the room's volumes in view.
-    Text(say(Phrases.goto_room), style = MaterialTheme.typography.titleSmall)
-    Text(say(Phrases.goto_room_hint))
-    Button(onClick = { onMeasure(MeasureJob.ROOM, null) }, enabled = status.open) { Text(say(Phrases.goto_room_go)) }
+    // Drawn as the handset draws it, as the one box on the screen that is the point of it.
+    Label(say(Phrases.calibrate_section))
+    Framed(strong = true) {
+        BoxTitle(say(Phrases.goto_room), strong = true)
+        Note(say(Phrases.goto_room_hint))
+        Column(Modifier.padding(top = 7.dp)) {
+            Solid(say(Phrases.goto_room_go), enabled = status.open) { onMeasure(MeasureJob.ROOM, null) }
+        }
+    }
     HostDrawing(host, status.room, sessions)
     MeasuredLines(host, status.room, details, sessions)
     Effects(host, status.room, sessions)
@@ -255,49 +282,48 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
 
     var address by remember { mutableStateOf("") }
 
-    if (going) {
-        Button(onClick = { scope.launch(sessions) { sink.stop() } }) { Text(say(Phrases.play_stop)) }
-    } else {
-        Button(onClick = { scope.launch(sessions) { sink.start() } }) { Text(say(Phrases.pc_start)) }
+    Column(Modifier.padding(top = 10.dp)) {
+        if (going) {
+            Solid(say(Phrases.play_stop)) { scope.launch(sessions) { sink.stop() } }
+        } else {
+            Solid(say(Phrases.pc_start)) { scope.launch(sessions) { sink.start() } }
+        }
+    }
+    if (!going) {
         // The way in when discovery finds nothing: the handset scans the host's code there, and
         // this machine has no camera to scan with. A host given this way is not looked for again
         // if it moves - it has no identity to be recognised by.
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = address,
                 onValueChange = { address = it.trim() },
                 label = { Text(say(Phrases.pc_host_address)) },
                 placeholder = { Text(say(Phrases.pc_address_example)) },
-                singleLine = true
+                singleLine = true,
+                modifier = Modifier.weight(1f)
             )
-            OutlinedButton(
-                onClick = { scope.launch(sessions) { sink.start(address) } },
-                enabled = address.isNotEmpty()
-            ) { Text(say(Phrases.pc_dial_address)) }
+            Ghost(say(Phrases.pc_dial_address), enabled = address.isNotEmpty(), modifier = Modifier.width(DIAL_WIDTH)) {
+                scope.launch(sessions) { sink.start(address) }
+            }
         }
         val own = remember { LocalNetworks.list() }
         if (LocalNetworks.elsewhere(address, own)) {
-            Text(
-                say(Phrases.pc_address_elsewhere, address, own.joinToString(say(Phrases.room_volume_name_join)) { it.address }),
-                color = MaterialTheme.colorScheme.error
-            )
+            Note(say(Phrases.pc_address_elsewhere, address, own.joinToString(say(Phrases.room_volume_name_join)) { it.address }), Tone.WRONG)
         }
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Line(first = true) {
         Badge(status.selfId, status.selfPlace)
-        Text(say(Phrases.pc_my_number, PeerBadge.numberOf(status.selfId)))
+        LineName(say(Phrases.pc_my_number, PeerBadge.numberOf(status.selfId)))
     }
-    if (status.volumePercent != SoftwareVolume.FULL) {
-        Text(say(Phrases.pc_volume_set, status.volumePercent))
-    }
-    Text(describe(status))
+    if (status.volumePercent != SoftwareVolume.FULL) Note(say(Phrases.pc_volume_set, status.volumePercent))
+    Text(describe(status), style = MaterialTheme.typography.bodyMedium)
     status.hostName?.let { name ->
-        Text(status.hostAddress?.let { say(Phrases.pc_following_at, name, it) } ?: say(Phrases.pc_following, name))
+        Note(status.hostAddress?.let { say(Phrases.pc_following_at, name, it) } ?: say(Phrases.pc_following, name))
     }
     status.room?.let { room ->
-        Text(say(Phrases.tab_room), style = MaterialTheme.typography.titleSmall)
+        Label(say(Phrases.tab_room))
         RoomDrawing(room, actions = null)
-        Text(say(Phrases.pc_room_readonly))
+        Note(say(Phrases.pc_room_readonly))
     }
     Diagnostics(
         details,
@@ -315,40 +341,64 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
     )
 }
 
+/** Wide enough for 连这个地址 beside an address box that takes the rest of the row. */
+private val DIAL_WIDTH = 132.dp
+
 /**
  * Every device in the room, one line each, this machine first - the handset host's roster. The
  * badge is on every line here because this window has no drawing of the room to find a colour in.
  */
 @Composable
 private fun Roster(status: HostStatus, onCalibrate: (String) -> Unit) {
-    Text(say(Phrases.pc_room_count, status.phones.size + 1), style = MaterialTheme.typography.titleSmall)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Label(say(Phrases.pc_room_count, status.phones.size + 1))
+    Line(first = true) {
         status.selfId?.let { Badge(it, status.selfPlace) }
-        Text(say(Phrases.pc_self_host))
+        LineName(say(Phrases.pc_self_host))
     }
-    if (status.phones.isEmpty()) Text(say(Phrases.pc_no_phones))
+    if (status.phones.isEmpty()) Note(say(Phrases.pc_no_phones))
     for (phone in status.phones) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Badge(phone.peerId, phone.place, hollow = phone.quiet || phone.stopped)
-            Text(phone.name)
+        val quiet = phone.quiet || phone.stopped
+        Line {
+            Badge(phone.peerId, phone.place, hollow = quiet)
+            LineName(phone.name, quiet = quiet)
             // The handset host's roster line: how it is lined up, and the one errand that fixes
             // it. Settled lines carry no chip, and the word itself is the way to measure again.
-            if (phone.carrying == Carried.SOMETHING) {
-                TextButton(onClick = { onCalibrate(phone.peerId) }) { Text(say(carryingWord(phone.carrying))) }
-            } else {
-                Text(say(carryingWord(phone.carrying)), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = { onCalibrate(phone.peerId) }) { Text(say(Phrases.roster_calibrate)) }
+            Tag(
+                say(carryingWord(phone.carrying)),
+                carryingTone(phone.carrying),
+                onClick = if (phone.carrying == Carried.SOMETHING) {
+                    { onCalibrate(phone.peerId) }
+                } else {
+                    null
+                }
+            )
+            if (phone.carrying != Carried.SOMETHING) {
+                FilledChip(say(Phrases.roster_calibrate)) { onCalibrate(phone.peerId) }
             }
         }
         // Quiet first: a quiet one may still be taking the audio, and "not taking it" would be false.
-        val note = when {
-            phone.quiet -> say(Phrases.roster_quiet)
-            phone.stopped -> say(Phrases.pc_not_receiving)
-            else -> null
+        val notes = listOfNotNull(
+            when {
+                phone.quiet -> say(Phrases.roster_quiet)
+                phone.stopped -> say(Phrases.pc_not_receiving)
+                else -> null
+            },
+            phone.excuse?.let { describe(it) }
+        )
+        if (notes.isNotEmpty()) {
+            Column(Modifier.padding(start = 32.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                for (note in notes) Note(note, Tone.WATCH)
+            }
         }
-        note?.let { Text(it, Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
-        phone.excuse?.let { Text(describe(it), Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
     }
+}
+
+/** How the roster word reads - the handset's carryingTone. */
+private fun carryingTone(carrying: Carried): Tone = when (carrying) {
+    Carried.SOMETHING -> Tone.GOOD
+    Carried.APPROXIMATE -> Tone.QUIET
+    Carried.NOTHING -> Tone.WATCH
+    Carried.UNSAID -> Tone.QUIET
 }
 
 /**
@@ -359,24 +409,44 @@ private fun Roster(status: HostStatus, onCalibrate: (String) -> Unit) {
 @Composable
 private fun Transport(host: HostSession, playhead: Playhead, paused: Boolean, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
-    Text(say(Phrases.pc_song_of, playhead.song + 1, playhead.songs, playhead.name))
+    Note(say(Phrases.pc_song_of, playhead.song + 1, playhead.songs, playhead.name))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(-1) } }, enabled = playhead.song > 0) {
-            Text(say(Phrases.play_previous))
+        Ghost(say(Phrases.play_previous), enabled = playhead.song > 0, modifier = Modifier.weight(1f)) {
+            scope.launch(sessions) { host.stepSong(-1) }
         }
-        OutlinedButton(onClick = { scope.launch(sessions) { host.setPaused(!paused) } }) {
-            Text(say(if (paused) Phrases.play_resume else Phrases.play_pause))
+        Ghost(say(if (paused) Phrases.play_resume else Phrases.play_pause), modifier = Modifier.weight(1f)) {
+            scope.launch(sessions) { host.setPaused(!paused) }
         }
-        OutlinedButton(onClick = { scope.launch(sessions) { host.stepSong(1) } }, enabled = playhead.song < playhead.songs - 1) {
-            Text(say(Phrases.play_next))
+        Ghost(say(Phrases.play_next), enabled = playhead.song < playhead.songs - 1, modifier = Modifier.weight(1f)) {
+            scope.launch(sessions) { host.stepSong(1) }
         }
     }
-    KnobLine(
-        say(Phrases.pc_progress),
-        playhead.heardMillis.toFloat().coerceAtMost(playhead.durationMillis.toFloat()),
-        0f..playhead.durationMillis.toFloat().coerceAtLeast(1f),
-        say(Phrases.play_position, clock(playhead.heardMillis), clock(playhead.durationMillis))
-    ) { scope.launch(sessions) { host.seekTo(it.toLong()) } }
+    Progress(playhead) { scope.launch(sessions) { host.seekTo(it) } }
+}
+
+/**
+ * Where the song is, and a way to send the room somewhere else in it - the handset's PlayheadPanel:
+ * a Material slider as there, with the time heard under its left end and the length under its right.
+ * Sent once on letting go, since every seek is a lead of silence in the room.
+ */
+@Composable
+private fun Progress(playhead: Playhead, seek: (Long) -> Unit) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    val duration = playhead.durationMillis.coerceAtLeast(1L)
+    val heard = dragging?.toLong() ?: playhead.heardMillis.coerceAtMost(duration)
+    Slider(
+        value = heard.toFloat(),
+        onValueChange = { dragging = it },
+        onValueChangeFinished = {
+            dragging?.let { seek(it.toLong()) }
+            dragging = null
+        },
+        valueRange = 0f..duration.toFloat()
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(clock(heard), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(clock(playhead.durationMillis), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 private fun clock(millis: Long): String {
@@ -405,7 +475,7 @@ internal fun HostDrawing(host: HostSession, room: RoomState, sessions: Coroutine
         scope.launch(sessions) { host.send() }
     }
     val shown = local?.copy(colours = room.colours, silentIds = room.silentIds) ?: room
-    Text(say(Phrases.tab_room), style = MaterialTheme.typography.titleSmall)
+    Label(say(Phrases.tab_room))
     RoomDrawing(
         shown,
         DrawingActions(
@@ -420,7 +490,7 @@ internal fun HostDrawing(host: HostSession, room: RoomState, sessions: Coroutine
             togglePart = { peerId -> scope.launch(sessions) { host.togglePart(peerId) } }
         )
     )
-    Text(say(Phrases.pc_drag_icons))
+    Note(say(Phrases.pc_drag_icons))
 }
 
 /** The handset host's effect list. The words are the handset's. */
@@ -431,105 +501,114 @@ private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispa
         scope.launch(sessions) { host.change() }
     }
     val chosen = EffectKind.entries.first { it.settings.mode == room.mode }
-    Text(say(Phrases.room_effect_title), style = MaterialTheme.typography.titleSmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (kind in EffectKind.entries) {
-            val title = EFFECT_TITLES[kind] ?: continue
-            FilterChip(selected = kind == chosen, onClick = { send { setEffect(kind) } }, label = { Text(say(title)) })
+    Label(say(Phrases.room_effect_title))
+    Segmented(
+        EffectKind.entries.mapNotNull { kind ->
+            EFFECT_TITLES[kind]?.let { title -> Segment(say(title), kind == chosen) { send { setEffect(kind) } } }
         }
-    }
+    )
     when (chosen) {
         EffectKind.UNISON -> {
-            Text(say(Phrases.room_effect_unison_line))
+            Note(say(Phrases.room_effect_unison_line))
             ContentSplit(room, ::send)
         }
         EffectKind.STEREO -> {
-            Text(say(Phrases.pc_stereo_line))
+            Note(say(Phrases.pc_stereo_line))
             ContentSplit(room, ::send)
         }
         EffectKind.SPIN -> {
-            Text(say(Phrases.pc_spin_line))
-            KnobLine(
+            Note(say(Phrases.pc_spin_line))
+            HeldKnob(
                 say(Phrases.room_spin_period),
                 room.periodSeconds.toFloat(),
                 SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(),
-                say(Phrases.room_spin_seconds, room.periodSeconds)
+                { Phrases.room_spin_seconds.of(it.english, it.value.roundToInt()) }
             ) { send { setSpinSeconds(it.roundToInt()) } }
         }
-        EffectKind.PLACE -> Text(say(Phrases.pc_place_line))
+        EffectKind.PLACE -> Note(say(Phrases.pc_place_line))
     }
     var open by remember { mutableStateOf(false) }
-    TextButton(onClick = { open = !open }) { Text(say(if (open) Phrases.room_fine_hide else Phrases.room_fine)) }
+    Column(Modifier.padding(top = 8.dp)) {
+        Ghost(say(if (open) Phrases.room_fine_hide else Phrases.room_fine)) { open = !open }
+    }
     if (open) {
-        KnobLine(say(Phrases.pc_reverb), room.reverb, 0f..1f, percent(room.reverb)) { send { setReverb(it) } }
+        HeldKnob(say(Phrases.pc_reverb), room.reverb, 0f..1f, ::percent) { send { setReverb(it) } }
         // The rotation only, as on the handset: under 自定义声音位置 this number is how far in the
         // dot has been dragged, and a slider beside it would be a second control for one number.
         if (room.mode == SpatialMode.ROTATE) {
-            KnobLine(say(Phrases.pc_envelopment), room.envelopment, 0f..SpatialField.MAX_ENVELOPMENT.toFloat(), percent(room.envelopment)) {
+            HeldKnob(say(Phrases.pc_envelopment), room.envelopment, 0f..SpatialField.MAX_ENVELOPMENT.toFloat(), ::percent) {
                 send { setEnvelopment(it) }
             }
-            Text(say(Phrases.pc_envelopment_line))
-            Text(say(Phrases.room_envelopment_hint))
+            Note(say(Phrases.pc_envelopment_line))
+            Note(say(Phrases.room_envelopment_hint))
         }
         if (splitting(room)) {
-            KnobLine(say(Phrases.room_split_content), room.separation, 0f..1f, percent(room.separation)) { send { setSeparation(it) } }
+            HeldKnob(say(Phrases.room_split_content), room.separation, 0f..1f, ::percent) { send { setSeparation(it) } }
         }
     }
 }
 
+/** What a knob's readout is made from: the value it shows, in the language it is said in. */
+private class Reading(val value: Float, val english: Boolean)
+
 /** A knob's 0-to-1 value as the handset writes it beside the knob. */
+private fun percent(reading: Reading): String = Phrases.room_knob_percent.of(reading.english, (reading.value * 100).roundToInt())
+
+/**
+ * The handset's knob, sent as it turns as on the handset - these are turned while listening - and
+ * drawn from where it was just turned to until the host's own status catches up, as [HostDrawing]
+ * is: the status is read twice a second, and a dot that followed the mouse only that often would
+ * jump back and forth under it.
+ */
 @Composable
-private fun percent(fraction: Float): String = say(Phrases.room_knob_percent, (fraction * 100).roundToInt())
+private fun HeldKnob(
+    title: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    readout: (Reading) -> String,
+    onSet: (Float) -> Unit
+) {
+    var local by remember { mutableStateOf<Float?>(null) }
+    var touchedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(touchedAt) {
+        delay(LOCAL_HOLD_MILLIS)
+        local = null
+    }
+    val shown = local ?: value
+    Knob(title, shown, readout(Reading(shown, LocalEnglish.current)), range) {
+        local = it
+        touchedAt = System.nanoTime()
+        onSet(it)
+    }
+}
 
 /** 分开放 - the handset's three segments, and what goes with a split once one is chosen. */
 @Composable
 private fun ContentSplit(room: RoomState, send: (HostSession.() -> Unit) -> Unit) {
     val split = room.separation > 0f
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(say(Phrases.room_split_label))
-        FilterChip(selected = !split, onClick = { send { setSplit(null) } }, label = { Text(say(Phrases.room_split_none)) })
-        FilterChip(
-            selected = split && room.splitAxis == SplitAxis.MIDDLE_SIDES,
-            onClick = { send { setSplit(SplitAxis.MIDDLE_SIDES) } },
-            label = { Text(say(Phrases.room_split_voice)) }
+    Note(say(Phrases.room_split_label))
+    Segmented(
+        listOf(
+            Segment(say(Phrases.room_split_none), !split) { send { setSplit(null) } },
+            Segment(say(Phrases.room_split_voice), split && room.splitAxis == SplitAxis.MIDDLE_SIDES) {
+                send { setSplit(SplitAxis.MIDDLE_SIDES) }
+            },
+            Segment(say(Phrases.room_split_bass), split && room.splitAxis == SplitAxis.LOW_HIGH) {
+                send { setSplit(SplitAxis.LOW_HIGH) }
+            }
         )
-        FilterChip(
-            selected = split && room.splitAxis == SplitAxis.LOW_HIGH,
-            onClick = { send { setSplit(SplitAxis.LOW_HIGH) } },
-            label = { Text(say(Phrases.room_split_bass)) }
-        )
-    }
+    )
     if (!split) return
     if (room.splitAxis == SplitAxis.LOW_HIGH) {
-        KnobLine(
+        HeldKnob(
             say(Phrases.pc_crossover),
             room.crossoverHz,
             SpatialField.LOWEST_CROSSOVER_HZ.toFloat()..SpatialField.HIGHEST_CROSSOVER_HZ.toFloat(),
-            say(Phrases.pc_crossover_reading, room.crossoverHz.roundToInt())
+            { Phrases.pc_crossover_reading.of(it.english, it.value.roundToInt()) }
         ) { send { setCrossoverHz(it) } }
     }
-    Text(say(Phrases.pc_parts_click))
-    Text(say(Phrases.room_split_limits))
-}
-
-/** One knob, sent on letting go like the volume sliders. */
-@Composable
-private fun KnobLine(name: String, value: Float, range: ClosedFloatingPointRange<Float>, reading: String, onSet: (Float) -> Unit) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(name, Modifier.width(96.dp))
-        Slider(
-            value = dragging ?: value,
-            onValueChange = { dragging = it },
-            onValueChangeFinished = {
-                dragging?.let(onSet)
-                dragging = null
-            },
-            valueRange = range,
-            modifier = Modifier.width(240.dp)
-        )
-        Text(reading, fontFamily = FontFamily.Monospace)
-    }
+    Note(say(Phrases.pc_parts_click))
+    Note(say(Phrases.room_split_limits))
 }
 
 /** The handset's titles for the effects. */
@@ -548,59 +627,50 @@ private const val SHORTEST_SPIN_SECONDS = 2
 private const val LONGEST_SPIN_SECONDS = 20
 
 /**
- * Every device's volume, one line each, under a room slider that levels them all - the handset
- * host's volume lines. Only SoundMesh's sound moves on a computer; a handset moves its own
- * media volume, as it always has.
+ * Every device's volume, one line each, under a room line that levels them all - the handset
+ * host's volume lines, each dot in its device's colour. Only SoundMesh's sound moves on a
+ * computer; a handset moves its own media volume, as it always has.
  */
 @Composable
 private fun Volumes(host: HostSession, status: HostStatus, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(say(Phrases.tab_volume), style = MaterialTheme.typography.titleSmall)
-        if (status.volumeTouched) {
-            TextButton(onClick = { scope.launch(sessions) { host.restoreVolume() } }) { Text(say(Phrases.room_volume_restore)) }
+    Label(
+        say(Phrases.tab_volume),
+        trailing = if (status.volumeTouched) say(Phrases.room_volume_restore) else null,
+        onTrailing = if (status.volumeTouched) {
+            { scope.launch(sessions) { host.restoreVolume() } }
+        } else {
+            null
         }
-    }
-    VolumeLine(say(Phrases.room_volume_all), status.roomVolumePercent ?: status.volumePercent) {
-        scope.launch(sessions) { host.setRoomVolume(it) }
-    }
-    VolumeLine(say(Phrases.pc_this_computer), status.volumePercent) { scope.launch(sessions) { host.setOwnVolume(it) } }
+    )
+    VolumeLine(
+        name = say(Phrases.room_volume_all),
+        percent = status.roomVolumePercent ?: status.volumePercent,
+        colour = MaterialTheme.colorScheme.onSurface,
+        strong = true
+    ) { scope.launch(sessions) { host.setRoomVolume(it) } }
+    VolumeLine(
+        name = say(Phrases.pc_this_computer),
+        percent = status.volumePercent,
+        colour = badgeColour(status.selfPlace, MaterialTheme.colorScheme.onSurfaceVariant)
+    ) { scope.launch(sessions) { host.setOwnVolume(it) } }
     for (phone in status.phones) {
-        VolumeLine(phone.name, phone.askedPercent ?: phone.volumePercent, reported = phone.volumePercent) {
-            scope.launch(sessions) { host.setDeviceVolume(phone.peerId, it) }
+        val reported = phone.volumePercent
+        if (reported == null) {
+            Line {
+                LineName(phone.name, quiet = true)
+                Tag(say(Phrases.pc_no_volume_yet))
+            }
+            continue
         }
-    }
-}
-
-/**
- * One slider. It says what it was set to and, where the device reported somewhere else - a
- * handset's volume moves in fifteen coarse steps - where it actually came to.
- */
-@Composable
-internal fun VolumeLine(name: String, percent: Int?, reported: Int? = null, onSet: (Int) -> Unit) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(name, Modifier.width(96.dp))
-        Slider(
-            value = dragging ?: (percent ?: SoftwareVolume.FULL).toFloat(),
-            onValueChange = { dragging = it },
-            // Sent once on letting go rather than on every step of a drag, as the handset does.
-            onValueChangeFinished = {
-                dragging?.let { onSet(it.roundToInt()) }
-                dragging = null
-            },
-            valueRange = 0f..SoftwareVolume.FULL.toFloat(),
-            enabled = percent != null,
-            modifier = Modifier.width(240.dp)
-        )
-        Text(
-            when {
-                percent == null -> say(Phrases.pc_no_volume_yet)
-                reported != null && reported != percent -> say(Phrases.pc_percent_now, percent, reported)
-                else -> say(Phrases.room_knob_percent, percent)
-            },
-            fontFamily = FontFamily.Monospace
-        )
+        VolumeLine(
+            name = phone.name,
+            percent = reported,
+            colour = badgeColour(phone.place, MaterialTheme.colorScheme.onSurfaceVariant)
+        ) { scope.launch(sessions) { host.setDeviceVolume(phone.peerId, it) } }
+        // What it was told, where that is not where it came to - a handset's volume moves in
+        // fifteen coarse steps. The row itself draws what the device says, as on the handset.
+        phone.askedPercent?.takeIf { it != reported }?.let { Note(say(Phrases.pc_percent_now, it, reported)) }
     }
 }
 
@@ -633,11 +703,11 @@ internal fun Badge(peerId: String, place: Int?, hollow: Boolean = false) {
 @Composable
 private fun Diagnostics(shown: Boolean, rows: List<Pair<String, String>>) {
     if (!shown) return
-    Text(say(Phrases.settings_diagnostics), style = MaterialTheme.typography.titleSmall)
-    for ((label, value) in rows) {
-        Row {
-            Text(label, Modifier.width(96.dp))
-            Text(value, fontFamily = FontFamily.Monospace)
+    Label(say(Phrases.settings_diagnostics))
+    for ((index, row) in rows.withIndex()) {
+        Line(first = index == 0) {
+            LineName(row.first, quiet = true)
+            Text(row.second, style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
         }
     }
 }
@@ -703,13 +773,18 @@ private fun Networks() {
         }
     }
     val list = addresses ?: return
-    Text(say(Phrases.network_title), style = MaterialTheme.typography.titleSmall)
+    Label(say(Phrases.network_title))
     if (list.isEmpty()) {
-        Text(say(Phrases.pc_no_network), color = MaterialTheme.colorScheme.error)
+        Note(say(Phrases.pc_no_network), Tone.WRONG)
         return
     }
-    for (own in list) Text("${own.adapter}  ${own.address}")
-    Text(say(Phrases.pc_networks_hint))
+    for ((index, own) in list.withIndex()) {
+        Line(first = index == 0) {
+            LineName(own.adapter)
+            Tag(own.address)
+        }
+    }
+    Note(say(Phrases.pc_networks_hint))
 }
 
 private const val NETWORKS_POLL_MILLIS = 3_000L
@@ -727,26 +802,20 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
     var payload by remember { mutableStateOf<String?>(null) }
     // Again once the role is open: the pane is drawn before the host has an id to put in it.
     LaunchedEffect(chosen, open) { payload = chosen?.let { withContext(sessions) { host.pairingCode(it.address) } } }
-    Text(say(Phrases.pc_code_title), style = MaterialTheme.typography.titleSmall)
+    Label(say(Phrases.pc_code_title))
     if (addresses.size > 1) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (address in addresses) {
-                FilterChip(
-                    selected = address == chosen,
-                    onClick = { chosen = address },
-                    label = { Text("${address.adapter}  ${address.address}") }
-                )
-            }
-        }
+        // Adapter over address in each cell: a cell holds two lines, and the adapter's name is
+        // what somebody picks by.
+        Segmented(addresses.map { address -> Segment("${address.adapter}\n${address.address}", address == chosen) { chosen = address } })
     }
     val where = chosen
     if (where == null) {
-        Text(say(Phrases.pc_code_nowhere), color = MaterialTheme.colorScheme.error)
+        Note(say(Phrases.pc_code_nowhere), Tone.WRONG)
         return
     }
     val code = payload ?: return
     val modules = remember(code) { PairingCodeModules.of(code) }
-    Canvas(Modifier.size(PAIR_CODE_SIZE).background(Color.White)) {
+    Canvas(Modifier.padding(top = 6.dp).size(PAIR_CODE_SIZE).background(Color.White)) {
         val cell = size.width / modules.size
         for (y in modules.indices) {
             for (x in modules[y].indices) {
@@ -756,8 +825,8 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
             }
         }
     }
-    Text(say(Phrases.pc_code_how))
-    Text(say(Phrases.pc_code_address, where.address, where.adapter))
+    Note(say(Phrases.pc_code_how))
+    Note(say(Phrases.pc_code_address, where.address, where.adapter))
 }
 
 /** Scanned from arm's length off a laptop screen, and small enough to leave the pane readable. */

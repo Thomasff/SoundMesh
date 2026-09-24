@@ -19,6 +19,7 @@
     <string name="pc_which_program">抓哪个程序的声音？</string>
     <string name="pc_program_playing">%1$s（正在出声）</string>
     <string name="pc_never_mind">算了</string>
+    <string name="pc_use_program">用这个</string>
     <string name="pc_program_sound">「%1$s」的声音</string>
     <string name="pc_play_here_too">电脑自己也出声</string>
     <string name="pc_capturing">房间在放「%1$s」的声音。它在这台电脑上的音量先调到了千分之一，免得比房间早一秒半响出来；停止后调回原样。</string>

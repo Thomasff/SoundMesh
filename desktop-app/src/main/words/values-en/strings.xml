@@ -14,6 +14,7 @@
     <string name="pc_which_program">Which program\'s sound?</string>
     <string name="pc_program_playing">%1$s (making sound)</string>
     <string name="pc_never_mind">Never mind</string>
+    <string name="pc_use_program">Use this</string>
     <string name="pc_program_sound">Sound from “%1$s”</string>
     <string name="pc_play_here_too">This computer plays too</string>
     <string name="pc_capturing">The room is playing “%1$s”. Its volume on this computer is turned down to a thousandth so it does not sound a second and a half ahead of the room; stopping puts it back.</string>
