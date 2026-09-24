@@ -4,7 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -92,15 +91,17 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
                     down.position.x / size.width,
                     down.position.y / size.height
                 ) ?: return@awaitEachGesture
-                val began = awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
-                if (began == null) {
-                    if (held is Grabbed.Handset && splitting(current)) onRoom?.togglePart(held.peerId)
-                    return@awaitEachGesture
-                }
-                put(held, began.position)
-                drag(down.id) { change ->
+                // No slop: the handset's is there for a finger that drifts while it rests, and a
+                // resting mouse does not drift. Compose's touch slop applies to a mouse as well,
+                // and left the icon lying still under the first stretch of every drag.
+                down.consume()
+                val press = Press(down.position, centreOf(held, current, size.width, size.height) ?: down.position)
+                val lifted = drag(down.id) { change ->
                     change.consume()
-                    put(held, change.position)
+                    put(held, press.follow(change.position))
+                }
+                if (lifted && press.wasClick && held is Grabbed.Handset && splitting(current)) {
+                    onRoom?.togglePart(held.peerId)
                 }
             }
         }
@@ -127,6 +128,32 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?) {
         }
         sourceSpotOf(room)?.let { drawSource(it, source) }
     }
+}
+
+/**
+ * One press on the drawing, in pixels. What was grabbed keeps the grip it was taken by, so it
+ * moves with the first pixel of travel and never jumps to put its middle under the pointer.
+ */
+internal class Press(private val down: Offset, private val grabbedCentre: Offset) {
+    private var farthest = 0f
+
+    /** Where the grabbed thing's middle goes with the pointer at [at]. */
+    fun follow(at: Offset): Offset {
+        farthest = maxOf(farthest, (at - down).getDistance())
+        return grabbedCentre + (at - down)
+    }
+
+    /** Released without really travelling: a click, which swaps a device's half. */
+    val wasClick: Boolean get() = farthest < CLICK_TRAVEL_PX
+}
+
+/** Where [held] is drawn now, in pixels. */
+private fun centreOf(held: Grabbed, room: RoomState, width: Int, height: Int): Offset? {
+    val (x, y) = when (held) {
+        is Grabbed.Source -> sourceSpotOf(room)?.let { it.x to it.y }
+        is Grabbed.Handset -> room.icons.firstOrNull { it.peerId == held.peerId }?.let { it.x to it.y }
+    } ?: return null
+    return Offset(x * width, y * height)
 }
 
 /** Whether the room is splitting the song, which is when a device's half means anything. */
@@ -202,6 +229,12 @@ private fun DrawScope.drawSource(spot: SourceSpot, colour: Color) {
 
 /** The handset drawing's icon radius, as a share of the side. */
 private const val DEVICE_RADIUS = 0.06f
+
+/**
+ * How far a press may wander and still be a click: Compose's own allowance for a mouse (its touch
+ * slop of 18 dp times 1/8), in pixels since that is what a hand's wobble is measured in.
+ */
+private const val CLICK_TRAVEL_PX = 3f
 
 /** Square, as on the handset: a place is a fraction of the width and of the height alike. */
 private val DRAWING_SIDE = 360.dp
