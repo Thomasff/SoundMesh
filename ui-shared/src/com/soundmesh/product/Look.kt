@@ -307,6 +307,39 @@ fun Framed(strong: Boolean = false, content: @Composable ColumnScope.() -> Unit)
     }
 }
 
+/**
+ * One of a list of named choices: its name, and when it is the chosen one, whatever [content]
+ * says it does and holds what moves it.
+ *
+ * Only clickable while it is **not** chosen. A chosen card holds sliders and segmented buttons,
+ * and a card that is also a button would take the finger that was aiming at one of them.
+ */
+@Composable
+fun ChoiceCard(title: String, chosen: Boolean, onClick: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().then(
+            if (chosen) Modifier else Modifier.clickable(onClick = onClick)
+        ),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            if (chosen) 2.dp else 1.dp,
+            if (chosen) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (chosen) content()
+        }
+    }
+}
+
 /** The line of small grey text under a control that says what it is for. */
 @Composable
 fun Note(text: String, tone: Tone = Tone.QUIET, waiting: Boolean = false) {

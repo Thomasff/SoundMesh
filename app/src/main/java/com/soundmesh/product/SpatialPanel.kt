@@ -2,7 +2,6 @@ package com.soundmesh.product
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,7 +45,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -1000,9 +997,7 @@ private fun EffectSection(
 
 /**
  * One named result: its name, and when it is the chosen one, what it does and what moves it.
- *
- * Only clickable while it is **not** chosen. A chosen card holds sliders and segmented buttons,
- * and a card that is also a button would take the finger that was aiming at one of them.
+ * The card itself is [ChoiceCard], which the desktop window's effect list is drawn with too.
  */
 @Composable
 private fun EffectRow(
@@ -1012,33 +1007,13 @@ private fun EffectRow(
     actions: RoomActions,
     onClick: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().then(
-            if (chosen) Modifier else Modifier.clickable(onClick = onClick)
-        ),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
-            if (chosen) 2.dp else 1.dp,
-            if (chosen) MaterialTheme.colorScheme.onSurface
-            else MaterialTheme.colorScheme.surfaceVariant
+    ChoiceCard(stringResource(effect.title), chosen, onClick) {
+        Text(
+            stringResource(effect.line),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
-            Text(
-                stringResource(effect.title),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            if (!chosen) return@Column
-            Text(
-                stringResource(effect.line),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            EffectOwn(effect, state, actions)
-        }
+        EffectOwn(effect, state, actions)
     }
 }
 
