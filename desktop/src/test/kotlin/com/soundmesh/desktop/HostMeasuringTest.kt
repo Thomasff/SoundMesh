@@ -149,8 +149,12 @@ class HostMeasuringTest {
             host.measureRoom()
 
             val sinkId = HostIdentity(sinkDir).current()
-            assertTrue(eventually(10_000) { host.status().phones.single().excuse == RoomExcuse.NO_MICROPHONE })
-            assertTrue(host.status().measure.heard.contains(sinkId to RoundLine.Excused(RoomExcuse.NO_MICROPHONE)))
+            // Waited for together: the line keeps the excuse a moment before it tells the round.
+            assertTrue("row ${host.status().phones} lines ${host.status().measure.heard}", eventually(10_000) {
+                val status = host.status()
+                status.phones.single().excuse == RoomExcuse.NO_MICROPHONE &&
+                    status.measure.heard.contains(sinkId to RoundLine.Excused(RoomExcuse.NO_MICROPHONE))
+            })
             // Everybody told has said why not, and the round still waits for an ask, as the
             // handset host's does - so it is called off here rather than waited out.
             host.callOffMeasuring()
