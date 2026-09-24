@@ -111,6 +111,8 @@ enum class MeasureJob { ROOM, PAIR }
 data class MeasureStatus(
     val running: Boolean = false,
     val job: MeasureJob? = null,
+    /** The device a pair round is with; null for a room. */
+    val aimedAt: String? = null,
     /** The chirps have started: calling it off now silences the room rather than refusing to answer. */
     val underWay: Boolean = false,
     /** Where the round has got to, or what it came to; null once a device's own line replaces it. */
@@ -615,6 +617,11 @@ class HostSession(
                 it.copy(
                     running = true,
                     job = job,
+                    aimedAt = aimedAt,
+                    // Each device's lines are about the job that said them: a room's excuses are
+                    // not a pair's answer. Pairs keep each other's, as the handset's pair screen
+                    // does - two devices measured in a row are two answers worth comparing.
+                    heard = if (it.job == job) it.heard else emptyList(),
                     underWay = false,
                     line = RoundLine.Waiting,
                     untilLocalNanos = null,
@@ -859,6 +866,11 @@ class HostSession(
             if (playing && stream != null) listOfNotNull(self.takeIf { playingHere }) + spatial.peerIds()
             else listOf(self) + (commandServer?.standingPeerIds() ?: emptyList())
         if (roster.distinct() == room.icons.map { it.peerId }) return
+        // Somebody drawn for the first time lands where nothing measured put them. Devices that
+        // come and go keep where they were - which on this machine is every start and stop of a
+        // song, the roster switching between who stands by and who takes the audio - and a fit
+        // taken is still true of them.
+        val newcomer = roster.any { it != self && it !in whereTheyWere && room.icons.none { icon -> icon.peerId == it } }
         whereTheyWere.putAll(room.icons.associateBy { it.peerId })
         room = room.copy(
             icons = SpatialRoom.reconciled(room.icons, roster, whereTheyWere),
@@ -869,7 +881,7 @@ class HostSession(
             // since somebody joining does not change how big the room is.
             measuredMetres = measuredDistances(identityDirectory, self, roster),
             listenerMetres = listenerMetres(self),
-            fitted = false
+            fitted = room.fitted && !newcomer
         )
         publishRoom()
     }

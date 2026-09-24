@@ -166,6 +166,12 @@ class HostMeasuringTest {
             // handset host's does - so it is called off here rather than waited out.
             host.callOffMeasuring()
             assertTrue(host.idle())
+
+            // A room's excuses are not a pair's answer: the pair window starts without them.
+            host.measurePair(sinkId)
+            assertEquals(emptyList<Pair<String, RoundLine>>(), host.status().measure.heard)
+            host.callOffMeasuring()
+            assertTrue(host.idle())
         } finally {
             sink.stop()
             host.close()
@@ -273,6 +279,14 @@ class HostMeasuringTest {
             host.fitRoom()
             assertTrue("not fitted", host.status().room.fitted)
             assertTrue("no scale, so nothing is held back", host.status().room.metresPerUnit > 0.0)
+
+            // A device that leaves and comes back - which on this machine is every start and stop
+            // of a song - is still where the fit put it, so the fit is not offered again.
+            sink.stop()
+            assertTrue(eventually(10_000) { host.status().room.icons.none { it.peerId == sinkId } })
+            sink.startOnHost()
+            assertTrue(eventually(10_000) { host.status().room.icons.any { it.peerId == sinkId } })
+            assertTrue("offered again after a device came back", host.status().room.fitted)
 
             val icon = host.status().room.icons.first { it.peerId == sinkId }
             host.moveIcon(icon.copy(x = icon.x * 0.5f))

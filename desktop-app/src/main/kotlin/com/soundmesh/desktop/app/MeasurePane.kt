@@ -65,8 +65,10 @@ internal fun MeasurePane(
     val scope = rememberCoroutineScope()
     val rows = volumeRows(status)
     val tooQuiet = tooQuietFor(rows)
-    // What the window shows as this job's answer: a round of the other job is somebody else's.
-    val mine = measure.job == job
+    // What the window shows as this job's answer: a round of the other job, or a pair with another
+    // device, is somebody else's. A round that is running is shown whichever it is, with the stop
+    // that ends it: the window can be opened on another device while one runs.
+    val mine = measure.job == job && (job == MeasureJob.ROOM || measure.aimedAt == aimedAt)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -78,7 +80,7 @@ internal fun MeasurePane(
         )
         if (job == MeasureJob.ROOM) Text(say(Phrases.room_calibrate_intro))
         VolumeGate(host, status, rows, tooQuiet, sessions)
-        if (measure.running && mine) {
+        if (measure.running) {
             Running(measure)
         } else if (mine) {
             RoundResult(status, measure, job, tooQuiet) { scope.launch(sessions) { host.measureRoom() } }
@@ -117,7 +119,9 @@ internal fun MeasurePane(
                 TooQuietNote(tooQuiet)
             }
         }
-        if (measure.running && mine) StopControl(measure, job) { scope.launch(sessions) { host.callOffMeasuring() } }
+        if (measure.running) {
+            StopControl(measure, measure.job ?: job) { scope.launch(sessions) { host.callOffMeasuring() } }
+        }
         // Under everything rather than above it, as on the handset: it exists only once a round
         // has finished, and while one runs the thing worth reading is the count.
         if (job == MeasureJob.ROOM && mine && measure.roomMeasured) {
