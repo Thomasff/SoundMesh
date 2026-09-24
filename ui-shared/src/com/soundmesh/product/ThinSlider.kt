@@ -120,12 +120,12 @@ fun VolumeLine(
         ) {
             val y = size.height / 2f
             val at = size.width * (shown / 100f)
-            drawLine(empty, Offset(0f, y), Offset(size.width, y), strokeWidth = TRACK_PIXELS)
-            drawLine(colour, Offset(0f, y), Offset(at, y), strokeWidth = TRACK_PIXELS)
+            drawLine(empty, Offset(0f, y), Offset(size.width, y), strokeWidth = TRACK.toPx())
+            drawLine(colour, Offset(0f, y), Offset(at, y), strokeWidth = TRACK.toPx())
             // The same halo the room drawing puts round a handset's icon, so that a glance from
             // one to the other lands on the same phone. See SpatialPanel's drawHandset.
-            drawCircle(colour.copy(alpha = 0.22f), radius = HALO_PIXELS, center = Offset(at, y))
-            drawCircle(colour, radius = DOT_PIXELS, center = Offset(at, y))
+            drawCircle(colour.copy(alpha = 0.22f), radius = HALO.toPx(), center = Offset(at, y))
+            drawCircle(colour, radius = DOT.toPx(), center = Offset(at, y))
         }
         Text(
             "$shown%",
@@ -246,17 +246,17 @@ fun Knob(
             // either side of zero, and a bar that always grows from the left says "less of this"
             // at the setting that means "neither way".
             val origin = size.width * knobFraction(0f, bounds)
-            drawLine(empty, Offset(0f, y), Offset(size.width, y), strokeWidth = TRACK_PIXELS)
-            drawLine(ink, Offset(minOf(origin, at), y), Offset(maxOf(origin, at), y), strokeWidth = TRACK_PIXELS)
+            drawLine(empty, Offset(0f, y), Offset(size.width, y), strokeWidth = TRACK.toPx())
+            drawLine(ink, Offset(minOf(origin, at), y), Offset(maxOf(origin, at), y), strokeWidth = TRACK.toPx())
             // Drawn where the value can actually land, so that a dot between two marks is a dot
             // somebody is still dragging rather than a control that missed.
             if (stops > 0) {
                 for (mark in 0..(stops + 1)) {
                     val x = size.width * (mark.toFloat() / (stops + 1))
-                    drawCircle(empty, radius = STOP_PIXELS, center = Offset(x, y))
+                    drawCircle(empty, radius = STOP.toPx(), center = Offset(x, y))
                 }
             }
-            drawCircle(ink, radius = DOT_PIXELS, center = Offset(at, y))
+            drawCircle(ink, radius = DOT.toPx(), center = Offset(at, y))
         }
     }
 }
@@ -305,11 +305,16 @@ private val NAME_WIDTH = 92.dp
 /** Tall enough to catch a finger, though only two of its points are drawn. */
 private val TOUCH_HEIGHT = 28.dp
 
-private const val TRACK_PIXELS = 5f
-private const val DOT_PIXELS = 11f
-private const val HALO_PIXELS = 24f
+/*
+ * In points, since 2026-09-24. They were pixels, drawn on handsets at 3 and 3.5 pixels a point, and
+ * the same pixels on a computer at one or one and a quarter are a dot two or three times the size.
+ * These are those pixels at about 3.2 a point, so neither handset moves by more than a pixel.
+ */
+private val TRACK = 1.6.dp
+private val DOT = 3.5.dp
+private val HALO = 7.5.dp
 
 /** Small enough to read as a mark on the track rather than as a second dot on it. */
-private const val STOP_PIXELS = 3f
+private val STOP = 1.dp
 
 private val PERCENT_WIDTH = 34.dp
