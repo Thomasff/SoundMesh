@@ -1127,5 +1127,3 @@ internal fun volumeComplaint(
     else -> VolumeComplaint.REFUSED
 }
 
-/** Long enough for a handset to hear, set its stream and answer across a room. */
-internal const val VOLUME_GRACE_MILLIS = 1_500L

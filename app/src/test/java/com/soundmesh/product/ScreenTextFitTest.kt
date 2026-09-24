@@ -29,7 +29,7 @@ class ScreenTextFitTest {
     fun aLabelTooWideForItsCellWrapsRatherThanBeingCutOff() {
         assertTrue(
             "a segmented label is back to one line, so the longest one is cut off again",
-            source("src/main/java/com/soundmesh/product/Look.kt").contains("maxLines = 2,")
+            source("../ui-shared/src/com/soundmesh/product/Look.kt").contains("maxLines = 2,")
         )
     }
 

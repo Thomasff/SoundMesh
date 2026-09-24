@@ -293,6 +293,12 @@ internal fun knobFraction(value: Float, range: ClosedFloatingPointRange<Float>):
 internal fun knobPercent(value: Float, range: ClosedFloatingPointRange<Float>): Int =
     (knobFraction(value, range) * 100).roundToInt()
 
+/**
+ * Long enough for a handset to hear, set its stream and answer across a room. Also how long
+ * HomeScreen's volumeComplaint keeps quiet after an ask.
+ */
+internal const val VOLUME_GRACE_MILLIS = 1_500L
+
 /** Wide enough for a system device name to be recognisable, narrow enough to leave a track. */
 private val NAME_WIDTH = 92.dp
 

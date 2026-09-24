@@ -118,6 +118,8 @@ val phrases = tasks.register("phrases") {
 kotlin.sourceSets.named("main") {
     kotlin.srcDir(aboutFacts)
     kotlin.srcDir(phrases)
+    // The handset's look, from the same files the handset compiles (see app/build.gradle.kts).
+    kotlin.srcDir(rootProject.file("ui-shared/src"))
 }
 
 dependencies {

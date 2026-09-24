@@ -82,6 +82,17 @@ android {
         }
     }
 
+    // The look both windows share - colours, the thin controls, the volume line - kept once in
+    // ui-shared and compiled here and into :desktop-app alike, each against its own Compose. A
+    // folder rather than a module: a Compose Multiplatform module would bring this app from
+    // Compose 1.7 to the desktop's 1.9 along with it. What it costs is that only what both
+    // versions have can be written there, and a build of either side says so at once.
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDir(rootProject.file("ui-shared/src"))
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true

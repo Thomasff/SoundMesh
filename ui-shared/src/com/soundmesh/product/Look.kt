@@ -48,7 +48,6 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -67,7 +66,7 @@ import androidx.compose.ui.unit.sp
  * label instead of a heading, a hairline instead of a card edge - and what stays solid is the two
  * or three things on a screen that are actually the point.
  *
- * Colour is rationed for the reason [SoundMeshTheme] gives: [BadgePalette] hands out twelve hues to
+ * Colour is rationed for the reason [soundMeshColours] gives: the badges hand out twelve hues to
  * say which handset is which, so nothing here may compete. [Tone] carries three deliberately
  * desaturated readings - about half the saturation of any badge - and everything else is a shade
  * of the surface.
@@ -75,14 +74,14 @@ import androidx.compose.ui.unit.sp
 
 /** A small grey heading over a list, with an optional count or state at its right-hand end. */
 @Composable
-fun Label(title: Int, trailing: String? = null, onTrailing: (() -> Unit)? = null) {
+fun Label(title: String, trailing: String? = null, onTrailing: (() -> Unit)? = null) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 5.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            stringResource(title),
+            title,
             style = MaterialTheme.typography.labelSmall,
             fontSize = 11.sp,
             letterSpacing = 1.4.sp,
@@ -167,7 +166,7 @@ fun RowScope.LineName(text: String, quiet: Boolean = false) {
 @Composable
 fun Dot(place: Int?, hollow: Boolean = false, size: Dp = 9.dp) {
     val colour = if (hollow) MaterialTheme.colorScheme.onSurfaceVariant
-    else BadgePalette.colourOf(place, MaterialTheme.colorScheme.onSurfaceVariant)
+    else badgeColour(place, MaterialTheme.colorScheme.onSurfaceVariant)
     Box(
         modifier = Modifier
             .size(size)
@@ -446,7 +445,7 @@ fun Ghost(
  * screens people are sent to from somewhere else.
  */
 @Composable
-fun PageBar(title: Int, onBack: () -> Unit) {
+fun PageBar(title: String, onBack: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -459,7 +458,7 @@ fun PageBar(title: Int, onBack: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            stringResource(title),
+            title,
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
