@@ -1098,16 +1098,32 @@ class HostSession(
     }
 
     private fun tellWhileOpen() {
+        var putBackAt = 0L
         while (!Thread.currentThread().isInterrupted) {
             tell()
             synchronized(lock) { refreshRoom() }
             echoStop()
+            if (System.nanoTime() - putBackAt >= PUT_BACK_EVERY_NANOS) {
+                putBackAt = System.nanoTime()
+                putBackWhileIdle()
+            }
             try {
                 Thread.sleep(retellMillis)
             } catch (_: InterruptedException) {
                 return
             }
         }
+    }
+
+    /**
+     * A program that quit while the room played it could not be put back then, and Windows gives
+     * it the level it was left at when it runs again: it is put back as soon as it does, rather
+     * than the next time this machine is host. Under [lock], and only while nothing plays, because
+     * a play turns its programs down on its own thread once it has started, and a put back
+     * between the two would undo that.
+     */
+    private fun putBackWhileIdle() = synchronized(lock) {
+        if (!playing) runCatching { turnDown.putBack() }
     }
 
     /**
@@ -1163,6 +1179,9 @@ class HostSession(
          * playing - the handset host checks on its own screen's refresh, about this often.
          */
         const val RETELL_MILLIS = 200L
+
+        /** How soon a program left turned down is put back once it runs again. Picked. */
+        private const val PUT_BACK_EVERY_NANOS = 1_000_000_000L
 
         /**
          * How long after a play starts before a device not taking the audio is said to have

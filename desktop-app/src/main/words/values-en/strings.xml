@@ -16,7 +16,6 @@
     <string name="pc_confirm">OK</string>
     <string name="pc_program_sound">Sound from “%1$s”</string>
     <string name="pc_play_here_too">This device plays too</string>
-    <string name="pc_held_down">“%1$s” is still turned down in the volume mixer. It is put back here the next time it runs, or turn it back up yourself in the Windows volume mixer.</string>
     <string name="pc_skipped">Skipped, could not play: %1$s</string>
     <string name="pc_ended">Finished.</string>
     <string name="pc_phones_follow">Other devices play by themselves once they connect to this one</string>

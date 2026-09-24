@@ -521,7 +521,6 @@ private fun HostPlaying(
         if (status.measure.running) Note(say(Phrases.pc_measuring_now))
     }
     val join = say(Phrases.room_volume_name_join)
-    if (status.heldDown.isNotEmpty()) Note(say(Phrases.pc_held_down, status.heldDown.joinToString(join)), Tone.WRONG)
     if (status.skipped.isNotEmpty()) Note(say(Phrases.pc_skipped, status.skipped.joinToString(join)), Tone.WRONG)
     if (status.ended) Note(say(Phrases.pc_ended))
     HostDrawing(host, status.room, sessions, rememberRipple(status.playing), status.killedIds)

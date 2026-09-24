@@ -615,6 +615,9 @@ class HostSessionTest {
             // On the play thread, once the capture has opened.
             assertTrue("never turned down", eventually { kotlin.math.abs(mixer.level(MUSIC)!! - 0.6f * AppTurnDown.LEVEL) < 1e-9f })
             assertTrue("the gain does not undo it", eventually { kotlin.math.abs(captures.single().gain - 1f / AppTurnDown.LEVEL) < 0.01f })
+            // Longer than the host takes to put back what was left down while nothing plays.
+            Thread.sleep(1500)
+            assertEquals("put back while it plays", 0.6f * AppTurnDown.LEVEL, mixer.level(MUSIC)!!, 1e-9f)
 
             val heard = { chunk: com.soundmesh.core.AudioChunk ->
                 (chunk.pcm.indices step 2).all { chunk.pcm[it] == (SAMPLE.toInt() and 0xFF).toByte() && chunk.pcm[it + 1] == (SAMPLE.toInt() shr 8).toByte() }
@@ -711,6 +714,29 @@ class HostSessionTest {
         try {
             host.open()
             assertEquals(0.7f, mixer.level(MUSIC))
+        } finally {
+            host.close()
+        }
+    }
+
+    /**
+     * A program that was not running when it should have been put back - it quit while the room
+     * played it - is put back when it runs again, while this machine is host and capturing nothing,
+     * not only the next time the host opens.
+     */
+    @Test
+    fun aProgramLeftDownIsPutBackWhenItRunsAgain() {
+        val mixer = FakeMixer().apply { add(MUSIC, "music", 0.7f) }
+        AppTurnDown(folder.root, mixer).turnDown(MUSIC, "music")
+        mixer.rows.remove(MUSIC)
+        val host = capturingSession(ports(), mixer, java.util.concurrent.CopyOnWriteArrayList())
+        try {
+            host.open()
+            assertEquals(listOf("music"), host.status().heldDown)
+
+            mixer.add(MUSIC + 1, "music", 0.7f * AppTurnDown.LEVEL)
+            assertTrue("never put back", eventually { mixer.level(MUSIC + 1) == 0.7f })
+            assertTrue(host.status().heldDown.isEmpty())
         } finally {
             host.close()
         }
