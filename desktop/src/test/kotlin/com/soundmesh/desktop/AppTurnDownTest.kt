@@ -67,7 +67,10 @@ class AppTurnDownTest {
         assertEquals(0.9f, mixer.level(8))
     }
 
-    /** Asked again for a program it already holds, it does not read the level it left there. */
+    /**
+     * Asked again for a program it already holds, it does not read the level it left there, nor
+     * write it down again - 所有声音 asks four times a second.
+     */
     @Test
     fun aProgramHeldAlreadyIsNotTurnedDownTwice() {
         val mixer = FakeMixer().apply { add(7, "chrome", 0.5f) }
@@ -76,6 +79,7 @@ class AppTurnDownTest {
         hold.turnDown(7, "chrome")
         assertEquals(1f / AppTurnDown.LEVEL, hold.turnDown(7, "chrome"), 0.01f)
         assertEquals(0.5f * AppTurnDown.LEVEL, mixer.level(7)!!, 1e-9f)
+        assertEquals(listOf("chrome"), hold.held())
 
         hold.putBack()
         assertEquals(0.5f, mixer.level(7))
