@@ -188,8 +188,9 @@ data class HostStatus(
  *
  * **It measures the room and pairs, the way a handset host does** - core's one copy of the host's
  * round ([HostRound]), on this machine's speakers and microphone, since 09-24. The one difference is
- * where it stands: a person is sitting at the computer, so the computer is the listener's seat as
- * well as a speaker, and there is no step of holding it over anybody's head. See [HostPlace.LISTENING].
+ * where it stands for a room: a person is sitting at the computer, so the computer is the listener's
+ * seat as well as a speaker, and there is no step of holding it over anybody's head. See
+ * [HostPlace.LISTENING].
  */
 class HostSession(
     private val identityDirectory: File,
@@ -651,7 +652,12 @@ class HostSession(
                 ),
                 // Served for as long as this machine is the host; see the class comment.
                 servesClock = false,
-                place = HostPlace.LISTENING,
+                // A room is measured with everything where it plays and the person at the computer,
+                // so its distances are the listener's too. A pair is not: its instruction brings the
+                // device to within arm's length of this machine, and filed as the listener's, one
+                // pairing would seat the listener beside that device. Filed as the handset host's
+                // roster pair files it, a separation and nothing more.
+                place = if (job == MeasureJob.ROOM) HostPlace.LISTENING else HostPlace.PLAYING,
                 timingFor = timingFor,
                 calledOff = { callingOff },
                 report = object : HostRoundReport {

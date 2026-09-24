@@ -16,6 +16,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.soundmesh.desktop.HostSession
+import com.soundmesh.desktop.MeasureJob
 import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.identityDirectory
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -24,7 +25,12 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 fun main() = application {
-    val host = remember { HostSession(identityDirectory()) }
+    // A round's recording stays only while the details switch is on, as the sink's does below.
+    val host = remember {
+        HostSession(identityDirectory(), keepsRecordings = {
+            WindowPrefs(File(identityDirectory(), "window.properties")).read("details") == "on"
+        })
+    }
     // A measuring round's recording stays on disk only while the details switch is on, as the
     // handset keeps its own (keepsRecordings = wantsDetails). Read from the file at each round.
     val sink = remember {
@@ -44,6 +50,9 @@ fun main() = application {
     var details by remember { mutableStateOf(prefs.read("details") == "on") }
     var language by remember { mutableStateOf(languageChoiceOf(prefs.read("language"))) }
     var settingsOpen by remember { mutableStateOf(false) }
+    // Which measuring window is open, and on whom: the handset's calibration screen, which is a
+    // screen of its own there too. Null while none is.
+    var measuring by remember { mutableStateOf<Pair<MeasureJob, String?>?>(null) }
 
     Window(
         onCloseRequest = {
@@ -62,7 +71,27 @@ fun main() = application {
         state = rememberWindowState(width = 560.dp, height = 680.dp)
     ) {
         Themed(theme, language) {
-            SoundMeshWindow(host, sink, dispatcher, details, onOpenSettings = { settingsOpen = true })
+            SoundMeshWindow(
+                host, sink, dispatcher, details,
+                onOpenSettings = { settingsOpen = true },
+                onMeasure = { job, aimedAt -> measuring = job to aimedAt }
+            )
+        }
+    }
+    measuring?.let { (job, aimedAt) ->
+        Window(
+            onCloseRequest = {
+                // A round nobody is watching is a round nobody wants - the handset screen's
+                // onDestroy. Called off on the sessions' thread, and the window goes at once.
+                sessions.submit { runCatching { host.callOffMeasuring() } }
+                measuring = null
+            },
+            title = Phrases.pc_measure_window.of(language.english()),
+            state = rememberWindowState(width = 520.dp, height = 720.dp)
+        ) {
+            Themed(theme, language) {
+                MeasurePane(host, job, aimedAt, dispatcher, details)
+            }
         }
     }
     if (settingsOpen) {

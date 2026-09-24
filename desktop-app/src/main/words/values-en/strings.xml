@@ -118,5 +118,14 @@
     <string name="pc_mic_not_48k">The microphone runs at %1$s and measuring needs 48 kHz: set it to 48000 Hz in Sound settings.</string>
     <string name="pc_mic_other">The microphone would not open: %1$s</string>
 
+    <string name="pc_measure_window">Measuring</string>
+    <string name="pc_room_step">Measure the distances between the devices</string>
+    <string name="pc_room_step_1">Put the phones where you want to hear them, and sit at the computer where you usually listen - its distance to each device is taken as yours</string>
+    <string name="pc_room_again">Measure again</string>
+    <string name="pc_pair_title">Sync with %1$s</string>
+    <string name="pc_mic_no_device_host">This computer has no microphone, so it cannot measure.</string>
+    <string name="pc_measuring_now">Measuring; playing waits until it is done.</string>
+    <string name="pc_listener_assumed">The computer\'s 0.5 m to you is assumed, not measured.</string>
+
     <string name="pc_details_hint">The counters, clock offset and seams in the main window. Not needed day to day; useful when something is wrong.</string>
 </resources>

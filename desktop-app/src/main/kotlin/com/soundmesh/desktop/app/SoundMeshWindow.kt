@@ -56,6 +56,8 @@ import com.soundmesh.desktop.PairingCodeModules
 import com.soundmesh.desktop.HostProblem
 import com.soundmesh.desktop.HostSession
 import com.soundmesh.desktop.HostStatus
+import com.soundmesh.desktop.MeasureJob
+import com.soundmesh.probe.sync.Carried
 import com.soundmesh.desktop.LocalNetworks
 import com.soundmesh.desktop.OwnAddress
 import com.soundmesh.desktop.Playhead
@@ -85,7 +87,9 @@ fun SoundMeshWindow(
     sink: SinkSession,
     sessions: CoroutineDispatcher,
     details: Boolean,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    /** Opens the measuring window on [MeasureJob], aimed at one device for a pair. */
+    onMeasure: (MeasureJob, String?) -> Unit
 ) {
     var role by remember { mutableStateOf<Role?>(null) }
     val scope = rememberCoroutineScope()
@@ -114,7 +118,7 @@ fun SoundMeshWindow(
             TextButton(onClick = onOpenSettings) { Text(say(Phrases.settings_open)) }
         }
         when (role) {
-            Role.HOST -> HostPane(host, sessions, details)
+            Role.HOST -> HostPane(host, sessions, details, onMeasure)
             Role.SINK -> SinkPane(sink, sessions, details)
             null -> {
                 Text(say(Phrases.pc_role_question))
@@ -125,7 +129,12 @@ fun SoundMeshWindow(
 }
 
 @Composable
-private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: Boolean) {
+private fun HostPane(
+    host: HostSession,
+    sessions: CoroutineDispatcher,
+    details: Boolean,
+    onMeasure: (MeasureJob, String?) -> Unit
+) {
     val status = polled { host.status() } ?: return
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     // A program's sound instead of files; picking either one puts the other down.
@@ -196,8 +205,9 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
                 if (program != null) scope.launch(sessions) { host.playApp(program.pid, program.name, alsoHere) }
                 else files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
             },
-            enabled = status.open && (files.isNotEmpty() || app != null)
+            enabled = status.open && !status.measure.running && (files.isNotEmpty() || app != null)
         ) { Text(say(Phrases.play_start)) }
+        if (status.measure.running) Text(say(Phrases.pc_measuring_now))
     }
     // The handset's word for joining names in a sentence: 、 in Chinese, a comma in English.
     val join = say(Phrases.room_volume_name_join)
@@ -212,8 +222,14 @@ private fun HostPane(host: HostSession, sessions: CoroutineDispatcher, details: 
     val addresses = remember { LocalNetworks.list() }
     if (addresses.isNotEmpty()) Text(say(Phrases.pc_type_this, addresses.joinToString(join) { it.address }))
     PairCode(host, status.open, addresses, sessions)
-    Roster(status)
+    Roster(status) { peerId -> onMeasure(MeasureJob.PAIR, peerId) }
+    // The handset home screen's 位置同步校准, which opens the calibration screen rather than
+    // starting anything: a minute of chirps is asked for there, with the room's volumes in view.
+    Text(say(Phrases.goto_room), style = MaterialTheme.typography.titleSmall)
+    Text(say(Phrases.goto_room_hint))
+    Button(onClick = { onMeasure(MeasureJob.ROOM, null) }, enabled = status.open) { Text(say(Phrases.goto_room_go)) }
     HostDrawing(host, status.room, sessions)
+    MeasuredLines(host, status.room, details, sessions)
     Effects(host, status.room, sessions)
     Volumes(host, status, sessions)
     Diagnostics(
@@ -304,7 +320,7 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
  * badge is on every line here because this window has no drawing of the room to find a colour in.
  */
 @Composable
-private fun Roster(status: HostStatus) {
+private fun Roster(status: HostStatus, onCalibrate: (String) -> Unit) {
     Text(say(Phrases.pc_room_count, status.phones.size + 1), style = MaterialTheme.typography.titleSmall)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         status.selfId?.let { Badge(it, status.selfPlace) }
@@ -315,6 +331,14 @@ private fun Roster(status: HostStatus) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Badge(phone.peerId, phone.place, hollow = phone.quiet || phone.stopped)
             Text(phone.name)
+            // The handset host's roster line: how it is lined up, and the one errand that fixes
+            // it. Settled lines carry no chip, and the word itself is the way to measure again.
+            if (phone.carrying == Carried.SOMETHING) {
+                TextButton(onClick = { onCalibrate(phone.peerId) }) { Text(say(carryingWord(phone.carrying))) }
+            } else {
+                Text(say(carryingWord(phone.carrying)), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = { onCalibrate(phone.peerId) }) { Text(say(Phrases.roster_calibrate)) }
+            }
         }
         // Quiet first: a quiet one may still be taking the audio, and "not taking it" would be false.
         val note = when {
@@ -323,6 +347,7 @@ private fun Roster(status: HostStatus) {
             else -> null
         }
         note?.let { Text(it, Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
+        phone.excuse?.let { Text(describe(it), Modifier.padding(start = 32.dp), color = MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -366,7 +391,7 @@ private fun clock(millis: Long): String {
  * a second, and an icon that followed the mouse only that often would lag a drag by half a second.
  */
 @Composable
-private fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
+internal fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
     var local by remember { mutableStateOf<RoomState?>(null) }
     var touchedAt by remember { mutableStateOf(0L) }
@@ -552,7 +577,7 @@ private fun Volumes(host: HostSession, status: HostStatus, sessions: CoroutineDi
  * handset's volume moves in fifteen coarse steps - where it actually came to.
  */
 @Composable
-private fun VolumeLine(name: String, percent: Int?, reported: Int? = null, onSet: (Int) -> Unit) {
+internal fun VolumeLine(name: String, percent: Int?, reported: Int? = null, onSet: (Int) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(name, Modifier.width(96.dp))
@@ -584,7 +609,7 @@ private fun VolumeLine(name: String, percent: Int?, reported: Int? = null, onSet
  * stopped, as the handset draws it: the colour is kept for devices that are there.
  */
 @Composable
-private fun Badge(peerId: String, place: Int?, hollow: Boolean = false) {
+internal fun Badge(peerId: String, place: Int?, hollow: Boolean = false) {
     val hue = place?.let { BadgeHues.argb.getOrNull(it) }?.let { Color(it) }
     val grey = MaterialTheme.colorScheme.onSurfaceVariant
     val fill = hue ?: MaterialTheme.colorScheme.primary
@@ -624,7 +649,7 @@ private fun Diagnostics(shown: Boolean, rows: List<Pair<String, String>>) {
  * events to push, and a host's status takes the lock a stop is holding while its stream winds down.
  */
 @Composable
-private fun <T> polled(read: () -> T): T? {
+internal fun <T> polled(read: () -> T): T? {
     var value by remember { mutableStateOf<T?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -794,7 +819,7 @@ private fun roundLines(status: SinkStatus): String =
  * a button this machine does not have - those are the pc_round_ ones beside them.
  */
 @Composable
-private fun describe(line: RoundLine): String = when (line) {
+internal fun describe(line: RoundLine): String = when (line) {
     is RoundLine.Failed -> say(Phrases.pair_calibrate_failed, line.code)
     RoundLine.NoPairing -> say(Phrases.pair_calibrate_no_pairing)
     RoundLine.Clock -> say(Phrases.pair_calibrate_clock)
@@ -824,9 +849,20 @@ private fun describe(line: RoundLine): String = when (line) {
     is RoundLine.Excused -> describe(line.excuse)
 }
 
+/**
+ * What one device's constant is called on the roster - the handset's carryingWord. UNSAID is a
+ * device too old to say, not one that carries nothing.
+ */
+private fun carryingWord(carrying: Carried): Phrase = when (carrying) {
+    Carried.SOMETHING -> Phrases.roster_calibrated
+    Carried.APPROXIMATE -> Phrases.roster_approximate
+    Carried.NOTHING -> Phrases.roster_uncalibrated
+    Carried.UNSAID -> Phrases.roster_unsaid
+}
+
 /** The handset's words for why a device kept out of a round (RoomRoster.excuseWord). */
 @Composable
-private fun describe(excuse: RoomExcuse): String = when (excuse) {
+internal fun describe(excuse: RoomExcuse): String = when (excuse) {
     RoomExcuse.NO_MICROPHONE -> say(Phrases.excuse_no_microphone)
     RoomExcuse.SLOW_LINK -> say(Phrases.excuse_slow_link)
     RoomExcuse.CLOCK_NOT_CONVERGED -> say(Phrases.excuse_clock_not_converged)
@@ -835,7 +871,7 @@ private fun describe(excuse: RoomExcuse): String = when (excuse) {
 }
 
 @Composable
-private fun describe(problem: MicrophoneProblem, detail: String?): String = when (problem) {
+internal fun describe(problem: MicrophoneProblem, detail: String?): String = when (problem) {
     MicrophoneProblem.NO_DEVICE -> say(Phrases.pc_mic_no_device)
     MicrophoneProblem.DENIED -> say(Phrases.pc_mic_denied)
     MicrophoneProblem.NOT_48K -> say(Phrases.pc_mic_not_48k, detail)

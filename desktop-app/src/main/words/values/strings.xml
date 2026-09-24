@@ -123,5 +123,14 @@
     <string name="pc_mic_not_48k">麦克风的采样率是 %1$s，测量要 48 kHz：在「声音设置」里把麦克风改成 48000 Hz。</string>
     <string name="pc_mic_other">麦克风打不开：%1$s</string>
 
+    <string name="pc_measure_window">测量</string>
+    <string name="pc_room_step">量设备之间的距离</string>
+    <string name="pc_room_step_1">手机放在你希望听的位置，你坐在电脑前平时听歌的地方——电脑到每台的距离就当作你到每台的距离</string>
+    <string name="pc_room_again">重测</string>
+    <string name="pc_pair_title">和 %1$s 对时</string>
+    <string name="pc_mic_no_device_host">这台电脑没有麦克风，测不了。</string>
+    <string name="pc_measuring_now">正在测量，测完才能播放。</string>
+    <string name="pc_listener_assumed">其中电脑到你的 0.5 米是估的，不是量的。</string>
+
     <string name="pc_details_hint">主窗口里的计数、时钟偏移和接缝这些数。平时用不上，出问题时有用。</string>
 </resources>
