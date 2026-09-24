@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Test
+import java.io.File
 
 class ResolveClientTest {
     private class Client
@@ -46,6 +47,22 @@ class ResolveClientTest {
         assertEquals(false, resolveWasStuck(0))
         assertEquals(false, resolveWasStuck("resolved"))
     }
+
+    /**
+     * The wiring the two tests above cannot reach, since it needs the platform: every resolve takes
+     * its client from here and gives it up when stuck, and both searches say what was heard.
+     */
+    @Test
+    fun resolvesGoThroughTheClientAndBothSearchesSayWhatWasHeard() {
+        val discovery = source("src/main/java/com/soundmesh/probe/sync/PeerDiscovery.kt")
+            .substringAfter("private fun resolve(")
+        assertEquals(true, discovery.contains("val nsd = clients.take()"))
+        assertEquals(true, discovery.contains("if (resolveWasStuck(answer)) clients.giveUp(nsd)"))
+        val search = source("src/main/java/com/soundmesh/probe/sync/HostSearch.kt")
+        assertEquals(2, search.split("+ unresolvedNote(outcome.unresolved)").size - 1)
+    }
+
+    private fun source(path: String) = File(path).readText(Charsets.UTF_8).replace("\r\n", "\n")
 
     private companion object {
         // NsdManager.FAILURE_ALREADY_ACTIVE, written out: the test runs without the platform.
