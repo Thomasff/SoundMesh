@@ -118,19 +118,31 @@ private fun SourcePicker(state: HomeState, actions: HomeActions) {
     )
 }
 
-/** What is playing, and where in the room's queue it is. */
+/**
+ * Whether the page names this handset's own chosen source. Only a host's: a sink keeps the song it
+ * chose while it was last a host, and naming that is naming a song nobody is playing.
+ */
+internal fun namesOwnSource(state: HomeState): Boolean = state.role == Role.HOST
+
+/**
+ * What is playing, and where in the room's queue it is. A sink says only what its host says is
+ * playing, and nothing until it does: the count and the kind of source are the host's to know.
+ */
 @Composable
 private fun NowPlaying(state: HomeState) {
+    val title = when {
+        !namesOwnSource(state) -> state.nowPlaying ?: return
+        state.capturing -> stringResource(R.string.song_pick_capture)
+        else -> state.nowPlaying ?: state.songName ?: stringResource(R.string.song_none)
+    }
     Column(modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 2.dp)) {
         Text(
-            when {
-                state.capturing -> stringResource(R.string.song_pick_capture)
-                else -> state.nowPlaying ?: state.songName ?: stringResource(R.string.song_none)
-            },
+            title,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             fontSize = 17.sp
         )
+        if (!namesOwnSource(state)) return@Column
         Note(
             stringResource(
                 R.string.play_line,

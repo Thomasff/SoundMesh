@@ -267,7 +267,7 @@
     <string name="join_no_wifi">本机没连 WiFi。连上和主机同一个 WiFi，或者连主机开的热点。</string>
     <string name="join_other_network">本机和主机不在同一个网：主机是 %1$s，本机是 %2$s。有的路由器会把 2.4G 和 5G 分成两个网，访客网络也是另一个网。</string>
     <string name="join_cannot_reach">和主机在同一个网，但连不上。可能是主机那台没开着这个应用，也可能是这个网不让设备之间互相通信（校园网、公司网、公共热点常这样）。最稳的办法是让主机开热点，本机连它的热点。</string>
-    <string name="standby_sink_alone">还没连上主机，正在同一个网络里自动找。找不到就扫一下主机屏幕上的码——有的网络（校园网、公司网、公共热点）不让设备互相通信，自动找在那种网络上永远找不到。</string>
+    <string name="standby_sink_alone">还没连上主机，正在同一个网络里自动找。找不到就扫一下主机屏幕上的码——部分网络无法让设备自动发现对方。</string>
     <string name="pair_with">已配对 %1$s @ %2$s:%3$d</string>
     <string name="pair_no_address">本机现在没有一个能让对方连上的地址</string>
 

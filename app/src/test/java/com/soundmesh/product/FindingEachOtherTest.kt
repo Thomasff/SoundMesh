@@ -407,7 +407,7 @@ class FindingEachOtherTest {
         val strings = source("src/main/res/values/strings.xml")
         assertTrue(
             "nothing tells somebody on such a network what to do instead",
-            strings.contains("有的网络（校园网、公司网、公共热点）不让设备互相通信")
+            strings.contains("找不到就扫一下主机屏幕上的码——部分网络无法让设备自动发现对方")
         )
     }
 }

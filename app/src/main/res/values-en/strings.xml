@@ -264,7 +264,7 @@
     <string name="join_no_wifi">This phone is not on WiFi. Join the same network as the host, or the hotspot the host is running.</string>
     <string name="join_other_network">This phone and the host are on different networks: the host is on %1$s, this phone on %2$s. Some routers split 2.4G and 5G into two networks, and a guest network is another one again.</string>
     <string name="join_cannot_reach">Same network as the host, but no connection. Either the host does not have this app open, or the network does not let devices talk to each other, which campus, office and public networks often do not. The surest way round it is a hotspot on the host with this phone joining it.</string>
-    <string name="standby_sink_alone">No host yet; looking for one on this network. If nothing turns up, scan the code on the host\'s screen. Some networks (campus, office, public hotspots) do not let devices talk to each other, and looking will never find anything on one of those.</string>
+    <string name="standby_sink_alone">No host yet; looking for one on this network. If nothing turns up, scan the code on the host\'s screen. Some networks do not let devices find each other on their own.</string>
     <string name="pair_with">Paired with %1$s @ %2$s:%3$d</string>
     <string name="pair_no_address">This phone has no address the other one could reach</string>
 
