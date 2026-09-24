@@ -639,6 +639,7 @@ class HostSession(
             // A chirp measured through music measures the music - the handset host's
             // hushWhateverIsPlaying. Not started again afterwards, as on the handset.
             stopPlaying()
+            lendSpatialPort()
             val round = HostRound(
                 filesDir = identityDirectory,
                 hostId = self,
@@ -698,8 +699,64 @@ class HostSession(
             noteMeasure { it.copy(line = RoundLine.Failed(e.message ?: e.toString())) }
         } finally {
             roundInFlight = null
+            takeBackSpatialPort()
             noteMeasure { it.copy(running = false, underWay = false, untilLocalNanos = null) }
             synchronized(lock) { rereadDistances() }
+        }
+    }
+
+    /**
+     * Hands the spatial port to the round's plan server, which dials the same number: a handset
+     * sink asks for its plan on RoundPorts.PLAN, and that is SinkStream.SPATIAL_PORT, 45126. The
+     * handset host never meets this - its spatial server lives only while a session plays, and a
+     * round cannot run beside one - while this machine holds its for as long as it is the host.
+     * Nothing is playing by now, so nobody is on it.
+     *
+     * Waited for until the port can be bound again, not only until close returns: the JDK hands a
+     * socket closed under a thread blocked in accept to that thread to close, and until it has,
+     * the port is still listening (09-20).
+     */
+    private fun lendSpatialPort() {
+        val lent = synchronized(lock) {
+            val spatial = spatialServer ?: return
+            spatialServer = null
+            spatial
+        }
+        lent.stop()
+        awaitPortFree(ports.spatial)
+    }
+
+    /** The spatial server back on its port once the round has let go of it, while still the host. */
+    private fun takeBackSpatialPort() {
+        // Never lent - a round that stopped at the microphone - or no longer the host.
+        if (synchronized(lock) { spatialServer != null || commandServer == null }) return
+        awaitPortFree(ports.spatial)
+        synchronized(lock) {
+            val command = commandServer ?: return
+            val self = selfId ?: return
+            if (spatialServer != null) return
+            val spatial = SpatialFieldServer(ports.spatial, self, command.places())
+            try {
+                spatial.start()
+            } catch (_: BindException) {
+                problem = HostProblem.PortTaken(HostPort.SPATIAL, ports.spatial)
+                return
+            }
+            spatialServer = spatial
+            publishRoom()
+        }
+    }
+
+    /** Waits, a bounded while, until nothing is listening on [port]. */
+    private fun awaitPortFree(port: Int) {
+        val until = System.nanoTime() + PORT_FREE_WAIT_NANOS
+        while (System.nanoTime() < until) {
+            try {
+                java.net.ServerSocket(port).close()
+                return
+            } catch (_: BindException) {
+                Thread.sleep(PORT_POLL_MILLIS)
+            }
         }
     }
 
@@ -1092,5 +1149,10 @@ class HostSession(
          * 1.5 ms.
          */
         const val LISTENER_METRES = 0.5
+
+        /** The most a round waits for the spatial port to come free, either way. Picked, not measured. */
+        private const val PORT_FREE_WAIT_NANOS = 3_000_000_000L
+
+        private const val PORT_POLL_MILLIS = 20L
     }
 }

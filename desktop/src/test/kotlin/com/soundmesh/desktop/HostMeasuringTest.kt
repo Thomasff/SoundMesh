@@ -39,9 +39,12 @@ class HostMeasuringTest {
 
     private val second = 1_000_000_000L
 
+    // The plan port is the spatial port, as it is in the product: RoundPorts.PLAN and
+    // SinkStream.SPATIAL_PORT are both 45126, and a handset sink dials the plan there whoever hosts.
+    private val spatial = freeTcpPort()
     private val ports = HostPorts(
-        chunk = freeTcpPort(), clock = freeUdpPort(), command = freeTcpPort(), spatial = freeTcpPort(),
-        result = freeTcpPort(), plan = freeTcpPort(), room = freeTcpPort()
+        chunk = freeTcpPort(), clock = freeUdpPort(), command = freeTcpPort(), spatial = spatial,
+        result = freeTcpPort(), plan = spatial, room = freeTcpPort()
     )
 
     /** Short enough for a test: one chirp each, no clock fill. */
@@ -129,6 +132,10 @@ class HostMeasuringTest {
             assertTrue("it said it measured a room", measure.roomMeasured)
             assertTrue("the sink heard no answer: ${sink.status().round}", eventually(10_000) {
                 sink.status().round is RoundLine.RoomSinkDone
+            })
+            // The port the round borrowed is the spatial one, and the next song needs it back.
+            assertTrue("the spatial port was not taken back", eventually(5_000) {
+                runCatching { java.net.Socket("127.0.0.1", ports.spatial).close() }.isSuccess
             })
         } finally {
             sink.stop()
