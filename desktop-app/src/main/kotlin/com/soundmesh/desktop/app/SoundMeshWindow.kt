@@ -166,37 +166,42 @@ private fun HostPane(
     val scope = rememberCoroutineScope()
     val english = LocalEnglish.current
 
+    // Choosing something else while the room plays is what the handset host's putDownWhatIsPlaying
+    // does: the room stops, and the new pick waits for 开始. Only once something is actually chosen -
+    // a dialog closed on nothing, or the program list opened and left, changes nothing.
+    val putDown = { if (status.playing) scope.launch(sessions) { host.stopPlaying() } }
+
     status.problem?.let { Note(describe(it), Tone.WRONG) }
     Label(say(Phrases.song_title))
     Line(first = true) {
         LineName(picked(english))
-        // Not while the room plays: what is playing is not changed from here, as on the handset,
-        // whose source picker belongs to the stage before the music.
-        if (!status.playing) {
-            Chip(say(Phrases.pc_pick_files)) {
-                pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
-                    files = it
-                    app = null
-                    val count = it.size
-                    val only = if (count == 1) it.single().name else null
-                    picked = { e -> only ?: Phrases.pc_songs_count.of(e, count) }
+        // There while the room plays as well, as on the handset: changing what the room is
+        // playing is a thing people do while it is playing.
+        Chip(say(Phrases.pc_pick_files)) {
+            pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
+                putDown()
+                files = it
+                app = null
+                val count = it.size
+                val only = if (count == 1) it.single().name else null
+                picked = { e -> only ?: Phrases.pc_songs_count.of(e, count) }
+            }
+        }
+        Chip(say(Phrases.song_choose_folder)) {
+            pickFolder(Phrases.pc_pick_folder_title.of(english))?.let { folder ->
+                putDown()
+                val songs = songsIn(folder)
+                files = songs
+                app = null
+                picked = { e ->
+                    if (songs.isEmpty()) Phrases.pc_folder_empty.of(e, folder.name)
+                    else Phrases.pc_folder_songs.of(e, folder.name, songs.size)
                 }
             }
-            Chip(say(Phrases.song_choose_folder)) {
-                pickFolder(Phrases.pc_pick_folder_title.of(english))?.let { folder ->
-                    val songs = songsIn(folder)
-                    files = songs
-                    app = null
-                    picked = { e ->
-                        if (songs.isEmpty()) Phrases.pc_folder_empty.of(e, folder.name)
-                        else Phrases.pc_folder_songs.of(e, folder.name, songs.size)
-                    }
-                }
-            }
-            Chip(say(Phrases.pc_capture_app)) {
-                // Asked afresh each time: the mixer's rows come and go with what is playing.
-                scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
-            }
+        }
+        Chip(say(Phrases.pc_capture_app)) {
+            // Asked afresh each time: the mixer's rows come and go with what is playing.
+            scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
         }
     }
     programs?.let { list ->
@@ -206,6 +211,7 @@ private fun HostPane(
             Line {
                 LineName(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name)
                 Chip(say(Phrases.pc_use_program)) {
+                    putDown()
                     app = program
                     files = emptyList()
                     programs = null
