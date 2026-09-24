@@ -92,9 +92,9 @@
     <string name="role_pick">What is this phone?</string>
     <string name="role_host">Be the host</string>
     <string name="role_host_taken">A network may only have one host. To move it, make that phone a sink first.</string>
-    <string name="role_host_hint">The phone the music comes from. The others follow it.</string>
+    <string name="role_host_hint">The source: other devices play in sync with this one</string>
     <string name="role_sink">Be a sink</string>
-    <string name="role_sink_hint">Scan the host\'s code and play along with it.</string>
+    <string name="role_sink_hint">Plays the host\'s sound in sync</string>
     <string name="role_change">Change role</string>
 
     <string name="song_title">Source</string>
@@ -267,7 +267,7 @@
     <string name="scan_no_camera">The camera will not open</string>
     <string name="standby_approximate">For %1$d of them the number came out of a room round rather than a proper sync. That is about 1–2 ms out, too little to hear, but worth measuring properly when there is time.</string>
     <string name="standby_uncalibrated">Not synced with this phone: %1$d. Without a sync the offset is taken as zero, so they will be tens of ms out, which you can hear. Go to those phones and run Sync with the paired phone once on each.</string>
-    <string name="standby_sink">Standing by: this phone starts by itself the moment the host does. Stay on this page.</string>
+    <string name="standby_sink">Connected. This device plays by itself once the host starts playing.</string>
     <string name="join_no_wifi">This phone is not on WiFi. Join the same network as the host, or the hotspot the host is running.</string>
     <string name="join_other_network">This phone and the host are on different networks: the host is on %1$s, this phone on %2$s. Some routers split 2.4G and 5G into two networks, and a guest network is another one again.</string>
     <string name="join_cannot_reach">Same network as the host, but no connection. Either the host does not have this app open, or the network does not let devices talk to each other, which campus, office and public networks often do not. The surest way round it is a hotspot on the host with this phone joining it.</string>
@@ -413,14 +413,14 @@
     <string name="room_disagrees">The measurement says %1$s is further away than %2$s, and your drawing says the opposite. Are those two icons the wrong way round?</string>
     <string name="failure_port_in_use">Will not start: the sync and the playback use the same port, and the sync is probably still open. Press stop on the sync page, wait a few seconds, and try again.</string>
     <string name="now_playing">Playing: %1$s</string>
-    <string name="welcome_what">Turn a few phones into one set of speakers</string>
+    <string name="welcome_what">Turn a few devices into one set of speakers</string>
     <string name="welcome_self">This phone · %1$s</string>
     <string name="welcome_need">What you need</string>
     <string name="welcome_need_phones">At least two Android phones</string>
     <string name="welcome_need_app">This app on each of them</string>
     <string name="welcome_need_app_share">Send it to the phone beside you</string>
     <string name="welcome_need_wifi">All on the same WiFi</string>
-    <string name="welcome_role">This phone is:</string>
+    <string name="welcome_role">This device is:</string>
     <string name="welcome_role_later">You can come back here to change roles.</string>
     <string name="role_host_other">The other phone picks Be a sink</string>
     <string name="role_sink_other">The other phone picks Be the host</string>
@@ -446,7 +446,7 @@
     <string name="settings_language_english">English</string>
     <string name="settings_diagnostics">Diagnostics</string>
     <string name="settings_details">Show diagnostic detail</string>
-    <string name="settings_details_hint">Status counters, battery and temperature, the build mark, and every calibration\'s recording kept. Not needed day to day; useful when something is wrong.</string>
+    <string name="settings_details_hint">Shows diagnostic readings such as the clock offset. Not needed day to day.</string>
     <string name="settings_calibrate">Calibration</string>
     <string name="settings_self_calibrate">Calibrate this phone\'s output lead</string>
     <string name="about_title">About</string>

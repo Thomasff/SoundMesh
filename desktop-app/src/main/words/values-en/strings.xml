@@ -1,10 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="pc_role_question">Is this computer the host, or does it play along with the host in the room?</string>
-    <string name="pc_welcome_what">Turn this computer and a few phones into one set of speakers</string>
-    <string name="pc_role_host_hint">The one that plays. Everything else in the room follows it.</string>
-    <string name="pc_role_sink_hint">Plays along with the host in the room, which it finds by itself on the same network.</string>
-
     <string name="pc_pick_files">Choose files</string>
     <string name="pc_pick_songs_title">Choose songs (several at once is fine)</string>
     <string name="pc_pick_folder_title">Choose a folder of songs</string>
@@ -15,16 +10,14 @@
     <string name="pc_no_programs">No program is making sound in the volume mixer right now. Start the one you want, then press again.</string>
     <string name="pc_which_program">Which program\'s sound?</string>
     <string name="pc_program_playing">%1$s (making sound)</string>
-    <string name="pc_never_mind">Never mind</string>
-    <string name="pc_use_program">Use this</string>
+    <string name="pc_cancel">Cancel</string>
     <string name="pc_program_sound">Sound from “%1$s”</string>
-    <string name="pc_play_here_too">This computer plays too</string>
-    <string name="pc_capturing">The room is playing “%1$s”. Its volume on this computer is turned down to a thousandth so it does not sound a second and a half ahead of the room; stopping puts it back.</string>
+    <string name="pc_play_here_too">This device plays too</string>
     <string name="pc_held_down">“%1$s” is still turned down in the volume mixer. It is put back here the next time it runs, or turn it back up yourself in the Windows volume mixer.</string>
     <string name="pc_skipped">Skipped, could not play: %1$s</string>
     <string name="pc_ended">Finished.</string>
-    <string name="pc_phones_follow">SoundMesh on a phone that is standing by joins in by itself.</string>
-    <string name="pc_type_this">If another computer cannot find this one, type: %1$s</string>
+    <string name="pc_phones_follow">Other devices play by themselves once they connect to this one</string>
+    <string name="pc_type_this">If another computer cannot connect to this one, type: %1$s</string>
 
     <string name="pc_diag_audio_port">Audio port</string>
     <string name="pc_diag_receiving">%1$d receiving</string>
@@ -45,12 +38,12 @@
 
     <string name="pc_host_address">Host address, if not found</string>
     <string name="pc_address_example">e.g. 192.168.0.150</string>
-    <string name="pc_dial_address">Connect to it</string>
+    <string name="pc_dial_address">Connect</string>
     <string name="pc_address_elsewhere">%1$s is on none of this computer\'s networks (this computer: %2$s). If it will not connect, check first that the two are on the same network.</string>
     <string name="pc_my_number">This computer is No. %1$d on the host\'s list</string>
     <string name="pc_volume_set">The host set SoundMesh\'s volume here to %1$d%% (the computer\'s own volume is untouched).</string>
-    <string name="pc_following">Following: %1$s</string>
-    <string name="pc_following_at">Following: %1$s (%2$s)</string>
+    <string name="pc_following">Connected to: %1$s</string>
+    <string name="pc_following_at">Connected to: %1$s (%2$s)</string>
     <string name="pc_room_readonly">The host arranges this drawing; here it can only be looked at. The one with the outer ring is this computer.</string>
 
     <string name="pc_room_count">%1$d in the room</string>
@@ -102,15 +95,14 @@
     <string name="pc_sink_finding">Looking for the host…</string>
     <string name="pc_sink_wrong_version">Found a host, but the versions do not match. Both sides need the same version.</string>
     <string name="pc_sink_two_hosts">There are two hosts in the room. Close one first.</string>
-    <string name="pc_sink_no_answer">No host has answered yet; still looking. Is the host running? Are both on the same network? You can also type the host's address below.</string>
+    <string name="pc_sink_no_answer">Looking for the host; none has answered yet. Make sure there is a host on the local network. If it cannot connect, type the address directly.</string>
     <string name="pc_sink_reaching">Connecting to the host (trying every 3 s)…</string>
-    <string name="pc_sink_standing">Standing by: plays the moment the host does.</string>
-    <string name="pc_sink_no_clock_last">Last time the host did not answer the clock, so this one did not join in.</string>
-    <string name="pc_sink_missed_last">Last time this one did not join in: %1$s</string>
+    <string name="pc_sink_no_clock_last">Last time the host did not answer the clock, so this device did not connect.</string>
+    <string name="pc_sink_missed_last">Last time this device did not connect: %1$s</string>
     <string name="pc_sink_opening">Opening the speakers…</string>
     <string name="pc_sink_syncing">Syncing the clock with the host…</string>
-    <string name="pc_sink_playing">Playing along.</string>
-    <string name="pc_sink_host_silent">The host has gone quiet and may have dropped. This one joins in by itself when it plays again.</string>
+    <string name="pc_sink_playing">Playing in sync.</string>
+    <string name="pc_sink_host_silent">The host has gone quiet and may have dropped. This device plays by itself when the host plays again.</string>
     <string name="pc_sink_failed">Something went wrong: %1$s</string>
 
     <string name="pc_sink_measuring">The host is measuring, and this computer is taking part…</string>
@@ -134,7 +126,4 @@
     <string name="pc_edge_title">Edge light</string>
     <string name="pc_edge_window">In the window</string>
     <string name="pc_edge_screen">Whole screen</string>
-    <string name="pc_edge_hint">Lit once this computer has a colour. Whole screen runs round the four sides of the screen this window is on, and clicks go through it. Only until SoundMesh is closed; the next start is back in the window.</string>
-
-    <string name="pc_details_hint">The counters, clock offset and seams in the main window. Not needed day to day; useful when something is wrong.</string>
 </resources>

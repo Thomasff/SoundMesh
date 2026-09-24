@@ -65,14 +65,13 @@ internal fun SettingsPane(
             ),
             modifier = Modifier.padding(top = 2.dp)
         )
-        Note(say(Phrases.pc_edge_hint))
 
         Label(say(Phrases.settings_diagnostics))
         Line(first = true) {
             LineName(say(Phrases.settings_details))
             Switch(checked = details, onCheckedChange = onDetails)
         }
-        Note(say(Phrases.pc_details_hint))
+        Note(say(Phrases.settings_details_hint))
 
         Label(say(Phrases.about_title))
         // Always shown: the build mark is how two installs of one version are told apart.

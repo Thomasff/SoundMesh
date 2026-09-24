@@ -5,11 +5,6 @@
   Every key starts pc_ so a clash with the handset's is impossible to miss.
 -->
 <resources>
-    <string name="pc_role_question">这台电脑当主机，还是跟着房间里的主机放？</string>
-    <string name="pc_welcome_what">把这台电脑和几台手机变成一套音箱</string>
-    <string name="pc_role_host_hint">放歌的那台。房间里其他设备跟着它响。</string>
-    <string name="pc_role_sink_hint">跟着房间里的主机响。同一个网里的主机会自己找到。</string>
-
     <string name="pc_pick_files">选文件</string>
     <string name="pc_pick_songs_title">选歌（可以多选）</string>
     <string name="pc_pick_folder_title">选一个放歌的文件夹</string>
@@ -20,16 +15,14 @@
     <string name="pc_no_programs">现在没有程序在音量合成器里出声。先让要抓的程序放起来，再点一次。</string>
     <string name="pc_which_program">抓哪个程序的声音？</string>
     <string name="pc_program_playing">%1$s（正在出声）</string>
-    <string name="pc_never_mind">算了</string>
-    <string name="pc_use_program">用这个</string>
+    <string name="pc_cancel">取消</string>
     <string name="pc_program_sound">「%1$s」的声音</string>
-    <string name="pc_play_here_too">电脑自己也出声</string>
-    <string name="pc_capturing">房间在放「%1$s」的声音。它在这台电脑上的音量先调到了千分之一，免得比房间早一秒半响出来；停止后调回原样。</string>
+    <string name="pc_play_here_too">本机也出声</string>
     <string name="pc_held_down">「%1$s」在音量合成器里还被调低着，它再运行时这里会调回来；也可以在 Windows 音量合成器里自己调回。</string>
     <string name="pc_skipped">跳过了放不了的：%1$s</string>
     <string name="pc_ended">放完了。</string>
-    <string name="pc_phones_follow">手机上的 SoundMesh 在待命时会自动跟上。</string>
-    <string name="pc_type_this">另一台电脑找不到这里时，填：%1$s</string>
+    <string name="pc_phones_follow">其他设备连接本机后会自动播放</string>
+    <string name="pc_type_this">若另一台电脑无法连接本机，填：%1$s</string>
 
     <string name="pc_diag_audio_port">音频口</string>
     <string name="pc_diag_receiving">%1$d 台在收</string>
@@ -50,12 +43,12 @@
 
     <string name="pc_host_address">找不到时填主机地址</string>
     <string name="pc_address_example">比如 192.168.0.150</string>
-    <string name="pc_dial_address">连这个地址</string>
+    <string name="pc_dial_address">连接</string>
     <string name="pc_address_elsewhere">%1$s 不在本机的网段里（本机：%2$s）。连不上的话，先看两台是不是连着同一个网。</string>
     <string name="pc_my_number">本机在主机名单上是 %1$d 号</string>
-    <string name="pc_volume_set">主机把这台的 SoundMesh 音量调到了 %1$d%%（电脑的系统音量没动）。</string>
-    <string name="pc_following">跟的是：%1$s</string>
-    <string name="pc_following_at">跟的是：%1$s（%2$s）</string>
+    <string name="pc_volume_set">主机把本机的 SoundMesh 音量调到了 %1$d%%（电脑的系统音量没动）。</string>
+    <string name="pc_following">连接的是：%1$s</string>
+    <string name="pc_following_at">连接的是：%1$s（%2$s）</string>
     <string name="pc_room_readonly">图是主机那边摆的，这里只能看。带外圈的是本机。</string>
 
     <string name="pc_room_count">房间里 %1$d 台</string>
@@ -84,11 +77,11 @@
     <string name="pc_no_volume_yet">还没报音量</string>
     <string name="pc_percent_now">%1$d%%（现在 %2$d%%）</string>
 
-    <string name="pc_no_network">这台电脑现在没连局域网，手机和别的电脑都连不到它。先连上 WiFi 或网线。</string>
+    <string name="pc_no_network">本机现在没连局域网，手机和别的电脑都连不到它。先连上 WiFi 或网线。</string>
     <string name="pc_networks_hint">房间里的每台都要连在其中一个网上。</string>
 
     <string name="pc_code_title">给手机扫的码</string>
-    <string name="pc_code_nowhere">这台电脑现在没有局域网地址，手机扫不到。</string>
+    <string name="pc_code_nowhere">本机现在没有局域网地址，手机扫不到。</string>
     <string name="pc_code_how">手机选「当从机」，找不到这里时扫这个码。</string>
     <string name="pc_code_address">码里是 %1$s（%2$s），扫码的手机要连在这个网上。</string>
 
@@ -99,7 +92,7 @@
     <string name="pc_port_taken">%1$s %2$d 被占用了。是不是命令行版的主机、或者另一个 SoundMesh 还开着？</string>
     <string name="pc_file_unreadable">这个文件放不了：%1$s</string>
     <string name="pc_speakers">电脑的扬声器打不开：%1$s</string>
-    <string name="pc_advertise">没法在局域网里广播这台主机，手机找不到它：%1$s</string>
+    <string name="pc_advertise">没法在局域网里广播本机，手机找不到它：%1$s</string>
     <string name="pc_play_failed">播放中断了：%1$s</string>
     <string name="pc_capture_failed">抓不到「%1$s」的声音（要 Windows 10 21H2 或更新）：%2$s</string>
 
@@ -107,23 +100,22 @@
     <string name="pc_sink_finding">正在自动找主机…</string>
     <string name="pc_sink_wrong_version">找到了主机，但版本对不上，两边要装同一版。</string>
     <string name="pc_sink_two_hosts">房间里同时有两台主机，先关掉一台。</string>
-    <string name="pc_sink_no_answer">暂时没有主机应答，还在接着找。主机那边开了吗？两边在同一个网络上吗？也可以在下面直接填主机地址。</string>
+    <string name="pc_sink_no_answer">寻找主机中，暂时无主机应答，请确保局域网内有一台主机，若无法连接，可直接填地址</string>
     <string name="pc_sink_reaching">正在连主机（每 3 秒试一次）…</string>
-    <string name="pc_sink_standing">待命中：主机一放就跟着放。</string>
-    <string name="pc_sink_no_clock_last">上一次主机没有应答时钟，没跟上。</string>
-    <string name="pc_sink_missed_last">上一次没跟上：%1$s</string>
+    <string name="pc_sink_no_clock_last">上一次主机没有应答时钟，没连接上。</string>
+    <string name="pc_sink_missed_last">上一次没连接上：%1$s</string>
     <string name="pc_sink_opening">正在打开扬声器…</string>
     <string name="pc_sink_syncing">正在和主机对时…</string>
-    <string name="pc_sink_playing">正在跟着放。</string>
-    <string name="pc_sink_host_silent">主机没在发声，可能断了。它再放的时候这台会自己跟上。</string>
+    <string name="pc_sink_playing">正在同步播放。</string>
+    <string name="pc_sink_host_silent">主机没在发声，可能断了。它再放的时候本机会自动播放。</string>
     <string name="pc_sink_failed">出错了：%1$s</string>
 
-    <string name="pc_sink_measuring">主机在测量，这台电脑跟着测…</string>
+    <string name="pc_sink_measuring">主机在测量，本机也在测…</string>
     <string name="pc_round_running">测量中：别碰设备，保持安静。</string>
-    <string name="pc_round_room_done">送到了。房间里 %1$d 台，这台电脑有 %2$d 对量出来了。</string>
-    <string name="pc_round_room_approximate">送到了。房间里 %1$d 台，这台电脑有 %2$d 对量出来了。这台还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f ms 先用着（是估的，误差大概 1–2 ms）。有空在主机的名单上点这台电脑做一次配对，测出来的会顶掉它。</string>
+    <string name="pc_round_room_done">送到了。房间里 %1$d 台，本机有 %2$d 对量出来了。</string>
+    <string name="pc_round_room_approximate">送到了。房间里 %1$d 台，本机有 %2$d 对量出来了。本机还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f ms 先用着（是估的，误差大概 1–2 ms）。有空在主机的名单上点本机做一次配对，测出来的会顶掉它。</string>
     <string name="pc_round_slow_link">网络太慢，没法对齐：和主机一来一回要 %1$.0f ms，超过 %2$.0f 就对不准了。</string>
-    <string name="pc_mic_no_device">这台电脑没有麦克风，测不了。主机那边会显示「没有麦克风」。</string>
+    <string name="pc_mic_no_device">本机没有麦克风，测不了。主机那边会显示「没有麦克风」。</string>
     <string name="pc_mic_denied">麦克风被 Windows 挡住了：设置 → 隐私和安全性 → 麦克风，打开「让桌面应用访问麦克风」。</string>
     <string name="pc_mic_not_48k">麦克风的采样率是 %1$s，测量要 48 kHz：在「声音设置」里把麦克风改成 48000 Hz。</string>
     <string name="pc_mic_other">麦克风打不开：%1$s</string>
@@ -132,14 +124,11 @@
     <string name="pc_room_step_1">手机放在你希望听的位置，你坐在电脑前平时听歌的地方——电脑到每台的距离就当作你到每台的距离</string>
     <string name="pc_room_again">重测</string>
     <string name="pc_pair_title">和 %1$s 对时</string>
-    <string name="pc_mic_no_device_host">这台电脑没有麦克风，测不了。</string>
+    <string name="pc_mic_no_device_host">本机没有麦克风，测不了。</string>
     <string name="pc_measuring_now">正在测量，测完才能播放。</string>
     <string name="pc_listener_assumed">其中电脑到你的 0.5 米是估的，不是量的。</string>
 
     <string name="pc_edge_title">边缘光</string>
     <string name="pc_edge_window">窗口内</string>
     <string name="pc_edge_screen">整个屏幕</string>
-    <string name="pc_edge_hint">有了颜色才亮。整个屏幕是沿着这个窗口所在的那块屏幕的四边亮，鼠标能点穿它。只在这次打开期间有效，下次打开回到窗口内。</string>
-
-    <string name="pc_details_hint">主窗口里的计数、时钟偏移和接缝这些数。平时用不上，出问题时有用。</string>
 </resources>

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -59,7 +60,6 @@ import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.BadgeEdges
 import com.soundmesh.product.BoxTitle
-import com.soundmesh.product.Chip
 import com.soundmesh.product.ChoiceCard
 import com.soundmesh.product.EffectKind
 import com.soundmesh.product.FilledChip
@@ -309,23 +309,23 @@ internal fun SoundMeshWindow(
 
 /**
  * Nobody has picked a role yet - the handset's WelcomeScreen: what this is for in one line, then
- * each role as a box with its own sentence, the whole box the click. The sentences are the
- * computer's: a sink here finds its host on the network rather than scanning a code.
+ * each role as a box with its own sentence, the whole box the click. Every sentence is the
+ * handset's own, so the two say the same thing.
  */
 @Composable
 private fun RolePicker(onHost: () -> Unit, onSink: () -> Unit) {
     Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(
-            say(Phrases.pc_welcome_what),
+            say(Phrases.welcome_what),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             lineHeight = 30.sp
         )
-        Note(say(Phrases.pc_role_question))
+        Note(say(Phrases.welcome_role))
     }
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        RoleBox(say(Phrases.role_host), say(Phrases.pc_role_host_hint), onHost)
-        RoleBox(say(Phrases.role_sink), say(Phrases.pc_role_sink_hint), onSink)
+        RoleBox(say(Phrases.role_host), say(Phrases.role_host_hint), onHost)
+        RoleBox(say(Phrases.role_sink), say(Phrases.role_sink_hint), onSink)
     }
     Note(say(Phrases.welcome_role_later))
 }
@@ -442,17 +442,20 @@ private fun HostPlaying(
         for (program in list) {
             Line {
                 LineName(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name)
-                Chip(say(Phrases.pc_use_program)) {
+                // Ticked is the program being played from, so reopening the list shows which it was.
+                // Only one can be: unticking does nothing, another program is picked by ticking it.
+                Checkbox(checked = pick.kind == SourceKind.APP && pick.app?.pid == program.pid, onCheckedChange = { tick ->
+                    if (!tick) return@Checkbox
                     putDown()
                     pick.app = program
                     pick.files = emptyList()
                     pick.kind = SourceKind.APP
                     programs = null
                     pick.picked = { e -> Phrases.pc_program_sound.of(e, program.name) }
-                }
+                })
             }
         }
-        Tag(say(Phrases.pc_never_mind), onClick = { programs = null })
+        Tag(say(Phrases.pc_cancel), onClick = { programs = null })
     }
     status.problem?.let { Note(describe(it), Tone.WRONG) }
     // What is playing, big enough to be the page's subject - the handset's NowPlaying.
@@ -470,7 +473,6 @@ private fun HostPlaying(
     if (status.playing) {
         status.playhead?.let { PlayControls(host, it, status.paused, sessions) }
         Ghost(say(Phrases.play_stop)) { scope.launch(sessions) { host.stopPlaying() } }
-        status.capturing?.let { Note(say(Phrases.pc_capturing, it)) }
     } else {
         Solid(
             say(Phrases.play_start),
@@ -1243,7 +1245,7 @@ private fun describe(status: SinkStatus): String = when (status.stage) {
     }
     // Not "found": a host typed in by address was never found, and may not be there at all.
     SinkStage.REACHING -> say(Phrases.pc_sink_reaching)
-    SinkStage.STANDING_BY -> say(Phrases.pc_sink_standing) + when (status.problem) {
+    SinkStage.STANDING_BY -> say(Phrases.standby_sink) + when (status.problem) {
         null -> ""
         SinkSession.NO_CLOCK_PROBLEM -> "\n" + say(Phrases.pc_sink_no_clock_last)
         else -> "\n" + say(Phrases.pc_sink_missed_last, status.problem)

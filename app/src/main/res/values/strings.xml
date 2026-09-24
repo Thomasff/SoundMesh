@@ -94,9 +94,9 @@
     <string name="role_pick">本机当什么？</string>
     <string name="role_host">当主机</string>
     <string name="role_host_taken">网络只允许存在一个主机。要换主机，先把那台改成从机。</string>
-    <string name="role_host_hint">放歌的那台。其他手机跟着它响。</string>
+    <string name="role_host_hint">作为音源，其他设备与本机同步播放</string>
     <string name="role_sink">当从机</string>
-    <string name="role_sink_hint">扫一下主机的码，跟着它响。</string>
+    <string name="role_sink_hint">用于同步播放主机的声音</string>
     <string name="role_change">换个角色</string>
 
     <string name="song_title">播放来源</string>
@@ -270,7 +270,7 @@
     <string name="scan_no_camera">打不开相机</string>
     <string name="standby_approximate">其中 %1$d 台用的是「测量房间」顺带算出来的估算值，还没正经对过时。差大概 1–2 ms，听不出来，但有空该各测一次。</string>
     <string name="standby_uncalibrated">其中 %1$d 台还没和本机对过时。没对过就按零来补，它们会差几十 ms，耳朵听得出来。去那几台上点「和配对的另一台手机对时」，各做一次。</string>
-    <string name="standby_sink">已待命：主机一按，本机自己开始。留在这一页别退出。</string>
+    <string name="standby_sink">已连接，主机开始播放后，本机将自动播放</string>
     <string name="join_no_wifi">本机没连 WiFi。连上和主机同一个 WiFi，或者连主机开的热点。</string>
     <string name="join_other_network">本机和主机不在同一个网：主机是 %1$s，本机是 %2$s。有的路由器会把 2.4G 和 5G 分成两个网，访客网络也是另一个网。</string>
     <string name="join_cannot_reach">和主机在同一个网，但连不上。可能是主机那台没开着这个应用，也可能是这个网不让设备之间互相通信（校园网、公司网、公共热点常这样）。最稳的办法是让主机开热点，本机连它的热点。</string>
@@ -416,7 +416,7 @@
     <string name="room_disagrees">测距说 %1$s 比 %2$s 远，你画的正相反——这两个图标是不是拖反了？</string>
     <string name="failure_port_in_use">起不来：对时和播放用的是同一个端口，多半是对时那边还开着。到「对时」那页按停止，等几秒再试一次。</string>
     <string name="now_playing">正在放：%1$s</string>
-    <string name="welcome_what">把几台手机变成一套音箱</string>
+    <string name="welcome_what">把几台设备变成一套音箱</string>
     <string name="welcome_self">本机 · %1$s</string>
     <string name="welcome_need">要准备什么</string>
     <string name="welcome_need_phones">至少两台安卓手机</string>
@@ -449,7 +449,7 @@
     <string name="settings_language_english">English</string>
     <string name="settings_diagnostics">诊断</string>
     <string name="settings_details">显示诊断细节</string>
-    <string name="settings_details_hint">状态计数、电量温度、构建号，并保留每次校准的录音。平时用不上，出问题时有用。</string>
+    <string name="settings_details_hint">显示时钟偏移等诊断参数。平时使用无需打开</string>
     <string name="settings_calibrate">校准</string>
     <string name="settings_self_calibrate">校准本机输出延迟</string>
     <string name="about_title">关于</string>
