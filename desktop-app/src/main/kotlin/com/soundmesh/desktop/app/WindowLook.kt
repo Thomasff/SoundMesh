@@ -19,10 +19,12 @@ import java.lang.foreign.ValueLayout
 import javax.imageio.ImageIO
 
 /**
- * The handset's launcher icon on every window, the taskbar and Alt+Tab - asset/master/icon-1024.png,
- * made smaller once, ahead of time, into the sizes Windows asks for (asset/windows, which also
- * holds the .ico the installer and the exe carry). All of them rather than one: Windows picks the
- * nearest for each place, and one image scaled down to 16 pixels by AWT is a smudge.
+ * The handset's launcher icon on every window, the taskbar and Alt+Tab - asset/master/icon-1024.png
+ * squared off (its rounded corners are opaque white, four specks on a dark taskbar) and made smaller
+ * once, ahead of time, into the sizes Windows asks for (asset/windows, which also holds the .ico the
+ * installer and the exe carry; tools/windows-icons.ps1 makes all of it). All of them rather than
+ * one: Windows picks the nearest for each place, and one image scaled down to 16 pixels by AWT is a
+ * smudge.
  */
 internal object AppIcon {
     private val SIZES = listOf(16, 20, 24, 32, 40, 48, 64, 256)
