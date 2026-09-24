@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.log10
@@ -100,6 +101,13 @@ internal interface EdgeGlow {
  * [disconnected] and [playing] are the caller's: on the handset a sink off its standing line and a
  * running session, on a computer the same two said by its own sessions.
  *
+ * [everyNanos] is how long the loop sleeps between two frames that move the light. Zero, the
+ * handset's, moves it on every frame the display draws. A computer passes more: its display may
+ * draw 165 times a second, and on 09-24 the window with the light moving on every one of them cost
+ * 40% of a core against 1.7% with it still - most of a core once the light went round the screen in
+ * four windows. Sleeping, not skipping: a loop that asks for every frame and writes on one in five
+ * measured 17% at 28 redraws a second, because asking for a frame is most of what one costs there.
+ *
  * ────────────────────────────────────────────────────────────────────────────
  * Why this hands back a function instead of a Float, and why [lit] exists
  * ────────────────────────────────────────────────────────────────────────────
@@ -122,7 +130,13 @@ internal interface EdgeGlow {
  *   nothing reads, which is the same waste in a cheaper suit.
  */
 @Composable
-internal fun rememberEdgeGlow(lit: Boolean, disconnected: Boolean, playing: Boolean, loudness: () -> Float): EdgeGlow {
+internal fun rememberEdgeGlow(
+    lit: Boolean,
+    disconnected: Boolean,
+    playing: Boolean,
+    everyNanos: Long = 0L,
+    loudness: () -> Float,
+): EdgeGlow {
     val heard by rememberUpdatedState(loudness)
     val glow = remember { mutableFloatStateOf(STANDBY_GLOW_MIN) }
     val punch = remember { mutableFloatStateOf(0f) }
@@ -147,8 +161,8 @@ internal fun rememberEdgeGlow(lit: Boolean, disconnected: Boolean, playing: Bool
             // No loop here either, so the waves hold still where they were - which is the same
             // statement the flat amplitude is making.
             Glow.DISCONNECTED -> glow.floatValue = DISCONNECTED_GLOW
-            Glow.PLAYING -> followLoudness(glow, punch, travel, PLAYING_MOOD.speed) { heard() }
-            Glow.STANDBY -> breathe(glow, travel, QUIET_MOOD.speed)
+            Glow.PLAYING -> followLoudness(glow, punch, travel, PLAYING_MOOD.speed, everyNanos) { heard() }
+            Glow.STANDBY -> breathe(glow, travel, QUIET_MOOD.speed, everyNanos)
         }
     }
     return remember(glow, punch, travel, mood) {
@@ -228,6 +242,7 @@ private suspend fun followLoudness(
     punch: MutableFloatState,
     travel: MutableDoubleState,
     speed: Float,
+    everyNanos: Long,
     loudness: () -> Float,
 ) {
     glow.floatValue = 0f
@@ -264,6 +279,9 @@ private suspend fun followLoudness(
                 punch.floatValue = ((out - PUNCH_OVER) / (PUNCH_FULL - PUNCH_OVER)).coerceIn(0f, 1f)
             }
         }
+        // The next frame takes the whole gap as its dt, and every step here is in seconds rather
+        // than per frame, so a slower pace changes how often the light moves and not how it moves.
+        if (everyNanos > 0L) delay(everyNanos / 1_000_000L)
     }
 }
 
@@ -298,7 +316,7 @@ private fun heardAs(rms: Float): Float {
  * problem [rememberEdgeGlow] describes. The shape is the same one it had: linear up over
  * [STANDBY_BREATH_MILLIS], linear back down over the same, forever.
  */
-private suspend fun breathe(glow: MutableFloatState, travel: MutableDoubleState, speed: Float) {
+private suspend fun breathe(glow: MutableFloatState, travel: MutableDoubleState, speed: Float, everyNanos: Long) {
     val half = STANDBY_BREATH_MILLIS * 1_000_000L
     var start: Long? = null
     var previous: Long? = null
@@ -313,6 +331,7 @@ private suspend fun breathe(glow: MutableFloatState, travel: MutableDoubleState,
             val up = if (at <= 1f) at else 2f - at
             glow.floatValue = STANDBY_GLOW_MIN + (STANDBY_GLOW_MAX - STANDBY_GLOW_MIN) * up
         }
+        if (everyNanos > 0L) delay(everyNanos / 1_000_000L)
     }
 }
 

@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,6 +20,9 @@ import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.identityDirectory
 import com.soundmesh.product.soundMeshColours
 import kotlinx.coroutines.asCoroutineDispatcher
+import java.awt.Rectangle
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -49,6 +53,12 @@ fun main() = application {
     var details by remember { mutableStateOf(prefs.read("details") == "on") }
     var language by remember { mutableStateOf(languageChoiceOf(prefs.read("language"))) }
     var settingsOpen by remember { mutableStateOf(false) }
+    // 设置's 边缘光. Not written to the file: every start draws the light round the window, and
+    // round the whole screen only for as long as somebody asked this time.
+    var edgeOnScreen by remember { mutableStateOf(false) }
+    var look by remember { mutableStateOf<EdgeLook?>(null) }
+    // The screen the window is on, which is the one the light goes round.
+    var screen by remember { mutableStateOf<Rectangle?>(null) }
     // Which measuring window is open, and on whom: the handset's calibration screen, which is a
     // screen of its own there too. Null while none is.
     var measuring by remember { mutableStateOf<Pair<MeasureJob, String?>?>(null) }
@@ -69,13 +79,29 @@ fun main() = application {
         title = "SoundMesh",
         state = rememberWindowState(width = 560.dp, height = 680.dp)
     ) {
+        DisposableEffect(window) {
+            val follow = object : ComponentAdapter() {
+                override fun componentMoved(e: ComponentEvent) {
+                    screen = window.graphicsConfiguration.bounds
+                }
+            }
+            screen = window.graphicsConfiguration.bounds
+            window.addComponentListener(follow)
+            onDispose { window.removeComponentListener(follow) }
+        }
         Themed(theme, language) {
             SoundMeshWindow(
                 host, sink, dispatcher, details,
                 onOpenSettings = { settingsOpen = true },
-                onMeasure = { job, aimedAt -> measuring = job to aimedAt }
+                onMeasure = { job, aimedAt -> measuring = job to aimedAt },
+                look = look,
+                onLook = { look = it },
+                edgeOnScreen = edgeOnScreen
             )
         }
+    }
+    if (edgeOnScreen) {
+        screen?.let { ScreenEdges(look, { if (look?.sink == true) sink.loudness() else host.loudness() }, it) }
     }
     measuring?.let { (job, aimedAt) ->
         Window(
@@ -115,7 +141,9 @@ fun main() = application {
                     onDetails = {
                         prefs.write("details", if (it) "on" else "off")
                         details = it
-                    }
+                    },
+                    edgeOnScreen,
+                    onEdgeOnScreen = { edgeOnScreen = it }
                 )
             }
         }

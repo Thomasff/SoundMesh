@@ -128,5 +128,10 @@
     <string name="pc_measuring_now">Measuring; playing waits until it is done.</string>
     <string name="pc_listener_assumed">The computer\'s 0.5 m to you is assumed, not measured.</string>
 
+    <string name="pc_edge_title">Edge light</string>
+    <string name="pc_edge_window">In the window</string>
+    <string name="pc_edge_screen">Whole screen</string>
+    <string name="pc_edge_hint">Lit once this computer has a colour. Whole screen runs round the four sides of the screen this window is on, and clicks go through it. Only until SoundMesh is closed; the next start is back in the window.</string>
+
     <string name="pc_details_hint">The counters, clock offset and seams in the main window. Not needed day to day; useful when something is wrong.</string>
 </resources>

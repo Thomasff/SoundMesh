@@ -133,5 +133,10 @@
     <string name="pc_measuring_now">正在测量，测完才能播放。</string>
     <string name="pc_listener_assumed">其中电脑到你的 0.5 米是估的，不是量的。</string>
 
+    <string name="pc_edge_title">边缘光</string>
+    <string name="pc_edge_window">窗口内</string>
+    <string name="pc_edge_screen">整个屏幕</string>
+    <string name="pc_edge_hint">有了颜色才亮。整个屏幕是沿着这个窗口所在的那块屏幕的四边亮，鼠标能点穿它。只在这次打开期间有效，下次打开回到窗口内。</string>
+
     <string name="pc_details_hint">主窗口里的计数、时钟偏移和接缝这些数。平时用不上，出问题时有用。</string>
 </resources>

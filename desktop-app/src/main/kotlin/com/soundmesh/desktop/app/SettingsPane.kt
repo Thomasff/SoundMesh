@@ -36,7 +36,9 @@ internal fun SettingsPane(
     language: LanguageChoice,
     onLanguage: (LanguageChoice) -> Unit,
     details: Boolean,
-    onDetails: (Boolean) -> Unit
+    onDetails: (Boolean) -> Unit,
+    edgeOnScreen: Boolean,
+    onEdgeOnScreen: (Boolean) -> Unit
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
@@ -54,6 +56,17 @@ internal fun SettingsPane(
             LANGUAGE_NAMES.map { (choice, name) -> Segment(say(name), language == choice) { onLanguage(choice) } },
             modifier = Modifier.padding(top = 2.dp)
         )
+
+        // Only a computer asks: a handset's window is its screen.
+        Label(say(Phrases.pc_edge_title))
+        Segmented(
+            listOf(
+                Segment(say(Phrases.pc_edge_window), !edgeOnScreen) { onEdgeOnScreen(false) },
+                Segment(say(Phrases.pc_edge_screen), edgeOnScreen) { onEdgeOnScreen(true) }
+            ),
+            modifier = Modifier.padding(top = 2.dp)
+        )
+        Note(say(Phrases.pc_edge_hint))
 
         Label(say(Phrases.settings_diagnostics))
         Line(first = true) {

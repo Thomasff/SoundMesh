@@ -103,47 +103,36 @@ import kotlin.math.roundToInt
 private enum class Role { HOST, SINK }
 
 /**
- * What the window's edge light is saying - the handset HomeScreen's edge: this machine's colour,
- * whether it is a sink that has dropped off its host, and whether it is playing. Said by whichever
- * pane is open, from the status it already reads.
- */
-private data class EdgeLook(val place: Int?, val disconnected: Boolean, val playing: Boolean)
-
-/** The sink stages in which it is on its host's list, as a handset standing by is. */
-private val ON_THE_LIST = setOf(
-    SinkStage.STANDING_BY, SinkStage.OPENING_SPEAKERS, SinkStage.SYNCING, SinkStage.PLAYING,
-    SinkStage.HOST_SILENT, SinkStage.MEASURING
-)
-
-/**
  * The one window, drawn out of the handset's own pieces (ui-shared's Look.kt and ThinSlider.kt):
  * small grey labels over hairline rows, one or two solid buttons, notes in small grey type, and
  * colour only where a device is meant.
  */
 @Composable
-fun SoundMeshWindow(
+internal fun SoundMeshWindow(
     host: HostSession,
     sink: SinkSession,
     sessions: CoroutineDispatcher,
     details: Boolean,
     onOpenSettings: () -> Unit,
     /** Opens the measuring window on [MeasureJob], aimed at one device for a pair. */
-    onMeasure: (MeasureJob, String?) -> Unit
+    onMeasure: (MeasureJob, String?) -> Unit,
+    /** What the edge light says, kept by the caller, which draws it round the screen instead when asked. */
+    look: EdgeLook?,
+    onLook: (EdgeLook?) -> Unit,
+    /** 设置's 整个屏幕: the light is round the screen, so none is drawn here. */
+    edgeOnScreen: Boolean
 ) {
     var role by remember { mutableStateOf<Role?>(null) }
-    var look by remember { mutableStateOf<EdgeLook?>(null) }
     val scope = rememberCoroutineScope()
-    // Dimmed rather than only stilled for a sink off its host, as on the handset: from across the
-    // room it should read as grey, not as a quieter version of its own colour.
-    val edge = look?.place?.let { badgeColour(it, MaterialTheme.colorScheme.primary) }
-        ?.let { if (look?.disconnected == true) it.copy(alpha = 0.3f) else it }
+    val edge = if (edgeOnScreen) null else look.colour()
     // Told whether there is a colour: with none nothing draws an edge, and nothing wakes every
     // frame to work out how bright it is not.
     val glow = rememberEdgeGlow(
         lit = edge != null,
         disconnected = look?.disconnected == true,
-        playing = look?.playing == true
-    ) { if (role == Role.SINK) sink.loudness() else host.loudness() }
+        playing = look?.playing == true,
+        everyNanos = EDGE_EVERY_NANOS
+    ) { if (look?.sink == true) sink.loudness() else host.loudness() }
     // The edge is laid over the window rather than wrapped round it, so the bands are nodes of
     // their own and the page under them is not redrawn for the light - the handset's layout.
     Box(Modifier.fillMaxSize()) {
@@ -173,10 +162,10 @@ fun SoundMeshWindow(
                 Chip(say(Phrases.settings_open), onOpenSettings)
             }
             when (role) {
-                Role.HOST -> HostPane(host, sessions, details, onMeasure) { look = it }
-                Role.SINK -> SinkPane(sink, sessions, details) { look = it }
+                Role.HOST -> HostPane(host, sessions, details, onMeasure, onLook)
+                Role.SINK -> SinkPane(sink, sessions, details, onLook)
                 null -> {
-                    SideEffect { look = null }
+                    SideEffect { onLook(null) }
                     Text(say(Phrases.pc_role_question), Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium)
                     Networks()
                 }
@@ -197,7 +186,7 @@ private fun HostPane(
 ) {
     val status = polled { host.status() } ?: return
     // Equal looks change nothing, so this settles after the first composition that says it.
-    SideEffect { onLook(EdgeLook(status.selfPlace, disconnected = false, playing = status.playing)) }
+    SideEffect { onLook(EdgeLook(status.selfPlace, disconnected = false, playing = status.playing, sink = false)) }
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     // A program's sound instead of files; picking either one puts the other down.
     var app by remember { mutableStateOf<AudioSession?>(null) }
@@ -330,7 +319,8 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
             EdgeLook(
                 status.selfPlace,
                 disconnected = status.stage !in ON_THE_LIST,
-                playing = status.stage == SinkStage.PLAYING || status.stage == SinkStage.HOST_SILENT
+                playing = status.stage == SinkStage.PLAYING || status.stage == SinkStage.HOST_SILENT,
+                sink = true
             )
         )
     }
