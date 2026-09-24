@@ -7,7 +7,7 @@
     <string name="session_notification">Playing in sync</string>
     <string name="standby_channel_name">SoundMesh standby</string>
     <string name="home_build">Build on this phone: %1$s</string>
-    <string name="standby_notification">Standing by: plays the moment the host does\nLongest main-loop stall %1$d s · longest network gap %2$d s · standing by %3$d s · %4$s · %5$s</string>
+    <string name="standby_notification">Ready, waiting for the host to play\nLongest main-loop stall %1$d s · longest network gap %2$d s · standing by %3$d s · %4$s · %5$s</string>
     <string name="standby_notification_down">No host, redialling\nSend failures %1$d · longest main-loop stall %2$d s · longest network gap %3$d s · standing by %4$d s · %5$s · %6$s</string>
     <string name="standby_awake_held">CPU wake lock held</string>
     <string name="standby_awake_refused">CPU wake lock not held</string>
@@ -82,7 +82,7 @@
     <string name="goto_self_again">Measure again</string>
     <string name="ready_measure">Measure it (once is enough)</string>
     <string name="explain_show">Why</string>
-    <string name="look_following">Following</string>
+    <string name="look_following">Playing in sync</string>
     <string name="look_gone">It dropped; redialling</string>
     <string name="look_killed">Battery saving stopped the app on that phone</string>
     <string name="vendor_try_exemption">Allow background running on that phone first</string>
@@ -459,7 +459,7 @@
     <string name="perm_mic">Microphone</string>
     <string name="perm_mic_why">The phone has to hear itself to measure how far behind it is</string>
     <string name="perm_notify">Notifications</string>
-    <string name="perm_notify_why">Playing along needs a notification, or the system stops it</string>
+    <string name="perm_notify_why">Playing in sync needs a notification, or the system stops it</string>
     <string name="perm_camera">Camera</string>
     <string name="perm_camera_why">Only to scan the other phone\'s pairing code; no photos are kept</string>
     <string name="perm_background">Background running</string>
@@ -472,7 +472,7 @@
     <string name="settings_permissions">Permissions</string>
     <string name="settings_permissions_open">Open</string>
     <string name="settings_permissions_hint">Anything refused on the first launch can be granted here. Anything refused twice is handed to the system settings.</string>
-    <string name="standby_lock_title">%1$s · following the host</string>
+    <string name="standby_lock_title">%1$s · playing in sync</string>
     <string name="standby_lock_title_down">%1$s · no connection, redialling</string>
     <string name="standby_lock_text">Volume %1$d%%</string>
     <!-- Shown in place of the standing line while a round is running with nobody looking. -->
