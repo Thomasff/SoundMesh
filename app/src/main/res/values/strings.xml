@@ -39,7 +39,6 @@
     <string name="ready_uncalibrated">%1$d 台没和本机对过时</string>
     <string name="ready_uncalibrated_why">会差几十 ms，能听出来</string>
     <string name="ready_blocked">%1$s 可能会被省电权限影响</string>
-    <string name="ready_blocked_why">一切走它就跟不上了，放行之后再开始</string>
     <string name="ready_paired">已连上主机</string>
     <string name="ready_paired_none">正在自动找主机</string>
     <string name="ready_background">本机已经放行后台运行</string>
@@ -198,7 +197,7 @@
     <string name="room_calibrate_now">测量进行中</string>
     <string name="room_calibrate_quiet">请尽量保持安静</string>
     <string name="room_calibrate_left">还有 %1$d 秒结束</string>
-    <string name="room_calibrate_sink">这一轮在主机上按开始，本机会跟着一起测，不用在这里按。</string>
+    <string name="room_calibrate_sink">这一轮在主机上按开始，本机会同步测量，不用在这里按。</string>
     <string name="pair_calibrate_room_title">几台一起量距离</string>
     <string name="pair_calibrate_room_waiting">已经通知了 %1$d 台，在等它们连过来，最多等 %2$d 秒。它们会自己开始，不用去按。</string>
     <string name="pair_calibrate_room_joined">已经连过来 %1$d 台（通知了 %2$d 台）。两个数一样就等着，它们在忙。</string>
@@ -245,7 +244,7 @@
     <string name="room_volume_level">%1$d%%</string>
     <string name="room_volume_capturing_hint">本机在采集别的应用，它自己走闹钟通道；媒体音量会被调到 0，否则你会听到一前一后两遍。还原的时候一起放回去。</string>
     <string name="room_volume_row">%1$s %2$d%%（%3$d/%4$d，%5$s）</string>
-    <string name="room_volume_row_missed">%1$s 没到你要的 %2$d%%——它的音量流没跟着动。</string>
+    <string name="room_volume_row_missed">%1$s 音量未到 %2$d%%</string>
     <string name="room_volume_row_silent">%1$s 收到了命令，但一直没把自己的音量报回来——它旁边这个数字是旧的。</string>
     <string name="room_volume_media">媒体</string>
     <string name="room_volume_alarm">闹钟</string>

@@ -39,7 +39,6 @@
     <string name="ready_uncalibrated">%1$d not synced with this phone</string>
     <string name="ready_uncalibrated_why">Tens of ms out, and you can hear it</string>
     <string name="ready_blocked">%1$s may be held back by battery saving</string>
-    <string name="ready_blocked_why">Switch away and it falls behind. Allow it, then start.</string>
     <string name="ready_paired">Connected to the host</string>
     <string name="ready_paired_none">Looking for a host</string>
     <string name="ready_background">Background running allowed on this phone</string>
@@ -195,7 +194,7 @@
     <string name="room_calibrate_now">Measuring</string>
     <string name="room_calibrate_quiet">Keep as quiet as you can</string>
     <string name="room_calibrate_left">%1$d s left</string>
-    <string name="room_calibrate_sink">The host starts this round and this phone measures along with it. Nothing to press here.</string>
+    <string name="room_calibrate_sink">The host starts this round and this device measures in sync. Nothing to press here.</string>
     <string name="pair_calibrate_room_title">Distances across the room</string>
     <string name="pair_calibrate_room_waiting">Told %1$d, waiting for them to dial in, up to %2$d s. They start on their own; nothing to press.</string>
     <string name="pair_calibrate_room_joined">%1$d dialled in of %2$d told. When the two match, just wait: they are busy.</string>
@@ -242,7 +241,7 @@
     <string name="room_volume_level">%1$d%%</string>
     <string name="room_volume_capturing_hint">This phone is capturing another app, so its own copy goes out on the alarm channel; media is turned down to 0, or you would hear it twice. Restoring puts both back.</string>
     <string name="room_volume_row">%1$s %2$d%% (%3$d/%4$d, %5$s)</string>
-    <string name="room_volume_row_missed">%1$s did not reach the %2$d%% you asked for: its volume stream did not move.</string>
+    <string name="room_volume_row_missed">%1$s volume has not reached %2$d%%</string>
     <string name="room_volume_row_silent">%1$s took the command but has never reported its own volume back, so the number beside it is old.</string>
     <string name="room_volume_media">Media</string>
     <string name="room_volume_alarm">Alarm</string>
