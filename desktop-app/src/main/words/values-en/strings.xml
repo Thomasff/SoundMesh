@@ -4,8 +4,6 @@
     <string name="pc_welcome_what">Turn this computer and a few phones into one set of speakers</string>
     <string name="pc_role_host_hint">The one that plays. Everything else in the room follows it.</string>
     <string name="pc_role_sink_hint">Plays along with the host in the room, which it finds by itself on the same network.</string>
-    <string name="pc_role_later">Once picked, switch any time at the top of the window.</string>
-    <string name="pc_settings_window">SoundMesh settings</string>
 
     <string name="pc_pick_files">Choose files</string>
     <string name="pc_pick_songs_title">Choose songs (several at once is fine)</string>
@@ -45,7 +43,6 @@
     <string name="pc_chunks">%1$d chunks</string>
     <string name="pc_times">%1$d times</string>
 
-    <string name="pc_start">Start</string>
     <string name="pc_host_address">Host address, if not found</string>
     <string name="pc_address_example">e.g. 192.168.0.150</string>
     <string name="pc_dial_address">Connect to it</string>
@@ -101,11 +98,11 @@
     <string name="pc_play_failed">Playback stopped: %1$s</string>
     <string name="pc_capture_failed">Cannot capture “%1$s” (needs Windows 10 21H2 or later): %2$s</string>
 
-    <string name="pc_sink_idle">Press Start to look for the host in the room.</string>
-    <string name="pc_sink_finding">Looking for the host (5 s)…</string>
+    <string name="pc_sink_idle">Getting ready to look for the host…</string>
+    <string name="pc_sink_finding">Looking for the host…</string>
     <string name="pc_sink_wrong_version">Found a host, but the versions do not match. Both sides need the same version.</string>
     <string name="pc_sink_two_hosts">There are two hosts in the room. Close one first.</string>
-    <string name="pc_sink_no_answer">No host answered. Is the host running? Are both on the same network? You can also type the host\'s address below.</string>
+    <string name="pc_sink_no_answer">No host has answered yet; still looking. Is the host running? Are both on the same network? You can also type the host's address below.</string>
     <string name="pc_sink_reaching">Connecting to the host (trying every 3 s)…</string>
     <string name="pc_sink_standing">Standing by: plays the moment the host does.</string>
     <string name="pc_sink_no_clock_last">Last time the host did not answer the clock, so this one did not join in.</string>
@@ -126,7 +123,6 @@
     <string name="pc_mic_not_48k">The microphone runs at %1$s and measuring needs 48 kHz: set it to 48000 Hz in Sound settings.</string>
     <string name="pc_mic_other">The microphone would not open: %1$s</string>
 
-    <string name="pc_measure_window">Measuring</string>
     <string name="pc_room_step">Measure the distances between the devices</string>
     <string name="pc_room_step_1">Put the phones where you want to hear them, and sit at the computer where you usually listen - its distance to each device is taken as yours</string>
     <string name="pc_room_again">Measure again</string>

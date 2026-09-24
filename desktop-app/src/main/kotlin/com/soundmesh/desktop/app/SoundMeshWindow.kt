@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -17,9 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -117,12 +116,32 @@ import javax.swing.JFileChooser
 import javax.swing.UIManager
 import kotlin.math.roundToInt
 
-private enum class Role { HOST, SINK }
+/** Which kind of source the host was last given - which cell of 歌曲｜文件夹｜本机的声音 is filled. */
+private enum class SourceKind { SONGS, FOLDER, APP }
+
+/**
+ * What the host will play next, held above the pages: it is picked on the playing page, and going
+ * to 状态 or 设置 and back must not lose it.
+ */
+private class HostPick {
+    var files by mutableStateOf<List<File>>(emptyList())
+    // A program's sound instead of files; picking either one puts the other down.
+    var app by mutableStateOf<AudioSession?>(null)
+    var kind by mutableStateOf<SourceKind?>(null)
+    // Kept as how to say it rather than as what was said, so a change of language reaches it.
+    var picked by mutableStateOf<(Boolean) -> String>({ Phrases.song_none.of(it) })
+    var alsoHere by mutableStateOf(true)
+}
 
 /**
  * The one window, drawn out of the handset's own pieces (ui-shared's Look.kt and ThinSlider.kt):
  * small grey labels over hairline rows, one or two solid buttons, notes in small grey type, and
  * colour only where a device is meant.
+ *
+ * Laid out as the handset is, as pages in the one window rather than one long page: 选角色, then
+ * 状态 (the board - network, pairing, devices, calibration), then 正在播放 (what is playing and
+ * what to do about it now), with 设置 and the measuring page as places somebody goes and comes
+ * back from. ← goes one page up and leaves the music as it is.
  */
 @Composable
 internal fun SoundMeshWindow(
@@ -130,9 +149,8 @@ internal fun SoundMeshWindow(
     sink: SinkSession,
     sessions: CoroutineDispatcher,
     details: Boolean,
-    onOpenSettings: () -> Unit,
-    /** Opens the measuring window on [MeasureJob], aimed at one device for a pair. */
-    onMeasure: (MeasureJob, String?) -> Unit,
+    /** The settings page's body, given the way back; its choices are the caller's to keep. */
+    settings: @Composable (onBack: () -> Unit) -> Unit,
     /** What the edge light says, kept by the caller, which draws it round the screen instead when asked. */
     look: EdgeLook?,
     onLook: (EdgeLook?) -> Unit,
@@ -140,7 +158,78 @@ internal fun SoundMeshWindow(
     edgeOnScreen: Boolean
 ) {
     var role by remember { mutableStateOf<Role?>(null) }
+    var steppedBack by remember { mutableStateOf(false) }
+    var holding by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    // Which measuring page is up, and on whom - the handset's calibration screen. Null while none is.
+    var measuring by remember { mutableStateOf<Pair<MeasureJob, String?>?>(null) }
+    val pick = remember { HostPick() }
     val scope = rememberCoroutineScope()
+
+    // Read here rather than on the pages, so the edge light and the page both follow what this
+    // machine is doing whichever page is up - settings included.
+    val hostStatus = if (role == Role.HOST) polled { host.status() } else null
+    val sinkStatus = if (role == Role.SINK) polled { sink.status() } else null
+    val running = when (role) {
+        Role.HOST -> hostStatus?.playing == true
+        Role.SINK -> sinkStatus?.stage in SINK_RUNNING
+        null -> false
+    }
+    // The handset's readSession: once the room plays, the room holds the page and the stand-in
+    // is given back; once it stops, there is nothing left to have stepped back out of.
+    LaunchedEffect(running) {
+        if (running) holding = false else steppedBack = false
+    }
+    // Equal looks change nothing, so this settles after the first composition that says it. Left
+    // alone while a role's first reading is still on its way, rather than put out for a moment.
+    SideEffect {
+        when (role) {
+            Role.HOST -> hostStatus?.let { onLook(EdgeLook(it.selfPlace, disconnected = false, playing = it.playing, sink = false)) }
+            Role.SINK -> sinkStatus?.let {
+                onLook(
+                    EdgeLook(
+                        it.selfPlace,
+                        disconnected = it.stage !in ON_THE_LIST,
+                        playing = it.stage == SinkStage.PLAYING || it.stage == SinkStage.HOST_SILENT,
+                        sink = true
+                    )
+                )
+            }
+            null -> onLook(null)
+        }
+    }
+    // A sink starts looking the moment it is picked, as a handset sink's standby does, and stops
+    // only when the role is put down: there is no 开始 to press.
+    val pickRole: (Role?) -> Unit = { wanted ->
+        role = wanted
+        holding = false
+        steppedBack = false
+        scope.launch(sessions) {
+            when (wanted) {
+                Role.HOST -> { sink.stop(); host.open() }
+                Role.SINK -> { host.close(); sink.start() }
+                null -> { host.close(); sink.stop() }
+            }
+        }
+    }
+    val stage = stageOf(role, running, steppedBack, holding)
+    val stepBack: () -> Unit = {
+        when (stage) {
+            // Only while something plays: with nothing playing there is nothing to leave running,
+            // and a flag left set would keep this machine off the playing page when a room starts.
+            Stage.PLAYING -> {
+                if (running) steppedBack = true
+                holding = false
+            }
+            Stage.READY -> pickRole(null)
+            Stage.WELCOME -> Unit
+        }
+    }
+    val enterPlaying: () -> Unit = {
+        steppedBack = false
+        holding = true
+    }
+
     val edge = if (edgeOnScreen) null else look.colour()
     // Told whether there is a colour: with none nothing draws an edge, and nothing wakes every
     // frame to work out how bright it is not.
@@ -150,49 +239,66 @@ internal fun SoundMeshWindow(
         playing = look?.playing == true,
         everyNanos = EDGE_EVERY_NANOS
     ) { if (look?.sink == true) sink.loudness() else host.loudness() }
-    val pickHost: () -> Unit = {
-        role = Role.HOST
-        scope.launch(sessions) { sink.stop(); host.open() }
-    }
-    val pickSink: () -> Unit = {
-        role = Role.SINK
-        scope.launch(sessions) { host.close() }
-    }
     // The edge is laid over the window rather than wrapped round it, so the bands are nodes of
     // their own and the page under them is not redrawn for the light - the handset's layout.
     Box(Modifier.fillMaxSize()) {
-        Column(
-            // Scrolls: a roster and a volume line per device outgrow the window in a room of a few.
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // The switch between the two once one is picked. Before that the two boxes below
-                // are the choice, and the same two words twice over would be one too many.
-                if (role != null) {
-                    Segmented(
-                        listOf(
-                            Segment(say(Phrases.role_host), role == Role.HOST, pickHost),
-                            Segment(say(Phrases.role_sink), role == Role.SINK, pickSink)
-                        ),
-                        Modifier.weight(1f)
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
-                Chip(say(Phrases.settings_open), onOpenSettings)
+        val job = measuring
+        when {
+            settingsOpen -> settings { settingsOpen = false }
+            job != null -> MeasurePane(host, job.first, job.second, sessions, details) {
+                // A round nobody is watching is a round nobody wants - the handset screen's
+                // onDestroy. Called off on the sessions' thread, and the page goes at once.
+                scope.launch(sessions) { runCatching { host.callOffMeasuring() } }
+                measuring = null
             }
-            when (role) {
-                Role.HOST -> HostPane(host, sessions, details, onMeasure, onLook)
-                Role.SINK -> SinkPane(sink, sessions, details, onLook)
-                null -> {
-                    SideEffect { onLook(null) }
-                    RolePicker(onHost = pickHost, onSink = pickSink)
-                    Networks()
+            else -> {
+                val openSettings = { settingsOpen = true }
+                val back = if (stage == Stage.WELCOME) null else stepBack
+                val title = say(
+                    when (stage) {
+                        Stage.WELCOME -> Phrases.welcome_title
+                        Stage.READY -> Phrases.ready_title
+                        Stage.PLAYING -> Phrases.play_title
+                    }
+                )
+                // Above the scroll on the board while the room plays: the one thing there that
+                // cannot wait for somebody to scroll back up to it - the handset's rule.
+                val pinned: @Composable ColumnScope.() -> Unit = {
+                    if (stage == Stage.READY && running) {
+                        Column(Modifier.padding(top = 8.dp)) {
+                            Solid(say(Phrases.ready_back_to_play)) { steppedBack = false }
+                        }
+                    }
+                }
+                Page(title, back, openSettings, pinned = pinned) {
+                    when (stage) {
+                        Stage.WELCOME -> {
+                            RolePicker(onHost = { pickRole(Role.HOST) }, onSink = { pickRole(Role.SINK) })
+                            Networks()
+                        }
+                        Stage.READY -> {
+                            when (role) {
+                                Role.HOST -> hostStatus?.let { HostReady(host, it, sessions) { job, aimedAt -> measuring = job to aimedAt } }
+                                Role.SINK -> sinkStatus?.let { SinkReady(sink, it, sessions) }
+                                null -> Unit
+                            }
+                            if (!running) {
+                                Column(Modifier.padding(top = 16.dp)) {
+                                    Solid(say(Phrases.ready_go), onClick = enterPlaying)
+                                }
+                            }
+                            Ghost(say(Phrases.role_change)) { pickRole(null) }
+                        }
+                        Stage.PLAYING -> when (role) {
+                            Role.HOST -> hostStatus?.let {
+                                // A pick while the room plays puts it down, and whoever picked it
+                                // is still on this page - the handset's putDownWhatIsPlaying.
+                                HostPlaying(host, it, pick, sessions, details) { holding = true }
+                            }
+                            Role.SINK -> sinkStatus?.let { SinkPlaying(it, details) }
+                            null -> Unit
+                        }
+                    }
                 }
             }
         }
@@ -221,7 +327,7 @@ private fun RolePicker(onHost: () -> Unit, onSink: () -> Unit) {
         RoleBox(say(Phrases.role_host), say(Phrases.pc_role_host_hint), onHost)
         RoleBox(say(Phrases.role_sink), say(Phrases.pc_role_sink_hint), onSink)
     }
-    Note(say(Phrases.pc_role_later))
+    Note(say(Phrases.welcome_role_later))
 }
 
 @Composable
@@ -234,114 +340,27 @@ private fun RoleBox(name: String, hint: String, onClick: () -> Unit) {
     }
 }
 
+/**
+ * The host's board - the handset's ReadyScreen: the code and addresses a device joins by, the
+ * devices that have, and the calibration, drawn as the one box on the page that is the point of it.
+ * What the room plays is not here: that is changed while it plays, on the playing page.
+ */
 @Composable
-private fun HostPane(
+private fun HostReady(
     host: HostSession,
+    status: HostStatus,
     sessions: CoroutineDispatcher,
-    details: Boolean,
-    onMeasure: (MeasureJob, String?) -> Unit,
-    onLook: (EdgeLook) -> Unit
+    onMeasure: (MeasureJob, String?) -> Unit
 ) {
-    val status = polled { host.status() } ?: return
-    // Equal looks change nothing, so this settles after the first composition that says it.
-    SideEffect { onLook(EdgeLook(status.selfPlace, disconnected = false, playing = status.playing, sink = false)) }
-    var files by remember { mutableStateOf<List<File>>(emptyList()) }
-    // A program's sound instead of files; picking either one puts the other down.
-    var app by remember { mutableStateOf<AudioSession?>(null) }
-    var programs by remember { mutableStateOf<List<AudioSession>?>(null) }
-    // Kept as how to say it rather than as what was said, so a change of language reaches it.
-    var picked by remember { mutableStateOf<(Boolean) -> String>({ Phrases.song_none.of(it) }) }
-    var alsoHere by remember { mutableStateOf(true) }
-    val scope = rememberCoroutineScope()
-    val english = LocalEnglish.current
-
-    // Choosing something else while the room plays is what the handset host's putDownWhatIsPlaying
-    // does: the room stops, and the new pick waits for 开始. Only once something is actually chosen -
-    // a dialog closed on nothing, or the program list opened and left, changes nothing.
-    val putDown = { if (status.playing) scope.launch(sessions) { host.stopPlaying() } }
-
-    status.problem?.let { Note(describe(it), Tone.WRONG) }
-    Label(say(Phrases.song_title))
-    Line(first = true) {
-        LineName(picked(english))
-        // There while the room plays as well, as on the handset: changing what the room is
-        // playing is a thing people do while it is playing.
-        Chip(say(Phrases.pc_pick_files)) {
-            pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
-                putDown()
-                files = it
-                app = null
-                val count = it.size
-                val only = if (count == 1) it.single().name else null
-                picked = { e -> only ?: Phrases.pc_songs_count.of(e, count) }
-            }
-        }
-        Chip(say(Phrases.song_choose_folder)) {
-            pickFolder(Phrases.pc_pick_folder_title.of(english))?.let { folder ->
-                putDown()
-                val songs = songsIn(folder)
-                files = songs
-                app = null
-                picked = { e ->
-                    if (songs.isEmpty()) Phrases.pc_folder_empty.of(e, folder.name)
-                    else Phrases.pc_folder_songs.of(e, folder.name, songs.size)
-                }
-            }
-        }
-        Chip(say(Phrases.pc_capture_app)) {
-            // Asked afresh each time: the mixer's rows come and go with what is playing.
-            scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
-        }
-    }
-    programs?.let { list ->
-        Note(say(if (list.isEmpty()) Phrases.pc_no_programs else Phrases.pc_which_program))
-        // One to a line: a browser, a player and a call can all be in the mixer at once.
-        for (program in list) {
-            Line {
-                LineName(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name)
-                Chip(say(Phrases.pc_use_program)) {
-                    putDown()
-                    app = program
-                    files = emptyList()
-                    programs = null
-                    picked = { e -> Phrases.pc_program_sound.of(e, program.name) }
-                }
-            }
-        }
-        Tag(say(Phrases.pc_never_mind), onClick = { programs = null })
-    }
-    Line {
-        LineName(say(Phrases.pc_play_here_too))
-        Switch(checked = alsoHere, onCheckedChange = { alsoHere = it }, enabled = !status.playing)
-    }
-    if (status.playing) {
-        status.playhead?.let { PlayControls(host, it, status.paused, sessions) }
-        Ghost(say(Phrases.play_stop)) { scope.launch(sessions) { host.stopPlaying() } }
-        status.capturing?.let { Note(say(Phrases.pc_capturing, it)) }
-    } else {
-        Solid(
-            say(Phrases.play_start),
-            enabled = status.open && !status.measure.running && (files.isNotEmpty() || app != null)
-        ) {
-            val program = app
-            if (program != null) scope.launch(sessions) { host.playApp(program.pid, program.name, alsoHere) }
-            else files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
-        }
-        if (status.measure.running) Note(say(Phrases.pc_measuring_now))
-    }
-    // The handset's word for joining names in a sentence: 、 in Chinese, a comma in English.
-    val join = say(Phrases.room_volume_name_join)
-    if (status.heldDown.isNotEmpty()) Note(say(Phrases.pc_held_down, status.heldDown.joinToString(join)), Tone.WRONG)
-    if (status.skipped.isNotEmpty()) Note(say(Phrases.pc_skipped, status.skipped.joinToString(join)), Tone.WRONG)
-    if (status.ended) Note(say(Phrases.pc_ended))
     Note(say(Phrases.pc_phones_follow))
     val addresses = remember { LocalNetworks.list() }
+    // The handset's word for joining names in a sentence: 、 in Chinese, a comma in English.
+    val join = say(Phrases.room_volume_name_join)
     if (addresses.isNotEmpty()) Note(say(Phrases.pc_type_this, addresses.joinToString(join) { it.address }))
     PairCode(host, status.open, addresses, sessions)
     Roster(status) { peerId -> onMeasure(MeasureJob.PAIR, peerId) }
-    // The handset home screen's 位置同步校准, which opens the calibration screen rather than
-    // starting anything: a minute of chirps is asked for there, with the room's volumes in view.
-    // Drawn as the handset draws it, as the one box on the screen that is the point of it.
+    // The handset's 位置同步校准, which opens the measuring page rather than starting anything: a
+    // minute of chirps is asked for there, with the room's volumes in view.
     Label(say(Phrases.calibrate_section))
     Framed(strong = true) {
         BoxTitle(say(Phrases.goto_room), strong = true)
@@ -350,6 +369,124 @@ private fun HostPane(
             Solid(say(Phrases.goto_room_go), enabled = status.open) { onMeasure(MeasureJob.ROOM, null) }
         }
     }
+}
+
+/**
+ * The host's playing page - the handset's PlayingScreen: the three sources as one row, what is
+ * playing and the way to start or stop it, then the room, its effects and every device's volume.
+ * [onPutDown] is called before a pick stops a playing room, so this page stays up.
+ */
+@Composable
+private fun HostPlaying(
+    host: HostSession,
+    status: HostStatus,
+    pick: HostPick,
+    sessions: CoroutineDispatcher,
+    details: Boolean,
+    onPutDown: () -> Unit
+) {
+    var programs by remember { mutableStateOf<List<AudioSession>?>(null) }
+    val scope = rememberCoroutineScope()
+    val english = LocalEnglish.current
+
+    // Choosing something else while the room plays is what the handset host's putDownWhatIsPlaying
+    // does: the room stops, and the new pick waits for 开始. Only once something is actually chosen -
+    // a dialog closed on nothing, or the program list opened and left, changes nothing.
+    val putDown = {
+        if (status.playing) {
+            onPutDown()
+            scope.launch(sessions) { host.stopPlaying() }
+        }
+    }
+
+    // Which cell is filled is what was picked, not the last cell pressed: pressing 文件夹 and
+    // closing the dialog on nothing leaves the songs that were there.
+    Segmented(
+        listOf(
+            Segment(say(Phrases.song_pick_one), pick.kind == SourceKind.SONGS) {
+                pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
+                    putDown()
+                    pick.files = it
+                    pick.app = null
+                    pick.kind = SourceKind.SONGS
+                    programs = null
+                    val count = it.size
+                    val only = if (count == 1) it.single().name else null
+                    pick.picked = { e -> only ?: Phrases.pc_songs_count.of(e, count) }
+                }
+            },
+            Segment(say(Phrases.song_pick_many), pick.kind == SourceKind.FOLDER) {
+                pickFolder(Phrases.pc_pick_folder_title.of(english))?.let { folder ->
+                    putDown()
+                    val songs = songsIn(folder)
+                    pick.files = songs
+                    pick.app = null
+                    pick.kind = SourceKind.FOLDER
+                    programs = null
+                    pick.picked = { e ->
+                        if (songs.isEmpty()) Phrases.pc_folder_empty.of(e, folder.name)
+                        else Phrases.pc_folder_songs.of(e, folder.name, songs.size)
+                    }
+                }
+            },
+            Segment(say(Phrases.song_pick_capture), pick.kind == SourceKind.APP) {
+                // Asked afresh each time: the mixer's rows come and go with what is playing.
+                scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
+            }
+        ),
+        Modifier.padding(top = 4.dp)
+    )
+    programs?.let { list ->
+        Note(say(if (list.isEmpty()) Phrases.pc_no_programs else Phrases.pc_which_program))
+        // One to a line: a browser, a player and a call can all be in the mixer at once.
+        for (program in list) {
+            Line {
+                LineName(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name)
+                Chip(say(Phrases.pc_use_program)) {
+                    putDown()
+                    pick.app = program
+                    pick.files = emptyList()
+                    pick.kind = SourceKind.APP
+                    programs = null
+                    pick.picked = { e -> Phrases.pc_program_sound.of(e, program.name) }
+                }
+            }
+        }
+        Tag(say(Phrases.pc_never_mind), onClick = { programs = null })
+    }
+    status.problem?.let { Note(describe(it), Tone.WRONG) }
+    // What is playing, big enough to be the page's subject - the handset's NowPlaying.
+    Text(
+        pick.picked(english),
+        Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        fontSize = 17.sp
+    )
+    Line {
+        LineName(say(Phrases.pc_play_here_too))
+        Switch(checked = pick.alsoHere, onCheckedChange = { pick.alsoHere = it }, enabled = !status.playing)
+    }
+    if (status.playing) {
+        status.playhead?.let { PlayControls(host, it, status.paused, sessions) }
+        Ghost(say(Phrases.play_stop)) { scope.launch(sessions) { host.stopPlaying() } }
+        status.capturing?.let { Note(say(Phrases.pc_capturing, it)) }
+    } else {
+        Solid(
+            say(Phrases.play_start),
+            enabled = status.open && !status.measure.running && (pick.files.isNotEmpty() || pick.app != null)
+        ) {
+            val program = pick.app
+            val alsoHere = pick.alsoHere
+            if (program != null) scope.launch(sessions) { host.playApp(program.pid, program.name, alsoHere) }
+            else pick.files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
+        }
+        if (status.measure.running) Note(say(Phrases.pc_measuring_now))
+    }
+    val join = say(Phrases.room_volume_name_join)
+    if (status.heldDown.isNotEmpty()) Note(say(Phrases.pc_held_down, status.heldDown.joinToString(join)), Tone.WRONG)
+    if (status.skipped.isNotEmpty()) Note(say(Phrases.pc_skipped, status.skipped.joinToString(join)), Tone.WRONG)
+    if (status.ended) Note(say(Phrases.pc_ended))
     HostDrawing(host, status.room, sessions, rememberRipple(status.playing), status.killedIds)
     MeasuredLines(host, status.room, details, sessions)
     Effects(host, status.room, sessions, details)
@@ -369,32 +506,26 @@ private fun HostPane(
     )
 }
 
+/**
+ * The sink's board - the handset sink's ReadyScreen: which networks this machine is on, whether it
+ * has found its host, and the way in by address when it has not. Looking for the host started when
+ * the role was picked and goes on by itself.
+ */
 @Composable
-private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: Boolean, onLook: (EdgeLook) -> Unit) {
-    val status = polled { sink.status() } ?: return
-    SideEffect {
-        onLook(
-            EdgeLook(
-                status.selfPlace,
-                disconnected = status.stage !in ON_THE_LIST,
-                playing = status.stage == SinkStage.PLAYING || status.stage == SinkStage.HOST_SILENT,
-                sink = true
-            )
-        )
-    }
+private fun SinkReady(sink: SinkSession, status: SinkStatus, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
-    val going = status.stage !in setOf(SinkStage.IDLE, SinkStage.NOT_FOUND, SinkStage.FAILED)
-
     var address by remember { mutableStateOf("") }
-
-    Column(Modifier.padding(top = 10.dp)) {
-        if (going) {
-            Solid(say(Phrases.play_stop)) { scope.launch(sessions) { sink.stop() } }
-        } else {
-            Solid(say(Phrases.pc_start)) { scope.launch(sessions) { sink.start() } }
-        }
+    Networks()
+    Label(say(Phrases.pair_title))
+    Line(first = true) {
+        Badge(status.selfId, status.selfPlace)
+        LineName(say(Phrases.pc_my_number, PeerBadge.numberOf(status.selfId)))
     }
-    if (!going) {
+    Text(describe(status), style = MaterialTheme.typography.bodyMedium)
+    status.hostName?.let { name ->
+        Note(status.hostAddress?.let { say(Phrases.pc_following_at, name, it) } ?: say(Phrases.pc_following, name))
+    }
+    if (status.stage in NOT_YET_REACHED) {
         // The way in when discovery finds nothing: the handset scans the host's code there, and
         // this machine has no camera to scan with. A host given this way is not looked for again
         // if it moves - it has no identity to be recognised by.
@@ -408,7 +539,8 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
                 modifier = Modifier.weight(1f)
             )
             Ghost(say(Phrases.pc_dial_address), enabled = address.isNotEmpty(), modifier = Modifier.width(DIAL_WIDTH)) {
-                scope.launch(sessions) { sink.start(address) }
+                // The looking under way is stopped first: a session follows one host at a time.
+                scope.launch(sessions) { sink.stop(); sink.start(address) }
             }
         }
         val own = remember { LocalNetworks.list() }
@@ -416,6 +548,15 @@ private fun SinkPane(sink: SinkSession, sessions: CoroutineDispatcher, details: 
             Note(say(Phrases.pc_address_elsewhere, address, own.joinToString(say(Phrases.room_volume_name_join)) { it.address }), Tone.WRONG)
         }
     }
+    if (status.volumePercent != SoftwareVolume.FULL) Note(say(Phrases.pc_volume_set, status.volumePercent))
+}
+
+/** Before a host has been reached, when an address typed in by hand is the other way in. */
+private val NOT_YET_REACHED = setOf(SinkStage.IDLE, SinkStage.FINDING, SinkStage.NOT_FOUND, SinkStage.REACHING, SinkStage.FAILED)
+
+/** The sink's playing page: where it has got to, whom it follows, and the host's room, read only. */
+@Composable
+private fun SinkPlaying(status: SinkStatus, details: Boolean) {
     Line(first = true) {
         Badge(status.selfId, status.selfPlace)
         LineName(say(Phrases.pc_my_number, PeerBadge.numberOf(status.selfId)))

@@ -17,7 +17,6 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.soundmesh.desktop.HostSession
-import com.soundmesh.desktop.MeasureJob
 import com.soundmesh.desktop.SinkSession
 import com.soundmesh.desktop.identityDirectory
 import com.soundmesh.product.soundMeshColours
@@ -54,16 +53,12 @@ fun main() = application {
     var theme by remember { mutableStateOf(themeChoiceOf(prefs.read("theme"))) }
     var details by remember { mutableStateOf(prefs.read("details") == "on") }
     var language by remember { mutableStateOf(languageChoiceOf(prefs.read("language"))) }
-    var settingsOpen by remember { mutableStateOf(false) }
     // 设置's 边缘光. Not written to the file: every start draws the light round the window, and
     // round the whole screen only for as long as somebody asked this time.
     var edgeOnScreen by remember { mutableStateOf(false) }
     var look by remember { mutableStateOf<EdgeLook?>(null) }
     // The screen the window is on, which is the one the light goes round.
     var screen by remember { mutableStateOf<Rectangle?>(null) }
-    // Which measuring window is open, and on whom: the handset's calibration screen, which is a
-    // screen of its own there too. Null while none is.
-    var measuring by remember { mutableStateOf<Pair<MeasureJob, String?>?>(null) }
 
     Window(
         onCloseRequest = {
@@ -95,8 +90,28 @@ fun main() = application {
         Themed(theme, language, window) {
             SoundMeshWindow(
                 host, sink, dispatcher, details,
-                onOpenSettings = { settingsOpen = true },
-                onMeasure = { job, aimedAt -> measuring = job to aimedAt },
+                settings = { onBack ->
+                    SettingsPane(
+                        theme,
+                        onTheme = {
+                            prefs.write("theme", it.name)
+                            theme = it
+                        },
+                        language,
+                        onLanguage = {
+                            prefs.write("language", it.name)
+                            language = it
+                        },
+                        details,
+                        onDetails = {
+                            prefs.write("details", if (it) "on" else "off")
+                            details = it
+                        },
+                        edgeOnScreen,
+                        onEdgeOnScreen = { edgeOnScreen = it },
+                        onBack
+                    )
+                },
                 look = look,
                 onLook = { look = it },
                 edgeOnScreen = edgeOnScreen
@@ -105,53 +120,6 @@ fun main() = application {
     }
     if (edgeOnScreen) {
         screen?.let { ScreenEdges(look, { if (look?.sink == true) sink.loudness() else host.loudness() }, it) }
-    }
-    measuring?.let { (job, aimedAt) ->
-        Window(
-            onCloseRequest = {
-                // A round nobody is watching is a round nobody wants - the handset screen's
-                // onDestroy. Called off on the sessions' thread, and the window goes at once.
-                sessions.submit { runCatching { host.callOffMeasuring() } }
-                measuring = null
-            },
-            title = Phrases.pc_measure_window.of(language.english()),
-            icon = AppIcon.painter,
-            state = rememberWindowState(width = 520.dp, height = 720.dp)
-        ) {
-            Themed(theme, language, window) {
-                MeasurePane(host, job, aimedAt, dispatcher, details)
-            }
-        }
-    }
-    if (settingsOpen) {
-        Window(
-            onCloseRequest = { settingsOpen = false },
-            title = Phrases.pc_settings_window.of(language.english()),
-            icon = AppIcon.painter,
-            state = rememberWindowState(width = 420.dp, height = 560.dp)
-        ) {
-            Themed(theme, language, window) {
-                SettingsPane(
-                    theme,
-                    onTheme = {
-                        prefs.write("theme", it.name)
-                        theme = it
-                    },
-                    language,
-                    onLanguage = {
-                        prefs.write("language", it.name)
-                        language = it
-                    },
-                    details,
-                    onDetails = {
-                        prefs.write("details", if (it) "on" else "off")
-                        details = it
-                    },
-                    edgeOnScreen,
-                    onEdgeOnScreen = { edgeOnScreen = it }
-                )
-            }
-        }
     }
 }
 

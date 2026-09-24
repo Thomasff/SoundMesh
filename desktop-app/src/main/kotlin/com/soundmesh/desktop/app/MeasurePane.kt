@@ -5,11 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -56,8 +53,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The measuring window - the handset host's calibration screen, in its two jobs: 位置同步校准 for
- * the whole room, or one device's pair from its roster row.
+ * The measuring page - the handset host's calibration screen, in its two jobs: 位置同步校准 for
+ * the whole room, or one device's pair from its roster row. [onBack] leaves it, and calls off a
+ * round that is still running.
  *
  * The room is one step here where the handset has two. Its first step holds the host over the
  * listener's head; at a computer the person is already sitting at the host, so the one round that
@@ -69,7 +67,8 @@ internal fun MeasurePane(
     job: MeasureJob,
     aimedAt: String?,
     sessions: CoroutineDispatcher,
-    details: Boolean
+    details: Boolean,
+    onBack: () -> Unit
 ) {
     val status = polled { host.status() } ?: return
     val measure = status.measure
@@ -80,17 +79,12 @@ internal fun MeasurePane(
     // device, is somebody else's. A round that is running is shown whichever it is, with the stop
     // that ends it: the window can be opened on another device while one runs.
     val mine = measure.job == job && (job == MeasureJob.ROOM || measure.aimedAt == aimedAt)
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+    // What is being measured is the page's name, as the handset's calibration screen is named.
+    Page(
+        if (job == MeasureJob.ROOM) say(Phrases.goto_room)
+        else say(Phrases.pc_pair_title, aimedAt?.let { name(status, it) } ?: ""),
+        onBack
     ) {
-        Text(
-            if (job == MeasureJob.ROOM) say(Phrases.goto_room)
-            else say(Phrases.pc_pair_title, aimedAt?.let { name(status, it) } ?: ""),
-            Modifier.padding(top = 16.dp),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
         if (job == MeasureJob.ROOM) Note(say(Phrases.room_calibrate_intro))
         VolumeGate(host, status, rows, tooQuiet, sessions)
         if (measure.running) {

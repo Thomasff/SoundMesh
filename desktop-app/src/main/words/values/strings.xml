@@ -9,8 +9,6 @@
     <string name="pc_welcome_what">把这台电脑和几台手机变成一套音箱</string>
     <string name="pc_role_host_hint">放歌的那台。房间里其他设备跟着它响。</string>
     <string name="pc_role_sink_hint">跟着房间里的主机响。同一个网里的主机会自己找到。</string>
-    <string name="pc_role_later">选了以后在窗口最上面随时换。</string>
-    <string name="pc_settings_window">SoundMesh 设置</string>
 
     <string name="pc_pick_files">选文件</string>
     <string name="pc_pick_songs_title">选歌（可以多选）</string>
@@ -50,7 +48,6 @@
     <string name="pc_chunks">%1$d 块</string>
     <string name="pc_times">%1$d 次</string>
 
-    <string name="pc_start">开始</string>
     <string name="pc_host_address">找不到时填主机地址</string>
     <string name="pc_address_example">比如 192.168.0.150</string>
     <string name="pc_dial_address">连这个地址</string>
@@ -106,11 +103,11 @@
     <string name="pc_play_failed">播放中断了：%1$s</string>
     <string name="pc_capture_failed">抓不到「%1$s」的声音（要 Windows 10 21H2 或更新）：%2$s</string>
 
-    <string name="pc_sink_idle">按开始，自动找房间里的主机。</string>
-    <string name="pc_sink_finding">正在找主机（5 秒）…</string>
+    <string name="pc_sink_idle">正在准备找主机…</string>
+    <string name="pc_sink_finding">正在自动找主机…</string>
     <string name="pc_sink_wrong_version">找到了主机，但版本对不上，两边要装同一版。</string>
     <string name="pc_sink_two_hosts">房间里同时有两台主机，先关掉一台。</string>
-    <string name="pc_sink_no_answer">没有主机应答。主机那边开了吗？两边在同一个网络上吗？也可以在下面直接填主机地址。</string>
+    <string name="pc_sink_no_answer">暂时没有主机应答，还在接着找。主机那边开了吗？两边在同一个网络上吗？也可以在下面直接填主机地址。</string>
     <string name="pc_sink_reaching">正在连主机（每 3 秒试一次）…</string>
     <string name="pc_sink_standing">待命中：主机一放就跟着放。</string>
     <string name="pc_sink_no_clock_last">上一次主机没有应答时钟，没跟上。</string>
@@ -131,7 +128,6 @@
     <string name="pc_mic_not_48k">麦克风的采样率是 %1$s，测量要 48 kHz：在「声音设置」里把麦克风改成 48000 Hz。</string>
     <string name="pc_mic_other">麦克风打不开：%1$s</string>
 
-    <string name="pc_measure_window">测量</string>
     <string name="pc_room_step">量设备之间的距离</string>
     <string name="pc_room_step_1">手机放在你希望听的位置，你坐在电脑前平时听歌的地方——电脑到每台的距离就当作你到每台的距离</string>
     <string name="pc_room_again">重测</string>

@@ -1,14 +1,9 @@
 package com.soundmesh.desktop.app
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -31,9 +26,9 @@ import com.soundmesh.product.Segmented
 import com.soundmesh.product.linkColour
 
 /**
- * The window behind 设置 - the handset's SettingsScreen, less what a computer has no use for:
- * no permissions (Windows asks for nothing here). The words are the handset's, read from its own
- * string files.
+ * The page behind 设置 - the handset's SettingsScreen, a page of the one window as it is there,
+ * less what a computer has no use for: no permissions (Windows asks for nothing here). The words
+ * are the handset's, read from its own string files.
  */
 @Composable
 internal fun SettingsPane(
@@ -44,13 +39,11 @@ internal fun SettingsPane(
     details: Boolean,
     onDetails: (Boolean) -> Unit,
     edgeOnScreen: Boolean,
-    onEdgeOnScreen: (Boolean) -> Unit
+    onEdgeOnScreen: (Boolean) -> Unit,
+    onBack: () -> Unit
 ) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
-        // Nothing between blocks: a label carries its own space above it, as on the handset.
-        verticalArrangement = Arrangement.spacedBy(0.dp)
-    ) {
+    // Nothing between blocks: a label carries its own space above it, as on the handset.
+    Page(say(Phrases.settings_title), onBack, spacing = 0.dp) {
         Label(say(Phrases.settings_theme))
         Segmented(
             THEME_NAMES.map { (choice, name) -> Segment(say(name), theme == choice) { onTheme(choice) } },
