@@ -8,9 +8,12 @@
     <string name="pc_folder_songs">%2$d songs in “%1$s”</string>
     <string name="pc_capture_app">Capture a program</string>
     <string name="pc_no_programs">No program is making sound in the volume mixer right now. Start the one you want, then press again.</string>
-    <string name="pc_which_program">Which program\'s sound?</string>
+    <string name="pc_everything">All sounds</string>
+    <string name="pc_everything_hint">Including programs opened later, and notification sounds</string>
+    <string name="pc_which_program">Which programs\' sound?</string>
     <string name="pc_program_playing">%1$s (making sound)</string>
     <string name="pc_cancel">Cancel</string>
+    <string name="pc_confirm">OK</string>
     <string name="pc_program_sound">Sound from “%1$s”</string>
     <string name="pc_play_here_too">This device plays too</string>
     <string name="pc_held_down">“%1$s” is still turned down in the volume mixer. It is put back here the next time it runs, or turn it back up yourself in the Windows volume mixer.</string>

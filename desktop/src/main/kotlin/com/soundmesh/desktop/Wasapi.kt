@@ -486,6 +486,9 @@ internal object Wasapi {
     /** PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE: the program and whatever it started. */
     private const val LOOPBACK_MODE_INCLUDE_TREE = 0
 
+    /** PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE: everything but the program and what it started. */
+    private const val LOOPBACK_MODE_EXCLUDE_TREE = 1
+
     private const val E_NOINTERFACE = 0x80004002.toInt()
     private const val E_TIMEOUT = 0x800705B4.toInt()
 
@@ -495,17 +498,18 @@ internal object Wasapi {
     )
 
     /**
-     * An IAudioClient that hears the process [pid] and everything it started, and nothing else.
+     * An IAudioClient that hears the process [pid] and everything it started, and nothing else - or,
+     * [exclude], everything else: every program on the machine but that one, those started later too.
      *
      * Blocks until the system answers. Serialised, because the handler is one object with one
      * slot for the answer.
      */
-    fun activateProcessLoopback(arena: Arena, pid: Long, out: MemorySegment): Int =
+    fun activateProcessLoopback(arena: Arena, pid: Long, out: MemorySegment, exclude: Boolean = false): Int =
         synchronized(ActivationHandler) {
             val params = arena.allocate(12, 4)
             params.set(I32, 0, ACTIVATION_TYPE_PROCESS_LOOPBACK)
             params.set(I32, 4, pid.toInt())
-            params.set(I32, 8, LOOPBACK_MODE_INCLUDE_TREE)
+            params.set(I32, 8, if (exclude) LOOPBACK_MODE_EXCLUDE_TREE else LOOPBACK_MODE_INCLUDE_TREE)
             // PROPVARIANT: the type at 0, then a BLOB at 8 - its length, padding, its pointer.
             val variant = arena.allocate(24, 8)
             variant.set(I16, 0, VT_BLOB.toShort())

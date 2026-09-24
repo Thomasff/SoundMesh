@@ -58,7 +58,7 @@ fun main() {
         val current = java.util.concurrent.atomic.AtomicInteger(-1)
         val settledAt = java.util.concurrent.atomic.AtomicLong(Long.MAX_VALUE)
 
-        AppCapture(pid) { bytes, length ->
+        AppCapture(CaptureTarget(pid)) { bytes, length ->
             val phase = current.get()
             if (phase >= 0) {
                 frames[phase] += (length / AppCapture.BYTES_PER_FRAME).toLong()

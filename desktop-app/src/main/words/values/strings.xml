@@ -12,10 +12,13 @@
     <string name="pc_folder_empty">「%1$s」里没有能放的歌</string>
     <string name="pc_folder_songs">「%1$s」里 %2$d 首</string>
     <string name="pc_capture_app">抓程序的声音</string>
+    <string name="pc_everything">所有声音</string>
+    <string name="pc_everything_hint">包括之后才打开的程序和通知音</string>
     <string name="pc_no_programs">现在没有程序在音量合成器里出声。先让要抓的程序放起来，再点一次。</string>
-    <string name="pc_which_program">抓哪个程序的声音？</string>
+    <string name="pc_which_program">抓哪些程序的声音？</string>
     <string name="pc_program_playing">%1$s（正在出声）</string>
     <string name="pc_cancel">取消</string>
+    <string name="pc_confirm">确定</string>
     <string name="pc_program_sound">「%1$s」的声音</string>
     <string name="pc_play_here_too">本机也出声</string>
     <string name="pc_held_down">「%1$s」在音量合成器里还被调低着，它再运行时这里会调回来；也可以在 Windows 音量合成器里自己调回。</string>

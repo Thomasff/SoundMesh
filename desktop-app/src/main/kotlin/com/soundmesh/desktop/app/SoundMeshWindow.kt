@@ -125,8 +125,9 @@ private enum class SourceKind { SONGS, FOLDER, APP }
  */
 private class HostPick {
     var files by mutableStateOf<List<File>>(emptyList())
-    // A program's sound instead of files; picking either one puts the other down.
-    var app by mutableStateOf<AudioSession?>(null)
+    // Programs' sound instead of files, or everything's; picking one puts the others down.
+    var apps by mutableStateOf<List<AudioSession>>(emptyList())
+    var everything by mutableStateOf(false)
     var kind by mutableStateOf<SourceKind?>(null)
     // Kept as how to say it rather than as what was said, so a change of language reaches it.
     var picked by mutableStateOf<(Boolean) -> String>({ Phrases.song_none.of(it) })
@@ -386,6 +387,9 @@ private fun HostPlaying(
     onPutDown: () -> Unit
 ) {
     var programs by remember { mutableStateOf<List<AudioSession>?>(null) }
+    // What is ticked in the list while it is open; the pick changes only at 确定.
+    var ticked by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var tickedEverything by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val english = LocalEnglish.current
 
@@ -407,7 +411,8 @@ private fun HostPlaying(
                 pickSongs(Phrases.pc_pick_songs_title.of(english)).takeIf { it.isNotEmpty() }?.let {
                     putDown()
                     pick.files = it
-                    pick.app = null
+                    pick.apps = emptyList()
+                    pick.everything = false
                     pick.kind = SourceKind.SONGS
                     programs = null
                     val count = it.size
@@ -420,7 +425,8 @@ private fun HostPlaying(
                     putDown()
                     val songs = songsIn(folder)
                     pick.files = songs
-                    pick.app = null
+                    pick.apps = emptyList()
+                    pick.everything = false
                     pick.kind = SourceKind.FOLDER
                     programs = null
                     pick.picked = { e ->
@@ -430,6 +436,9 @@ private fun HostPlaying(
                 }
             },
             Segment(say(Phrases.song_pick_capture), pick.kind == SourceKind.APP) {
+                // Ticked as it is being played from, so reopening the list shows what it was.
+                ticked = if (pick.kind == SourceKind.APP) pick.apps.map { it.pid }.toSet() else emptySet()
+                tickedEverything = pick.kind == SourceKind.APP && pick.everything
                 // Asked afresh each time: the mixer's rows come and go with what is playing.
                 scope.launch { programs = withContext(sessions) { runCatching { AudioSessions.list() }.getOrDefault(emptyList()) } }
             }
@@ -437,25 +446,46 @@ private fun HostPlaying(
         Modifier.padding(top = 4.dp)
     )
     programs?.let { list ->
+        // First, and on its own: it takes the programs above and any started later, so it and
+        // the programs are one or the other - ticking either unticks the rest.
+        Line {
+            LineName(say(Phrases.pc_everything))
+            Checkbox(checked = tickedEverything, onCheckedChange = { tick ->
+                tickedEverything = tick
+                if (tick) ticked = emptySet()
+            })
+        }
+        Note(say(Phrases.pc_everything_hint))
         Note(say(if (list.isEmpty()) Phrases.pc_no_programs else Phrases.pc_which_program))
         // One to a line: a browser, a player and a call can all be in the mixer at once.
         for (program in list) {
             Line {
                 LineName(if (program.playing) say(Phrases.pc_program_playing, program.name) else program.name)
-                // Ticked is the program being played from, so reopening the list shows which it was.
-                // Only one can be: unticking does nothing, another program is picked by ticking it.
-                Checkbox(checked = pick.kind == SourceKind.APP && pick.app?.pid == program.pid, onCheckedChange = { tick ->
-                    if (!tick) return@Checkbox
-                    putDown()
-                    pick.app = program
-                    pick.files = emptyList()
-                    pick.kind = SourceKind.APP
-                    programs = null
-                    pick.picked = { e -> Phrases.pc_program_sound.of(e, program.name) }
+                Checkbox(checked = program.pid in ticked, onCheckedChange = { tick ->
+                    ticked = if (tick) ticked + program.pid else ticked - program.pid
+                    if (tick) tickedEverything = false
                 })
             }
         }
-        Tag(say(Phrases.pc_cancel), onClick = { programs = null })
+        // Nothing changes until 确定, so 取消 leaves the room playing what it was.
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Tag(say(Phrases.pc_cancel), onClick = { programs = null })
+            val chosen = list.filter { it.pid in ticked }
+            Tag(
+                say(Phrases.pc_confirm),
+                onClick = if (!tickedEverything && chosen.isEmpty()) null else ({
+                    putDown()
+                    pick.everything = tickedEverything
+                    pick.apps = if (tickedEverything) emptyList() else chosen
+                    pick.files = emptyList()
+                    pick.kind = SourceKind.APP
+                    programs = null
+                    val join = Phrases.room_volume_name_join
+                    pick.picked = if (tickedEverything) { e -> Phrases.pc_everything.of(e) }
+                    else { e -> Phrases.pc_program_sound.of(e, chosen.joinToString(join.of(e)) { it.name }) }
+                })
+            )
+        }
     }
     status.problem?.let { Note(describe(it), Tone.WRONG) }
     // What is playing, big enough to be the page's subject - the handset's NowPlaying.
@@ -476,12 +506,17 @@ private fun HostPlaying(
     } else {
         Solid(
             say(Phrases.play_start),
-            enabled = status.open && !status.measure.running && (pick.files.isNotEmpty() || pick.app != null)
+            enabled = status.open && !status.measure.running &&
+                (pick.files.isNotEmpty() || pick.apps.isNotEmpty() || pick.everything)
         ) {
-            val program = pick.app
+            val chosen = pick.apps
             val alsoHere = pick.alsoHere
-            if (program != null) scope.launch(sessions) { host.playApp(program.pid, program.name, alsoHere) }
-            else pick.files.takeIf { it.isNotEmpty() }?.let { chosen -> scope.launch(sessions) { host.play(chosen, 0, alsoHere) } }
+            // What the handsets are told is playing: the programs' own names, or 所有声音.
+            val name = if (pick.everything) Phrases.pc_everything.of(english)
+            else chosen.joinToString(Phrases.room_volume_name_join.of(english)) { it.name }
+            if (pick.everything) scope.launch(sessions) { host.playEverything(name, alsoHere) }
+            else if (chosen.isNotEmpty()) scope.launch(sessions) { host.playApps(chosen, name, alsoHere) }
+            else pick.files.takeIf { it.isNotEmpty() }?.let { files -> scope.launch(sessions) { host.play(files, 0, alsoHere) } }
         }
         if (status.measure.running) Note(say(Phrases.pc_measuring_now))
     }

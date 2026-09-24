@@ -3,6 +3,9 @@ package com.soundmesh.desktop
 import java.lang.foreign.Arena
 import java.lang.foreign.MemorySegment
 
+/** What one capture hears: [pid] and whatever it started, or, [exclude], everything else. */
+data class CaptureTarget(val pid: Long, val exclude: Boolean = false)
+
 /** A capture as [HostSession] drives it: [AppCapture], or a test's stand-in for one. */
 interface CaptureHandle : AutoCloseable {
     /** What every sample is multiplied by on the way out. */
@@ -28,9 +31,13 @@ interface CaptureHandle : AutoCloseable {
  *
  * [onPcm] is called on the reader thread with interleaved frames, and the array is reused after
  * it returns.
+ *
+ * With [CaptureTarget.exclude] it hears every program but the one named - this one, for 所有声音 -
+ * and those started later too, and the program is no longer the reason to capture one at a time.
+ * A packet that [overloads] goes on as silence: see there.
  */
 class AppCapture(
-    val pid: Long,
+    val target: CaptureTarget,
     bufferMillis: Long = 200L,
     private val onPcm: (bytes: ByteArray, length: Int) -> Unit
 ) : CaptureHandle {
@@ -60,9 +67,16 @@ class AppCapture(
     @Volatile var silentPackets = 0L
         private set
 
+    /** Packets sent on as silence because they [overloads]. */
+    @Volatile var overloadedPackets = 0L
+        private set
+
     init {
         Wasapi.coInitialize()
-        Wasapi.check(Wasapi.activateProcessLoopback(arena, pid, out), "ActivateAudioInterfaceAsync(process $pid)")
+        Wasapi.check(
+            Wasapi.activateProcessLoopback(arena, target.pid, out, target.exclude),
+            "ActivateAudioInterfaceAsync(process ${target.pid}${if (target.exclude) ", excluded" else ""})"
+        )
         client = out.get(Wasapi.PTR, 0)
 
         // WAVEFORMATEX, float: tag, channels, rate, bytes a second, block, bits, extra size.
@@ -138,13 +152,18 @@ class AppCapture(
         }
         val length = frameCount * BYTES_PER_FRAME
         if (scratch.size < length) scratch = ByteArray(length)
-        if (flags.get(Wasapi.I32, 0) and Wasapi.BUFFERFLAGS_SILENT != 0) {
+        val block = data.get(Wasapi.PTR, 0).reinterpret(frameCount.toLong() * FLOAT_FRAME_BYTES)
+        val samples = frameCount * CHANNELS
+        val silent = flags.get(Wasapi.I32, 0) and Wasapi.BUFFERFLAGS_SILENT != 0
+        var peak = 0f
+        if (!silent) for (i in 0 until samples) peak = maxOf(peak, Math.abs(block.get(Wasapi.F32, i * 4L)))
+        val gain = gain
+        if (silent || overloads(peak, gain)) {
             java.util.Arrays.fill(scratch, 0, length, 0)
-            silentPackets++
+            if (silent) silentPackets++ else overloadedPackets++
         } else {
-            val block = data.get(Wasapi.PTR, 0).reinterpret(frameCount.toLong() * FLOAT_FRAME_BYTES)
             val scale = gain * Short.MAX_VALUE
-            for (i in 0 until frameCount * CHANNELS) {
+            for (i in 0 until samples) {
                 val s = Math.round((block.get(Wasapi.F32, i * 4L) * scale).coerceIn(-32768f, 32767f))
                 scratch[i * 2] = s.toByte()
                 scratch[i * 2 + 1] = (s shr 8).toByte()
@@ -157,6 +176,18 @@ class AppCapture(
     }
 
     companion object {
+        /**
+         * Whether a packet whose loudest sample is [peak] would come out more than [OVERLOAD]
+         * times full scale at [gain]. Not a program played loud: a row nobody turned down yet - a
+         * program that started a moment ago, heard by 所有声音 before it is found - multiplied by
+         * the thousand that undoes the rest, sixty decibels over the top. The room is sent silence
+         * for it instead, for the moment until the row is found and turned down.
+         */
+        fun overloads(peak: Float, gain: Float): Boolean = peak * gain > OVERLOAD
+
+        /** Four times full scale: twelve decibels of clipping, more than a loud mix of two reaches. */
+        const val OVERLOAD = 4f
+
         const val SAMPLE_RATE = 48_000
         const val CHANNELS = 2
         const val BYTES_PER_FRAME = CHANNELS * 2

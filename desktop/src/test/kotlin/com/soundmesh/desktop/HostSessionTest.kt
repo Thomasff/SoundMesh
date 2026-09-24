@@ -590,7 +590,7 @@ class HostSessionTest {
             folder.root, ports, advertise = false, openSpeakers = FakeSpeakers()::open, retellMillis = 50L,
             mixer = mixer,
             openCapture = { asked, onPcm ->
-                if (asked != pid) error("no such process")
+                if (asked.pid != pid) error("no such process")
                 FakeCapture(onPcm).also { captures.add(it) }
             }
         )
@@ -610,11 +610,11 @@ class HostSessionTest {
         val client = com.soundmesh.probe.sync.ChunkClient("127.0.0.1", ports.chunk) { received.add(it) }
         try {
             client.start()
-            host.playApp(MUSIC, "music", alsoHere = false)
+            host.playApps(listOf(AudioSession(MUSIC, "music", true)), "music", alsoHere = false)
             assertTrue(eventually { host.status().capturing == "music" })
             // On the play thread, once the capture has opened.
-            assertTrue("never turned down", eventually { mixer.level(MUSIC) == AppTurnDown.LEVEL })
-            assertTrue("the gain does not undo it", eventually { kotlin.math.abs(captures.single().gain - 600f) < 0.01f })
+            assertTrue("never turned down", eventually { kotlin.math.abs(mixer.level(MUSIC)!! - 0.6f * AppTurnDown.LEVEL) < 1e-9f })
+            assertTrue("the gain does not undo it", eventually { kotlin.math.abs(captures.single().gain - 1f / AppTurnDown.LEVEL) < 0.01f })
 
             val heard = { chunk: com.soundmesh.core.AudioChunk ->
                 (chunk.pcm.indices step 2).all { chunk.pcm[it] == (SAMPLE.toInt() and 0xFF).toByte() && chunk.pcm[it + 1] == (SAMPLE.toInt() shr 8).toByte() }
@@ -632,6 +632,36 @@ class HostSessionTest {
         }
     }
 
+    /**
+     * 所有声音: one capture of everything but this process, the room told the name the window
+     * gave, every program turned down while it plays and put back at stop.
+     */
+    @Test
+    fun everythingButThisProcessIsSentAndEveryProgramTurnedDownUntilStop() {
+        val ports = ports()
+        val mixer = FakeMixer().apply { add(MUSIC, "music", 0.6f) }
+        val asked = java.util.concurrent.CopyOnWriteArrayList<CaptureTarget>()
+        val host = HostSession(
+            folder.root, ports, advertise = false, openSpeakers = FakeSpeakers()::open, retellMillis = 50L,
+            mixer = mixer,
+            openCapture = { target, onPcm -> asked.add(target); FakeCapture(onPcm) }
+        )
+        host.open()
+        try {
+            host.playEverything("所有声音", alsoHere = false)
+            assertTrue(eventually { host.status().capturing == "所有声音" })
+            // On the play thread.
+            assertTrue(eventually { asked == listOf(CaptureTarget(ProcessHandle.current().pid(), exclude = true)) })
+            assertTrue("never turned down", eventually { kotlin.math.abs(mixer.level(MUSIC)!! - 0.6f * AppTurnDown.LEVEL) < 1e-9f })
+
+            host.stopPlaying()
+            assertEquals(0.6f, mixer.level(MUSIC))
+            assertTrue(host.status().heldDown.isEmpty())
+        } finally {
+            host.close()
+        }
+    }
+
     /** A program that cannot be captured is said by name, and nothing about it is touched. */
     @Test
     fun aProgramThatCannotBeCapturedIsSaidAndLeftAlone() {
@@ -643,7 +673,7 @@ class HostSessionTest {
         val phone = standBy(ports.command, heard)
         try {
             assertTrue(eventually { host.status().phones.size == 1 })
-            host.playApp(MUSIC + 1, "other", alsoHere = false)
+            host.playApps(listOf(AudioSession(MUSIC + 1, "other", true)), "other", alsoHere = false)
             assertTrue(eventually { host.status().problem is HostProblem.CaptureFailed })
             assertFalse(host.status().playing)
             assertEquals(0.6f, mixer.level(MUSIC + 1))

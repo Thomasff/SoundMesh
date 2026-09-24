@@ -214,9 +214,9 @@ class HostSession(
     private val advertiser: (serviceName: String, port: Int, hostId: String) -> AutoCloseable = PeerDiscovery::register,
     private val stoppedGraceMillis: Long = STOPPED_GRACE_MILLIS,
     /** The volume mixer, and a program's sound on its own - parameters so a test touches neither. */
-    mixer: AppMixer = AudioSessions,
-    private val openCapture: (pid: Long, onPcm: (ByteArray, Int) -> Unit) -> CaptureHandle =
-        { pid, onPcm -> AppCapture(pid, onPcm = onPcm) },
+    private val mixer: AppMixer = AudioSessions,
+    private val openCapture: (target: CaptureTarget, onPcm: (ByteArray, Int) -> Unit) -> CaptureHandle =
+        { target, onPcm -> AppCapture(target, onPcm = onPcm) },
     /** Why a round could not record here, or null when it could. See [MicrophoneCheck]. */
     private val microphoneProblem: () -> Pair<MicrophoneProblem, String>? = { MicrophoneCheck.problem() },
     /** A round's recording, given the run store, the case and host time. */
@@ -248,7 +248,7 @@ class HostSession(
     @Volatile private var streamSinceNanos = 0L
     @Volatile private var file: String? = null
     @Volatile private var songs: SongList? = null
-    @Volatile private var capture: AppFeed? = null
+    @Volatile private var capture: CapturedFeed? = null
     private var player: Thread? = null
 
     /**
@@ -489,13 +489,28 @@ class HostSession(
     }
 
     /**
-     * Starts the room playing whatever [pid] - a program from [AudioSessions.list] - is playing,
-     * until stopped: the handset host's 抓取音频. The program is turned down in the mixer for as
-     * long as the room plays it, and put back at stop - see [AppTurnDown].
+     * Starts the room playing whatever [programs] - from [AudioSessions.list] - are playing, added
+     * together, until stopped: the handset host's 抓取音频. The room is told it is [name]. Each
+     * program is turned down in the mixer for as long as the room plays it, and put back at stop -
+     * see [AppTurnDown].
      */
-    fun playApp(pid: Long, app: String, alsoHere: Boolean) = synchronized(lock) {
-        val feed = AppFeed(pid, app, openCapture, turnDown)
-        startPlayer(feed, app, alsoHere) {
+    fun playApps(programs: List<AudioSession>, name: String, alsoHere: Boolean) = synchronized(lock) {
+        if (programs.isEmpty()) return
+        playCaptured(AppFeed(programs, name, openCapture, turnDown), alsoHere)
+    }
+
+    /**
+     * Starts the room playing everything this machine plays but SoundMesh, programs started later
+     * included - 所有声音 - told it is [name]. Every row in the mixer is turned down while it lasts:
+     * see [EverythingFeed].
+     */
+    fun playEverything(name: String, alsoHere: Boolean) = synchronized(lock) {
+        playCaptured(EverythingFeed(name, ProcessHandle.current().pid(), openCapture, turnDown, mixer), alsoHere)
+    }
+
+    /** Under [lock]. */
+    private fun playCaptured(feed: CapturedFeed, alsoHere: Boolean) {
+        startPlayer(feed, feed.app, alsoHere) {
             songs = null
             capture = feed
         }
