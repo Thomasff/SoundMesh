@@ -58,7 +58,7 @@ object HostSearch {
             return Found(
                 null,
                 if (others.isEmpty() && outcome.hosts.isNotEmpty()) ONLY_ITS_OWN_RECORD
-                else wordFor(outcome, mine)
+                else wordFor(outcome, mine) + unresolvedNote(outcome.unresolved)
             )
         }
         // Why its own record is there to be filtered at all: giving the role back is a request to
@@ -122,7 +122,8 @@ object HostSearch {
                 return Found(it, "nothing answered, but ${it.address} is hosting at the gateway; following it")
             }
         }
-        val host = what.host ?: return Found(null, wordFor(what.verdict, stored))
+        val host = what.host
+            ?: return Found(null, wordFor(what.verdict, stored) + unresolvedNote(outcome.unresolved))
         if (paired.read() != stored) return Found(null, SCANNED_MEANWHILE)
         paired.write(host)
         return Found(host, wordFor(what.verdict, host))
@@ -190,6 +191,10 @@ object HostSearch {
      * and this is the part that can be asked a question. It was one line inside [atTheGateway]
      * until 2026-09-21, and deleting that line left the whole app suite green.
      */
+    /** Added to a look that came to nothing when something was heard - see [DiscoveryOutcome.unresolved]. */
+    internal fun unresolvedNote(unresolved: Int): String =
+        if (unresolved == 0) "" else " ($unresolved heard but could not be resolved)"
+
     internal fun notThisHandset(code: PairingCode?, mine: String): PairingCode? =
         if (code == null || code.hostId == mine) null else code
 

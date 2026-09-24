@@ -33,7 +33,13 @@ data class DiscoveryOutcome(
      * and [DiscoveryFailure.AMBIGUOUS] - two of them - is the loudest possible yes while [peer] is
      * null for it. The refusal is right for joining a room and wrong for counting one.
      */
-    val hosts: List<DiscoveredPeer>
+    val hosts: List<DiscoveredPeer>,
+    /**
+     * How many were heard and could not be resolved into an address, which [failure] counts as
+     * nothing having answered. Said apart because the two are found in different places: a network
+     * that carries no multicast, against a resolve stuck inside the handset that is looking.
+     */
+    val unresolved: Int = 0
 ) {
     /** How many of [seen] this build could actually talk to. */
     val compatible: Int get() = hosts.size

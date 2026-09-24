@@ -35,6 +35,19 @@ class HostSearchTest {
         assertEquals(theirs, HostSearch.notThisHandset(theirs, mine))
     }
 
+    /**
+     * A look that heard a host and could not resolve it is not a look where nothing answered.
+     *
+     * On 2026-09-24 X10 heard Magic6 every ten seconds for as long as it looked, and its timeline
+     * said "nothing answered" every time - which sends whoever reads it to the network, while the
+     * fault was one resolve stuck inside this process.
+     */
+    @Test
+    fun `hosts heard but not resolved are said`() {
+        assertEquals("", HostSearch.unresolvedNote(0))
+        assertEquals(" (1 heard but could not be resolved)", HostSearch.unresolvedNote(1))
+    }
+
     @Test
     fun `nobody at the gateway is nobody`() {
         assertNull(HostSearch.notThisHandset(null, mine))

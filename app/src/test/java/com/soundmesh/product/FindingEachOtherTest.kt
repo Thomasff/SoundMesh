@@ -227,7 +227,7 @@ class FindingEachOtherTest {
         val standby = source("src/main/java/com/soundmesh/product/StandbyService.kt")
         assertTrue(
             "the down clock is hung off the socket flag, which a dead line keeps true",
-            standby.contains("private fun carrying(): Boolean = line?.connected == true && missed == 0")
+            standby.contains("private fun carrying(): Boolean = line?.connected == true && complaints.missed == 0")
         )
         assertTrue(
             "the clock is started from something other than whether the line is carrying",

@@ -103,8 +103,9 @@ class PeerDiscovery(context: Context) {
         }
         // One resolve at a time: the platform rejects a second one while the first is outstanding,
         // and a rejected resolve is indistinguishable here from a host that is not there.
-        val resolved = found.distinctBy { it.serviceName }.mapNotNull(::resolve)
-        return PeerAdvertisement.choose(resolved)
+        val heard = found.distinctBy { it.serviceName }
+        val resolved = heard.mapNotNull(::resolve)
+        return PeerAdvertisement.choose(resolved).copy(unresolved = heard.size - resolved.size)
     }
 
     @Suppress("DEPRECATION")
@@ -114,8 +115,12 @@ class PeerDiscovery(context: Context) {
             override fun onResolveFailed(service: NsdServiceInfo, errorCode: Int) { answered.offer(errorCode) }
             override fun onServiceResolved(service: NsdServiceInfo) { answered.offer(service) }
         }
+        val clients = resolveClients(application)
+        val nsd = clients.take()
         runCatching { nsd.resolveService(service, listener) }.onFailure { return null }
-        val info = answered.poll(RESOLVE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS) as? NsdServiceInfo ?: return null
+        val answer = answered.poll(RESOLVE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+        if (resolveWasStuck(answer)) clients.giveUp(nsd)
+        val info = answer as? NsdServiceInfo ?: return null
         val address = info.host?.hostAddress ?: return null
         return DiscoveredPeer(
             name = info.serviceName,
@@ -128,5 +133,56 @@ class PeerDiscovery(context: Context) {
     private companion object {
         const val MULTICAST_LOCK_TAG = "soundmesh-discovery"
         const val RESOLVE_TIMEOUT_MILLIS = 5_000L
+
+        @Volatile
+        private var resolvers: ResolveClient<NsdManager>? = null
+
+        /**
+         * One for the process, since what gets stuck belongs to the process: the platform keeps a
+         * client per NsdManager, and getSystemService hands every caller in it the same one.
+         */
+        fun resolveClients(application: Context): ResolveClient<NsdManager> =
+            resolvers ?: synchronized(this) {
+                resolvers ?: ResolveClient {
+                    // A context of its own is what makes it a new client: NsdManager is cached per
+                    // context, and the platform's client is the channel that NsdManager opened.
+                    application.createConfigurationContext(application.resources.configuration)
+                        .getSystemService(Context.NSD_SERVICE) as NsdManager
+                }.also { resolvers = it }
+            }
     }
 }
+
+/**
+ * The platform client resolves go through, given up once a resolve gets stuck in it.
+ *
+ * Until Android 13 the platform lets each client have one resolve outstanding and refuses every
+ * other with FAILURE_ALREADY_ACTIVE, and a resolve of a name that has gone - a host that stopped
+ * while its record was still cached - is never answered at all. Waiting out [PeerDiscovery]'s
+ * timeout does not end it on the platform's side. So one such resolve left this process unable
+ * to resolve anything for as long as it lived: on 2026-09-24 X10 heard Magic6 every ten seconds,
+ * resolved it never, and found it on the first look after it was swiped away and reopened.
+ *
+ * Nothing on those releases takes a resolve back, so the client is left where it is and the next
+ * resolve goes through a new one. What that leaks is one stuck request per stuck resolve.
+ */
+internal class ResolveClient<C : Any>(private val open: () -> C) {
+    private var client: C? = null
+
+    @Synchronized
+    fun take(): C = client ?: open().also { client = it }
+
+    /** Only if it is still the one in use: a look that overlapped this one may have replaced it. */
+    @Synchronized
+    fun giveUp(stuck: C) {
+        if (client === stuck) client = null
+    }
+}
+
+/**
+ * Whether a resolve's [answer] leaves its client unable to resolve again: no answer at all, or a
+ * refusal because an earlier one is still outstanding. A failure the platform did answer with is
+ * over, and the client is free.
+ */
+internal fun resolveWasStuck(answer: Any?): Boolean =
+    answer == null || answer == NsdManager.FAILURE_ALREADY_ACTIVE

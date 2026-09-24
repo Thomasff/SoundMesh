@@ -211,11 +211,8 @@ class StandbyService : Service() {
     /** When this handset last told the host it was still there. */
     private var saidHereAt = 0L
 
-    /** The last thing written about something not going out, so it is written once and not again. */
-    private var complained: String? = null
-
-    /** How many did not go out since then, which is the other half of one line in the log. */
-    private var missed = 0
+    /** What did not go out, written once per reason. */
+    private val complaints = Complaints { events.write(it) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -407,11 +404,11 @@ class StandbyService : Service() {
      * the clock exists for, a handset or its host changing network, was the one case it never
      * started in.
      *
-     * [missed] is what the other half already counts: every couple of seconds this handset says it
+     * [Complaints.missed] is what the other half already counts: every couple of seconds this handset says it
      * is still here, and the count is the number of those in a row that did not leave. Zero and
      * connected is a line something is moving on. See [sayHereIfDue] and [complain].
      */
-    private fun carrying(): Boolean = line?.connected == true && missed == 0
+    private fun carrying(): Boolean = line?.connected == true && complaints.missed == 0
 
     /** What this handset would say on connecting, read fresh because all of it can change. */
     private fun announcement(): StandbyAnnounce? {
@@ -596,31 +593,14 @@ class StandbyService : Service() {
         saidVolume = now.takeIf { landed }
     }
 
-    /**
-     * Writes down that something did not go out, once per reason rather than once per attempt.
-     *
-     * Per attempt, this is a line a second for as long as the fault lasts - 1,600 of them in one
-     * evening on 2026-09-14, all identical, hiding the handful of lines that said what was
-     * happening around them. What a person reading this file needs is when it started, what it
-     * says, and when it stopped.
-     */
+    /** Writes down that something did not go out - see [Complaints]. */
     private fun complain(what: String) {
         val why = line?.lastRefusal ?: "there is no line at all"
-        missed++
         lastTrouble = why
-        val said = "$what: $why"
-        if (said == complained) return
-        complained = said
-        events.write(said)
+        complaints.complain(what, why)
     }
 
-    /** And the other end of it, which is the line that says the fault is over. */
-    private fun said(what: String) {
-        if (complained == null) return
-        events.write("$what said again, after $missed that did not go out")
-        complained = null
-        missed = 0
-    }
+    private fun said(what: String) = complaints.said(what)
 
     /**
      * Tells the host when this handset's volume moved without the host asking, which is the keys.
@@ -777,7 +757,7 @@ class StandbyService : Service() {
         )
         else getString(
             R.string.standby_notification_down,
-            missed,
+            complaints.missed,
             worst.longestGapMillis / 1000L,
             worst.longestAwayMillis / 1000L,
             standing,
