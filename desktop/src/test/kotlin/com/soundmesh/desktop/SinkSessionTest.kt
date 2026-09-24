@@ -386,6 +386,30 @@ class SinkSessionTest {
     }
 
     /**
+     * Nobody answering is not the end of it: this machine keeps looking, as a handset sink's
+     * standby does, and stands by once a host turns up - without being started again. A host is
+     * usually switched on minutes after a sink was set down, and the window has no 开始 any more.
+     */
+    @Test
+    fun aHostSwitchedOnLaterIsFoundWithoutStartingAgain() {
+        val commandPort = freeTcpPort()
+        val orders = RoomCommandServer(commandPort).apply { start() }
+        val looks = AtomicInteger()
+        val sink = SinkSession(folder.newFolder(), openSpeakers = FakeSpeakers()::open, lookAgainMillis = 100L, discover = {
+            if (looks.getAndIncrement() < 2) DiscoveryOutcome(null, DiscoveryFailure.NOTHING_FOUND, 0, emptyList())
+            else advertisedAt("127.0.0.1", freeTcpPort())
+        })
+        try {
+            sink.start(commandPort = commandPort)
+            assertTrue(eventually(5_000) { sink.status().stage == SinkStage.NOT_FOUND })
+            assertTrue("never looked again: ${sink.status()}", eventually(10_000) { orders.standingBy() == 1 })
+        } finally {
+            sink.stop()
+            orders.stop()
+        }
+    }
+
+    /**
      * Told to play by a host whose clock never answers: nothing is played, the speakers are given
      * back, and this machine goes back to standing by with the reason kept for the screen.
      */

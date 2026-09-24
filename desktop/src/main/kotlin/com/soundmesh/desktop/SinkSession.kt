@@ -1,6 +1,7 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.ChunkCodec
+import com.soundmesh.core.DiscoveredPeer
 import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.DiscoveryOutcome
 import com.soundmesh.core.HostRepoint
@@ -116,6 +117,8 @@ class SinkSession(
     private val identityDirectory: File,
     private val openSpeakers: () -> Speakers = Speakers::open,
     private val discover: (Int) -> DiscoveryOutcome = PeerDiscovery::discover,
+    /** How long to wait between two looks that found nobody. */
+    private val lookAgainMillis: Long = LOOK_AGAIN_MILLIS,
     private val clockWaitMillis: Long = CLOCK_WAIT_MILLIS,
     private val silentAfterNanos: Long = SILENT_AFTER_NANOS,
     /** What to call this machine on the host's list. */
@@ -265,12 +268,21 @@ class SinkSession(
                 port = chunkPort
             } else {
                 stage = SinkStage.FINDING
-                val outcome = discover(DISCOVERY_WINDOW_MILLIS)
-                val peer = outcome.peer ?: run {
-                    failure = outcome.failure
-                    stage = SinkStage.NOT_FOUND
-                    return
+                // Looked for until one answers or this is stopped, as a handset sink's standby
+                // looks: the host is usually switched on minutes after a sink was set down. The
+                // stage stays at NOT_FOUND between looks, with the last reason, for the window.
+                var peer: DiscoveredPeer? = null
+                while (peer == null) {
+                    val outcome = discover(DISCOVERY_WINDOW_MILLIS)
+                    peer = outcome.peer
+                    if (peer == null) {
+                        failure = outcome.failure
+                        stage = SinkStage.NOT_FOUND
+                        if (!running) return
+                        Thread.sleep(lookAgainMillis)
+                    }
                 }
+                failure = null
                 hostName = peer.name
                 stored = PairingCode(PeerAdvertisement.hostIdOf(peer), peer.hostAddress, peer.port)
                 remember(stored)
@@ -639,6 +651,9 @@ class SinkSession(
     companion object {
         /** The handset sink's window, for the reason it gives: mDNS never says that was all of them. */
         const val DISCOVERY_WINDOW_MILLIS = 5_000
+
+        /** Between two looks that found nobody: added to the five seconds a look takes. */
+        const val LOOK_AGAIN_MILLIS = 3_000L
 
         /** The command-line sink's wait, which has been enough on every link measured so far. */
         const val CLOCK_WAIT_MILLIS = 30_000L
