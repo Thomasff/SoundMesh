@@ -125,9 +125,11 @@ class HostRoundTest {
         @Volatile var measured: List<String>? = null
         @Volatile var underWay = false
         var onUnderWay: () -> Unit = {}
+        var onSay: (RoundLine) -> Unit = {}
 
         override fun say(line: RoundLine, untilLocalNanos: Long?) {
             lines.add(line)
+            onSay(line)
         }
         override fun heard(peerId: String, line: RoundLine) {
             perDevice[peerId] = line
@@ -338,6 +340,33 @@ class HostRoundTest {
         assertEquals(emptyMap<Pair<String, String>, Double>(), StoredRoomField(hostDir).read())
         assertEquals(null, StoredSeparation(hostDir, one).read())
         assertEquals(null, report.measured)
+    }
+
+    /**
+     * Pressed in the moment between telling the room and starting to gather: the press closes the
+     * plan socket first, and the gathering then finds none. That is the button working, and it is
+     * said as a round called off - not as PLAN_UNBOUND, a round that broke (seen 09-24).
+     */
+    @Test
+    fun aRoundCalledOffBeforeItGathersSaysSoRatherThanThatItBroke() {
+        val stopping = AtomicBoolean(false)
+        val report = Heard()
+        val nobody = object : HostCommands {
+            override fun send(command: RoomCommand): Int = 0
+            override fun sendTo(peerId: String, order: RoomOrder): Boolean = false
+            override fun standingBy(): Int = 1
+            override fun forgetExcuses() {}
+            override fun listenForExcuses(listener: ((String, RoomExcuse) -> Unit)?) {}
+        }
+        val round = round(nobody, HostPlace.LISTENING, report) { stopping.get() }
+        report.onSay = { line ->
+            if (line == RoundLine.RoomToldNobody) {
+                stopping.set(true)
+                round.callOff()
+            }
+        }
+        assertFalse(round.room())
+        assertEquals(RoundLine.RoomCalledOffHere, report.lines.last())
     }
 
     @Test

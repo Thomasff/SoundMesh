@@ -367,7 +367,10 @@ class HostRound(
                 )
             } ?: run {
                 report.say(
-                    if (planServer.failureCode == CalibrationPlanServer.CALLED_OFF) {
+                    // Or called off before the gathering began: the press closed the plan socket
+                    // first, and the gathering then found none - PLAN_UNBOUND, which is the button
+                    // working and not a round that broke.
+                    if (planServer.failureCode == CalibrationPlanServer.CALLED_OFF || calledOff()) {
                         events.write("room-called-off: pressed while the room was still gathering")
                         RoundLine.RoomCalledOffHere
                     } else {
