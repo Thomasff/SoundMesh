@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import com.soundmesh.core.BadgeHues
 import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.PeerBadge
+import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
@@ -808,6 +809,29 @@ private fun describe(line: RoundLine): String = when (line) {
     is RoundLine.Verified -> say(Phrases.pair_calibrate_verified, line.ms)
     is RoundLine.NotFolded -> say(Phrases.pair_calibrate_not_folded, line.ms)
     is RoundLine.Done -> say(Phrases.pair_calibrate_done, line.ms, line.observations)
+    RoundLine.Waiting -> say(Phrases.pair_calibrate_waiting)
+    RoundLine.WaitingAimed -> say(Phrases.pair_calibrate_waiting_aimed)
+    RoundLine.AimedGone -> say(Phrases.pair_calibrate_aimed_gone)
+    RoundLine.RoomToldNobody -> say(Phrases.pair_calibrate_room_told_nobody)
+    is RoundLine.RoomWaiting -> say(Phrases.pair_calibrate_room_waiting, line.told, line.seconds)
+    is RoundLine.RoomJoined -> say(Phrases.pair_calibrate_room_joined, line.joined, line.told)
+    RoundLine.RoomCalledOffHere -> say(Phrases.pair_calibrate_room_called_off_here)
+    RoundLine.Stopping -> say(Phrases.pair_calibrate_stopping)
+    is RoundLine.RoomDone -> say(Phrases.pair_calibrate_room_done, line.handsets, line.measured, line.pairs)
+    is RoundLine.HostDone -> say(Phrases.pair_calibrate_host_done, line.ms, line.metres)
+    is RoundLine.DistanceDone -> say(Phrases.pair_calibrate_distance_done, line.metres)
+    is RoundLine.WrongSink -> say(Phrases.pair_calibrate_wrong_sink, "${PeerBadge.numberOf(line.peerId)}")
+    is RoundLine.Excused -> describe(line.excuse)
+}
+
+/** The handset's words for why a device kept out of a round (RoomRoster.excuseWord). */
+@Composable
+private fun describe(excuse: RoomExcuse): String = when (excuse) {
+    RoomExcuse.NO_MICROPHONE -> say(Phrases.excuse_no_microphone)
+    RoomExcuse.SLOW_LINK -> say(Phrases.excuse_slow_link)
+    RoomExcuse.CLOCK_NOT_CONVERGED -> say(Phrases.excuse_clock_not_converged)
+    RoomExcuse.BUSY -> say(Phrases.excuse_busy)
+    RoomExcuse.ASLEEP -> say(Phrases.excuse_asleep)
 }
 
 @Composable

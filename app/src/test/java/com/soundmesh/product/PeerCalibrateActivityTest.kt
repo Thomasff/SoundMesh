@@ -38,12 +38,14 @@ class PeerCalibrateActivityTest {
      * quiet rule and a satisfied one look exactly alike.
      *
      * The arms and their timings went to core's CalibrationArms.kt on 09-23 so a desktop sink runs
-     * the same schedule, which makes it the third file.
+     * the same schedule, which makes it the third file; the host's half went to core's HostRound.kt
+     * on 09-24 so a desktop host runs the same round, which makes it the fourth.
      */
     private val source =
         File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8) +
             File("../core/src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8) +
-            File("../core/src/main/java/com/soundmesh/product/CalibrationArms.kt").readText(Charsets.UTF_8)
+            File("../core/src/main/java/com/soundmesh/product/CalibrationArms.kt").readText(Charsets.UTF_8) +
+            File("../core/src/main/java/com/soundmesh/product/HostRound.kt").readText(Charsets.UTF_8)
 
     /**
      * The screen is singleTask, so a second start is delivered to onNewIntent and never reaches
@@ -230,7 +232,7 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun eachSinksAnswerIsKeptBesideTheOthersRatherThanReplacingThem() {
-        assertTrue(source.contains("record(sinkId, outcome)"))
+        assertTrue(source.contains("report.heard(sinkId, outcome)"))
         assertTrue(
             "rows are told apart by the whole name, because the short one can collide",
             source.contains("state.outcomes.filterNot { it.sinkId == sinkId }")
@@ -663,8 +665,9 @@ class PeerCalibrateActivityTest {
         // SinkRoundRequest, so that hand-off counts as a use with no runner behind it - and the
         // count was the weaker rule anyway: two sources on one runner and none on the next adds
         // up to exactly the same pair of numbers.
+        // Two since 09-24: the host's pair and room build theirs in one place, HostRound.runnerFor.
         val runners = source.split("PeerCalibrationRunner(").drop(1)
-        assertEquals("a runner appeared or vanished", 3, runners.size)
+        assertEquals("a runner appeared or vanished", 2, runners.size)
         for (call in runners) {
             assertTrue(
                 "a runner is built without a capture source",
@@ -899,7 +902,7 @@ class PeerCalibrateActivityTest {
      */
     @Test
     fun namesAHandsetForAPairRoundOnlyAfterTheServersAreListening() {
-        val serving = source.substringAfter("private fun measureAsHost(")
+        val serving = source.substringAfter("fun pair(aimedAt: String?)")
         val told = serving.indexOf("RoomCommand.MEASURE_PAIR")
         assertTrue("the host never tells the handset it is aimed at", told > 0)
         assertTrue(

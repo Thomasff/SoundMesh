@@ -34,7 +34,8 @@ class PeerCalibrateRoomTest {
      */
     private val source =
         File("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt").readText(Charsets.UTF_8) +
-            File("../core/src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8)
+            File("../core/src/main/java/com/soundmesh/product/SinkRound.kt").readText(Charsets.UTF_8) +
+            File("../core/src/main/java/com/soundmesh/product/HostRound.kt").readText(Charsets.UTF_8)
 
     private val one = "a1b2c3d4e5f60718"
     private val two = "0918273645abcdef"

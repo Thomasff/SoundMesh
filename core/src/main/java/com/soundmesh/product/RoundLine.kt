@@ -1,7 +1,9 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.RoomExcuse
+
 /**
- * One sentence a sink's round says about itself, with the numbers that go in it.
+ * One sentence a round says about itself, with the numbers that go in it.
  *
  * The round is one copy in core and its words are not: a handset says them out of its string
  * resources, a desktop out of the same keys read at build time. So the round names which sentence
@@ -47,4 +49,46 @@ sealed class RoundLine {
 
     /** `pair_calibrate_done`: the constant now carried, and how many runs it is folded from. */
     data class Done(val ms: Double, val observations: Int) : RoundLine()
+
+    // What a host's round says. Here beside the sink's since 09-24, when the host's round moved to
+    // core as well: the same table of keys, so a desktop host says what a handset host says.
+
+    /** `pair_calibrate_waiting`: waiting for a handset to ask. */
+    object Waiting : RoundLine()
+
+    /** `pair_calibrate_waiting_aimed`: the named handset has been told and is on its way. */
+    object WaitingAimed : RoundLine()
+
+    /** `pair_calibrate_aimed_gone`: the named handset was there a moment ago and is not now. */
+    object AimedGone : RoundLine()
+
+    /** `pair_calibrate_room_told_nobody`: nobody was standing by to be told. */
+    object RoomToldNobody : RoundLine()
+
+    /** `pair_calibrate_room_waiting`: how many were told, and the most this waits for them. */
+    data class RoomWaiting(val told: Int, val seconds: Int) : RoundLine()
+
+    /** `pair_calibrate_room_joined`: how many of those told have asked so far. */
+    data class RoomJoined(val joined: Int, val told: Int) : RoundLine()
+
+    /** `pair_calibrate_room_called_off_here`: this host called the round off. */
+    object RoomCalledOffHere : RoundLine()
+
+    /** `pair_calibrate_stopping`: this host stopped a pair round. */
+    object Stopping : RoundLine()
+
+    /** `pair_calibrate_room_done`: handsets in the room, pairs measured, pairs in all. */
+    data class RoomDone(val handsets: Int, val measured: Int, val pairs: Int) : RoundLine()
+
+    /** `pair_calibrate_host_done`: a pair's constant as the host combined it, and the distance. */
+    data class HostDone(val ms: Double, val metres: Double) : RoundLine()
+
+    /** `pair_calibrate_distance_done`: the distance arm's only answer. */
+    data class DistanceDone(val metres: Double) : RoundLine()
+
+    /** `pair_calibrate_wrong_sink`: a delivery signed by [peerId], not the handset this round is with. */
+    data class WrongSink(val peerId: String) : RoundLine()
+
+    /** One `excuse_*` key: why [excuse] kept a handset out of the round. */
+    data class Excused(val excuse: RoomExcuse) : RoundLine()
 }

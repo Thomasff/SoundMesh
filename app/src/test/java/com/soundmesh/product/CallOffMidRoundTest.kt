@@ -116,7 +116,7 @@ class CallOffMidRoundTest {
                 0 until afterRun.indexOf("AlignmentResultClient(")
         )
 
-        val host = source("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt")
+        val host = source("../core/src/main/java/com/soundmesh/product/HostRound.kt")
         assertTrue(
             "the pair host keeps a round it was told to stop",
             host.contains("pair-cancelled while chirping; nothing of this round is kept")
@@ -182,8 +182,14 @@ class CallOffMidRoundTest {
         val host = source("src/main/java/com/soundmesh/product/PeerCalibrateActivity.kt")
         val press = host.substringAfter("private fun stopServing()")
         assertTrue(
+            "the press never reaches the round in flight",
+            press.contains("hostRoundInFlight?.callOff()")
+        )
+        val round = source("../core/src/main/java/com/soundmesh/product/HostRound.kt")
+            .substringAfter("fun callOff()")
+        assertTrue(
             "the press reaches only the handsets still waiting for a plan",
-            press.contains("RoomCommands.send(RoomCommand.CALL_OFF)")
+            round.contains("commands.send(RoomCommand.CALL_OFF)")
         )
 
         val standby = source("src/main/java/com/soundmesh/product/StandbyService.kt")

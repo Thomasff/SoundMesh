@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
+import com.soundmesh.core.PeerBadge
+import com.soundmesh.core.RoomExcuse
 import com.soundmesh.probe.R
 import com.soundmesh.probe.sync.CalibrationAudioSource
 import com.soundmesh.probe.sync.CalibrationRunner
@@ -163,6 +165,28 @@ internal fun RoundLine.text(context: Context): String = when (this) {
     is RoundLine.Verified -> context.getString(R.string.pair_calibrate_verified, ms)
     is RoundLine.NotFolded -> context.getString(R.string.pair_calibrate_not_folded, ms)
     is RoundLine.Done -> context.getString(R.string.pair_calibrate_done, ms, observations)
+    RoundLine.Waiting -> context.getString(R.string.pair_calibrate_waiting)
+    RoundLine.WaitingAimed -> context.getString(R.string.pair_calibrate_waiting_aimed)
+    RoundLine.AimedGone -> context.getString(R.string.pair_calibrate_aimed_gone)
+    RoundLine.RoomToldNobody -> context.getString(R.string.pair_calibrate_room_told_nobody)
+    is RoundLine.RoomWaiting -> context.getString(R.string.pair_calibrate_room_waiting, told, seconds)
+    is RoundLine.RoomJoined -> context.getString(R.string.pair_calibrate_room_joined, joined, told)
+    RoundLine.RoomCalledOffHere -> context.getString(R.string.pair_calibrate_room_called_off_here)
+    RoundLine.Stopping -> context.getString(R.string.pair_calibrate_stopping)
+    is RoundLine.RoomDone -> context.getString(R.string.pair_calibrate_room_done, handsets, measured, pairs)
+    is RoundLine.HostDone -> context.getString(R.string.pair_calibrate_host_done, ms, metres)
+    is RoundLine.DistanceDone -> context.getString(R.string.pair_calibrate_distance_done, metres)
+    // Its number, the same one the room draws on it. See PeerCalibrateActivity.shortName.
+    is RoundLine.WrongSink -> context.getString(R.string.pair_calibrate_wrong_sink, "${PeerBadge.numberOf(peerId)}")
+    is RoundLine.Excused -> context.getString(
+        when (excuse) {
+            RoomExcuse.NO_MICROPHONE -> R.string.excuse_no_microphone
+            RoomExcuse.SLOW_LINK -> R.string.excuse_slow_link
+            RoomExcuse.CLOCK_NOT_CONVERGED -> R.string.excuse_clock_not_converged
+            RoomExcuse.BUSY -> R.string.excuse_busy
+            RoomExcuse.ASLEEP -> R.string.excuse_asleep
+        }
+    )
 }
 
 /** An instant on System.nanoTime's scale, as a countdown on elapsedRealtime's. See [whenItReaches]. */
