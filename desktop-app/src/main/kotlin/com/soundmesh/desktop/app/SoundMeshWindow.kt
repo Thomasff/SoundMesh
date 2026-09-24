@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -44,6 +45,7 @@ import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
 import com.soundmesh.product.BoxTitle
 import com.soundmesh.product.Chip
+import com.soundmesh.product.ChoiceCard
 import com.soundmesh.product.EffectKind
 import com.soundmesh.product.FilledChip
 import com.soundmesh.product.Framed
@@ -61,6 +63,8 @@ import com.soundmesh.product.Solid
 import com.soundmesh.product.SpatialRoom
 import com.soundmesh.product.Tag
 import com.soundmesh.product.Tone
+import com.soundmesh.product.Transport
+import com.soundmesh.product.TransportIcon
 import com.soundmesh.product.VolumeLine
 import com.soundmesh.product.badgeColour
 import com.soundmesh.desktop.AudioSession
@@ -226,8 +230,8 @@ private fun HostPane(
         Switch(checked = alsoHere, onCheckedChange = { alsoHere = it }, enabled = !status.playing)
     }
     if (status.playing) {
-        Solid(say(Phrases.play_stop)) { scope.launch(sessions) { host.stopPlaying() } }
-        status.playhead?.let { Transport(host, it, status.paused, sessions) }
+        status.playhead?.let { PlayControls(host, it, status.paused, sessions) }
+        Ghost(say(Phrases.play_stop)) { scope.launch(sessions) { host.stopPlaying() } }
         status.capturing?.let { Note(say(Phrases.pc_capturing, it)) }
     } else {
         Solid(
@@ -408,26 +412,28 @@ private fun carryingTone(carrying: Carried): Tone = when (carrying) {
 }
 
 /**
- * 上一首 / 暂停 / 下一首 and where in the song the room is - the handset host's transport row and
- * playhead. Every one of them lands a lead later in the room: the queued audio is thrown away and
- * the new place starts a second and a half on.
+ * Where in the song the room is and 上一首 / 暂停 / 下一首 - the handset host's playhead and
+ * transport row, in its order and with its drawn buttons. Every one of them lands a lead later in
+ * the room: the queued audio is thrown away and the new place starts a second and a half on.
  */
 @Composable
-private fun Transport(host: HostSession, playhead: Playhead, paused: Boolean, sessions: CoroutineDispatcher) {
+private fun PlayControls(host: HostSession, playhead: Playhead, paused: Boolean, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
     Note(say(Phrases.pc_song_of, playhead.song + 1, playhead.songs, playhead.name))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Ghost(say(Phrases.play_previous), enabled = playhead.song > 0, modifier = Modifier.weight(1f)) {
-            scope.launch(sessions) { host.stepSong(-1) }
-        }
-        Ghost(say(if (paused) Phrases.play_resume else Phrases.play_pause), modifier = Modifier.weight(1f)) {
+    Progress(playhead) { scope.launch(sessions) { host.seekTo(it) } }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(28.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Spacer(Modifier.weight(1f))
+        Transport(TransportIcon.PREVIOUS, enabled = playhead.song > 0) { scope.launch(sessions) { host.stepSong(-1) } }
+        Transport(if (paused) TransportIcon.PLAY else TransportIcon.PAUSE, enabled = true, filled = true) {
             scope.launch(sessions) { host.setPaused(!paused) }
         }
-        Ghost(say(Phrases.play_next), enabled = playhead.song < playhead.songs - 1, modifier = Modifier.weight(1f)) {
-            scope.launch(sessions) { host.stepSong(1) }
-        }
+        Transport(TransportIcon.NEXT, enabled = playhead.song < playhead.songs - 1) { scope.launch(sessions) { host.stepSong(1) } }
+        Spacer(Modifier.weight(1f))
     }
-    Progress(playhead) { scope.launch(sessions) { host.seekTo(it) } }
 }
 
 /**
@@ -499,7 +505,11 @@ internal fun HostDrawing(host: HostSession, room: RoomState, sessions: Coroutine
     Note(say(Phrases.pc_drag_icons))
 }
 
-/** The handset host's effect list. The words are the handset's. */
+/**
+ * The handset host's effect list: one card each, and the chosen one opens to say what it does and
+ * hold what moves it. The words are the handset's, apart from the lines that say what an effect
+ * does, which are written for a room that is not only handsets.
+ */
 @Composable
 private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
     val scope = rememberCoroutineScope()
@@ -508,30 +518,32 @@ private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispa
     }
     val chosen = EffectKind.entries.first { it.settings.mode == room.mode }
     Label(say(Phrases.room_effect_title))
-    Segmented(
-        EffectKind.entries.mapNotNull { kind ->
-            EFFECT_TITLES[kind]?.let { title -> Segment(say(title), kind == chosen) { send { setEffect(kind) } } }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (kind in EffectKind.entries) {
+            val title = EFFECT_TITLES[kind] ?: continue
+            ChoiceCard(say(title), kind == chosen, onClick = { send { setEffect(kind) } }) {
+                when (kind) {
+                    EffectKind.UNISON -> {
+                        EffectLine(say(Phrases.room_effect_unison_line))
+                        ContentSplit(room, ::send)
+                    }
+                    EffectKind.STEREO -> {
+                        EffectLine(say(Phrases.pc_stereo_line))
+                        ContentSplit(room, ::send)
+                    }
+                    EffectKind.SPIN -> {
+                        EffectLine(say(Phrases.pc_spin_line))
+                        HeldKnob(
+                            say(Phrases.room_spin_period),
+                            room.periodSeconds.toFloat(),
+                            SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(),
+                            { Phrases.room_spin_seconds.of(it.english, it.value.roundToInt()) }
+                        ) { send { setSpinSeconds(it.roundToInt()) } }
+                    }
+                    EffectKind.PLACE -> EffectLine(say(Phrases.pc_place_line))
+                }
+            }
         }
-    )
-    when (chosen) {
-        EffectKind.UNISON -> {
-            Note(say(Phrases.room_effect_unison_line))
-            ContentSplit(room, ::send)
-        }
-        EffectKind.STEREO -> {
-            Note(say(Phrases.pc_stereo_line))
-            ContentSplit(room, ::send)
-        }
-        EffectKind.SPIN -> {
-            Note(say(Phrases.pc_spin_line))
-            HeldKnob(
-                say(Phrases.room_spin_period),
-                room.periodSeconds.toFloat(),
-                SHORTEST_SPIN_SECONDS.toFloat()..LONGEST_SPIN_SECONDS.toFloat(),
-                { Phrases.room_spin_seconds.of(it.english, it.value.roundToInt()) }
-            ) { send { setSpinSeconds(it.roundToInt()) } }
-        }
-        EffectKind.PLACE -> Note(say(Phrases.pc_place_line))
     }
     var open by remember { mutableStateOf(false) }
     Column(Modifier.padding(top = 8.dp)) {
@@ -552,6 +564,12 @@ private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispa
             HeldKnob(say(Phrases.room_split_content), room.separation, 0f..1f, ::percent) { send { setSeparation(it) } }
         }
     }
+}
+
+/** What a chosen effect does, under its name in its card - the handset's EffectRow line. */
+@Composable
+private fun EffectLine(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** What a knob's readout is made from: the value it shows, in the language it is said in. */
