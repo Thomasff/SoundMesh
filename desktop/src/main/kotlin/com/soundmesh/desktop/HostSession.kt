@@ -168,7 +168,13 @@ data class HostStatus(
     val localBand: String?,
     val localShares: String?,
     val problem: HostProblem?,
-    val measure: MeasureStatus = MeasureStatus()
+    val measure: MeasureStatus = MeasureStatus(),
+    /**
+     * The hollow ones on the drawing that said, before they went, that their own system does not
+     * exempt SoundMesh from power saving - the handset host's StandbyLook.KILLED. Only what they
+     * said about themselves: going on its own says nothing about why.
+     */
+    val killedIds: Set<String> = emptySet()
 )
 
 /**
@@ -403,13 +409,18 @@ class HostSession(
         // The drawing's colours are whichever channel is holding the room just now, as on the
         // handset: the spatial channel's while playing, the standing channel's between songs.
         val colours = if (playing && stream != null) spatialServer?.places().orEmpty() else places
+        // Between songs the drawing keeps whoever went (see [refreshRoom]), and not standing by is
+        // the only way to have stopped: nobody is sent audio, and a line that closed is not quiet.
+        val standing = if (playing && stream != null) null else command?.standingPeerIds().orEmpty().toSet()
+        val silent = room.icons.map { it.peerId }
+            .filter { it != selfId && (it in quiet || (onAudio != null && it !in onAudio) || (standing != null && it !in standing)) }
+            .toSet()
+        // By name, as the handset host matches them: the command channel keeps what each one said
+        // under the name it gave, and one that never gave a name is left out rather than guessed.
+        val saidNotExempt = command?.notExemptNames().orEmpty().toSet()
         HostStatus(
-            room = room.copy(
-                colours = colours,
-                silentIds = room.icons.map { it.peerId }
-                    .filter { it != selfId && (it in quiet || (onAudio != null && it !in onAudio)) }
-                    .toSet()
-            ),
+            room = room.copy(colours = colours, silentIds = silent),
+            killedIds = silent.filter { command?.nameOf(it) in saidNotExempt }.toSet(),
             volumePercent = volume.percent,
             roomVolumePercent = roomVolume,
             volumeTouched = roomVolume != null || asked.isNotEmpty() || volume.percent != SoftwareVolume.FULL,
@@ -866,15 +877,18 @@ class HostSession(
      *
      * Who is in it follows the handset host (HomeActivity.readRoom): while playing, whoever has
      * named itself on the spatial channel - the devices actually taking part - with this machine
-     * first when it plays aloud; between songs, this machine and whoever stands by. A device that
-     * comes and goes keeps where it was drawn.
+     * first when it plays aloud; between songs, this machine, whoever is already drawn and whoever
+     * stands by (the handset host's betweenSessionsRoster). One that goes between songs stays,
+     * hollow, as on the handset host: that is when a phone's own power saving stops it, and a
+     * drawing that dropped it would have nothing left to show it on. A device that comes and goes
+     * keeps where it was drawn.
      */
     private fun refreshRoom() {
         val self = selfId ?: return
         val spatial = spatialServer ?: return
         val roster =
             if (playing && stream != null) listOfNotNull(self.takeIf { playingHere }) + spatial.peerIds()
-            else listOf(self) + (commandServer?.standingPeerIds() ?: emptyList())
+            else (listOf(self) + room.icons.map { it.peerId } + (commandServer?.standingPeerIds() ?: emptyList())).distinct()
         if (roster.distinct() == room.icons.map { it.peerId }) return
         // Somebody drawn for the first time lands where nothing measured put them. Devices that
         // come and go keep where they were - which on this machine is every start and stop of a

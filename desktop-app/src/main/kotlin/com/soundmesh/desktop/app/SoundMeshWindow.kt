@@ -292,7 +292,7 @@ private fun HostPane(
             Solid(say(Phrases.goto_room_go), enabled = status.open) { onMeasure(MeasureJob.ROOM, null) }
         }
     }
-    HostDrawing(host, status.room, sessions, rememberRipple(status.playing))
+    HostDrawing(host, status.room, sessions, rememberRipple(status.playing), status.killedIds)
     MeasuredLines(host, status.room, details, sessions)
     Effects(host, status.room, sessions)
     Volumes(host, status, sessions)
@@ -513,7 +513,13 @@ private fun clock(millis: Long): String {
  * a second, and an icon that followed the mouse only that often would lag a drag by half a second.
  */
 @Composable
-internal fun HostDrawing(host: HostSession, room: RoomState, sessions: CoroutineDispatcher, ripple: Float? = null) {
+internal fun HostDrawing(
+    host: HostSession,
+    room: RoomState,
+    sessions: CoroutineDispatcher,
+    ripple: Float? = null,
+    killed: Set<String> = emptySet()
+) {
     val scope = rememberCoroutineScope()
     var local by remember { mutableStateOf<RoomState?>(null) }
     var touchedAt by remember { mutableStateOf(0L) }
@@ -541,7 +547,8 @@ internal fun HostDrawing(host: HostSession, room: RoomState, sessions: Coroutine
             },
             togglePart = { peerId -> scope.launch(sessions) { host.togglePart(peerId) } }
         ),
-        ripple
+        ripple,
+        killed
     )
     Note(say(Phrases.pc_drag_icons))
 }

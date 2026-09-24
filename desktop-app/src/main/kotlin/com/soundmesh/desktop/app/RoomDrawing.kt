@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
@@ -58,9 +59,13 @@ class DrawingActions(
  *
  * [ripple] is the handset's just-started ring round this machine's own icon, 0..1 while it spreads
  * - see [rememberRipple].
+ *
+ * [killed] are the hollow ones that said their own power saving was not letting SoundMesh be - the
+ * handset host's StandbyLook.KILLED: ringed in the error colour rather than their own, since that
+ * ring names the fault and not the device, and flashed twice the moment they become it.
  */
 @Composable
-fun RoomDrawing(room: RoomState, actions: DrawingActions?, ripple: Float? = null) {
+fun RoomDrawing(room: RoomState, actions: DrawingActions?, ripple: Float? = null, killed: Set<String> = emptySet()) {
     // Read through here rather than keyed on: the gesture outlives the recompositions that move
     // the icons, and would otherwise pick up whatever was nearest where the icons used to be -
     // the handset drawing's reason, word for word.
@@ -73,6 +78,12 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?, ripple: Float? = null
     val self = MaterialTheme.colorScheme.tertiary
     val source = MaterialTheme.colorScheme.secondary
     val frame = MaterialTheme.colorScheme.surfaceVariant
+    val danger = MaterialTheme.colorScheme.error
+    // Out here rather than in the Canvas, as on the handset: a flash is remembered animation state,
+    // which a DrawScope cannot hold.
+    val pulses = room.icons.associate { icon ->
+        icon.peerId to key(icon.peerId) { rememberKilledPulse(icon.peerId in killed) }
+    }
     val english = LocalEnglish.current
     var modifier = Modifier
         .size(DRAWING_SIDE)
@@ -127,6 +138,9 @@ fun RoomDrawing(room: RoomState, actions: DrawingActions?, ripple: Float? = null
                 PeerBadge.numberOf(icon.peerId),
                 selfRing = if (icon.peerId == room.selfId) self else null,
                 hollow = icon.peerId in room.silentIds,
+                ring = danger.takeIf { icon.peerId in killed },
+                pulse = pulses[icon.peerId] ?: 0f,
+                danger = danger,
                 measurer = measurer
             )
             if (splitting(room)) {
@@ -157,6 +171,20 @@ fun rememberRipple(running: Boolean): Float? {
         ripple.animateTo(1f, animationSpec = tween(RIPPLE_MILLIS))
     }
     return ripple.value.takeIf { running }
+}
+
+/** The handset's rememberKilledPulse: two red flashes the moment [killed] turns true, and its alpha. */
+@Composable
+private fun rememberKilledPulse(killed: Boolean): Float {
+    val pulse = remember { Animatable(0f) }
+    LaunchedEffect(killed) {
+        if (!killed) return@LaunchedEffect
+        repeat(KILLED_PULSE_REPEATS) {
+            pulse.animateTo(1f, animationSpec = tween(KILLED_PULSE_MILLIS))
+            pulse.animateTo(0f, animationSpec = tween(KILLED_PULSE_MILLIS))
+        }
+    }
+    return pulse.value
 }
 
 /**
@@ -218,6 +246,11 @@ private fun DrawScope.drawDevice(
     number: Int,
     selfRing: Color?,
     hollow: Boolean,
+    /** The hollow ring's colour when it is not the device's own - see RoomDrawing's killed. */
+    ring: Color?,
+    /** The killed flash's alpha, 0 outside of one. */
+    pulse: Float,
+    danger: Color,
     measurer: TextMeasurer
 ) {
     val centre = Offset(icon.x * size.width, icon.y * size.height)
@@ -228,8 +261,11 @@ private fun DrawScope.drawDevice(
         radius = halo,
         center = centre
     )
-    if (hollow) drawCircle(colour, radius = radius, center = centre, style = Stroke(width = 4f))
+    if (hollow) drawCircle(ring ?: colour, radius = radius, center = centre, style = Stroke(width = 4f))
     else drawCircle(colour, radius = radius, center = centre)
+    if (pulse > 0f) {
+        drawCircle(danger.copy(alpha = pulse), radius = radius + KILLED_PULSE_RING_PX, center = centre, style = Stroke(width = 4f))
+    }
     selfRing?.let { drawCircle(it, radius = radius + 4f, center = centre, style = Stroke(width = 3f)) }
     val text = measurer.measure("$number", TextStyle(fontSize = 10.sp, color = if (hollow) colour else labelColour))
     drawText(text, topLeft = Offset(centre.x - text.size.width / 2f, centre.y - text.size.height / 2f))
@@ -267,6 +303,11 @@ private fun DrawScope.drawRipple(icon: RoomIcon, progress: Float, colour: Color)
 private const val RIPPLE_MILLIS = 600
 private const val RIPPLE_SPREAD = 0.3f
 private const val RIPPLE_MAX_ALPHA = 0.8f
+
+/** The handset's killed flash, unchanged: how many, each half of one, and how far outside the icon. */
+private const val KILLED_PULSE_REPEATS = 2
+private const val KILLED_PULSE_MILLIS = 150
+private const val KILLED_PULSE_RING_PX = 6f
 
 /** The handset drawing's icon radius, as a share of the side. */
 private const val DEVICE_RADIUS = 0.06f

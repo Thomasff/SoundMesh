@@ -253,6 +253,40 @@ class HostSessionTest {
     }
 
     /**
+     * Between songs a handset that went stays on the drawing, hollow, where it stood - the handset
+     * host's keptRoom - and one that said its own system does not exempt SoundMesh before it went
+     * is the handset host's StandbyLook.KILLED. One that went without saying so is only hollow:
+     * going on its own says nothing about why.
+     */
+    @Test
+    fun aHandsetThatSaidItIsNotExemptAndWentIsDrawnKilled() {
+        val ports = ports()
+        val host = session(ports)
+        val heard = ArrayBlockingQueue<RoomOrder>(8)
+        host.open()
+        val killed = standBy(ports.command, heard)
+        val gone = standBy(ports.command, heard, selfId = OTHER_PHONE, called = "客厅")
+        try {
+            assertTrue(eventually { host.status().room.icons.size == 3 })
+            assertTrue("never said it", eventually { killed.sayPower(false) })
+            assertTrue(host.status().killedIds.isEmpty())
+            killed.close()
+            gone.close()
+            assertTrue(
+                "the two that went were not left hollow: ${host.status().room.silentIds}, standing ${host.status().phones.map { it.name }}",
+                eventually { host.status().room.silentIds == setOf(PHONE, OTHER_PHONE) }
+            )
+            val status = host.status()
+            assertEquals(3, status.room.icons.size)
+            assertEquals(setOf(PHONE), status.killedIds)
+        } finally {
+            killed.close()
+            gone.close()
+            host.close()
+        }
+    }
+
+    /**
      * 下一首 moves the list on and restarts the timeline, and what was queued of the old song is
      * thrown away - here on this machine's own output, which plays through the same playout a
      * sink does.
@@ -654,6 +688,7 @@ class HostSessionTest {
 
     private companion object {
         const val PHONE = "a1b2c3d4e5f60718"
+        const val OTHER_PHONE = "f0e1d2c3b4a59687"
         const val MUSIC = 4242L
         const val SAMPLE: Short = 1234
     }
