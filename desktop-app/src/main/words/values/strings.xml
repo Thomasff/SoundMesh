@@ -13,9 +13,8 @@
     <string name="pc_folder_songs">「%1$s」里 %2$d 首</string>
     <string name="pc_capture_app">抓程序的声音</string>
     <string name="pc_everything">所有声音</string>
-    <string name="pc_everything_hint">包括之后才打开的程序和通知音</string>
     <string name="pc_no_programs">现在没有程序在音量合成器里出声。先让要抓的程序放起来，再点一次。</string>
-    <string name="pc_which_program">抓哪些程序的声音？</string>
+    <string name="pc_which_program">选择播放的声音</string>
     <string name="pc_program_playing">%1$s（正在出声）</string>
     <string name="pc_cancel">取消</string>
     <string name="pc_confirm">确定</string>

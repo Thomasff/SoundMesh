@@ -9,8 +9,7 @@
     <string name="pc_capture_app">Capture a program</string>
     <string name="pc_no_programs">No program is making sound in the volume mixer right now. Start the one you want, then press again.</string>
     <string name="pc_everything">All sounds</string>
-    <string name="pc_everything_hint">Including programs opened later, and notification sounds</string>
-    <string name="pc_which_program">Which programs\' sound?</string>
+    <string name="pc_which_program">Choose the sound to play</string>
     <string name="pc_program_playing">%1$s (making sound)</string>
     <string name="pc_cancel">Cancel</string>
     <string name="pc_confirm">OK</string>

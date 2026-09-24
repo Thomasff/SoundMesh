@@ -446,7 +446,8 @@ private fun HostPlaying(
         Modifier.padding(top = 4.dp)
     )
     programs?.let { list ->
-        // First, and on its own: it takes the programs above and any started later, so it and
+        Note(say(Phrases.pc_which_program))
+        // First, and on its own: it takes the programs below and any started later, so it and
         // the programs are one or the other - ticking either unticks the rest.
         Line {
             LineName(say(Phrases.pc_everything))
@@ -455,8 +456,7 @@ private fun HostPlaying(
                 if (tick) ticked = emptySet()
             })
         }
-        Note(say(Phrases.pc_everything_hint))
-        Note(say(if (list.isEmpty()) Phrases.pc_no_programs else Phrases.pc_which_program))
+        if (list.isEmpty()) Note(say(Phrases.pc_no_programs))
         // One to a line: a browser, a player and a call can all be in the mixer at once.
         for (program in list) {
             Line {
@@ -468,23 +468,25 @@ private fun HostPlaying(
             }
         }
         // Nothing changes until 确定, so 取消 leaves the room playing what it was.
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Tag(say(Phrases.pc_cancel), onClick = { programs = null })
+        // One question with two answers, so side by side rather than stacked - see [Solid].
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Ghost(say(Phrases.pc_cancel), modifier = Modifier.weight(1f)) { programs = null }
             val chosen = list.filter { it.pid in ticked }
-            Tag(
+            Solid(
                 say(Phrases.pc_confirm),
-                onClick = if (!tickedEverything && chosen.isEmpty()) null else ({
-                    putDown()
-                    pick.everything = tickedEverything
-                    pick.apps = if (tickedEverything) emptyList() else chosen
-                    pick.files = emptyList()
-                    pick.kind = SourceKind.APP
-                    programs = null
-                    val join = Phrases.room_volume_name_join
-                    pick.picked = if (tickedEverything) { e -> Phrases.pc_everything.of(e) }
-                    else { e -> Phrases.pc_program_sound.of(e, chosen.joinToString(join.of(e)) { it.name }) }
-                })
-            )
+                enabled = tickedEverything || chosen.isNotEmpty(),
+                modifier = Modifier.weight(1f)
+            ) {
+                putDown()
+                pick.everything = tickedEverything
+                pick.apps = if (tickedEverything) emptyList() else chosen
+                pick.files = emptyList()
+                pick.kind = SourceKind.APP
+                programs = null
+                val join = Phrases.room_volume_name_join
+                pick.picked = if (tickedEverything) { e -> Phrases.pc_everything.of(e) }
+                else { e -> Phrases.pc_program_sound.of(e, chosen.joinToString(join.of(e)) { it.name }) }
+            }
         }
     }
     status.problem?.let { Note(describe(it), Tone.WRONG) }
