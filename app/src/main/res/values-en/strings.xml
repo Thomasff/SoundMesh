@@ -240,15 +240,9 @@
     <string name="room_volume_title">All phones</string>
     <string name="room_volume_level">%1$d%%</string>
     <string name="room_volume_capturing_hint">This phone is capturing another app, so its own copy goes out on the alarm channel; media is turned down to 0, or you would hear it twice. Restoring puts both back.</string>
-    <string name="room_volume_row">%1$s %2$d%% (%3$d/%4$d, %5$s)</string>
     <string name="room_volume_row_missed">%1$s volume has not reached %2$d%%</string>
     <string name="room_volume_row_silent">%1$s took the command but has never reported its own volume back, so the number beside it is old.</string>
-    <string name="room_volume_media">Media</string>
-    <string name="room_volume_alarm">Alarm</string>
-    <string name="room_volume_row_hint">The slider under each phone moves that phone alone. Drag the one above and they all line up again. The row above each slider is what that phone read back, so one that did not follow shows up.</string>
-    <string name="room_volume_none">No phone has reported its volume yet.</string>
     <string name="room_volume_restore">Restore volumes</string>
-    <string name="room_volume_restore_hint">Puts every phone back to the volume it was at before this touched it. Phones do not agree on how many steps a stream has, so the same percentage lands on a different step on each; that is why the rows above are what each phone read back rather than a copy of the slider.</string>
     <string name="capture_silent">Sound has been paused for %1$d s. If you did not pause it yourself, try setting this handset\'s media volume to 1.</string>
 
     <string name="pair_title">Pairing</string>

@@ -39,9 +39,9 @@ import kotlin.math.roundToInt
  * dot on this one matches the icon on the room drawing for the same phone. Somebody glancing down
  * from the drawing has to be able to say which row is which without reading a name.
  *
- * A drag reports at its end and not through it - see [RoomVolumePanel]'s own note: one drag is
- * fifty values, and each one told to the room is a frame to every handset and a thread to send it
- * on. The dot still moves under the finger, because one that does not is a broken control.
+ * A drag reports at its end and not through it: one drag is fifty values, and each one told to the
+ * room is a frame to every handset and a thread to send it on. The dot still moves under the
+ * finger, because one that does not is a broken control.
  *
  * A tap on the track lands the dot there. It used to be swallowed - Material reports a touch on a
  * track exactly as it reports a drag, so a sleeve across the screen could set the whole room - but
