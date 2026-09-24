@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="pc_role_question">Is this computer the host, or does it play along with the host in the room?</string>
+    <string name="pc_welcome_what">Turn this computer and a few phones into one set of speakers</string>
+    <string name="pc_role_host_hint">The one that plays. Everything else in the room follows it.</string>
+    <string name="pc_role_sink_hint">Plays along with the host in the room, which it finds by itself on the same network.</string>
+    <string name="pc_role_later">Once picked, switch any time at the top of the window.</string>
     <string name="pc_settings_window">SoundMesh settings</string>
 
     <string name="pc_pick_files">Choose files</string>

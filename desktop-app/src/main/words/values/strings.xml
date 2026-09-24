@@ -6,6 +6,10 @@
 -->
 <resources>
     <string name="pc_role_question">这台电脑当主机，还是跟着房间里的主机放？</string>
+    <string name="pc_welcome_what">把这台电脑和几台手机变成一套音箱</string>
+    <string name="pc_role_host_hint">放歌的那台。房间里其他设备跟着它响。</string>
+    <string name="pc_role_sink_hint">跟着房间里的主机响。同一个网里的主机会自己找到。</string>
+    <string name="pc_role_later">选了以后在窗口最上面随时换。</string>
     <string name="pc_settings_window">SoundMesh 设置</string>
 
     <string name="pc_pick_files">选文件</string>

@@ -6,10 +6,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -77,6 +79,7 @@ fun main() = application {
             exitApplication()
         },
         title = "SoundMesh",
+        icon = AppIcon.painter,
         state = rememberWindowState(width = 560.dp, height = 680.dp)
     ) {
         DisposableEffect(window) {
@@ -89,7 +92,7 @@ fun main() = application {
             window.addComponentListener(follow)
             onDispose { window.removeComponentListener(follow) }
         }
-        Themed(theme, language) {
+        Themed(theme, language, window) {
             SoundMeshWindow(
                 host, sink, dispatcher, details,
                 onOpenSettings = { settingsOpen = true },
@@ -112,9 +115,10 @@ fun main() = application {
                 measuring = null
             },
             title = Phrases.pc_measure_window.of(language.english()),
+            icon = AppIcon.painter,
             state = rememberWindowState(width = 520.dp, height = 720.dp)
         ) {
-            Themed(theme, language) {
+            Themed(theme, language, window) {
                 MeasurePane(host, job, aimedAt, dispatcher, details)
             }
         }
@@ -123,9 +127,10 @@ fun main() = application {
         Window(
             onCloseRequest = { settingsOpen = false },
             title = Phrases.pc_settings_window.of(language.english()),
+            icon = AppIcon.painter,
             state = rememberWindowState(width = 420.dp, height = 560.dp)
         ) {
-            Themed(theme, language) {
+            Themed(theme, language, window) {
                 SettingsPane(
                     theme,
                     onTheme = {
@@ -151,18 +156,22 @@ fun main() = application {
 }
 
 /**
- * The handset's colours, on its ground so the window's ground follows the theme too, and the
- * language every phrase below is said in.
+ * The handset's colours, on its ground so the window's ground follows the theme too - title bar
+ * included, see [TitleBar] - and the language every phrase below is said in. Also where each
+ * window gets the icon, in all its sizes: see [AppIcon].
  */
 @Composable
-private fun Themed(theme: ThemeChoice, language: LanguageChoice, content: @Composable () -> Unit) {
+private fun Themed(theme: ThemeChoice, language: LanguageChoice, window: ComposeWindow, content: @Composable () -> Unit) {
     val dark = when (theme) {
         ThemeChoice.SYSTEM -> isSystemInDarkTheme()
         ThemeChoice.LIGHT -> false
         ThemeChoice.DARK -> true
     }
+    val colours = soundMeshColours(dark)
+    LaunchedEffect(window) { AppIcon.dress(window) }
+    LaunchedEffect(window, dark) { TitleBar.paint(window, colours.background, colours.onBackground, dark) }
     CompositionLocalProvider(LocalEnglish provides language.english()) {
-        MaterialTheme(colorScheme = soundMeshColours(dark)) {
+        MaterialTheme(colorScheme = colours) {
             Surface(color = MaterialTheme.colorScheme.background, content = content)
         }
     }

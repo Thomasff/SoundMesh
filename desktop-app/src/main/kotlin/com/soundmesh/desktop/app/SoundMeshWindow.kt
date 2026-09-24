@@ -3,8 +3,10 @@ package com.soundmesh.desktop.app
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,9 +21,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -34,9 +38,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.rememberWindowState
 import com.soundmesh.core.BadgeHues
 import com.soundmesh.core.DiscoveryFailure
 import com.soundmesh.core.PeerBadge
@@ -133,6 +144,14 @@ internal fun SoundMeshWindow(
         playing = look?.playing == true,
         everyNanos = EDGE_EVERY_NANOS
     ) { if (look?.sink == true) sink.loudness() else host.loudness() }
+    val pickHost: () -> Unit = {
+        role = Role.HOST
+        scope.launch(sessions) { sink.stop(); host.open() }
+    }
+    val pickSink: () -> Unit = {
+        role = Role.SINK
+        scope.launch(sessions) { host.close() }
+    }
     // The edge is laid over the window rather than wrapped round it, so the bands are nodes of
     // their own and the page under them is not redrawn for the light - the handset's layout.
     Box(Modifier.fillMaxSize()) {
@@ -146,19 +165,19 @@ internal fun SoundMeshWindow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Segmented(
-                    listOf(
-                        Segment(say(Phrases.role_host), role == Role.HOST) {
-                            role = Role.HOST
-                            scope.launch(sessions) { sink.stop(); host.open() }
-                        },
-                        Segment(say(Phrases.role_sink), role == Role.SINK) {
-                            role = Role.SINK
-                            scope.launch(sessions) { host.close() }
-                        }
-                    ),
-                    Modifier.weight(1f)
-                )
+                // The switch between the two once one is picked. Before that the two boxes below
+                // are the choice, and the same two words twice over would be one too many.
+                if (role != null) {
+                    Segmented(
+                        listOf(
+                            Segment(say(Phrases.role_host), role == Role.HOST, pickHost),
+                            Segment(say(Phrases.role_sink), role == Role.SINK, pickSink)
+                        ),
+                        Modifier.weight(1f)
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
                 Chip(say(Phrases.settings_open), onOpenSettings)
             }
             when (role) {
@@ -166,13 +185,46 @@ internal fun SoundMeshWindow(
                 Role.SINK -> SinkPane(sink, sessions, details, onLook)
                 null -> {
                     SideEffect { onLook(null) }
-                    Text(say(Phrases.pc_role_question), Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium)
+                    RolePicker(onHost = pickHost, onSink = pickSink)
                     Networks()
                 }
             }
         }
         // Last, so it is over the page, which scrolls. A computer's window is square-cornered.
         if (edge != null) BadgeEdges(edge, glow, round = 0f, keepHandsetWavelength = true)
+    }
+}
+
+/**
+ * Nobody has picked a role yet - the handset's WelcomeScreen: what this is for in one line, then
+ * each role as a box with its own sentence, the whole box the click. The sentences are the
+ * computer's: a sink here finds its host on the network rather than scanning a code.
+ */
+@Composable
+private fun RolePicker(onHost: () -> Unit, onSink: () -> Unit) {
+    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            say(Phrases.pc_welcome_what),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 30.sp
+        )
+        Note(say(Phrases.pc_role_question))
+    }
+    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        RoleBox(say(Phrases.role_host), say(Phrases.pc_role_host_hint), onHost)
+        RoleBox(say(Phrases.role_sink), say(Phrases.pc_role_sink_hint), onSink)
+    }
+    Note(say(Phrases.pc_role_later))
+}
+
+@Composable
+private fun RoleBox(name: String, hint: String, onClick: () -> Unit) {
+    Box(Modifier.clickable(onClick = onClick)) {
+        Framed {
+            BoxTitle(name, strong = true)
+            Note(hint)
+        }
     }
 }
 
@@ -887,7 +939,22 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
     }
     val code = payload ?: return
     val modules = remember(code) { PairingCodeModules.of(code) }
-    Canvas(Modifier.padding(top = 6.dp).size(PAIR_CODE_SIZE).background(Color.White)) {
+    // Where it opens full size: the screen that was clicked on, which is the one this window is on.
+    var wholeScreen by remember { mutableStateOf<java.awt.Rectangle?>(null) }
+    CodePicture(modules, Modifier.padding(top = 6.dp).size(PAIR_CODE_SIZE).clickable {
+        wholeScreen = java.awt.MouseInfo.getPointerInfo()?.device?.defaultConfiguration?.bounds
+    })
+    Note(say(Phrases.pc_code_how))
+    Note(say(Phrases.pc_code_address, where.address, where.adapter))
+    wholeScreen?.let { screen ->
+        CodeScreen(modules, say(Phrases.pc_code_address, where.address, where.adapter), screen) { wholeScreen = null }
+    }
+}
+
+/** The code's modules, black on white, filling [modifier]'s square. */
+@Composable
+private fun CodePicture(modules: Array<BooleanArray>, modifier: Modifier) {
+    Canvas(modifier.background(Color.White)) {
         val cell = size.width / modules.size
         for (y in modules.indices) {
             for (x in modules[y].indices) {
@@ -897,8 +964,51 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
             }
         }
     }
-    Note(say(Phrases.pc_code_how))
-    Note(say(Phrases.pc_code_address, where.address, where.adapter))
+}
+
+/**
+ * The code held up to a camera from a metre away, and nothing else - the handset's
+ * PairCodeScreen, over the whole of [screen]. The address it carries is written under it, as in
+ * the pane, since a wrong pick of adapter is only visible that way. 返回 or Esc closes it.
+ */
+@Composable
+private fun CodeScreen(modules: Array<BooleanArray>, address: String, screen: java.awt.Rectangle, onClose: () -> Unit) {
+    // Carried over by hand: what the window is themed and worded in belongs to the one it opened from.
+    val colours = MaterialTheme.colorScheme
+    val english = LocalEnglish.current
+    Window(
+        onCloseRequest = onClose,
+        title = say(Phrases.pair_code_fullscreen),
+        icon = AppIcon.painter,
+        undecorated = true,
+        alwaysOnTop = true,
+        // AWT's units here are the window's own dp - see ScreenEdges.
+        state = rememberWindowState(
+            position = WindowPosition(screen.x.dp, screen.y.dp),
+            size = DpSize(screen.width.dp, screen.height.dp)
+        ),
+        onKeyEvent = { if (it.key == Key.Escape) { onClose(); true } else false }
+    ) {
+        LaunchedEffect(window) { AppIcon.dress(window) }
+        CompositionLocalProvider(LocalEnglish provides english) {
+            MaterialTheme(colorScheme = colours) {
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        val side = minOf(maxWidth, maxHeight) * 0.7f
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            BoxTitle(say(Phrases.pair_code_fullscreen), strong = true)
+                            CodePicture(modules, Modifier.size(side))
+                            Note(address)
+                            Ghost(say(Phrases.back), onClick = onClose)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** Scanned from arm's length off a laptop screen, and small enough to leave the pane readable. */

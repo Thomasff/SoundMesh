@@ -144,6 +144,11 @@ compose.desktop {
             packageName = "SoundMesh"
             packageVersion = "1.0.0"
             modules("java.instrument", "jdk.unsupported")
+            // The exe's own icon, what Explorer and a pinned taskbar button show before a window
+            // exists. Made by tools/windows-icons.ps1, as are the windows' own in resources/icon.
+            windows {
+                iconFile.set(rootProject.file("asset/windows/SoundMesh.ico"))
+            }
         }
     }
 }
