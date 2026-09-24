@@ -68,6 +68,9 @@
     <string name="pc_stereo_line">Devices on the left play the left channel and those on the right the right, split by the layout above.</string>
     <string name="pc_spin_line">The source circles around you; better with three devices or more.</string>
     <string name="pc_place_line">Drag the ringed dot in the room drawing above to move the source.</string>
+    <string name="pc_source_here">The source sits on the ring of devices; the room is as it was.</string>
+    <string name="pc_source_inside">The source is inside the ring of devices: direction is %1$d%% weaker.</string>
+    <string name="pc_source_dry">But Room reverb is at zero right now, so pulling the source back only makes it quieter. Loudness alone cannot say how far away something is — a whisper at your ear and a shout across the street can be equally loud. Turn up Room reverb under Fine tuning: the reverb does not recede with the source, so one drops and the other does not, and the ear reads that as distance.</string>
     <string name="pc_reverb">Room reverb</string>
     <string name="pc_envelopment">Envelopment</string>
     <string name="pc_envelopment_line">How much each device keeps once the sound turns away.</string>

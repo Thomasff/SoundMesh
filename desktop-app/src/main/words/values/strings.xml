@@ -73,6 +73,9 @@
     <string name="pc_stereo_line">偏左的放左声道，偏右的放右声道，按上面图里的摆位分。</string>
     <string name="pc_spin_line">声源环绕转动，三台以上效果更好。</string>
     <string name="pc_place_line">在上面的房间图里拖那个带圈的点，改变声源位置。</string>
+    <string name="pc_source_here">声源就在设备那一圈上，全屋原样。</string>
+    <string name="pc_source_inside">声源在设备那一圈以内：方向感弱了 %1$d%%。</string>
+    <string name="pc_source_dry">但现在回声强度是零，所以拖远只是变轻。光靠响度说不清远近——耳边的耳语和远处的喊叫可以一样响。把「细调」里的「回声强度」拧上来：回声不跟着声源走远，一个变轻一个不变，耳朵才读得出距离。</string>
     <string name="pc_reverb">回声强度</string>
     <string name="pc_envelopment">包裹感</string>
     <string name="pc_envelopment_line">声音转开之后，每台还留多少。</string>

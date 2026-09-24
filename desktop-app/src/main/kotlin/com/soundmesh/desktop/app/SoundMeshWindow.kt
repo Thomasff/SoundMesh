@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -81,6 +84,9 @@ import com.soundmesh.product.TransportIcon
 import com.soundmesh.product.VolumeLine
 import com.soundmesh.product.badgeColour
 import com.soundmesh.product.rememberEdgeGlow
+import com.soundmesh.product.RoomReading
+import com.soundmesh.product.roomReadings
+import com.soundmesh.product.ruleOf
 import com.soundmesh.desktop.AudioSession
 import com.soundmesh.desktop.AudioSessions
 import com.soundmesh.desktop.HostPort
@@ -346,7 +352,7 @@ private fun HostPane(
     }
     HostDrawing(host, status.room, sessions, rememberRipple(status.playing), status.killedIds)
     MeasuredLines(host, status.room, details, sessions)
-    Effects(host, status.room, sessions)
+    Effects(host, status.room, sessions, details)
     Volumes(host, status, sessions)
     Diagnostics(
         details,
@@ -603,6 +609,24 @@ internal fun HostDrawing(
         killed
     )
     Note(say(Phrases.pc_drag_icons))
+    if (shown.mode == SpatialMode.PAN) SourceReadout(shown)
+}
+
+/**
+ * Where the source dot has been put, in words the drawing cannot say - the handset's
+ * SourceReadout: how much of the sense of direction a dot inside the ring has given up, and that a
+ * dot pulled outside it with no reverb only gets quieter. What the dot is and how to move it is
+ * already in 自定义声音位置's card, so the handset's first line is not repeated here.
+ */
+@Composable
+private fun SourceReadout(room: RoomState) {
+    val inside = SpatialRoom.envelopmentFor(room.retreat, room.envelopment)
+    when {
+        room.retreat > 0f -> Unit
+        inside > 0f -> Note(say(Phrases.pc_source_inside, (inside / SpatialField.MAX_ENVELOPMENT.toFloat() * 100f).roundToInt()))
+        else -> Note(say(Phrases.pc_source_here))
+    }
+    if (room.retreat > 0f && room.reverb <= 0f) Note(say(Phrases.pc_source_dry))
 }
 
 /**
@@ -611,7 +635,7 @@ internal fun HostDrawing(
  * does, which are written for a room that is not only handsets.
  */
 @Composable
-private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
+private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispatcher, details: Boolean) {
     val scope = rememberCoroutineScope()
     fun send(change: HostSession.() -> Unit) {
         scope.launch(sessions) { host.change() }
@@ -645,6 +669,8 @@ private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispa
             }
         }
     }
+    // Under the list rather than inside a card, as on the handset: they are about the room.
+    if (details) LiveReadings(room)
     var open by remember { mutableStateOf(false) }
     Column(Modifier.padding(top = 8.dp)) {
         Ghost(say(if (open) Phrases.room_fine_hide else Phrases.room_fine)) { open = !open }
@@ -665,6 +691,39 @@ private fun Effects(host: HostSession, room: RoomState, sessions: CoroutineDispa
         }
     }
 }
+
+/**
+ * The handset host's 实时读数: what the rule asks of each device right now, bigger where the sound
+ * should be - so that "the sound seems to come from over there" can be checked against the app's
+ * own answer. Read off this machine's clock, which here is the host clock the rule runs on. Only
+ * with 显示诊断细节 on, and worked out five times a second, as often as the handset's screen does.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LiveReadings(room: RoomState) {
+    val readings by produceState(emptyList<RoomReading>(), room) {
+        while (true) {
+            value = runCatching { ruleOf(room) }.getOrNull()?.let { roomReadings(it, System.nanoTime()) }.orEmpty()
+            delay(READINGS_EVERY_MILLIS)
+        }
+    }
+    if (readings.isEmpty()) return
+    Label(say(Phrases.room_live))
+    FlowRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        for (reading in readings) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Badge(reading.peerId, room.colours[reading.peerId])
+                Text(say(Phrases.room_live_row, reading.loudness), style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
+private const val READINGS_EVERY_MILLIS = 200L
 
 /** What a chosen effect does, under its name in its card - the handset's EffectRow line. */
 @Composable
