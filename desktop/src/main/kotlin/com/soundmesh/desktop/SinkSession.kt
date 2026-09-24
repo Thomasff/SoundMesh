@@ -172,6 +172,16 @@ class SinkSession(
     // Whether the speakers are held for playing, which a round has to wait to be let go of.
     @Volatile private var speakersOpen = false
 
+    // The speakers while following, for [loudness]; null the rest of the time.
+    @Volatile private var heardOn: Speakers? = null
+
+    /**
+     * How loud what this machine is playing is right now, 0..1, and 0 while it is not following -
+     * the handset session's loudness(), which the window's edge light reads once a frame. Not part
+     * of [status], which is read twice a second.
+     */
+    fun loudness(): Float = heardOn?.loudness() ?: 0f
+
     /** Starts following [address], or whichever single host discovery finds when it is null. */
     fun start(
         address: String? = null,
@@ -551,6 +561,7 @@ class SinkSession(
         }
         // Held until the use below lets go, whichever way it leaves; a round waits on this to record.
         speakersOpen = true
+        heardOn = speakers
         try {
             speakers.use {
                 // The measurement first, the room round's approximation when there is none, and zero
@@ -581,6 +592,7 @@ class SinkSession(
                 }
             }
         } finally {
+            heardOn = null
             speakersOpen = false
         }
     }

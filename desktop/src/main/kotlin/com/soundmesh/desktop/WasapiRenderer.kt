@@ -77,6 +77,18 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
     @Volatile private var running = false
     private var writer: Thread? = null
 
+    // What was handed over and how loud, by frame. Guarded by [lock], as the writer is.
+    private val heard = HeardLoudness()
+
+    /**
+     * How loud what the engine is playing right now is, 0 (silence) to 1 (full scale) - the
+     * handset renderer's loudness, which the window's edge light reads once a frame. Set by the
+     * writer each time it wakes, so it is as fresh as the writer's own sleep; a volatile write is
+     * all it costs that thread.
+     */
+    @Volatile var loudness = 0f
+        private set
+
     private class Clip(val startFrame: Long, val samples: ShortArray, val channels: Int) {
         val frames: Int get() = samples.size / channels
         val endFrame: Long get() = startFrame + frames
@@ -311,14 +323,19 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
 
     private fun writeAvailable() = synchronized(lock) {
         if (Wasapi.getCurrentPadding(client, out) < 0) return@synchronized
-        val free = bufferFrames - out.get(Wasapi.I32, 0)
+        val padding = out.get(Wasapi.I32, 0)
+        // The padding is what the engine holds and has not played, so the frame it is on is that
+        // far behind everything handed over.
+        loudness = heard.at(written - padding)
+        val free = bufferFrames - padding
         // Below a period's worth there is nothing useful to hand over, and asking for a tiny
         // buffer every 10 ms costs more than waiting for the next round.
         if (free < 64) return@synchronized
 
         if (Wasapi.getBuffer(render, free, out) < 0) return@synchronized
-        fill(out.get(Wasapi.PTR, 0), free)
+        val squares = fill(out.get(Wasapi.PTR, 0), free)
         Wasapi.releaseBuffer(render, free, 0)
+        heard.wrote(written, free, HeardLoudness.levelOf(squares, free * format.channels))
         written += free
     }
 
@@ -329,11 +346,15 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
      * engine takes the ordinary path with ordinary data in it. That was deliberate in the probe -
      * a silent flag may permit a shortcut, and a measurement of the shortcut is not a measurement
      * of what the product does - and it stays deliberate here.
+     *
+     * Answers the sum of the squares of what it wrote, for [HeardLoudness]: one multiply-add a
+     * sample on a loop that is already visiting every one.
      */
-    private fun fill(buffer: MemorySegment, frames: Int) {
+    private fun fill(buffer: MemorySegment, frames: Int): Double {
         val channels = format.channels
         val b = buffer.reinterpret(frames.toLong() * format.blockAlign)
         val base = written
+        var squares = 0.0
 
         // Only the clips that reach into this window, and clips already behind it are dropped so
         // the list cannot grow for the length of a session.
@@ -354,7 +375,9 @@ class WasapiRenderer(bufferMillis: Long = 200L) : AutoCloseable {
                 } else {
                     b.set(Wasapi.I16, slot * 2, v.coerceIn(-32768, 32767).toShort())
                 }
+                squares += v.toDouble() * v
             }
         }
+        return squares
     }
 }

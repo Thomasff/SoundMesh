@@ -11,10 +11,14 @@ import java.lang.foreign.Arena
 class Speakers(
     val output: FrameOutput,
     val deviceName: String?,
+    private val level: () -> Float = { 0f },
     private val closer: () -> Unit
 ) : AutoCloseable {
 
     override fun close() = closer()
+
+    /** How loud what is sounding here right now is, 0..1 - see [WasapiRenderer.loudness]. */
+    fun loudness(): Float = level()
 
     companion object {
         /**
@@ -32,7 +36,7 @@ class Speakers(
                 // Refuses a device that is not at the stream's rate, and says how to fix it.
                 val output = WasapiOutput(renderer, clock)
                 renderer.start()
-                return Speakers(output, renderer.deviceName) { renderer.close() }
+                return Speakers(output, renderer.deviceName, { renderer.loudness }) { renderer.close() }
             } catch (e: Throwable) {
                 renderer.close()
                 throw e

@@ -378,6 +378,16 @@ class HostSession(
         }
     }
 
+    // This machine's speakers while the room plays here too, for [loudness]; null otherwise.
+    @Volatile private var heardOn: Speakers? = null
+
+    /**
+     * How loud what this machine is playing is right now, 0..1, and 0 while it plays nothing here -
+     * the handset host's loudness(), which the window's edge light reads once a frame. Not part of
+     * [status], which is read twice a second.
+     */
+    fun loudness(): Float = heardOn?.loudness() ?: 0f
+
     fun status(): HostStatus = synchronized(lock) {
         val command = commandServer
         val places = command?.places().orEmpty()
@@ -987,6 +997,7 @@ class HostSession(
                 return
             }
             try {
+                heardOn = speakers
                 // This machine's own part of the room, shaped by the same functions a sink's is.
                 val here = if (speakers == null) null else synchronized(lock) { selfId }?.let { SinkSpatial(it) }
                 synchronized(lock) {
@@ -1032,6 +1043,7 @@ class HostSession(
             } finally {
                 // Straight away rather than after a tail: stop is a person asking for quiet, and the
                 // handsets are stopping at the same moment.
+                if (heardOn === speakers) heardOn = null
                 speakers?.close()
                 // Only this press's: a newer one has set its own.
                 synchronized(lock) {
