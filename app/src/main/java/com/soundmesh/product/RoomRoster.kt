@@ -132,4 +132,5 @@ private fun excuseWord(excuse: RoomExcuse): Int = when (excuse) {
     RoomExcuse.CLOCK_NOT_CONVERGED -> R.string.excuse_clock_not_converged
     RoomExcuse.BUSY -> R.string.excuse_busy
     RoomExcuse.ASLEEP -> R.string.excuse_asleep
+    RoomExcuse.MIC_MUTED -> R.string.excuse_mic_muted
 }

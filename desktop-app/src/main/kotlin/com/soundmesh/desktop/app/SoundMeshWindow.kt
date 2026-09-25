@@ -1393,6 +1393,7 @@ internal fun describe(excuse: RoomExcuse): String = when (excuse) {
     RoomExcuse.CLOCK_NOT_CONVERGED -> say(Phrases.excuse_clock_not_converged)
     RoomExcuse.BUSY -> say(Phrases.excuse_busy)
     RoomExcuse.ASLEEP -> say(Phrases.excuse_asleep)
+    RoomExcuse.MIC_MUTED -> say(Phrases.excuse_mic_muted)
 }
 
 @Composable
@@ -1400,6 +1401,8 @@ internal fun describe(problem: MicrophoneProblem, detail: String?): String = whe
     MicrophoneProblem.NO_DEVICE -> say(Phrases.pc_mic_no_device)
     MicrophoneProblem.DENIED -> say(Phrases.pc_mic_denied)
     MicrophoneProblem.NOT_48K -> say(Phrases.pc_mic_not_48k, detail)
+    // The same sentence the host's row says for it - one string, see excuse_mic_muted.
+    MicrophoneProblem.MUTED -> say(Phrases.excuse_mic_muted)
     MicrophoneProblem.OTHER -> say(Phrases.pc_mic_other, detail)
 }
 

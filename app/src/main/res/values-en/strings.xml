@@ -216,10 +216,11 @@
     <string name="pair_calibrate_room_told_nobody">**Nobody was told, so no phone will start.** The others have to have this app open and be sitting on its front screen to get the command. On the launcher, in another app, or still on the last round\'s result page, and it never arrives. Take them all back to the front screen, where it says how many are standing by, and press again.</string>
     <string name="pair_calibrate_room_done">%1$d in the room; %2$d of %3$d pairs measured.</string>
     <string name="excuse_no_microphone">No microphone permission. Grant it first, then measure.</string>
-    <string name="excuse_slow_link">The network round trip to this phone is too slow; the number would be unusable.</string>
-    <string name="excuse_clock_not_converged">Its clock has not converged, which is usually the network as well.</string>
-    <string name="excuse_busy">It is in the middle of another measurement. Press again when it finishes.</string>
-    <string name="excuse_asleep">It is standing by, but its screen is off. Playback and volume do not need the screen; measuring does. Wake that phone and press again.</string>
+    <string name="excuse_slow_link">This device\'s network round trip to this host is too slow; the number would be unusable.</string>
+    <string name="excuse_clock_not_converged">This device\'s clock has not converged, which is usually the network as well.</string>
+    <string name="excuse_busy">This device is in the middle of another measurement. Press again when it finishes.</string>
+    <string name="excuse_asleep">This device is standing by, but its screen is off. Playback and volume do not need the screen; measuring does. Wake that phone and press again.</string>
+    <string name="excuse_mic_muted">The microphone is muted or its input volume is 0. Change it in the system settings.</string>
     <string name="pair_calibrate_room_sink_done">Delivered. %1$d in the room, %2$d pairs measured for this phone.</string>
     <string name="pair_calibrate_room_sink_approximate">Delivered. %1$d in the room, %2$d pairs measured for this phone. This phone has never been properly synced with the host, so the %3$.3f ms this round worked out has been kept to be going on with. It is an estimate, out by 1–2 ms. Press Start sync when there is time and a real measurement will replace it.</string>
     <string name="pair_calibrate_stop">Stop</string>

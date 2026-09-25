@@ -222,10 +222,11 @@
     <string name="pair_calibrate_room_told_nobody">**一台都没通知到，所以没有手机会自己开始。** 其他手机要开着这个应用、停在首页，才收得到这个指令——退到桌面、切到别的应用、或者还停在上一轮的对时结果页，都收不到。先去把它们都退回首页，首页上会写着待命几台，然后再按一次。</string>
     <string name="pair_calibrate_room_done">房间里 %1$d 台，%3$d 对里量出了 %2$d 对的距离。</string>
     <string name="excuse_no_microphone">没有录音权限，建议先设置后再测量。</string>
-    <string name="excuse_slow_link">它到本机的网络往返太慢，测出来的数不能用。</string>
-    <string name="excuse_clock_not_converged">它的对时没收敛，多半还是网络。</string>
-    <string name="excuse_busy">它正在跑别的测量，还没跑完。等它结束再按。</string>
-    <string name="excuse_asleep">它在待命，但屏幕是灭的。播放和音量不用亮屏，测量要——把那台手机点亮再按一次。</string>
+    <string name="excuse_slow_link">此设备到本机的网络往返太慢，测出来的数不能用。</string>
+    <string name="excuse_clock_not_converged">此设备的对时没收敛，多半还是网络。</string>
+    <string name="excuse_busy">此设备正在跑别的测量，还没跑完。等它结束再按。</string>
+    <string name="excuse_asleep">此设备在待命，但屏幕是灭的。播放和音量不用亮屏，测量要——把那台手机点亮再按一次。</string>
+    <string name="excuse_mic_muted">检测到麦克风被静音或输入音量为0，请去系统设置中修改</string>
     <string name="pair_calibrate_room_sink_done">送到了。房间里 %1$d 台，你本机有 %2$d 对量出来了。</string>
     <string name="pair_calibrate_room_sink_approximate">送到了。房间里 %1$d 台，你本机有 %2$d 对量出来了。本机还没正经和主机对过时，所以顺手记下了这一轮算出来的 %3$.3f ms 先用着（是估的，误差大概 1–2 ms）。有空按一次「开始对时」，测出来的会顶掉它。</string>
     <string name="pair_calibrate_stop">停止</string>

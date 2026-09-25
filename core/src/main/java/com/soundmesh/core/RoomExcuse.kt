@@ -44,7 +44,15 @@ enum class RoomExcuse {
      * And the question every new command has to answer - does obeying this put something on my
      * own screen - still has to have somewhere to land when the answer is yes.
      */
-    ASLEEP
+    ASLEEP,
+
+    /**
+     * A microphone that opens but hears nothing: muted, its input level at zero, or silenced where
+     * nothing can read it. Sent by a computer, whose mute key (F4 on a laptop) leaves the device
+     * open and hands back zeros - a round would run to the end and file nothing. One case for all
+     * three, because the person's fix is the same place: the system's sound settings.
+     */
+    MIC_MUTED
 }
 
 /**

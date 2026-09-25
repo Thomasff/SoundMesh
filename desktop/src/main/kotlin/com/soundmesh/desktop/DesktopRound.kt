@@ -164,8 +164,13 @@ class WasapiRoundRecorder(
     }
 }
 
-/** Why this machine cannot record a round, in the three ways that have a fix a person can make. */
-enum class MicrophoneProblem { NO_DEVICE, DENIED, NOT_48K, OTHER }
+/**
+ * Why this machine cannot record a round, in the ways that have a fix a person can make.
+ *
+ * MUTED is a microphone that opens and hears nothing: the endpoint muted (a laptop's F4), its
+ * level at zero, or silenced somewhere nothing reports - see [MicrophoneCheck.silenced].
+ */
+enum class MicrophoneProblem { NO_DEVICE, DENIED, NOT_48K, MUTED, OTHER }
 
 /**
  * Whether a round could record here, asked by opening the microphone once and closing it.
@@ -194,9 +199,42 @@ object MicrophoneCheck {
             if (it.format.sampleRate != ChirpGenerator.SAMPLE_RATE) {
                 return MicrophoneProblem.NOT_48K to "${it.format.sampleRate} Hz"
             }
+            // Listened to only when the endpoint's own word does not already settle it, so a muted
+            // microphone is said at once rather than after half a second of zeros.
+            val level = it.volume
+            val heard = if (level != null && (level.second || level.first <= 0f)) ShortArray(0) else listen(it)
+            if (silenced(level, heard)) {
+                val said = level?.let { (scalar, muted) -> "${"%.0f".format(scalar * 100)}%${if (muted) ", muted" else ""}" }
+                return MicrophoneProblem.MUTED to "${said ?: "level unknown"}, ${heard.size} samples heard"
+            }
         }
         return null
     }
+
+    /**
+     * Whether a microphone that opened is one a round would hear nothing through.
+     *
+     * The endpoint's mute and level are read first because they name the cause; the recording is
+     * what catches the rest - a switch that mutes below Windows, or a privacy setting that hands a
+     * desktop app zeros rather than refusing it. Every sample exactly zero is not a threshold: on
+     * this project's laptop a live microphone in a quiet room never came near it (see
+     * MicrophoneCheckTest). Nothing heard at all is not taken as silence - that is a timing
+     * question, and a round refused on it would be refused on a guess.
+     */
+    fun silenced(volume: Pair<Float, Boolean>?, heard: ShortArray): Boolean {
+        if (volume != null && (volume.second || volume.first <= 0f)) return true
+        return heard.isNotEmpty() && heard.all { it.toInt() == 0 }
+    }
+
+    private fun listen(capture: WasapiCapture): ShortArray {
+        capture.start()
+        Thread.sleep(LISTEN_MILLIS)
+        capture.stop()
+        return capture.take().mono
+    }
+
+    /** Long enough for a few dozen packets, short enough not to be felt before a round. */
+    private const val LISTEN_MILLIS = 500L
 
     /** E_ACCESSDENIED as Wasapi.check prints it. */
     private const val ACCESS_DENIED = "0x80070005"

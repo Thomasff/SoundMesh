@@ -179,6 +179,35 @@ class HostMeasuringTest {
     }
 
     /**
+     * A computer whose microphone is muted says that, not "no permission": the fix is a different
+     * place, and the row is the only thing the person at the host sees.
+     */
+    @Test
+    fun aDeviceWithItsMicrophoneMutedSaysSoAgainstItsRow() {
+        val host = host()
+        val sinkDir = folder.newFolder("sink")
+        val sink = sink(sinkDir, microphone = MicrophoneProblem.MUTED to "muted")
+        try {
+            host.open()
+            sink.startOnHost()
+            assertTrue(eventually(10_000) { host.status().phones.size == 1 })
+            host.measureRoom()
+
+            val sinkId = HostIdentity(sinkDir).current()
+            assertTrue("row ${host.status().phones} lines ${host.status().measure.heard}", eventually(10_000) {
+                val status = host.status()
+                status.phones.single().excuse == RoomExcuse.MIC_MUTED &&
+                    status.measure.heard.contains(sinkId to RoundLine.Excused(RoomExcuse.MIC_MUTED))
+            })
+            host.callOffMeasuring()
+            assertTrue(host.idle())
+        } finally {
+            sink.stop()
+            host.close()
+        }
+    }
+
+    /**
      * This machine without a microphone does not start a round at all: the devices would chirp for
      * a host that hears none of it. Said as which of the problems it is.
      */

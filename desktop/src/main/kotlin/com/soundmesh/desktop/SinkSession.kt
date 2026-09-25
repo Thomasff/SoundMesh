@@ -484,7 +484,9 @@ class SinkSession(
                 if (trouble != null) {
                     microphone = trouble.first
                     microphoneDetail = trouble.second
-                    runCatching { tellHostWhy(host.address, dials.command, selfId, RoomExcuse.NO_MICROPHONE) }
+                    // Muted has a fix of its own, and the host's row is where the person will read it.
+                    val why = if (trouble.first == MicrophoneProblem.MUTED) RoomExcuse.MIC_MUTED else RoomExcuse.NO_MICROPHONE
+                    runCatching { tellHostWhy(host.address, dials.command, selfId, why) }
                     return@Thread
                 }
                 hush()
