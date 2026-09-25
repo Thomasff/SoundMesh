@@ -55,10 +55,13 @@ class HostRoundTest {
     private class Air(private val places: Map<String, Pair<Double, Double>>) {
         private val sounds = Collections.synchronizedList(ArrayList<Pair<String, AudioChunk>>())
 
+        /** Devices whose speaker plays nothing, as one turned right down would. */
+        val muted: MutableSet<String> = Collections.synchronizedSet(HashSet<String>())
+
         fun speaker(id: String): RoundSpeaker = object : RoundSpeaker {
             override fun start(endAtHostNanos: Long) {}
             override fun submit(chunk: AudioChunk) {
-                sounds.add(id to chunk)
+                if (id !in muted) sounds.add(id to chunk)
             }
             override fun stopNow() {}
             override fun finish(): String? = "{}"
@@ -208,6 +211,7 @@ class HostRoundTest {
         override fun sendTo(peerId: String, order: RoomOrder): Boolean {
             said.add(order.command)
             if (order.command == RoomCommand.MEASURE_PAIR) sink(if (peerId == one) oneDir else twoDir, peerId, room = false)
+            if (order.command == RoomCommand.MEASURE_ROOM) sink(if (peerId == one) oneDir else twoDir, peerId, room = true)
             return true
         }
 
@@ -320,6 +324,52 @@ class HostRoundTest {
         assertEquals(RoundLine.Excused(RoomExcuse.NO_MICROPHONE), report.perDevice[two])
         assertEquals(listOf(one, hostId), report.measured)
         near(2.0, StoredSeparation(hostDir, one).read(), "the separation to one")
+    }
+
+    @Test
+    fun aSoundCheckHearsEveryDeviceAndFilesNothing() {
+        val check = round(Line(), HostPlace.PLAYING, Heard()).soundCheck()
+        joinSinks()
+
+        assertNotNull(check)
+        assertEquals(setOf(one, two, hostId), check!!.heard)
+        assertEquals(hostId, check.tookPart.last())
+        assertEquals(emptyMap<Pair<String, String>, Double>(), StoredRoomField(hostDir).read())
+        assertEquals(null, StoredSeparation(hostDir, one).read())
+        // The sinks were answered, and offered nothing to keep.
+        assertTrue("a sink did not hear the answer: $sinkLines", sinkLines.values.all { it is RoundLine.RoomSinkDone })
+    }
+
+    @Test
+    fun aSoundCheckDoesNotHearADeviceThatMadeNoSound() {
+        air.muted += two
+        val check = round(Line(), HostPlace.PLAYING, Heard()).soundCheck()
+        joinSinks()
+
+        assertEquals(setOf(one, hostId), check!!.heard)
+        assertTrue(two in check.tookPart)
+    }
+
+    /** Nothing it heard can be placed without its own chirp, so it names nobody as heard. */
+    @Test
+    fun aHostThatCannotHearItselfHearsNobody() {
+        air.muted += hostId
+        val check = round(Line(), HostPlace.PLAYING, Heard()).soundCheck()
+        joinSinks()
+
+        assertEquals(emptySet<String>(), check!!.heard)
+    }
+
+    /** The two-device check is a room of two, told by name: the other sink is not asked. */
+    @Test
+    fun aSoundCheckOfOneDeviceAsksThatOneAlone() {
+        val line = Line()
+        val check = round(line, HostPlace.PLAYING, Heard()).soundCheck(one)
+        joinSinks()
+
+        assertEquals(listOf(RoomCommand.MEASURE_ROOM), line.said)
+        assertEquals(listOf(one, hostId), check!!.tookPart)
+        assertEquals(setOf(one, hostId), check.heard)
     }
 
     @Test

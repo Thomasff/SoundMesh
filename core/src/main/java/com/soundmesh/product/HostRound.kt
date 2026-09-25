@@ -7,6 +7,7 @@ import com.soundmesh.core.CalibrationReply
 import com.soundmesh.core.CalibrationRole
 import com.soundmesh.core.CalibrationUpdate
 import com.soundmesh.core.ChirpArrival
+import com.soundmesh.core.ChirpCorrelator
 import com.soundmesh.core.ChirpGenerator
 import com.soundmesh.core.HostId
 import com.soundmesh.core.RoomCommand
@@ -18,6 +19,7 @@ import com.soundmesh.probe.sync.AlignmentResultServer
 import com.soundmesh.probe.sync.CalibrationPlanServer
 import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.EventLog
+import com.soundmesh.probe.sync.PeerCalibrationRun
 import com.soundmesh.probe.sync.PeerCalibrationRunner
 import com.soundmesh.probe.sync.PeerRunLog
 import com.soundmesh.probe.sync.RoomResultServer
@@ -40,6 +42,34 @@ enum class RoundResult {
 
     /** This round broke. */
     FAILED
+}
+
+/**
+ * What a sound check heard. [tookPart] is every device the schedule named, host last; [heard] the
+ * ones this host's recording carries; [excuses] who said why they would not take part.
+ *
+ * A device on the room's line that is in none of these was told and never came - it made no sound,
+ * so it was not heard either, which is what the screen says about it.
+ */
+data class SoundCheck(
+    val tookPart: List<String>,
+    val heard: Set<String>,
+    val excuses: Map<String, RoomExcuse>
+)
+
+/**
+ * Which slots one pass of a room was heard in, by the gate a measurement reads them with.
+ *
+ * Nothing unless [ownSlot] itself was heard. Every other slot is looked for a fixed distance from
+ * where this device's own chirp landed, so without that anchor a window can sit on noise, the
+ * previous slot's tail, or anything at all; the one thing that can honestly be said is that this
+ * device did not hear itself.
+ */
+fun heardSlots(arrivals: List<ChirpArrival?>, ownSlot: Int): Set<Int> {
+    fun audible(arrival: ChirpArrival?) =
+        arrival != null && arrival.ratio >= ChirpCorrelator.MIN_TRUSTWORTHY_RATIO && !arrival.atSearchEdge
+    if (!audible(arrivals.getOrNull(ownSlot))) return emptySet()
+    return arrivals.indices.filter { audible(arrivals[it]) }.toSet()
 }
 
 /**
@@ -250,7 +280,164 @@ class HostRound(
      * until everybody has asked; and the pair between two sinks is made of two deliveries that
      * neither of them can combine.
      */
-    fun room(): Boolean {
+    fun room(): Boolean = gathered(aimedAt = null, oneChirp = false) { gathering ->
+        val plan = gathering.plan
+        val ownSlot = gathering.ownSlot
+        val run = gathering.run
+        val roomServer = gathering.roomServer
+        // Written before anything is combined, so a room that loses everybody still leaves
+        // this handset's own hearing of it on disk.
+        File(RunStore(filesDir).prepareRun(plan.caseId), hostArtifact(hostId)).writeText(run.json)
+        fileAttempt("HOST-${plan.caseId}-$hostId", run.json)
+        log(run.json)
+        // Keyed by slot throughout: the analysis speaks slots, and the one place a slot
+        // becomes a name again is roomField.
+        val heard = LinkedHashMap<Int, List<List<ChirpArrival?>>>()
+        heard[ownSlot] = run.arrivalsByRepeat
+        val heardFrom = ArrayList<String>()
+        var field = RoomField(emptyMap(), emptyMap(), emptyMap(), emptyMap(), 0)
+        roomServer.awaitRoom(plan.slotIds.size - 1, ROOM_RESULT_TIMEOUT_MILLIS) { delivered ->
+            for (message in delivered) {
+                val slot = plan.slotIds.indexOf(message.senderId)
+                // A delivery from a handset this plan never named, or one that read its
+                // window against a slot other than the one it was given, is a hearing of a
+                // different room. Combining it puts a real pair on the wrong two phones.
+                if (slot < 0 || slot != message.ownSlot) continue
+                heard[slot] = message.arrivalsByRepeat
+                heardFrom += message.senderId
+            }
+            field = roomField(plan, heard, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+            delivered.associate {
+                it.senderId to RoomReply(
+                    plan.slotIds.size,
+                    pairsReadableFor(field, it.senderId),
+                    // Offered to everybody who delivered, because the host cannot tell who
+                    // needs it: the constant lives on the handset that applies it, and the
+                    // channel where a handset says what it carries is closed for the whole
+                    // of a round. The receiver keeps it only if it has nothing better.
+                    offeredTo(field, hostId, it.senderId)
+                )
+            }
+        }
+        fileAttempt(
+            "HOST-${plan.caseId}-ROOM",
+            roomReportJson(plan, field, heardFrom, timing.planLeadNanos)
+        )
+        // The whole field, which is what the room screen reads to check a drawing against.
+        // The per-peer files below are the same distances for the pairs this handset is an
+        // end of; this is the only place the rest of them have ever had.
+        val toStore = roomFieldToStore(field.separationMetres, hostId, place == HostPlace.OVERHEAD)
+        if (saysSomethingAboutTheRoom(toStore)) {
+            runCatching { StoredRoomField(filesDir).write(toStore) }
+            events.write("room-field written, ${toStore.count { it.value != null }} pairs")
+        } else {
+            events.write("room-field kept: this round measured no distance between handsets")
+        }
+        // Read, not yet used. The room measured how far apart every pair fires at the same
+        // instant it measured how far apart they stand, and if that number is good enough
+        // it replaces a minute per handset of somebody walking to each one. Whether it is
+        // good enough is a comparison against constants measured the long way, so the first
+        // thing it has to do is be readable afterwards.
+        for (entry in field.alignmentErrorMs) {
+            val millis = entry.value ?: continue
+            events.write(
+                "room-firing ${entry.key.first} ${entry.key.second} " +
+                    String.format(Locale.US, "%.3f", millis) + "ms"
+            )
+        }
+        for (entry in field.edgeFiringOffsetMs) {
+            val millis = entry.value ?: continue
+            events.write(
+                "room-firing-edge ${entry.key.first} ${entry.key.second} " +
+                    String.format(Locale.US, "%.3f", millis) + "ms"
+            )
+        }
+        // And what was actually handed out, which is a different list: a pair can be readable
+        // and still be refused here, and a refusal that leaves no trace is a fix that looks
+        // like a feature that was never built.
+        for (entry in field.offerableOffsetMicros) {
+            events.write(
+                "room-offer ${entry.key.first} ${entry.key.second} " + (entry.value?.let {
+                    String.format(Locale.US, "%.3f", it / 1000.0) + "ms"
+                } ?: "refused: the repeats of this pair did not agree closely enough")
+            )
+        }
+        // And the per-peer files, which is where every other arm writes a distance and
+        // where the pair flow reads one. What may be kept is what [separationToStore] would
+        // keep - a room always sweeps the thresholds, so the narrower rule and the wider one
+        // are the same rule here.
+        for (entry in field.separationMetres) {
+            val peer = when (hostId) {
+                entry.key.first -> entry.key.second
+                entry.key.second -> entry.key.first
+                else -> continue
+            }
+            val metres = entry.value ?: continue
+            runCatching {
+                if (place != HostPlace.PLAYING) StoredListenerDistance(filesDir, peer).write(metres)
+                if (place != HostPlace.OVERHEAD) StoredSeparation(filesDir, peer).write(metres)
+            }
+        }
+        report.say(
+            RoundLine.RoomDone(
+                plan.slotIds.size,
+                field.separationMetres.count { it.value != null },
+                field.separationMetres.size
+            )
+        )
+        report.measured(plan.slotIds)
+        true
+    } ?: false
+
+    /**
+     * Whether each device can be heard here, which is all a sound check asks: the same gathering
+     * as [room], one chirp each, and nothing filed. [aimedAt] checks that one device alone.
+     *
+     * Judged on this host's own recording only, by the same gate a measurement reads - so a device
+     * called heard here is one a round would read from here. Every device in a room also has to
+     * hear every other one, and that this does not ask. Null when no plan went out.
+     *
+     * The sinks run an ordinary room round and cannot tell the difference; what keeps them from
+     * filing anything is the answer they get, which offers no constant.
+     */
+    fun soundCheck(aimedAt: String? = null): SoundCheck? = gathered(aimedAt, oneChirp = true) { gathering ->
+        val plan = gathering.plan
+        // Waited for, so every sink ends its round on an answer rather than a refused socket. The
+        // count it is told is true of this round, since it is shown on that sink's screen; the
+        // constant is never offered, so nobody keeps anything from one chirp.
+        gathering.roomServer.awaitRoom(plan.slotIds.size - 1, ROOM_RESULT_TIMEOUT_MILLIS) { delivered ->
+            val all = LinkedHashMap<Int, List<List<ChirpArrival?>>>()
+            all[gathering.ownSlot] = gathering.run.arrivalsByRepeat
+            for (message in delivered) {
+                val slot = plan.slotIds.indexOf(message.senderId)
+                if (slot >= 0 && slot == message.ownSlot) all[slot] = message.arrivalsByRepeat
+            }
+            val field = roomField(plan, all, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
+            delivered.associate {
+                it.senderId to RoomReply(plan.slotIds.size, pairsReadableFor(field, it.senderId), null)
+            }
+        }
+        val heard = heardSlots(gathering.run.arrivalsByRepeat.firstOrNull().orEmpty(), gathering.ownSlot)
+            .map { plan.slotIds[it] }.toSet()
+        events.write("sound-check heard ${heard.size} of ${plan.slotIds.size}: ${plan.slotIds.filter { it !in heard }.joinToString(" ").ifEmpty { "nobody missed" }}")
+        SoundCheck(plan.slotIds, heard, LinkedHashMap(gathering.excuses))
+    }
+
+    /** What [gathered] hands on: the plan, this host's slot and hearing, and who said why not. */
+    private class Gathering(
+        val plan: CalibrationPlan,
+        val ownSlot: Int,
+        val run: PeerCalibrationRun,
+        val roomServer: RoomResultServer,
+        val excuses: Map<String, RoomExcuse>
+    )
+
+    /**
+     * The half of a room round that [room] and [soundCheck] share: tell the room, gather it, hand
+     * out one schedule and chirp in this host's own slot. [measure] is what is made of it, on the
+     * servers still open; null when no plan went out or the round was called off.
+     */
+    private fun <T> gathered(aimedAt: String?, oneChirp: Boolean, measure: (Gathering) -> T): T? {
         val clockServer = if (servesClock) ClockSyncServer(dials.clock) else null
         val roomServer = RoomResultServer(dials.room)
         val planServer = CalibrationPlanServer(dials.plan)
@@ -288,11 +475,11 @@ class HostRound(
             // Kept as names rather than a count, so a handset that excuses twice is still one
             // handset. The room is complete when everybody told has either asked or said why not,
             // and a count would let one noisy refusal close the room on somebody still arriving.
-            val excused = Collections.synchronizedSet(HashSet<String>())
+            val excuses = Collections.synchronizedMap(LinkedHashMap<String, RoomExcuse>())
             commands.listenForExcuses { peerId, excuse ->
                 events.write("room-excuse $peerId ${excuse.name}")
                 report.heard(peerId, RoundLine.Excused(excuse))
-                excused += peerId
+                excuses[peerId] = excuse
             }
             // Handsets told to leave their home screens a moment ago are on their way back to
             // them, and a room told while they are in the air reaches nobody at all. Reported on
@@ -301,8 +488,11 @@ class HostRound(
             if (!awaitBriefly(ROOM_RETURN_GRACE_MILLIS) { commands.standingBy() > 0 }) {
                 events.write("room-nobody-standing after ${ROOM_RETURN_GRACE_MILLIS}ms of waiting")
             }
-            val told = commands.send(
-                if (place == HostPlace.OVERHEAD) RoomCommand.MEASURE_OVERHEAD else RoomCommand.MEASURE_ROOM
+            // A sound check of one device is a room of two: told by name, so nobody else joins.
+            val told = if (aimedAt != null) {
+                if (commands.sendTo(aimedAt, RoomOrder(RoomCommand.MEASURE_ROOM))) 1 else 0
+            } else commands.send(
+                if (place == HostPlace.OVERHEAD && !oneChirp) RoomCommand.MEASURE_OVERHEAD else RoomCommand.MEASURE_ROOM
             )
             log("the room servers are up: clock ${dials.clock}, room ${dials.room}, plan ${dials.plan}")
             report.say(
@@ -310,10 +500,11 @@ class HostRound(
                 else RoundLine.RoomWaiting(told, ROOM_WINDOW_MILLIS / 1000)
             )
             events.write(
-                "room-gathering opened as ${if (place == HostPlace.OVERHEAD) "overhead" else "room"}, " +
+                "room-gathering opened as ${if (oneChirp) "sound check" else if (place == HostPlace.OVERHEAD) "overhead" else "room"}, " +
                     "told $told handsets, waiting up to ${ROOM_WINDOW_MILLIS / 1000}s"
             )
-            timing = timingFor(CASE_ROOM)
+            // One chirp each for a sound check: it asks whether a device is heard, not where it is.
+            timing = timingFor(CASE_ROOM).let { if (oneChirp) it.copy(repeats = 1) else it }
             val plan = planServer.awaitRoom(
                 PLAN_WAIT_MILLIS,
                 ROOM_SETTLE_MILLIS,
@@ -326,7 +517,7 @@ class HostRound(
                 // wait for. Guarded on having told anybody at all: a round nobody was told about
                 // would otherwise be complete the moment one stranger asked.
                 enough = { joined ->
-                    told > 0 && joined >= told - excused.size
+                    told > 0 && joined >= told - excuses.size
                 }
             ) { asks ->
                 // Every ask has to be this arm's. A handset running the pair flow would be
@@ -377,7 +568,7 @@ class HostRound(
                         RoundLine.Failed(planServer.failureCode ?: "ROOM_LOST")
                     }
                 )
-                return false
+                return null
             }
             // The plan is out. Up to here calling the round off meant refusing to answer it; from
             // here it means telling everybody who holds it to stop, which is a different sentence
@@ -393,110 +584,9 @@ class HostRound(
             // worse than no file at all. What it does leave is a line in the timeline.
             if (calledOff()) {
                 events.write("room-cancelled while chirping; nothing of this round is kept")
-                return false
+                return null
             }
-            // Written before anything is combined, so a room that loses everybody still leaves
-            // this handset's own hearing of it on disk.
-            File(RunStore(filesDir).prepareRun(plan.caseId), hostArtifact(hostId)).writeText(run.json)
-            fileAttempt("HOST-${plan.caseId}-$hostId", run.json)
-            log(run.json)
-            // Keyed by slot throughout: the analysis speaks slots, and the one place a slot
-            // becomes a name again is roomField.
-            val heard = LinkedHashMap<Int, List<List<ChirpArrival?>>>()
-            heard[ownSlot] = run.arrivalsByRepeat
-            val heardFrom = ArrayList<String>()
-            var field = RoomField(emptyMap(), emptyMap(), emptyMap(), emptyMap(), 0)
-            roomServer.awaitRoom(plan.slotIds.size - 1, ROOM_RESULT_TIMEOUT_MILLIS) { delivered ->
-                for (message in delivered) {
-                    val slot = plan.slotIds.indexOf(message.senderId)
-                    // A delivery from a handset this plan never named, or one that read its
-                    // window against a slot other than the one it was given, is a hearing of a
-                    // different room. Combining it puts a real pair on the wrong two phones.
-                    if (slot < 0 || slot != message.ownSlot) continue
-                    heard[slot] = message.arrivalsByRepeat
-                    heardFrom += message.senderId
-                }
-                field = roomField(plan, heard, AlignmentAnalysis.DISTANCE_EDGE_SHARES)
-                delivered.associate {
-                    it.senderId to RoomReply(
-                        plan.slotIds.size,
-                        pairsReadableFor(field, it.senderId),
-                        // Offered to everybody who delivered, because the host cannot tell who
-                        // needs it: the constant lives on the handset that applies it, and the
-                        // channel where a handset says what it carries is closed for the whole
-                        // of a round. The receiver keeps it only if it has nothing better.
-                        offeredTo(field, hostId, it.senderId)
-                    )
-                }
-            }
-            fileAttempt(
-                "HOST-${plan.caseId}-ROOM",
-                roomReportJson(plan, field, heardFrom, timing.planLeadNanos)
-            )
-            // The whole field, which is what the room screen reads to check a drawing against.
-            // The per-peer files below are the same distances for the pairs this handset is an
-            // end of; this is the only place the rest of them have ever had.
-            val toStore = roomFieldToStore(field.separationMetres, hostId, place == HostPlace.OVERHEAD)
-            if (saysSomethingAboutTheRoom(toStore)) {
-                runCatching { StoredRoomField(filesDir).write(toStore) }
-                events.write("room-field written, ${toStore.count { it.value != null }} pairs")
-            } else {
-                events.write("room-field kept: this round measured no distance between handsets")
-            }
-            // Read, not yet used. The room measured how far apart every pair fires at the same
-            // instant it measured how far apart they stand, and if that number is good enough
-            // it replaces a minute per handset of somebody walking to each one. Whether it is
-            // good enough is a comparison against constants measured the long way, so the first
-            // thing it has to do is be readable afterwards.
-            for (entry in field.alignmentErrorMs) {
-                val millis = entry.value ?: continue
-                events.write(
-                    "room-firing ${entry.key.first} ${entry.key.second} " +
-                        String.format(Locale.US, "%.3f", millis) + "ms"
-                )
-            }
-            for (entry in field.edgeFiringOffsetMs) {
-                val millis = entry.value ?: continue
-                events.write(
-                    "room-firing-edge ${entry.key.first} ${entry.key.second} " +
-                        String.format(Locale.US, "%.3f", millis) + "ms"
-                )
-            }
-            // And what was actually handed out, which is a different list: a pair can be readable
-            // and still be refused here, and a refusal that leaves no trace is a fix that looks
-            // like a feature that was never built.
-            for (entry in field.offerableOffsetMicros) {
-                events.write(
-                    "room-offer ${entry.key.first} ${entry.key.second} " + (entry.value?.let {
-                        String.format(Locale.US, "%.3f", it / 1000.0) + "ms"
-                    } ?: "refused: the repeats of this pair did not agree closely enough")
-                )
-            }
-            // And the per-peer files, which is where every other arm writes a distance and
-            // where the pair flow reads one. What may be kept is what [separationToStore] would
-            // keep - a room always sweeps the thresholds, so the narrower rule and the wider one
-            // are the same rule here.
-            for (entry in field.separationMetres) {
-                val peer = when (hostId) {
-                    entry.key.first -> entry.key.second
-                    entry.key.second -> entry.key.first
-                    else -> continue
-                }
-                val metres = entry.value ?: continue
-                runCatching {
-                    if (place != HostPlace.PLAYING) StoredListenerDistance(filesDir, peer).write(metres)
-                    if (place != HostPlace.OVERHEAD) StoredSeparation(filesDir, peer).write(metres)
-                }
-            }
-            report.say(
-                RoundLine.RoomDone(
-                    plan.slotIds.size,
-                    field.separationMetres.count { it.value != null },
-                    field.separationMetres.size
-                )
-            )
-            report.measured(plan.slotIds)
-            return true
+            return measure(Gathering(plan, ownSlot, run, roomServer, LinkedHashMap(excuses)))
         } finally {
             this.planServer = null
             // Nobody is standing at the screen once the round is over, and a listener held past
