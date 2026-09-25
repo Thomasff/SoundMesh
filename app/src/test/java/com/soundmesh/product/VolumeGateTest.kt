@@ -28,11 +28,11 @@ class VolumeGateTest {
     fun `a room that is all loud enough stops nobody`() {
         assertEquals(
             emptyList<String>(),
-            tooQuietFor(listOf(row("Magic6", 60), row("X10", 10)))
+            tooQuietFor(listOf(row("Magic6", 60), row("X10", 30)))
         )
     }
 
-    /** Ten is the floor and not the first refusal: at ten a handset passes, at nine it does not. */
+    /** The floor passes and one under it does not, whatever the floor is. */
     @Test
     fun `the floor itself passes`() {
         assertEquals(emptyList<String>(), tooQuietFor(listOf(row("X10", QUIET_FLOOR_PERCENT))))

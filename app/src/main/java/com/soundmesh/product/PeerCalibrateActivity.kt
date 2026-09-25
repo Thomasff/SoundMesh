@@ -172,6 +172,19 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private var roomRedo: Int? by mutableStateOf(null)
 
+    /** The page on screen and what this visit has measured - see [PeerCalibrateState.page]. */
+    private var roomPage by mutableStateOf(1)
+    private var stepOneDone by mutableStateOf(false)
+    private var stepTwoDone by mutableStateOf(false)
+    private var roomRan: Int? by mutableStateOf(null)
+
+    /**
+     * Whether a handset other than this one was given a volume of its own here. Its own disk
+     * holds what it was at before, but only a restore sent from here puts it back, and whether one
+     * is sent was judged on this handset's streams alone.
+     */
+    private var singledOut = false
+
     /** One calibration at a time: two would share a microphone, a port and a run directory. */
     @Volatile private var running = false
 
@@ -251,16 +264,31 @@ class PeerCalibrateActivity : ComponentActivity() {
                             observations = stored?.observations ?: 0,
                             step = roomStep,
                             redo = roomRedo,
-                            colours = colours
+                            colours = colours,
+                            page = roomPage,
+                            stepOneDone = stepOneDone,
+                            stepTwoDone = stepTwoDone,
+                            ran = roomRan
                         ),
                         // Unrecognised or absent means PAIR - see peerJobOf - which is what every
                         // ADB-driven `am start` of this activity has always meant with no extra.
                         job = peerJobOf(intent.getStringExtra(PEER_JOB_EXTRA)),
                         actions = PeerCalibrateActions(
                             calibrate = { begin(verifying = false, allowSlowLink = false) },
-                            skipStep = { roomStep = 2 },
+                            skipStep = {
+                                roomStep = 2
+                                stepOneDone = true
+                                roomPage = 3
+                            },
                             back = { finish() },
                             setRoomVolume = { percent -> setRoomVolume(percent) },
+                            setHandsetVolume = { peerId, percent -> setHandsetVolume(peerId, percent) },
+                            // Arriving on a step's page makes that step the one to do, so a page
+                            // come back to has its start button rather than a quiet box.
+                            toPage = { page ->
+                                roomPage = page
+                                roomStep = if (page == 3) 2 else 1
+                            },
                             verify = { begin(verifying = true, allowSlowLink = false) },
                             forget = { forget() },
                             stop = { stopServing() },
@@ -508,6 +536,13 @@ class PeerCalibrateActivity : ComponentActivity() {
         // earns one is decided where it finishes, so a run that is called off or throws leaves
         // none - see [roomRedo].
         roomRedo = null
+        // Which step this round is, and the page it is watched on: a round started from outside
+        // this screen - `am start` with `auto` - lands on its own page like one started here.
+        if (roomAsked()) {
+            val step = if (overhead()) 1 else 2
+            roomRan = step
+            if (role() == CalibrationRole.HOST) roomPage = step + 1
+        }
         state = state.copy(
             running = true,
             stopOffer = stopOfferFor(role()),
@@ -654,6 +689,18 @@ class PeerCalibrateActivity : ComponentActivity() {
         state = state.copy(volumes = roomVolumes())
     }
 
+    /** One handset on its own: this one on its own streams, anybody else over the standing line. */
+    private fun setHandsetVolume(peerId: String, percent: Int) {
+        if (peerId == HostIdentity(filesDir).current()) {
+            handsetVolume.set(percent, capturing = false)
+        } else {
+            singledOut = true
+            val reached = RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent))
+            events.write("volume for one handset in a round: $peerId to $percent%" + if (reached) "" else ", no line to it")
+        }
+        state = state.copy(volumes = roomVolumes())
+    }
+
     /**
      * Puts the room back on the way out, but only if this screen is what moved it.
      *
@@ -663,7 +710,7 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private fun putVolumeBack() {
         if (role() != CalibrationRole.HOST) return
-        if (!restoresOnLeaving(volumeChangedBefore, handsetVolume.changed())) return
+        if (!restoresOnLeaving(volumeChangedBefore, handsetVolume.changed() || singledOut)) return
         RoomCommands.send(RoomCommand.RESTORE_VOLUME)
         handsetVolume.restore()
         events.write("room volume put back on leaving the calibration")
@@ -700,6 +747,9 @@ class PeerCalibrateActivity : ComponentActivity() {
         val which = if (overhead()) 1 else 2
         handler.post {
             if (which == 1) roomStep = 2
+            // What lights the page's forward button. The page itself stays: the answer is read
+            // here, and going on is the person's press, not this.
+            if (which == 1) stepOneDone = true else stepTwoDone = true
             roomRedo = which
         }
     }

@@ -14,6 +14,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -127,8 +128,44 @@ data class PeerCalibrateState(
      * now the only sign that anything had been measured was a sentence counting pairs. A drawing
      * is the one form of that answer somebody can check against the room they are standing in.
      */
-    val room: RoomState? = null
+    val room: RoomState? = null,
+    /**
+     * Which page of the position calibration is on screen: 1 the room's volume, 2 where the
+     * listener sits, 3 where the phones stand. One thing to look at per page, with the way on at
+     * the bottom - reported on 2026-09-25 that a single screen holding all three left somebody
+     * not knowing what to read first. Only the host walks through pages.
+     */
+    val page: Int = 1,
+    /** Whether the listener's step was measured or skipped on this visit, which opens page 3. */
+    val stepOneDone: Boolean = false,
+    /** Whether the phones were measured on this visit, which is what 完成 waits for. */
+    val stepTwoDone: Boolean = false,
+    /** Which step the last round on this visit measured, or null before one ran. See [resultBelongsOn]. */
+    val ran: Int? = null
 )
+
+/** Whether the forward button at the bottom of [page] can be pressed. */
+internal fun roomForwardOpen(
+    page: Int,
+    running: Boolean,
+    tooQuiet: List<String>,
+    stepOneDone: Boolean,
+    stepTwoDone: Boolean
+): Boolean = !running && when (page) {
+    1 -> tooQuiet.isEmpty()
+    2 -> stepOneDone
+    else -> stepTwoDone
+}
+
+/** Whether 上一步 can be pressed: never on the first page, and never away from a round that runs. */
+internal fun roomBackOpen(page: Int, running: Boolean): Boolean = !running && page > 1
+
+/**
+ * Whether a round's answer is drawn on [page]: on the page of the step it measured, so the
+ * listener's result is not read as the phones' one page later. With no round yet, whatever is
+ * said is said where the person is.
+ */
+internal fun resultBelongsOn(page: Int, ran: Int?): Boolean = ran == null || ran == page - 1
 
 /**
  * Whole seconds still to wait, rounded up, and never below zero.
@@ -166,6 +203,10 @@ class PeerCalibrateActions(
     val skipStep: () -> Unit,
     /** One number for the whole room, this handset included. */
     val setRoomVolume: (Int) -> Unit,
+    /** One handset on its own, as its row on the playing screen does. */
+    val setHandsetVolume: (peerId: String, percent: Int) -> Unit,
+    /** To another page of the position calibration. See [PeerCalibrateState.page]. */
+    val toPage: (Int) -> Unit,
     /** A finger moving one handset on the drawing, which is a person saying where it is. */
     val moveIcon: (RoomIcon) -> Unit,
     /** The drawing moved onto the lengths just measured, offered rather than done. */
@@ -217,68 +258,121 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, job: PeerJob, actions: PeerCa
     // the average of every run so far. Local to the screen: nothing outside it needs to know that
     // somebody is halfway through deciding.
     var confirmingForget by remember { mutableStateOf(false) }
+    val paged = job == PeerJob.ROOM && state.role == CalibrationRole.HOST
+    // The system's back walks the pages as 上一步 does, and leaves only from the first.
+    BackHandler(enabled = paged && roomBackOpen(state.page, state.running)) {
+        actions.toPage(state.page - 1)
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
             // Android 15 draws every app edge to edge, so without this the title sits under the
             // status bar clock. Visible on the Magic6 and not on the X10, which is Android 10.
             .safeDrawingPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-            .padding(bottom = 28.dp),
-        // Nothing between blocks: a label carries its own space above it. See Look.kt.
-        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
-        PageBar(
-            if (job == PeerJob.PAIR) R.string.pair_calibrate_title else R.string.goto_room,
-            actions.back
-        )
-        // The two jobs are two different screens that happen to be run by the same activity. The
-        // room one is the product's own calibration, walked through in order; the pair one is a
-        // single measurement between two named handsets, reached from that handset's own row.
-        if (job == PeerJob.PAIR) PairBody(state, actions) { confirmingForget = true }
-        else RoomBody(state, actions)
-        if (confirmingForget && state.stored != null) {
-            AlertDialog(
-                onDismissRequest = { confirmingForget = false },
-                title = { Text(stringResource(R.string.pair_calibrate_forget_title)) },
-                text = {
-                    Text(
-                        stringResource(
-                            R.string.pair_calibrate_forget_body,
-                            state.stored / 1000.0,
-                            state.observations
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            // Nothing between blocks: a label carries its own space above it. See Look.kt.
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            PageBar(
+                if (job == PeerJob.PAIR) R.string.pair_calibrate_title else R.string.goto_room,
+                actions.back
+            )
+            // The two jobs are two different screens that happen to be run by the same activity. The
+            // room one is the product's own calibration, walked through in order; the pair one is a
+            // single measurement between two named handsets, reached from that handset's own row.
+            if (job == PeerJob.PAIR) PairBody(state, actions) { confirmingForget = true }
+            else RoomBody(state, actions)
+            if (confirmingForget && state.stored != null) {
+                AlertDialog(
+                    onDismissRequest = { confirmingForget = false },
+                    title = { Text(stringResource(R.string.pair_calibrate_forget_title)) },
+                    text = {
+                        Text(
+                            stringResource(
+                                R.string.pair_calibrate_forget_body,
+                                state.stored / 1000.0,
+                                state.observations
+                            )
                         )
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        confirmingForget = false
-                        actions.forget()
-                    }) {
-                        Text(stringResource(R.string.pair_calibrate_forget_yes))
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmingForget = false
+                            actions.forget()
+                        }) {
+                            Text(stringResource(R.string.pair_calibrate_forget_yes))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmingForget = false }) {
+                            Text(stringResource(R.string.pair_calibrate_forget_no))
+                        }
                     }
-                },
-                dismissButton = {
-                    TextButton(onClick = { confirmingForget = false }) {
-                        Text(stringResource(R.string.pair_calibrate_forget_no))
-                    }
-                }
+                )
+            }
+            // Under the buttons rather than above them, because it only exists once a round has
+            // finished - and while one is running the thing worth reading is the countdown.
+            // Not on the volume page, which is the upper half of the old single screen and no more.
+            if (!paged || state.page != 1) state.room?.let { room ->
+                Label(R.string.pair_calibrate_room_drawing)
+                Note(stringResource(R.string.pair_calibrate_room_drawing_hint))
+                // No offer to go and measure the listener: this screen is where that round is run,
+                // and the button for it is a few lines above.
+                MeasuredRoom(room, RoomMapActions(actions.moveIcon, actions.fitRoom, null))
+            }
+            // The pair job keeps its result here, at the end of a screen whose whole body is two
+            // buttons - the words land a finger's width under the button that was pressed. The room
+            // job does not: see the box RoomBody draws in the running box's own place.
+            if (job == PeerJob.PAIR) RoundResult(state)
+        }
+        if (paged) RoomPageButtons(state, actions)
+    }
+}
+
+/**
+ * 上一步 and 下一步 - 完成 on the last page - held under the scrolling part so they are always
+ * where the eye ends. Grey rather than hidden when they cannot be pressed: see [roomForwardOpen].
+ */
+@Composable
+private fun RoomPageButtons(state: PeerCalibrateState, actions: PeerCalibrateActions) {
+    val forward = roomForwardOpen(
+        state.page,
+        state.running,
+        tooQuietFor(state.volumes),
+        state.stepOneDone,
+        state.stepTwoDone
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (state.page > 1) {
+            Ghost(
+                stringResource(R.string.room_calibrate_prev),
+                enabled = roomBackOpen(state.page, state.running),
+                modifier = Modifier.weight(1f)
+            ) { actions.toPage(state.page - 1) }
+        }
+        if (state.page < 3) {
+            Solid(
+                stringResource(R.string.room_calibrate_next),
+                enabled = forward,
+                modifier = Modifier.weight(1f)
+            ) { actions.toPage(state.page + 1) }
+        } else {
+            Solid(
+                stringResource(R.string.room_calibrate_done),
+                enabled = forward,
+                modifier = Modifier.weight(1f),
+                onClick = actions.back
             )
         }
-        // Under the buttons rather than above them, because it only exists once a round has
-        // finished - and while one is running the thing worth reading is the countdown.
-        state.room?.let { room ->
-            Label(R.string.pair_calibrate_room_drawing)
-            Note(stringResource(R.string.pair_calibrate_room_drawing_hint))
-            // No offer to go and measure the listener: this screen is where that round is run,
-            // and the button for it is a few lines above.
-            MeasuredRoom(room, RoomMapActions(actions.moveIcon, actions.fitRoom, null))
-        }
-        // The pair job keeps its result here, at the end of a screen whose whole body is two
-        // buttons - the words land a finger's width under the button that was pressed. The room
-        // job does not: see the box RoomBody draws in the running box's own place.
-        if (job == PeerJob.PAIR) RoundResult(state)
     }
 }
 
@@ -368,41 +462,25 @@ private fun RoomRoundResult(
  */
 @Composable
 private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
-    Column(modifier = Modifier.padding(top = 6.dp)) {
-        Note(stringResource(R.string.room_calibrate_intro))
-    }
     val tooQuiet = tooQuietFor(state.volumes)
-    if (state.role == CalibrationRole.HOST) VolumeGate(state, tooQuiet, actions)
-    if (state.running) {
-        Label(R.string.room_calibrate_now)
-        Framed(strong = true) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    stringResource(R.string.room_calibrate_quiet),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                state.until?.let {
-                    HoldStill(it, R.string.room_calibrate_left, MaterialTheme.typography.bodyMedium)
-                }
-                // Swept only while there is no count beside it, which is the same question as
-                // whether anything is audible: the count is handed over by the thing that fires
-                // the chirps. Before it arrives this line is a room waiting for handsets to dial
-                // in, and it is the only thing on the screen. See [Modifier.sweeping].
-                state.message?.let { Note(it, waiting = state.until == null) }
-            }
+    // The host walks it a page at a time: the volume, then each step on its own. A sink has one
+    // page with no button on it, as before.
+    val page = if (state.role == CalibrationRole.HOST) state.page else 0
+    if (page <= 1) {
+        Column(modifier = Modifier.padding(top = 6.dp)) {
+            Note(stringResource(R.string.room_calibrate_intro))
         }
-    } else {
-        RoomRoundResult(state, tooQuiet, actions)
     }
+    if (page == 1) {
+        VolumeGate(state, tooQuiet, actions)
+        return
+    }
+    if (page == 0 || state.running || resultBelongsOn(page, state.ran)) RoundBox(state, tooQuiet, actions)
     when (state.role) {
         // Only the host is held over anybody's head: it is the handset that gathers the room and
         // the only one that files what a round measured, so a sink doing this would be holding a
         // phone in the air for a number nothing writes down.
-        CalibrationRole.HOST -> {
+        CalibrationRole.HOST -> if (page == 2) {
             Step(
                 number = 1,
                 title = R.string.room_calibrate_step1,
@@ -422,6 +500,7 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
                 Ghost(stringResource(R.string.room_calibrate_skip), onClick = actions.skipStep)
                 Note(stringResource(R.string.room_calibrate_skip_note))
             }
+        } else {
             Step(
                 number = 2,
                 title = R.string.room_calibrate_step2,
@@ -451,6 +530,36 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
         }
     }
     StopControl(state, PeerJob.ROOM, actions)
+}
+
+/** The round that is running, or what the last one came to, in the one box both are drawn in. */
+@Composable
+private fun RoundBox(state: PeerCalibrateState, tooQuiet: List<String>, actions: PeerCalibrateActions) {
+    if (state.running) {
+        Label(R.string.room_calibrate_now)
+        Framed(strong = true) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    stringResource(R.string.room_calibrate_quiet),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                state.until?.let {
+                    HoldStill(it, R.string.room_calibrate_left, MaterialTheme.typography.bodyMedium)
+                }
+                // Swept only while there is no count beside it, which is the same question as
+                // whether anything is audible: the count is handed over by the thing that fires
+                // the chirps. Before it arrives this line is a room waiting for handsets to dial
+                // in, and it is the only thing on the screen. See [Modifier.sweeping].
+                state.message?.let { Note(it, waiting = state.until == null) }
+            }
+        }
+    } else {
+        RoomRoundResult(state, tooQuiet, actions)
+    }
 }
 
 /**
@@ -484,19 +593,17 @@ private fun VolumeGate(
         onSet = actions.setRoomVolume
     )
     Label(R.string.room_volume_now)
-    for ((index, row) in state.volumes.withIndex()) {
+    // Each one its own slider, the playing screen's row: the phone that is too quiet is set from
+    // here rather than walked to. Drawn in the error colour while it is under the floor, which is
+    // what the 太小 tag on the old read-only row said.
+    for (row in state.volumes) {
         val quiet = row.percent < QUIET_FLOOR_PERCENT
-        Line(first = index == 0) {
-            Dot(state.colours[row.peerId])
-            LineName(row.name, quiet = quiet)
-            Tag(
-                stringResource(
-                    if (quiet) R.string.room_volume_too_quiet_row else R.string.room_volume_level,
-                    row.percent
-                ),
-                if (quiet) Tone.WRONG else Tone.GOOD
-            )
-        }
+        VolumeLine(
+            name = row.name,
+            percent = row.percent,
+            colour = if (quiet) MaterialTheme.colorScheme.error
+            else BadgePalette.colourOf(state.colours[row.peerId], MaterialTheme.colorScheme.onSurfaceVariant)
+        ) { actions.setHandsetVolume(row.peerId, it) }
     }
     if (tooQuiet.isNotEmpty()) {
         Note(

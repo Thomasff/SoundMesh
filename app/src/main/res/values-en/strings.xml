@@ -189,6 +189,9 @@
     <string name="room_calibrate_step2_2">Touch none of the phones, and keep people and things out from between them</string>
     <string name="room_calibrate_step2_3">Press start; they sound one after another a few seconds later</string>
     <string name="room_calibrate_step2_go">Start</string>
+    <string name="room_calibrate_prev">Back</string>
+    <string name="room_calibrate_next">Next</string>
+    <string name="room_calibrate_done">Done</string>
     <string name="room_calibrate_again">Redo step %1$d</string>
     <string name="room_calibrate_step2_again_note">If the phones moved, the listening position from step 1 is out of date as well. Redo both.</string>
     <string name="room_calibrate_now">Measuring</string>
