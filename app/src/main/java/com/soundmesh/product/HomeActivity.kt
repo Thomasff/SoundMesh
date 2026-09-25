@@ -983,16 +983,19 @@ class HomeActivity : ComponentActivity() {
     private fun AskBeforePlaying(ask: BeforePlaying) {
         AskBeforeGoing(
             text = when (ask) {
+                BeforePlaying.NobodyJoined -> stringResource(R.string.before_play_nobody)
                 BeforePlaying.OwnLead -> stringResource(R.string.before_play_own_lead)
                 is BeforePlaying.Uncalibrated -> stringResource(R.string.before_play_uncalibrated, ask.name)
             },
             cancel = stringResource(R.string.before_play_cancel),
-            fix = stringResource(R.string.before_play_calibrate),
+            // Nothing to go and calibrate when nobody has joined: that is fixed on the other phones.
+            fix = if (ask == BeforePlaying.NobodyJoined) null else stringResource(R.string.before_play_calibrate),
             goOn = stringResource(R.string.before_play_go),
             onCancel = { asking = emptyList() },
             onFix = {
                 asking = emptyList()
                 when (ask) {
+                    BeforePlaying.NobodyJoined -> Unit
                     BeforePlaying.OwnLead -> actions.goto(ReadyGoto.SELF_CALIBRATE, null)
                     is BeforePlaying.Uncalibrated -> actions.calibratePeer(ask.peerId)
                 }

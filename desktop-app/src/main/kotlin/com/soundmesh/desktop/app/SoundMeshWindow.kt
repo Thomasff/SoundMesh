@@ -324,11 +324,12 @@ internal fun SoundMeshWindow(
         asking.firstOrNull()?.let { ask ->
             AskBeforeGoing(
                 text = when (ask) {
+                    BeforePlaying.NobodyJoined -> say(Phrases.before_play_nobody)
                     BeforePlaying.OwnLead -> say(Phrases.before_play_own_lead)
                     is BeforePlaying.Uncalibrated -> say(Phrases.before_play_uncalibrated, ask.name)
                 },
                 cancel = say(Phrases.before_play_cancel),
-                fix = say(Phrases.before_play_calibrate),
+                fix = if (ask == BeforePlaying.NobodyJoined) null else say(Phrases.before_play_calibrate),
                 goOn = say(Phrases.before_play_go),
                 onCancel = { asking = emptyList() },
                 onFix = {

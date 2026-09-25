@@ -13,6 +13,16 @@ class BeforePlayingTest {
         assertEquals(emptyList<BeforePlaying>(), beforePlaying(ownLeadMissing = false, peers = peers))
     }
 
+    /** Nobody to play to comes first, before anything about how well they would play. */
+    @Test
+    fun aHostWithNobodyConnectedIsToldThatFirst() {
+        assertEquals(
+            listOf(BeforePlaying.NobodyJoined, BeforePlaying.OwnLead),
+            beforePlaying(ownLeadMissing = true, peers = emptyList())
+        )
+        assertEquals(listOf(BeforePlaying.NobodyJoined), beforePlaying(ownLeadMissing = false, peers = emptyList()))
+    }
+
     @Test
     fun theOwnLeadIsAskedFirstAndThenEachUncalibratedPeerInTurn() {
         val peers = listOf(peer("a", Carried.NOTHING), peer("b", Carried.SOMETHING), peer("c", Carried.NOTHING))

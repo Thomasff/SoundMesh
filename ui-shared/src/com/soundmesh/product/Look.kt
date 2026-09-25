@@ -503,12 +503,16 @@ fun Ghost(
  * question is for, and going on is a choice somebody is allowed to make rather than the one the
  * screen is steering them into. Tapping outside is backing out, which is the answer that changes
  * nothing.
+ *
+ * With no [fix] - a question whose fix is somewhere else, on another device - there are two answers,
+ * and backing out is the solid one: it is the answer the question is steering towards, and going
+ * on is still allowed.
  */
 @Composable
 fun AskBeforeGoing(
     text: String,
     cancel: String,
-    fix: String,
+    fix: String?,
     goOn: String,
     onCancel: () -> Unit,
     onFix: () -> Unit,
@@ -522,8 +526,12 @@ fun AskBeforeGoing(
             ) {
                 Text(text, style = MaterialTheme.typography.bodyMedium, lineHeight = 21.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Ghost(cancel, modifier = Modifier.weight(1f), onClick = onCancel)
-                    Solid(fix, modifier = Modifier.weight(1f), onClick = onFix)
+                    if (fix == null) {
+                        Solid(cancel, modifier = Modifier.weight(1f), onClick = onCancel)
+                    } else {
+                        Ghost(cancel, modifier = Modifier.weight(1f), onClick = onCancel)
+                        Solid(fix, modifier = Modifier.weight(1f), onClick = onFix)
+                    }
                     Ghost(goOn, modifier = Modifier.weight(1f), onClick = onGoOn)
                 }
             }

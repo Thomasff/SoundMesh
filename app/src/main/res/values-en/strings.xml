@@ -62,6 +62,7 @@
     <string name="roster_quiet">Nothing heard for a while; the screen is probably off</string>
     <string name="pair_calibrate_aimed_gone">That phone was there a moment ago and cannot be reached now.</string>
     <string name="ready_go">Go to playback</string>
+    <string name="before_play_nobody">No other device is connected yet. On the other devices, choose Be a sink, and make sure they are on the same network. If they do not connect by themselves, scan the host\'s QR code from each sink.</string>
     <string name="before_play_own_lead">This phone\'s output delay has not been measured. Playing now will be out of sync and sound worse. Go on anyway?</string>
     <string name="before_play_uncalibrated">%1$s has not been calibrated, or its calibration failed. It may be out of sync and sound worse. Go on anyway?</string>
     <string name="before_play_cancel">Cancel</string>
@@ -143,7 +144,7 @@
     <string name="calibrate_failed">The calibration did not finish: %1$s</string>
     <string name="calibrate_no_permission">Without the microphone permission there is nothing to measure with: the phone has to hear itself. Turn it on for this app in the system settings.</string>
     <!-- The volume gate on the output-lead screen. Two outputs, because the run chirps on each. -->
-    <string name="calibrate_volume_hint">Drag the slider below to turn this phone up. It sounds once on each of two outputs, so media and alarm both have to be audible, and the room has to be quiet.</string>
+    <string name="calibrate_volume_hint">Drag the slider below to set the volume of both outputs</string>
     <string name="calibrate_volume">Volume</string>
     <string name="calibrate_volume_advice">Best above 40%</string>
     <string name="calibrate_volume_both">All</string>
@@ -464,7 +465,7 @@
     <string name="about_github">Open on GitHub</string>
     <string name="perm_title">Permissions needed</string>
     <string name="perm_mic">Microphone</string>
-    <string name="perm_mic_why">Used for recording while calibrating, and at no other time</string>
+    <string name="perm_mic_why">Recording is used only while calibrating or playing this phone\'s own sound, and at no other time</string>
     <string name="perm_notify">Notifications</string>
     <string name="perm_notify_why">Shows what is going on, and keeps the system from stopping it</string>
     <string name="perm_camera">Camera</string>

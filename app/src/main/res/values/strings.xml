@@ -63,6 +63,7 @@
     <string name="pair_calibrate_aimed_gone">那台手机刚才还在，现在连不上了。</string>
     <string name="ready_go">进入播放</string>
     <!-- Asked on 进入播放, one at a time. See BeforePlaying. -->
+    <string name="before_play_nobody">暂时未连接其他设备，请在其他设备上选择「当从机」，并确保它们在同一个网络内。如果自动连接失败，请用从机扫描主机的二维码</string>
     <string name="before_play_own_lead">还未校准本机输出延迟，开始播放会导致声音不同步，影响体验，是否继续？</string>
     <string name="before_play_uncalibrated">%1$s未校准过或校准失败，声音可能不同步，影响体验，是否继续？</string>
     <string name="before_play_cancel">取消</string>
@@ -147,7 +148,7 @@
     <string name="calibrate_failed">校准没跑完：%1$s</string>
     <string name="calibrate_no_permission">没有录音权限就没法测，手机得听见自己的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
     <!-- The volume gate on the output-lead screen. Two outputs, because the run chirps on each. -->
-    <string name="calibrate_volume_hint">拖动下面的音量条把本机调大。本机要在两条输出上各响一次，媒体和闹钟都得听得见，房间也要保持安静。</string>
+    <string name="calibrate_volume_hint">拖动下面的音量条来调整双通道音量</string>
     <string name="calibrate_volume">本机音量</string>
     <string name="calibrate_volume_advice">建议调到 40% 以上</string>
     <string name="calibrate_volume_both">全部</string>
@@ -470,7 +471,7 @@
     <string name="about_github">在 GitHub 上打开</string>
     <string name="perm_title">需要的权限</string>
     <string name="perm_mic">麦克风</string>
-    <string name="perm_mic_why">校准时需要使用录音功能，其余时间不会使用</string>
+    <string name="perm_mic_why">只有校准、播放本机声音时需要使用录音功能，其余时间不会使用</string>
     <string name="perm_notify">通知</string>
     <string name="perm_notify_why">用于方便查看信息，并避免被系统停止</string>
     <string name="perm_camera">相机</string>
