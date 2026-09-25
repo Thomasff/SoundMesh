@@ -195,6 +195,9 @@
     <string name="room_calibrate_prev">上一步</string>
     <string name="room_calibrate_next">下一步</string>
     <string name="room_calibrate_done">完成</string>
+    <string name="sound_check">试音</string>
+    <string name="sound_check_hint">检测声音是否符合要求</string>
+    <string name="sound_check_unheard">检测到此设备声音过小，请调整音量或检查是否被障碍物遮挡</string>
     <string name="room_calibrate_again">重测第 %1$d 步</string>
     <string name="room_calibrate_step2_again_note">如果是因为手机挪了位置才重测，第 1 步量的听音位置也已过期，建议一并重测。</string>
     <string name="room_calibrate_now">测量进行中</string>

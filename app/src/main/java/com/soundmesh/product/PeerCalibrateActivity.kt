@@ -185,6 +185,18 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private var singledOut = false
 
+    /**
+     * Whether the run [start] is about to make, or is making, is a sound check rather than a round.
+     * Set by the button and cleared where the run's answer is read, on the main thread both times.
+     */
+    @Volatile private var checkingSound = false
+
+    /** What the sound check in flight heard, handed from the run's thread to the main one. */
+    @Volatile private var checked: SoundCheck? = null
+
+    /** Whether a pair round has been served on this visit, which is what 完成 waits for. */
+    private var pairDone by mutableStateOf(false)
+
     /** One calibration at a time: two would share a microphone, a port and a run directory. */
     @Volatile private var running = false
 
@@ -244,7 +256,11 @@ class PeerCalibrateActivity : ComponentActivity() {
 
     private val askRecordAudio = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) start(verifyingAfterPermission, allowSlowLinkAfterPermission)
-        else state = state.copy(message = getString(R.string.pair_calibrate_no_permission))
+        else {
+            // Or the next press of a measuring button would run the check it was waiting for.
+            checkingSound = false
+            state = state.copy(message = getString(R.string.pair_calibrate_no_permission))
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -268,13 +284,21 @@ class PeerCalibrateActivity : ComponentActivity() {
                             page = roomPage,
                             stepOneDone = stepOneDone,
                             stepTwoDone = stepTwoDone,
-                            ran = roomRan
+                            ran = roomRan,
+                            pairDone = pairDone
                         ),
                         // Unrecognised or absent means PAIR - see peerJobOf - which is what every
                         // ADB-driven `am start` of this activity has always meant with no extra.
                         job = peerJobOf(intent.getStringExtra(PEER_JOB_EXTRA)),
                         actions = PeerCalibrateActions(
                             calibrate = { begin(verifying = false, allowSlowLink = false) },
+                            soundCheck = {
+                                if (!running) {
+                                    checkingSound = true
+                                    checked = null
+                                    begin(verifying = false, allowSlowLink = false)
+                                }
+                            },
                             skipStep = {
                                 roomStep = 2
                                 stepOneDone = true
@@ -538,15 +562,18 @@ class PeerCalibrateActivity : ComponentActivity() {
         roomRedo = null
         // Which step this round is, and the page it is watched on: a round started from outside
         // this screen - `am start` with `auto` - lands on its own page like one started here.
-        if (roomAsked()) {
+        // A sound check is neither: it stays on the page it was pressed on and measures no step.
+        if (roomAsked() && !checkingSound) {
             val step = if (overhead()) 1 else 2
             roomRan = step
             if (role() == CalibrationRole.HOST) roomPage = step + 1
         }
         state = state.copy(
             running = true,
-            stopOffer = stopOfferFor(role()),
-            message = getString(R.string.pair_calibrate_waiting)
+            // No way to stop a sound check: it is one chirp each and over in seconds.
+            stopOffer = if (checkingSound) StopOffer.NONE else stopOfferFor(role()),
+            message = getString(R.string.pair_calibrate_waiting),
+            checking = checkingSound
         )
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
@@ -568,7 +595,8 @@ class PeerCalibrateActivity : ComponentActivity() {
                         // narrower one: this host gathers everybody and hands out one
                         // schedule naming all of them, where the pair host serves a queue.
                         CalibrationRole.HOST ->
-                            if (roomAsked()) measureAsRoom() else measureAsHost()
+                            if (checkingSound) checkSound()
+                            else if (roomAsked()) measureAsRoom() else measureAsHost()
                         CalibrationRole.SINK -> measureAsSink(verifying, allowSlowLink)
                         null -> show(getString(R.string.pair_calibrate_no_role))
                     }
@@ -580,6 +608,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             }
             running = false
             handler.post {
+                if (checkingSound) soundChecked(checked)
                 state = state.copy(running = false, stopOffer = StopOffer.NONE)
                 putItselfAway()
             }
@@ -686,7 +715,8 @@ class PeerCalibrateActivity : ComponentActivity() {
         val now = handsetVolume.set(percent, capturing = false)
         RoomCommands.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
         events.write("room volume for a round: asked $percent%, this handset is ${now.percent}%")
-        state = state.copy(volumes = roomVolumes())
+        // A check says what was heard at the old level, which is no longer anybody's.
+        state = state.copy(volumes = roomVolumes(), unheard = emptyMap())
     }
 
     /** One handset on its own: this one on its own streams, anybody else over the standing line. */
@@ -698,7 +728,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             val reached = RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent))
             events.write("volume for one handset in a round: $peerId to $percent%" + if (reached) "" else ", no line to it")
         }
-        state = state.copy(volumes = roomVolumes())
+        state = state.copy(volumes = roomVolumes(), unheard = state.unheard - peerId)
     }
 
     /**
@@ -722,11 +752,55 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private fun measureAsHost() {
         val round = hostRound().also { hostRoundInFlight = it }
-        try {
+        val result = try {
             round.pair(aimedAt())
         } finally {
             hostRoundInFlight = null
         }
+        if (result == RoundResult.SERVED) handler.post { pairDone = true }
+    }
+
+    /** A sound check of the whole room, or of the one device this pair screen is about. */
+    private fun checkSound() {
+        val round = hostRound().also { hostRoundInFlight = it }
+        checked = try {
+            round.soundCheck(if (peerJobOf(intent.getStringExtra(PEER_JOB_EXTRA)) == PeerJob.PAIR) aimedAt() else null)
+        } finally {
+            hostRoundInFlight = null
+        }
+    }
+
+    /**
+     * What the check came to, as one line per device that was not heard, on that device's row.
+     *
+     * Every device on the rows is judged, not only the ones that took part: one that was told and
+     * never came made no sound, so it was not heard either. One that said why not says that
+     * instead. A check that never got as far as a plan leaves its last line, which says why.
+     */
+    private fun soundChecked(check: SoundCheck?) {
+        checkingSound = false
+        val failed = if (check == null) state.message else null
+        val judged = if (peerJobOf(intent.getStringExtra(PEER_JOB_EXTRA)) == PeerJob.PAIR) {
+            listOfNotNull(HostIdentity(filesDir).current(), aimedAt())
+        } else {
+            state.volumes.map { it.peerId }
+        }
+        val unheard = if (check == null) emptyMap() else unheardLines(
+            check,
+            judged,
+            excuse = { RoundLine.Excused(it).text(this) },
+            notHeard = getString(R.string.sound_check_unheard)
+        )
+        events.write("sound-check shown: ${unheard.keys.joinToString(" ").ifEmpty { "nobody unheard" }}")
+        // The round's own lines are about gathering a room nobody asked to measure; the answer is
+        // on the rows, so they go.
+        state = state.copy(
+            checking = false,
+            message = null,
+            outcomes = emptyList(),
+            unheard = unheard,
+            checkFailed = failed
+        )
     }
 
     /**

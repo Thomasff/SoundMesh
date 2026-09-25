@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import android.os.SystemClock
 import kotlinx.coroutines.delay
 import com.soundmesh.core.CalibrationRole
+import com.soundmesh.core.RoomExcuse
 import com.soundmesh.probe.R
 
 /**
@@ -140,7 +141,15 @@ data class PeerCalibrateState(
     /** Whether the phones were measured on this visit, which is what 完成 waits for. */
     val stepTwoDone: Boolean = false,
     /** Which step the last round on this visit measured, or null before one ran. See [resultBelongsOn]. */
-    val ran: Int? = null
+    val ran: Int? = null,
+    /** A sound check is running: one chirp each, nothing kept, and no stop. */
+    val checking: Boolean = false,
+    /** What the last sound check said against each device it did not hear, by id. */
+    val unheard: Map<String, String> = emptyMap(),
+    /** Why the last sound check never got as far as a chirp, or null. */
+    val checkFailed: String? = null,
+    /** Whether a pair round has been served on this visit, which lights 完成 on the pair screen. */
+    val pairDone: Boolean = false
 )
 
 /** Whether the forward button at the bottom of [page] can be pressed. */
@@ -155,6 +164,25 @@ internal fun roomForwardOpen(
     2 -> stepOneDone
     else -> stepTwoDone
 }
+
+/**
+ * What a sound check says against each of [judged]: its own reason where it gave one, [notHeard]
+ * where this host did not hear it - including one told that never came, which made no sound - and
+ * nothing where it was heard.
+ */
+internal fun unheardLines(
+    check: SoundCheck,
+    judged: List<String>,
+    excuse: (RoomExcuse) -> String,
+    notHeard: String
+): Map<String, String> = judged.mapNotNull { peerId ->
+    val said = check.excuses[peerId]
+    when {
+        said != null -> peerId to excuse(said)
+        peerId !in check.heard -> peerId to notHeard
+        else -> null
+    }
+}.toMap()
 
 /** Whether 上一步 can be pressed: never on the first page, and never away from a round that runs. */
 internal fun roomBackOpen(page: Int, running: Boolean): Boolean = !running && page > 1
@@ -191,6 +219,8 @@ data class SinkOutcome(val sinkId: String, val name: String, val text: String)
 
 class PeerCalibrateActions(
     val calibrate: () -> Unit,
+    /** Every device chirps once and whoever this host did not hear is named. Files nothing. */
+    val soundCheck: () -> Unit,
     val verify: () -> Unit,
     val forget: () -> Unit,
     val stop: () -> Unit,
@@ -344,6 +374,16 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, job: PeerJob, actions: PeerCa
             if (job == PeerJob.PAIR) RoundResult(state)
         }
         if (paged) RoomPageButtons(state, actions)
+        // The pair stays one page; its way out is the same button at the same place.
+        if (job == PeerJob.PAIR && state.role == CalibrationRole.HOST) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                Solid(
+                    stringResource(R.string.room_calibrate_done),
+                    enabled = state.pairDone && !state.running,
+                    onClick = actions.back
+                )
+            }
+        }
     }
 }
 
@@ -614,9 +654,11 @@ private fun VolumeGate(
             name = row.name,
             percent = row.percent,
             colour = if (quiet) MaterialTheme.colorScheme.error
-            else BadgePalette.colourOf(state.colours[row.peerId], MaterialTheme.colorScheme.onSurfaceVariant)
+            else BadgePalette.colourOf(state.colours[row.peerId], MaterialTheme.colorScheme.onSurfaceVariant),
+            complaint = state.unheard[row.peerId]
         ) { actions.setHandsetVolume(row.peerId, it) }
     }
+    SoundCheckButton(state, actions)
     if (tooQuiet.isNotEmpty()) {
         Note(
             stringResource(
@@ -626,6 +668,28 @@ private fun VolumeGate(
             ),
             Tone.WRONG
         )
+    }
+}
+
+/**
+ * 试音, straight under the rows it answers on. Optional: nothing waits for it, and 下一步 asks
+ * only for the volume. Outlined for that reason, and grey only while something runs or nobody has
+ * joined to be heard. The line under it sweeps while the check runs, which is all the check says
+ * about itself; what it found is on the rows.
+ */
+@Composable
+private fun SoundCheckButton(state: PeerCalibrateState, actions: PeerCalibrateActions) {
+    Column(
+        modifier = Modifier.padding(top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Ghost(
+            stringResource(R.string.sound_check),
+            enabled = !state.running && !state.alone,
+            onClick = actions.soundCheck
+        )
+        Note(stringResource(R.string.sound_check_hint), waiting = state.checking)
+        state.checkFailed?.let { Note(it, Tone.WRONG) }
     }
 }
 
@@ -737,8 +801,9 @@ private fun PairBody(
     onForget: () -> Unit
 ) {
     // Above everything else while a round runs, because it is the only thing on this screen
-    // that is about the next few seconds.
-    if (state.running) {
+    // that is about the next few seconds. Not for a sound check, which says itself under its
+    // own button.
+    if (state.running && !state.checking) {
         Label(R.string.room_calibrate_now)
         // The first phase of a pair round is the one this was asked for: dialling the other
         // handset and then agreeing a clock with it, sixteen seconds during which nothing is

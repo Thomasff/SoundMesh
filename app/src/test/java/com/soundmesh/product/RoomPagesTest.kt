@@ -1,5 +1,7 @@
 package com.soundmesh.product
 
+import com.soundmesh.core.RoomExcuse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -47,5 +49,19 @@ class RoomPagesTest {
         assertFalse(resultBelongsOn(3, ran = 1))
         assertTrue(resultBelongsOn(3, ran = 2))
         assertTrue(resultBelongsOn(2, ran = null))
+    }
+
+    /** Heard says nothing; not heard, or never came, says so; a reason given is said instead. */
+    @Test
+    fun `a sound check speaks only against the devices it did not hear`() {
+        val check = SoundCheck(
+            tookPart = listOf("one", "two", "host"),
+            heard = setOf("one", "host"),
+            excuses = mapOf("three" to RoomExcuse.ASLEEP)
+        )
+        assertEquals(
+            mapOf("two" to "quiet", "three" to "ASLEEP", "four" to "quiet"),
+            unheardLines(check, listOf("host", "one", "two", "three", "four"), { it.name }, "quiet")
+        )
     }
 }
