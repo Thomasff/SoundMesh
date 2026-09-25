@@ -168,7 +168,7 @@
     <string name="pair_calibrate_clock">正在和另一台对时钟。这一步不发声。</string>
     <string name="pair_calibrate_running">校准中：两台都别碰，保持安静。</string>
     <string name="calibrate_computing">计算中，请耐心等待几秒。</string>
-    <string name="room_calibrate_intro">通过校准来同步手机时间，并测量距离从而精确调控音量与延时。</string>
+    <string name="room_calibrate_intro">通过校准来同步设备时间，并测量距离从而精确调控音量与延时。</string>
     <string name="room_volume_gate_hint">拖动此音量条改变所有手机音量，确保能让所有手机听见。</string>
     <string name="room_volume_unify">统一媒体音量</string>
     <string name="room_volume_unify_advice">建议调到 70% 以上</string>

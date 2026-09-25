@@ -609,7 +609,9 @@ class PeerCalibrateActivity : ComponentActivity() {
      */
     private val readVolumes = object : Runnable {
         override fun run() {
-            if (role() == CalibrationRole.HOST) state = state.copy(volumes = roomVolumes())
+            if (role() == CalibrationRole.HOST) {
+                state = state.copy(volumes = roomVolumes(), alone = RoomCommands.standingPeerIds().isEmpty())
+            }
             handler.postDelayed(this, VOLUME_MILLIS)
         }
     }

@@ -27,6 +27,14 @@ fun tooQuietFor(rows: List<VolumeRow>, floor: Int = QUIET_FLOOR_PERCENT): List<S
     rows.filter { it.percent < floor }.map { it.name }
 
 /**
+ * Whether a round between devices can be started: not while one runs, not with a device too quiet
+ * to be heard, and not on a host [alone] - one nobody has joined, where a round runs its minute and
+ * has nobody to hear it. A handset's own output latency is measured alone and does not ask this.
+ */
+fun roundCanStart(running: Boolean, tooQuiet: List<String>, alone: Boolean): Boolean =
+    !running && tooQuiet.isEmpty() && !alone
+
+/**
  * Whether leaving the calibration should put the room's volume back where it was.
  *
  * Only when this screen is what moved it. The volume a room plays at is set on the playing screen

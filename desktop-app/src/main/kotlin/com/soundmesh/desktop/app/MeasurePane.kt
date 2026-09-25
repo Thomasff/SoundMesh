@@ -46,6 +46,7 @@ import com.soundmesh.product.delayLines
 import com.soundmesh.product.fitOffer
 import com.soundmesh.product.listenerLines
 import com.soundmesh.product.measuredLines
+import com.soundmesh.product.roundCanStart
 import com.soundmesh.product.sweeping
 import com.soundmesh.product.tooQuietFor
 import kotlinx.coroutines.CoroutineDispatcher
@@ -94,7 +95,7 @@ internal fun MeasurePane(
         }
         if (mine) measure.microphone?.let { Note(describeHere(it, measure.microphoneDetail), Tone.WRONG) }
         Column(Modifier.padding(top = 12.dp)) {
-            val canStart = status.open && !measure.running && tooQuiet.isEmpty()
+            val canStart = status.open && roundCanStart(measure.running, tooQuiet, alone = status.phones.isEmpty())
             Framed(strong = !measure.running) {
                 when (job) {
                     MeasureJob.ROOM -> {
@@ -277,7 +278,7 @@ private fun RoundResult(
         }
         if (job == MeasureJob.ROOM && measure.roomMeasured) {
             Column(Modifier.padding(top = 7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Ghost(say(Phrases.pc_room_again), enabled = tooQuiet.isEmpty(), onClick = again)
+                Ghost(say(Phrases.pc_room_again), enabled = roundCanStart(false, tooQuiet, alone = status.phones.isEmpty()), onClick = again)
                 TooQuietNote(tooQuiet)
             }
         }

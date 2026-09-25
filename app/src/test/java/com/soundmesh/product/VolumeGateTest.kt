@@ -61,6 +61,19 @@ class VolumeGateTest {
         )
     }
 
+    /** A host nobody has joined has nobody to hear it: a round there runs its minute for nothing. */
+    @Test
+    fun `a host alone cannot start a round`() {
+        assertFalse(roundCanStart(running = false, tooQuiet = emptyList(), alone = true))
+        assertTrue(roundCanStart(running = false, tooQuiet = emptyList(), alone = false))
+    }
+
+    @Test
+    fun `a round running or a handset too quiet stops the next one as before`() {
+        assertFalse(roundCanStart(running = true, tooQuiet = emptyList(), alone = false))
+        assertFalse(roundCanStart(running = false, tooQuiet = listOf("X10"), alone = false))
+    }
+
     /**
      * Leaving puts the room back only where this screen is what moved it. The playing screen sets
      * a room volume too and has a restore of its own, and both put back the level from before the

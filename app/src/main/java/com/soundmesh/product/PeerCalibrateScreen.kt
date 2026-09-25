@@ -86,6 +86,8 @@ data class PeerCalibrateState(
      * and it is what the gate above the steps is judged on. See [tooQuietFor].
      */
     val volumes: List<VolumeRow> = emptyList(),
+    /** A host no sink is standing with: nothing starts a round. Read with [volumes]; never true on a sink. */
+    val alone: Boolean = false,
     /** Which colour each handset is drawn in, off the saved drawing. Empty before a room is one. */
     val colours: Map<String, Int> = emptyMap(),
     /**
@@ -342,7 +344,7 @@ private fun RoomRoundResult(
             ) {
                 Ghost(
                     stringResource(R.string.room_calibrate_again, which),
-                    enabled = tooQuiet.isEmpty(),
+                    enabled = roundCanStart(false, tooQuiet, state.alone),
                     onClick = if (which == 1) actions.measureOverhead else actions.measureRoom
                 )
                 TooQuietNote(tooQuiet)
@@ -413,7 +415,7 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
             ) {
                 Solid(
                     stringResource(R.string.room_calibrate_step1_go),
-                    enabled = !state.running && tooQuiet.isEmpty(),
+                    enabled = roundCanStart(state.running, tooQuiet, state.alone),
                     onClick = actions.measureOverhead
                 )
                 TooQuietNote(tooQuiet)
@@ -432,7 +434,7 @@ private fun RoomBody(state: PeerCalibrateState, actions: PeerCalibrateActions) {
             ) {
                 Solid(
                     stringResource(R.string.room_calibrate_step2_go),
-                    enabled = !state.running && tooQuiet.isEmpty(),
+                    enabled = roundCanStart(state.running, tooQuiet, state.alone),
                     onClick = actions.measureRoom
                 )
                 TooQuietNote(tooQuiet)
@@ -653,7 +655,7 @@ private fun PairBody(
             ) {
                 Solid(
                     stringResource(R.string.pair_calibrate_start),
-                    enabled = !state.running && tooQuiet.isEmpty(),
+                    enabled = roundCanStart(state.running, tooQuiet, state.alone),
                     onClick = actions.calibrate
                 )
                 TooQuietNote(tooQuiet)

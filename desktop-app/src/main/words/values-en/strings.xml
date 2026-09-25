@@ -74,12 +74,12 @@
     <string name="pc_percent_now">%1$d%% (now %2$d%%)</string>
 
     <string name="pc_no_network">This computer is not on a local network, so no phone or computer can reach it. Join a WiFi network or plug in a cable first.</string>
-    <string name="pc_networks_hint">Every device in the room has to be on one of these.</string>
+    <string name="pc_networks_hint">Every device in the room has to be on this network.</string>
 
     <string name="pc_code_title">Code for phones to scan</string>
     <string name="pc_code_nowhere">This computer has no local network address, so there is nothing for a phone to scan.</string>
-    <string name="pc_code_how">On a phone, pick Be a sink, and scan this code if it cannot find this computer.</string>
-    <string name="pc_code_address">The code holds %1$s (%2$s); the phone that scans it has to be on that network.</string>
+    <string name="pc_code_how">On the other devices, pick Be a sink; if one does not connect by itself, scan this code.</string>
+    <string name="pc_code_address">A phone that scans it will connect to %1$s</string>
 
     <string name="pc_port_command">Command port TCP</string>
     <string name="pc_port_clock">Clock port UDP</string>
@@ -117,7 +117,7 @@
     <string name="pc_mic_other">The microphone would not open: %1$s</string>
 
     <string name="pc_room_step">Measure the distances between the devices</string>
-    <string name="pc_room_step_1">Put the phones where you want to hear them, and sit at the computer where you usually listen - its distance to each device is taken as yours</string>
+    <string name="pc_room_step_1">Put the phones where you want to hear them</string>
     <string name="pc_room_again">Measure again</string>
     <string name="pc_pair_title">Sync with %1$s</string>
     <string name="pc_mic_no_device_host">This computer has no microphone, so it cannot measure.</string>

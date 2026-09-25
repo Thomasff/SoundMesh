@@ -165,7 +165,7 @@
     <string name="pair_calibrate_clock">Syncing clocks with the other phone. Nothing sounds in this step.</string>
     <string name="pair_calibrate_running">Measuring: leave both phones alone and keep it quiet.</string>
     <string name="calibrate_computing">Working it out; a few seconds.</string>
-    <string name="room_calibrate_intro">Calibration syncs the phones\' clocks and measures the distances, so volume and timing can be set properly.</string>
+    <string name="room_calibrate_intro">Calibration syncs the devices\' clocks and measures the distances, so volume and timing can be set properly.</string>
     <string name="room_volume_gate_hint">Drag this slider to set every phone\'s volume, so they can all hear each other.</string>
     <string name="room_volume_unify">Media volume</string>
     <string name="room_volume_unify_advice">Best above 70%</string>

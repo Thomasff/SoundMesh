@@ -79,12 +79,12 @@
     <string name="pc_percent_now">%1$d%%（现在 %2$d%%）</string>
 
     <string name="pc_no_network">本机现在没连局域网，手机和别的电脑都连不到它。先连上 WiFi 或网线。</string>
-    <string name="pc_networks_hint">房间里的每台都要连在其中一个网上。</string>
+    <string name="pc_networks_hint">房间里的设备都要连接此网。</string>
 
     <string name="pc_code_title">给手机扫的码</string>
     <string name="pc_code_nowhere">本机现在没有局域网地址，手机扫不到。</string>
-    <string name="pc_code_how">手机选「当从机」，找不到这里时扫这个码。</string>
-    <string name="pc_code_address">码里是 %1$s（%2$s），扫码的手机要连在这个网上。</string>
+    <string name="pc_code_how">其他设备选「当从机」，若无法自动连接，扫此二维码。</string>
+    <string name="pc_code_address">扫码的手机将会连接 %1$s</string>
 
     <string name="pc_port_command">命令口 TCP</string>
     <string name="pc_port_clock">时钟口 UDP</string>
@@ -122,7 +122,7 @@
     <string name="pc_mic_other">麦克风打不开：%1$s</string>
 
     <string name="pc_room_step">量设备之间的距离</string>
-    <string name="pc_room_step_1">手机放在你希望听的位置，你坐在电脑前平时听歌的地方——电脑到每台的距离就当作你到每台的距离</string>
+    <string name="pc_room_step_1">手机放在你希望听的位置</string>
     <string name="pc_room_again">重测</string>
     <string name="pc_pair_title">和 %1$s 对时</string>
     <string name="pc_mic_no_device_host">本机没有麦克风，测不了。</string>

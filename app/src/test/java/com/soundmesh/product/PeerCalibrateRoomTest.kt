@@ -668,7 +668,7 @@ class PeerCalibrateRoomTest {
         )
         assertTrue(
             "a pair round starts with a handset nothing can hear",
-            pair.contains("enabled = !state.running && tooQuiet.isEmpty()") &&
+            pair.contains("enabled = roundCanStart(state.running, tooQuiet, state.alone)") &&
                 pair.contains("TooQuietNote(tooQuiet)")
         )
     }

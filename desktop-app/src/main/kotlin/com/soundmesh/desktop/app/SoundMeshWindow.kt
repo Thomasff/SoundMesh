@@ -1183,9 +1183,9 @@ private fun PairCode(host: HostSession, open: Boolean, addresses: List<OwnAddres
         wholeScreen = java.awt.MouseInfo.getPointerInfo()?.device?.defaultConfiguration?.bounds
     })
     Note(say(Phrases.pc_code_how))
-    Note(say(Phrases.pc_code_address, where.address, where.adapter))
+    Note(say(Phrases.pc_code_address, where.address))
     wholeScreen?.let { screen ->
-        CodeScreen(modules, say(Phrases.pc_code_address, where.address, where.adapter), screen) { wholeScreen = null }
+        CodeScreen(modules, say(Phrases.pc_code_address, where.address), screen) { wholeScreen = null }
     }
 }
 
