@@ -23,6 +23,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -501,6 +502,33 @@ class HostSessionTest {
             ServerSocket(ports.command).close()
             ServerSocket(ports.chunk).close()
         } finally {
+            host.close()
+        }
+    }
+
+    /**
+     * The record takes Windows three quarters of a second to put on the network, and the board
+     * waits on [HostSession.status]: that is read, and says open, while the record is still going
+     * on - a handset that scans the code needs no record, only the ports.
+     */
+    @Test
+    fun theBoardIsReadWhileTheRecordIsStillGoingOn() {
+        val registering = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val host = HostSession(folder.root, ports(), advertise = true, retellMillis = 50L,
+            advertiser = { _, _, _ ->
+                registering.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                AutoCloseable { }
+            })
+        val opening = Thread { host.open() }.apply { start() }
+        try {
+            assertTrue(registering.await(5, TimeUnit.SECONDS))
+            val read = Executors.newSingleThreadExecutor().submit<HostStatus> { host.status() }
+            assertTrue(read.get(1, TimeUnit.SECONDS).open)
+        } finally {
+            release.countDown()
+            opening.join()
             host.close()
         }
     }

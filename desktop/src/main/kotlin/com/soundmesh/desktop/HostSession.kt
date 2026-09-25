@@ -294,8 +294,31 @@ class HostSession(
     @Volatile private var callingOff = false
 
     /** Binds the three ports and advertises, or says which port was taken and holds none of them. */
-    fun open() = synchronized(lock) {
-        if (commandServer != null) return
+    fun open() {
+        val (command, hostId) = synchronized(lock) { bindPorts() } ?: return
+        if (!advertise) return
+        // Outside the lock: Windows probes the network for the name before it answers, three
+        // quarters of a second, and [status] - which the board waits on - would wait that long too.
+        // After all the ports, so nothing that finds the record can dial one not yet open. A record
+        // that will not go on leaves nothing open: nobody could find this host, and one that stayed
+        // open would stream to nobody while the button said it was the host.
+        val advertised = try {
+            advertiser("$SERVICE_NAME_PREFIX-$hostId", ports.chunk, hostId)
+        } catch (e: Exception) {
+            if (synchronized(lock) { commandServer === command }) {
+                close()
+                synchronized(lock) { problem = HostProblem.AdvertiseFailed(e.message ?: e.toString()) }
+            }
+            return
+        }
+        synchronized(lock) {
+            if (commandServer === command) record = advertised else runCatching { advertised.close() }
+        }
+    }
+
+    /** [open]'s part under the lock: this session's ports and id, or null when there is nothing to advertise. */
+    private fun bindPorts(): Pair<RoomCommandServer, String>? {
+        if (commandServer != null) return null
         problem = null
         // A program a host that died left turned down - see [AppTurnDown]. Not a reason to refuse the role.
         runCatching { turnDown.putBack() }
@@ -316,12 +339,12 @@ class HostSession(
                 problem = HostProblem.PortTaken(port, number)
                 false
             }
-        if (!bind(HostPort.COMMAND, ports.command, command::start, command::stop)) return
-        if (!bind(HostPort.CLOCK, ports.clock, clock::start, clock::stop)) return
-        if (!bind(HostPort.AUDIO, ports.chunk, chunks::start, chunks::stop)) return
+        if (!bind(HostPort.COMMAND, ports.command, command::start, command::stop)) return null
+        if (!bind(HostPort.CLOCK, ports.clock, clock::start, clock::stop)) return null
+        if (!bind(HostPort.AUDIO, ports.chunk, chunks::start, chunks::stop)) return null
         // With the role rather than per play, as the handset opens it per session: for the same
         // reason as the other two, see the class comment.
-        if (!bind(HostPort.SPATIAL, ports.spatial, spatial::start, spatial::stop)) return
+        if (!bind(HostPort.SPATIAL, ports.spatial, spatial::start, spatial::stop)) return null
 
         // A handset that opens a second line under the same name replaces its first, and its id
         // never leaves [RoomCommandServer.standingPeerIds] - so [tell] would go on counting it as
@@ -331,21 +354,10 @@ class HostSession(
         // a moment inside [RoomCommandServer.sendTo], so taking ours here cannot deadlock.
         command.onLeft = { peerId, _ -> synchronized(lock) { told.remove(peerId) } }
 
-        // After all three, so nothing that finds the record can dial a port not yet open. A
-        // record that will not go on leaves nothing open: nobody could find this host, and one
-        // that stayed open would stream to nobody while the button said it was the host.
-        val advertised = if (!advertise) null else try {
-            advertiser("$SERVICE_NAME_PREFIX-$hostId", ports.chunk, hostId)
-        } catch (e: Exception) {
-            for (undo in bound.asReversed()) undo()
-            problem = HostProblem.AdvertiseFailed(e.message ?: e.toString())
-            return
-        }
         commandServer = command
         clockServer = clock
         chunkServer = chunks
         spatialServer = spatial
-        record = advertised
         selfId = hostId
         drawing.read()?.let { saved ->
             whereTheyWere.putAll(saved.placements.associateBy { it.peerId })
@@ -358,6 +370,7 @@ class HostSession(
             isDaemon = true
             start()
         }
+        return command to hostId
     }
 
     /** Withdraws the record first, the mirror of [open], then gives every port back. */
