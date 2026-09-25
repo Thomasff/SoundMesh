@@ -354,7 +354,7 @@ private fun HostReady(
     onMeasure: (MeasureJob, String?) -> Unit
 ) {
     Note(say(Phrases.pc_phones_follow))
-    val addresses = remember { LocalNetworks.list() }
+    val addresses = remember { LocalNetworks.toOffer() }
     // The handset's word for joining names in a sentence: 、 in Chinese, a comma in English.
     val join = say(Phrases.room_volume_name_join)
     if (addresses.isNotEmpty()) Note(say(Phrases.pc_type_this, addresses.joinToString(join) { it.address }))
@@ -1130,7 +1130,7 @@ private fun Networks() {
     var addresses by remember { mutableStateOf<List<OwnAddress>?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
-            addresses = withContext(Dispatchers.IO) { LocalNetworks.list() }
+            addresses = withContext(Dispatchers.IO) { LocalNetworks.toOffer() }
             delay(NETWORKS_POLL_MILLIS)
         }
     }

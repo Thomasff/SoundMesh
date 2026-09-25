@@ -1,6 +1,8 @@
 package com.soundmesh.desktop
 
+import java.net.DatagramSocket
 import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.NetworkInterface
 
 /** One of this machine's LAN addresses, the adapter Windows names it by, and its network's prefix. */
@@ -24,6 +26,34 @@ object LocalNetworks {
                     .map { OwnAddress(it.address.hostAddress, nic.displayName ?: nic.name, it.networkPrefixLength.toInt()) }
             }
     }.getOrDefault(emptyList())
+
+    /**
+     * What a handset is shown to reach this machine by: [list], cut to the adapter the way out
+     * goes through. The others are most often a virtual machine's network (VirtualBox, Hyper-V),
+     * which no handset is on, and the first one listed is the one the code carries.
+     */
+    fun toOffer(): List<OwnAddress> = offered(list(), outward())
+
+    /** [all] cut to the one at [outward], or all of them when that is unknown or none of them. */
+    fun offered(all: List<OwnAddress>, outward: String?): List<OwnAddress> =
+        all.filter { it.address == outward }.ifEmpty { all }
+
+    /**
+     * The address this machine would send from to reach beyond its networks, or null. A UDP
+     * socket's connect sends nothing; it only asks the routing table. Null for a tunnel's (no
+     * hardware address): a VPN that takes all traffic is the way out, and no handset is on it.
+     */
+    private fun outward(): String? = runCatching {
+        DatagramSocket().use { socket ->
+            socket.connect(InetAddress.getByName(BEYOND), 9)
+            val local = socket.localAddress
+            val nic = NetworkInterface.getByInetAddress(local)
+            if (local.isAnyLocalAddress || nic?.hardwareAddress == null) null else local.hostAddress
+        }
+    }.getOrNull()
+
+    // Any address past every private network: only the route to it is looked up.
+    private const val BEYOND = "8.8.8.8"
 
     /**
      * True only when [address] is a dotted IPv4 address outside every network in [own].
