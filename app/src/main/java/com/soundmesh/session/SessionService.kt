@@ -44,6 +44,7 @@ import com.soundmesh.probe.sync.SyncProjectionService
 import com.soundmesh.probe.sync.SyncRenderer
 import com.soundmesh.product.inChosenLanguage
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -436,6 +437,9 @@ class SessionService : Service() {
         val nudge = SilenceNudge(
             AndroidStreamVolumes(getSystemService(AudioManager::class.java))
         )
+        // How many times this silence has been nudged, for the spell's own line. Reset by the
+        // silence's first chunk; read also by a close, off the capture loop.
+        val nudges = AtomicInteger()
         CaptureSilence.watch(
             onBegan = {
                 // Read here and written on another thread: the reading has to be of the handset as
@@ -443,17 +447,28 @@ class SessionService : Service() {
                 // the capture loop is what the thread below exists to avoid. Nothing audible is
                 // being produced at this instant anyway, which is the fault being recorded.
                 val moment = momentOf(this, CAPTURING_HOST_STREAM)
-                val at = System.nanoTime()
                 Thread({
                     events.write("capture-silence begins | ${moment}")
-                    // The repair a listener has been doing by hand since 09-12, and it goes in the
-                    // record whatever it did - including when it refused. A repair nobody can see
-                    // is a repair that can stop working without anybody noticing, and this one
-                    // sits in front of the only symptom the product has for this fault.
-                    val outcome = nudge.push(at) { Thread.sleep(SilenceNudge.HOLD_MILLIS) }
-                    events.write("capture-silence nudge: $outcome")
                 }, "SoundMeshSilenceRecord").start()
                 Log.w(LOG_TAG, "the capture has been handing over digital silence: ${moment}")
+            },
+            onQuiet = { silentNanos, first ->
+                if (first) nudges.set(0)
+                // The repair a listener has been doing by hand since 09-12: from 0.7 s of silence,
+                // and again every five seconds while it lasts. The first of each silence goes in
+                // the record with the handset's state, whatever it did - including when it refused.
+                // A repair nobody can see is a repair that can stop working without anybody
+                // noticing. The retries are only counted, on the spell's line: a paused player is
+                // silence too, and an hour of it would otherwise push everything else out.
+                if (nudge.claim(System.nanoTime())) {
+                    val moment = if (nudges.incrementAndGet() == 1) momentOf(this, CAPTURING_HOST_STREAM) else null
+                    Thread({
+                        val outcome = nudge.push { Thread.sleep(SilenceNudge.HOLD_MILLIS) }
+                        if (moment != null) {
+                            events.write("capture-silence nudge after ${silentNanos / 1_000_000L}ms: $outcome | ${moment}")
+                        }
+                    }, "SoundMeshSilenceNudge").start()
+                }
             },
             onSpell = { silentNanos, recovered ->
                 val ended = if (recovered) "the audio came back" else "it never came back"
@@ -463,8 +478,9 @@ class SessionService : Service() {
                 val moment = momentOf(this, CAPTURING_HOST_STREAM)
                 // Off the capture loop. A spell is rare enough that a thread each is nothing, and
                 // the alternative is a flash write between two chunks of audio that just came back.
+                val nudged = nudges.get()
                 Thread({
-                    events.write("capture-silent ${silentNanos / 1_000_000L}ms, $ended | ${moment}")
+                    events.write("capture-silent ${silentNanos / 1_000_000L}ms, $ended, nudged $nudged | ${moment}")
                 }, "SoundMeshSilenceRecord").start()
                 Log.w(LOG_TAG, "the capture handed over ${silentNanos / 1_000_000L} ms of digital silence")
             }

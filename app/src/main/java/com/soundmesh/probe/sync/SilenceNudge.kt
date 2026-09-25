@@ -3,7 +3,7 @@ package com.soundmesh.probe.sync
 import android.media.AudioManager
 
 /** What one attempt did, so the record says which of these happened rather than "tried". */
-enum class NudgeOutcome { PUSHED, TOO_SOON, NOT_SILENCED, WOULD_NOT_MOVE }
+enum class NudgeOutcome { PUSHED, NOT_SILENCED, WOULD_NOT_MOVE }
 
 /**
  * Pushes the media stream off zero and straight back, to make the handset look at its audio path
@@ -39,23 +39,30 @@ class SilenceNudge(
     private var lastNanos: Long? = null
 
     /**
-     * [hold] is how long the stream stays off zero, passed in rather than slept here: this runs on
-     * a thread of the caller's choosing and a test should not take a quarter of a second.
+     * Whether an attempt may start at [nowNanos], and if so the cooldown starts now.
      *
-     * Synchronised because each spell announces itself on a thread of its own, and the cooldown is
-     * read and written inside one call. Two spells cannot overlap - a spell takes four seconds of
-     * silence to start - so this is never contended; it is here so the cooldown does not depend on
-     * that argument staying true.
+     * Asked on every chunk of silence past [CaptureSilence.QUIET_NANOS], on the capture's own loop,
+     * so it is a comparison and nothing more; the push itself is on a thread of its own. Claimed
+     * here rather than inside [push], because by the time that thread ran, the next chunks would
+     * have started threads of their own. Stamped whatever the push then does: a throw or a stream
+     * that would not move must not leave the next chunk free to try again at once - a repair that
+     * fires fifty times a second is a fault of its own.
      */
     @Synchronized
-    fun push(nowNanos: Long, hold: () -> Unit): NudgeOutcome {
+    fun claim(nowNanos: Long): Boolean {
         val last = lastNanos
-        if (last != null && nowNanos - last < cooldownNanos) return NudgeOutcome.TOO_SOON
-        if (streams.level(AudioManager.STREAM_MUSIC) != 0) return NudgeOutcome.NOT_SILENCED
-        // Stamped before the act rather than after. A throw between here and the end would
-        // otherwise leave the cooldown unset, and the next chunk of silence would try again
-        // immediately - a repair that fires every few seconds is a fault of its own.
+        if (last != null && nowNanos - last < cooldownNanos) return false
         lastNanos = nowNanos
+        return true
+    }
+
+    /**
+     * [hold] is how long the stream stays off zero, passed in rather than slept here: this runs on
+     * a thread of the caller's choosing and a test should not take a quarter of a second. Only
+     * after [claim] said yes.
+     */
+    fun push(hold: () -> Unit): NudgeOutcome {
+        if (streams.level(AudioManager.STREAM_MUSIC) != 0) return NudgeOutcome.NOT_SILENCED
         streams.set(AudioManager.STREAM_MUSIC, 1)
         // Read back, because on this project's own handsets setStreamVolume has taken a value,
         // thrown nothing and moved nothing. A push that did not move is not a push that failed to
@@ -68,11 +75,9 @@ class SilenceNudge(
 
     companion object {
         /**
-         * Long enough that a repair which did not work is not retried on the very next spell.
-         *
-         * A spell has to last [CaptureSilence.SPELL_SECONDS] before anything fires at all, so the
-         * floor between two attempts is already four seconds; this raises it to five and, more to
-         * the point, covers the case of one spell ending and another starting straight after.
+         * How long after one attempt the next may start, while the silence goes on or when a new
+         * one starts straight after. Chosen by the listener on 09-25 along with the 0.7 s: a
+         * repair that did not work is retried every five seconds rather than on every chunk.
          */
         const val COOLDOWN_SECONDS = 5
 

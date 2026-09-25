@@ -2,6 +2,8 @@ package com.soundmesh.probe.sync
 
 import android.media.AudioManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -21,7 +23,7 @@ class SilenceNudgeTest {
         val nudge = SilenceNudge(streams)
         val held = ArrayList<List<Pair<Int, Int>>>()
 
-        val outcome = nudge.push(nowNanos = 100 * second) { held += streams.written.toList() }
+        val outcome = nudge.push { held += streams.written.toList() }
 
         assertEquals(NudgeOutcome.PUSHED, outcome)
         assertEquals(listOf(media to 1, media to 0), streams.written)
@@ -30,28 +32,15 @@ class SilenceNudgeTest {
         assertEquals(listOf(listOf(media to 1)), held)
     }
 
+    /** Asked on every chunk of silence: yes once, then no until five seconds have gone by. */
     @Test
-    fun `a second spell inside the cooldown is left alone`() {
-        val streams = FakeStreams(mutableMapOf(media to 0))
-        val nudge = SilenceNudge(streams)
-        nudge.push(100 * second) {}
-        streams.written.clear()
+    fun `an attempt inside the cooldown is not claimed`() {
+        val nudge = SilenceNudge(FakeStreams(mutableMapOf(media to 0)))
 
-        val outcome = nudge.push(104 * second) {}
-
-        assertEquals(NudgeOutcome.TOO_SOON, outcome)
-        assertEquals(emptyList<Pair<Int, Int>>(), streams.written)
-    }
-
-    @Test
-    fun `past the cooldown it tries again`() {
-        val streams = FakeStreams(mutableMapOf(media to 0))
-        val nudge = SilenceNudge(streams)
-        nudge.push(100 * second) {}
-        streams.written.clear()
-
-        assertEquals(NudgeOutcome.PUSHED, nudge.push(105 * second) {})
-        assertEquals(listOf(media to 1, media to 0), streams.written)
+        assertTrue(nudge.claim(100 * second))
+        assertFalse(nudge.claim(100 * second + 20_000_000L))
+        assertFalse(nudge.claim(105 * second - 1))
+        assertTrue(nudge.claim(105 * second))
     }
 
     /** A volume somebody chose is theirs. This only ever acts on the zero the app itself wrote. */
@@ -60,7 +49,7 @@ class SilenceNudgeTest {
         val streams = FakeStreams(mutableMapOf(media to 3))
         val nudge = SilenceNudge(streams)
 
-        assertEquals(NudgeOutcome.NOT_SILENCED, nudge.push(100 * second) {})
+        assertEquals(NudgeOutcome.NOT_SILENCED, nudge.push {})
         assertEquals(emptyList<Pair<Int, Int>>(), streams.written)
     }
 
@@ -69,16 +58,17 @@ class SilenceNudgeTest {
      *
      * It is reported as its own answer rather than as a push, and it still costs the cooldown: a
      * handset that will not move its media volume will not move it in five seconds either, and
-     * retrying on every spell would be a repair that never works and never stops.
+     * retrying on every chunk would be a repair that never works and never stops.
      */
     @Test
     fun `a set that changes nothing says so, and the stream is still put back`() {
         val streams = FakeStreams(mutableMapOf(media to 0), deaf = setOf(media))
         val nudge = SilenceNudge(streams)
 
-        assertEquals(NudgeOutcome.WOULD_NOT_MOVE, nudge.push(100 * second) {})
+        assertTrue(nudge.claim(100 * second))
+        assertEquals(NudgeOutcome.WOULD_NOT_MOVE, nudge.push {})
         assertEquals(listOf(media to 1, media to 0), streams.written)
-        assertEquals(NudgeOutcome.TOO_SOON, nudge.push(102 * second) {})
+        assertFalse(nudge.claim(102 * second))
     }
 
     /** Levels that move, writes kept in order, and a stream that accepts a value and ignores it. */

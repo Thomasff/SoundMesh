@@ -50,6 +50,17 @@ object CaptureSilence {
     const val SPELL_SECONDS = 4
     const val SPELL_NANOS = SPELL_SECONDS * 1_000_000_000L
 
+    /**
+     * When the repair is asked for - [SilenceNudge] - which does not wait for a spell. A third
+     * reader with a number of its own, because what it costs to be wrong is not the same: a gap
+     * between tracks read as a fault puts a false line on the screen and in the record, while the
+     * same gap nudged makes no sound at all, there being nothing flowing to leak. Chosen by the
+     * listener on 09-25 after QQ Music in the background went silent every twenty seconds or so
+     * for the first minutes of a session, four and a half seconds at a time.
+     */
+    const val QUIET_MILLIS = 700L
+    const val QUIET_NANOS = QUIET_MILLIS * 1_000_000L
+
     @Volatile private var watching = false
     @Volatile private var heardAnything = false
     @Volatile private var lastSoundNanos = 0L
@@ -58,26 +69,34 @@ object CaptureSilence {
     @Volatile private var now: () -> Long = System::nanoTime
     @Volatile private var onSpell: (Long, Boolean) -> Unit = { _, _ -> }
     @Volatile private var onBegan: () -> Unit = {}
+    @Volatile private var onQuiet: (Long, Boolean) -> Unit = { _, _ -> }
+    @Volatile private var quietAsked = false
 
     /**
      * Called when a capture opens, so a previous session's silence is not this one's.
      *
      * [now] is a parameter rather than a call because a test for something measured in seconds
      * would otherwise have to take seconds.
+     *
+     * [onQuiet] is called on every silent chunk from [QUIET_NANOS] on, on the capture's own loop,
+     * with [first] true for the first of this silence: how often to act on it is the callee's.
      */
     fun watch(
         now: () -> Long = System::nanoTime,
         onBegan: () -> Unit = {},
+        onQuiet: (silentNanos: Long, first: Boolean) -> Unit = { _, _ -> },
         onSpell: (silentNanos: Long, recovered: Boolean) -> Unit = { _, _ -> }
     ) {
         this.now = now
         this.onBegan = onBegan
+        this.onQuiet = onQuiet
         this.onSpell = onSpell
         watching = true
         heardAnything = false
         lastSoundNanos = now()
         since = 0L
         inSpell = false
+        quietAsked = false
     }
 
     /** A capture that closes mid-spell still files it: never coming back is the louder answer. */
@@ -87,6 +106,7 @@ object CaptureSilence {
         heardAnything = false
         since = 0L
         inSpell = false
+        quietAsked = false
     }
 
     /** Every chunk the capture hands over, on the host's own loop. */
@@ -98,11 +118,18 @@ object CaptureSilence {
                 heardAnything = true
                 lastSoundNanos = now()
                 since = 0L
+                quietAsked = false
                 return
             }
         }
         if (!heardAnything) return
         since = now() - lastSoundNanos
+        if (since >= QUIET_NANOS) {
+            val first = !quietAsked
+            quietAsked = true
+            // Like the record: a repair that throws must not stop a capture.
+            runCatching { onQuiet(since, first) }
+        }
         if (since >= SPELL_NANOS && !inSpell) {
             inSpell = true
             // Set before the call, so a record that throws cannot leave this announcing the same

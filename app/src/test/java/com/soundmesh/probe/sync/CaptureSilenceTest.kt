@@ -282,6 +282,62 @@ class CaptureSilenceTest {
         assertEquals(0, begins)
     }
 
+    /**
+     * The repair does not wait for a spell. From 0.7 s of silence it is asked on every silent
+     * chunk - the cooldown is its own to keep - and told which chunk is the first of this silence.
+     */
+    @Test
+    fun `from the quiet mark every silent chunk asks for the repair`() {
+        var clock = 0L
+        val asked = mutableListOf<Pair<Long, Boolean>>()
+        CaptureSilence.watch(now = { clock }, onQuiet = { silent, first -> asked += silent to first })
+
+        CaptureSilence.sawChunk(music())
+        clock += CaptureSilence.QUIET_NANOS - 1
+        CaptureSilence.sawChunk(silence())
+        assertEquals(emptyList<Pair<Long, Boolean>>(), asked)
+
+        clock += 1
+        CaptureSilence.sawChunk(silence())
+        clock += 20_000_000L
+        CaptureSilence.sawChunk(silence())
+
+        assertEquals(
+            listOf(CaptureSilence.QUIET_NANOS to true, CaptureSilence.QUIET_NANOS + 20_000_000L to false),
+            asked
+        )
+    }
+
+    /** Sound coming back ends it, and the next silence is a first again. */
+    @Test
+    fun `a new silence after sound starts again from its first chunk`() {
+        var clock = 0L
+        val firsts = mutableListOf<Boolean>()
+        CaptureSilence.watch(now = { clock }, onQuiet = { _, first -> firsts += first })
+
+        CaptureSilence.sawChunk(music())
+        clock += CaptureSilence.QUIET_NANOS
+        CaptureSilence.sawChunk(silence())
+        CaptureSilence.sawChunk(music())
+        clock += CaptureSilence.QUIET_NANOS
+        CaptureSilence.sawChunk(silence())
+
+        assertEquals(listOf(true, true), firsts)
+    }
+
+    /** The 09-13 case once more: nothing is repaired on a capture that never made a sound. */
+    @Test
+    fun `a capture that has never heard anything never asks for the repair`() {
+        var clock = 0L
+        var asked = 0
+        CaptureSilence.watch(now = { clock }, onQuiet = { _, _ -> asked++ })
+
+        clock += CaptureSilence.SPELL_NANOS * 10
+        repeat(20) { CaptureSilence.sawChunk(silence()) }
+
+        assertEquals(0, asked)
+    }
+
     /** The one that matters most: it said so at the time even though it never came back. */
     @Test
     fun `a spell that never recovers still announced its start`() {
