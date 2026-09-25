@@ -62,6 +62,12 @@
     <string name="roster_quiet">有一阵子没通信了，可能是息屏了</string>
     <string name="pair_calibrate_aimed_gone">那台手机刚才还在，现在连不上了。</string>
     <string name="ready_go">进入播放</string>
+    <!-- Asked on 进入播放, one at a time. See BeforePlaying. -->
+    <string name="before_play_own_lead">还未校准本机输出延迟，开始播放会导致声音不同步，影响体验，是否继续？</string>
+    <string name="before_play_uncalibrated">%1$s未校准过或校准失败，声音可能不同步，影响体验，是否继续？</string>
+    <string name="before_play_cancel">取消</string>
+    <string name="before_play_calibrate">去校准</string>
+    <string name="before_play_go">继续</string>
     <string name="ready_back_to_play">回到播放</string>
     <string name="ready_goto_song">换一首</string>
     <string name="ready_goto_self">去测</string>
@@ -123,6 +129,7 @@
     <string name="calibrate_title">本机输出延迟</string>
     <string name="calibrate_have">已校准</string>
     <string name="calibrate_have_not">还没测过</string>
+    <string name="calibrate_once">只需测一次，以后无需重复本测试</string>
     <string name="calibrate_value">%1$.1f ms</string>
     <string name="calibrate_again">重新测一遍</string>
     <string name="calibrate_quiet">把手机放在桌上别碰，房间保持安静，大约一分半。</string>
@@ -156,7 +163,9 @@
     <string name="pair_calibrate_title">两台手机对时</string>
     <string name="pair_calibrate_no_pairing">本机还没扫过另一台的配对码。先回首页扫一次。</string>
     <string name="pair_calibrate_no_role">先回首页选本机是主机还是从机。</string>
-    <string name="pair_calibrate_quiet">请将两台设备放在一臂距离内，确保设备之间无杂物阻挡。测量时长大约一分钟，请保持安静</string>
+    <!-- Two halves of one sentence: the first is drawn bold. See pairQuiet. -->
+    <string name="pair_calibrate_quiet_lead">请将两台设备放在一臂距离内</string>
+    <string name="pair_calibrate_quiet">，确保设备之间无杂物阻挡。测量时长大约一分钟，请保持安静</string>
     <string name="pair_calibrate_start">开始对时</string>
     <string name="pair_calibrate_verify">验证已经测过的结果</string>
     <string name="pair_calibrate_result">结果</string>
@@ -197,6 +206,8 @@
     <string name="room_calibrate_done">完成</string>
     <string name="sound_check">试音</string>
     <string name="sound_check_hint">检测声音是否符合要求</string>
+    <!-- Appended to sound_check_hint once a check heard every device. -->
+    <string name="sound_check_passed">：检测成功，符合要求，可以开始</string>
     <string name="sound_check_unheard">检测到此设备声音过小，请调整音量或检查是否被障碍物遮挡</string>
     <string name="room_calibrate_again">重测第 %1$d 步</string>
     <string name="room_calibrate_step2_again_note">如果是因为手机挪了位置才重测，第 1 步量的听音位置也已过期，建议一并重测。</string>
@@ -459,9 +470,9 @@
     <string name="about_github">在 GitHub 上打开</string>
     <string name="perm_title">需要的权限</string>
     <string name="perm_mic">麦克风</string>
-    <string name="perm_mic_why">手机要听见自己的声音，才能量出它慢了多少</string>
+    <string name="perm_mic_why">校准时需要使用录音功能，其余时间不会使用</string>
     <string name="perm_notify">通知</string>
-    <string name="perm_notify_why">同步播放时得有一条通知，否则系统会把它停掉</string>
+    <string name="perm_notify_why">用于方便查看信息，并避免被系统停止</string>
     <string name="perm_camera">相机</string>
     <string name="perm_camera_why">只用来扫另一台的配对码，不存照片</string>
     <string name="perm_background">后台运行</string>

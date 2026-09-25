@@ -48,13 +48,18 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 
 /**
  * The pieces every stage is drawn out of, since 2026-09-15: labels, hairline rows, small pills.
@@ -342,7 +347,28 @@ fun ChoiceCard(title: String, chosen: Boolean, onClick: () -> Unit, content: @Co
 
 /** The line of small grey text under a control that says what it is for. */
 @Composable
-fun Note(text: String, tone: Tone = Tone.QUIET, waiting: Boolean = false) {
+fun Note(text: String, tone: Tone = Tone.QUIET, waiting: Boolean = false) =
+    NoteText(AnnotatedString(text), tone, waiting)
+
+/**
+ * The same line with its opening words in bold: [lead] and then [rest], read as one sentence.
+ *
+ * For the instruction whose first half is a thing somebody has to go and do with their hands
+ * before pressing anything - where the phones stand - and whose second half is the fine print.
+ */
+@Composable
+fun LeadNote(lead: String, rest: String, tone: Tone = Tone.QUIET, waiting: Boolean = false) =
+    NoteText(
+        buildAnnotatedString {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(lead) }
+            append(rest)
+        },
+        tone,
+        waiting
+    )
+
+@Composable
+private fun NoteText(text: AnnotatedString, tone: Tone, waiting: Boolean) {
     val colour = toneColour(tone)
     Text(
         text,
@@ -466,6 +492,42 @@ fun Ghost(
         modifier = modifier.fillMaxWidth()
     ) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * A question put on the way somewhere, with its three answers side by side: back out, go and fix
+ * it, or go on anyway.
+ *
+ * The middle one is the solid one, the way 进入播放 is beside 换个角色: fixing it is what the
+ * question is for, and going on is a choice somebody is allowed to make rather than the one the
+ * screen is steering them into. Tapping outside is backing out, which is the answer that changes
+ * nothing.
+ */
+@Composable
+fun AskBeforeGoing(
+    text: String,
+    cancel: String,
+    fix: String,
+    goOn: String,
+    onCancel: () -> Unit,
+    onFix: () -> Unit,
+    onGoOn: () -> Unit
+) {
+    Dialog(onDismissRequest = onCancel) {
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+            Column(
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                Text(text, style = MaterialTheme.typography.bodyMedium, lineHeight = 21.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Ghost(cancel, modifier = Modifier.weight(1f), onClick = onCancel)
+                    Solid(fix, modifier = Modifier.weight(1f), onClick = onFix)
+                    Ghost(goOn, modifier = Modifier.weight(1f), onClick = onGoOn)
+                }
+            }
+        }
     }
 }
 

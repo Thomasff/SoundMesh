@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +43,11 @@ data class CalibrateState(
      * seconds asking for something it no longer needs while nothing on it moves.
      */
     val computing: Boolean = false,
+    /**
+     * When the recording closes, on `SystemClock.elapsedRealtime`, or null before the run has laid
+     * itself out. What the countdown counts to - see [OutputLeadRunner]'s onPlanned.
+     */
+    val until: Long? = null,
     /**
      * What this handset's two outputs actually read back, in the order they are drawn.
      *
@@ -107,13 +111,10 @@ fun CalibrateScreen(state: CalibrateState, actions: CalibrateActions) {
     ) {
         PageBar(R.string.calibrate_title, actions.back)
         Column(modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) {
-            Tag(
-                stringResource(
-                    if (state.stored != null) R.string.calibrate_have else R.string.calibrate_have_not
-                ),
-                if (state.stored != null) Tone.GOOD else Tone.QUIET
-            )
+            // Only once there is a number. Unmeasured, the top of the screen was 还没测过 over a
+            // line about when this matters; since 2026-09-25 it is the sentence below alone.
             state.stored?.let {
+                Tag(stringResource(R.string.calibrate_have), Tone.GOOD)
                 Text(
                     stringResource(R.string.calibrate_value, it / 1000.0),
                     style = MaterialTheme.typography.headlineMedium,
@@ -121,16 +122,14 @@ fun CalibrateScreen(state: CalibrateState, actions: CalibrateActions) {
                 )
             }
         }
-        // The same sentence the status screen puts under this measurement's entry, off the same
-        // string: two wordings for one fact is how a screen ends up arguing with the one before it.
-        Note(stringResource(R.string.goto_self_hint))
+        Note(stringResource(R.string.calibrate_once))
         val tooQuiet = tooQuietFor(state.volumes)
         VolumeGate(state, tooQuiet, actions)
         Label(R.string.calibrate_again)
         Framed(strong = state.offered != null || state.running) {
             when {
                 state.offered != null -> Offer(state, actions)
-                state.running -> Measuring(state.computing)
+                state.running -> Measuring(state.computing, state.until)
                 else -> {
                     Note(stringResource(R.string.calibrate_quiet))
                     Column(
@@ -267,30 +266,42 @@ private fun Offer(state: CalibrateState, actions: CalibrateActions) {
 /**
  * What is worth reading while a minute and a half of quiet room goes by.
  *
- * No count of seconds, unlike the room round on the other calibration screen. That one is handed
- * the instant its step ends by the thing running it; this one is not, and a number made up here
- * would be believed by the one person in the room who must not move yet.
+ * With a count of seconds, since 2026-09-25, like the room round on the other calibration screen.
+ * It used not to have one because nothing handed it an end; but the run lays out every pass before
+ * it plays one, so the instant the recording closes is known from the start, and [until] is it.
+ * Counted by the room round's own [HoldStill], which shows 计算中 once it reaches zero.
  */
 @Composable
-private fun Measuring(computing: Boolean) {
+private fun Measuring(computing: Boolean, until: Long?) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Only the arithmetic sweeps. While it is still recording the room can hear what the
+        // phone is doing, and a screen that shimmers through every phase says nothing by saying
+        // it everywhere. In the quiet colour rather than the box's own: the band lights text up
+        // to onSurface, which is what text in a box is drawn in, so a sweep from there drew
+        // nothing - the same fault the room round's 计算中 had. See [Modifier.sweeping].
+        if (computing) {
+            val quiet = MaterialTheme.colorScheme.onSurfaceVariant
+            Text(
+                stringResource(R.string.calibrate_computing),
+                modifier = Modifier.sweeping(quiet),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = quiet
+            )
+            return@Column
+        }
         Text(
-            stringResource(
-                if (computing) R.string.calibrate_computing else R.string.calibrate_measuring
-            ),
-            // Only the arithmetic. While it is still recording the room can hear what the phone is
-            // doing, and a screen that shimmers through every phase says nothing by saying it
-            // everywhere. See [Modifier.sweeping].
-            modifier = if (computing) Modifier.sweeping(LocalContentColor.current) else Modifier,
+            stringResource(R.string.calibrate_measuring),
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.Bold
         )
         // Only while it is still listening. Once it is only arithmetic, the room may make as much
         // noise as it likes and the phone may be picked up, so leaving the instruction on screen
         // would be asking for something this run no longer needs.
-        if (!computing) Note(stringResource(R.string.calibrate_measuring_long))
+        Note(stringResource(R.string.calibrate_measuring_long))
+        until?.let { HoldStill(it, R.string.room_calibrate_left, MaterialTheme.typography.titleMedium) }
     }
 }

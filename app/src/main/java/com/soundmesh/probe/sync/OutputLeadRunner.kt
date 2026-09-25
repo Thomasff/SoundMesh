@@ -133,7 +133,15 @@ class OutputLeadRunner(
      * rather than a measurement: the arithmetic would run, the screen would show a result, and
      * nothing anywhere would say it came from a run that was stopped halfway.
      */
-    private val calledOff: () -> Boolean = { false }
+    private val calledOff: () -> Boolean = { false },
+    /**
+     * Called once, on the running thread, with the `nanoTime` instant the recording closes.
+     *
+     * Known before a single chirp plays, because every pass is laid out up front - see [plan] - so
+     * the screen can count down to it rather than say "about a minute and a half". After it there
+     * is only arithmetic. Defaulted to nothing for the runs with no screen.
+     */
+    private val onPlanned: (endsAtNanos: Long) -> Unit = {}
 ) {
     private val tone = TonePcmSource()
 
@@ -162,9 +170,10 @@ class OutputLeadRunner(
         }
         val passes = plan(System.nanoTime() + START_LEAD_NANOS)
         val calibration = CalibrationRunner(runStore, caseId, audioSource) { System.nanoTime() }
-        val lastEnd = passes.last().chirpAtHostNanos + chirpNanos() + CHIRP_DRAIN_NANOS
+        val ends = recordingEndsAt(passes)
+        runCatching { onPlanned(ends) }
         awaitHostInstant(passes.first().startHostNanos - RECORD_LEAD_NANOS)
-        val recordSeconds = secondsUntil(lastEnd + RECORD_TAIL_NANOS)
+        val recordSeconds = secondsUntil(ends)
         val recording = Thread({
             runCatching { calibration.record(recordSeconds, calledOff) }
                 .onFailure { recordingFailure = "${it.javaClass.simpleName}: ${it.message}" }
@@ -336,6 +345,10 @@ class OutputLeadRunner(
         warmupNanos + CALIBRATION_GAP_NANOS + chirpNanos() + CHIRP_DRAIN_NANOS + PASS_MARGIN_NANOS
 
     private fun repeatStrideNanos(): Long = passStrideNanos() * 2
+
+    /** When the recording may close: the last chirp played out and drained, and a tail after it. */
+    internal fun recordingEndsAt(passes: List<Pass>): Long =
+        passes.last().chirpAtHostNanos + chirpNanos() + CHIRP_DRAIN_NANOS + RECORD_TAIL_NANOS
 
     private fun chirpNanos(): Long =
         ChirpGenerator.generateStereoChunks(SyncRenderer.FRAMES_PER_CHUNK).size * SyncRenderer.CHUNK_NANOS

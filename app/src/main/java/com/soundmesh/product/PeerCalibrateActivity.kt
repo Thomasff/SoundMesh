@@ -573,7 +573,8 @@ class PeerCalibrateActivity : ComponentActivity() {
             // No way to stop a sound check: it is one chirp each and over in seconds.
             stopOffer = if (checkingSound) StopOffer.NONE else stopOfferFor(role()),
             message = getString(R.string.pair_calibrate_waiting),
-            checking = checkingSound
+            checking = checkingSound,
+            checkPassed = state.checkPassed && !checkingSound
         )
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
@@ -716,7 +717,7 @@ class PeerCalibrateActivity : ComponentActivity() {
         RoomCommands.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
         events.write("room volume for a round: asked $percent%, this handset is ${now.percent}%")
         // A check says what was heard at the old level, which is no longer anybody's.
-        state = state.copy(volumes = roomVolumes(), unheard = emptyMap())
+        state = state.copy(volumes = roomVolumes(), unheard = emptyMap(), checkPassed = false)
     }
 
     /** One handset on its own: this one on its own streams, anybody else over the standing line. */
@@ -728,7 +729,7 @@ class PeerCalibrateActivity : ComponentActivity() {
             val reached = RoomCommands.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent))
             events.write("volume for one handset in a round: $peerId to $percent%" + if (reached) "" else ", no line to it")
         }
-        state = state.copy(volumes = roomVolumes(), unheard = state.unheard - peerId)
+        state = state.copy(volumes = roomVolumes(), unheard = state.unheard - peerId, checkPassed = false)
     }
 
     /**
@@ -799,7 +800,9 @@ class PeerCalibrateActivity : ComponentActivity() {
             message = null,
             outcomes = emptyList(),
             unheard = unheard,
-            checkFailed = failed
+            checkFailed = failed,
+            // Every device judged was heard. Not said for a check that never ran.
+            checkPassed = check != null && unheard.isEmpty()
         )
     }
 

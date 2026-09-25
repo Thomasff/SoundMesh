@@ -210,7 +210,7 @@ private fun CalibrateSection(state: HomeState, actions: HomeActions) {
  */
 @Composable
 private fun Problems(items: List<ReadyItem>, actions: HomeActions) {
-    val left = items.filter { it.mark != Mark.OK && it.line !in SAID_ELSEWHERE }
+    val left = boardProblems(items)
     if (left.isEmpty()) return
     Label(R.string.ready_title)
     for ((index, item) in left.withIndex()) {
@@ -230,9 +230,17 @@ private fun Problems(items: List<ReadyItem>, actions: HomeActions) {
     }
 }
 
+/** What [Problems] draws: whatever is wrong and is not said anywhere better. */
+internal fun boardProblems(items: List<ReadyItem>): List<ReadyItem> =
+    items.filter { it.mark != Mark.OK && it.line !in SAID_ELSEWHERE }
+
 /** The lines this screen already draws somewhere better, in the words of whatever states them. */
 private val SAID_ELSEWHERE = setOf(
-    R.string.ready_song,
+    // Both halves of the song line. The source is picked on the playing page, where it is heard
+    // taking effect, and nothing on this board is a way to pick one - so its missing half drew a
+    // ✕ 还没选歌 above 进入播放 on every phone that had never played a song, which is exactly the
+    // phone somebody is setting up for the first time. Seen on a new phone, 2026-09-25.
+    R.string.ready_song, R.string.ready_song_missing,
     R.string.ready_paired, R.string.ready_paired_none,
     R.string.ready_standing, R.string.ready_standing_none,
     R.string.ready_uncalibrated

@@ -91,6 +91,10 @@ fun unheardLines(
     }
 }.toMap()
 
+/** Whether a sound check has nothing to say against any of [judged] - see [unheardLines]. */
+fun heardEvery(check: SoundCheck, judged: List<String>): Boolean =
+    judged.all { it in check.heard && it !in check.excuses }
+
 /**
  * Where the host stands for a round, which is what decides where each distance it is an end of is
  * filed. It changes nothing about the measurement.

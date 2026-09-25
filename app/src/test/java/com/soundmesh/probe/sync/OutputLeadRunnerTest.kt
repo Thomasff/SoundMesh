@@ -25,6 +25,21 @@ class OutputLeadRunnerTest {
         repeats = repeats
     )
 
+    /**
+     * The instant the screen counts down to. Somebody reading 0 puts the phone down or starts
+     * talking, so it must not come before the last chirp has been played out and heard.
+     */
+    @Test
+    fun theRecordingEndsAfterEveryChirpHasDrained() {
+        val runner = runner(5)
+        val passes = runner.plan(0L)
+        val ends = runner.recordingEndsAt(passes)
+
+        for (pass in passes) {
+            assertTrue(ends >= pass.chirpAtHostNanos + OutputLeadRunner.CHIRP_DRAIN_NANOS)
+        }
+    }
+
     @Test
     fun everyRepeatPlaysBothOutputsOnce() {
         val passes = runner(3).plan(0L)

@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -236,7 +237,7 @@ class CalibrateActivity : ComponentActivity() {
     private fun stop() {
         if (!running) return
         stopping = true
-        state = state.copy(message = getString(R.string.calibrate_stopping), computing = false)
+        state = state.copy(message = getString(R.string.calibrate_stopping), computing = false, until = null)
     }
 
     private fun start(verifying: Boolean) {
@@ -245,7 +246,7 @@ class CalibrateActivity : ComponentActivity() {
         stopping = false
         // No sentence saying a run has started: the screen says so, and the message line here is
         // kept for the runs that come to nothing.
-        state = state.copy(running = true, message = null, offered = null, computing = false)
+        state = state.copy(running = true, message = null, offered = null, computing = false, until = null)
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
         Thread({
@@ -257,7 +258,7 @@ class CalibrateActivity : ComponentActivity() {
             // Cleared beside running, not instead of it: a run that threw on its way to the
             // analysis never reaches onAnalysing, and one that threw inside it never comes back
             // out - so this is the only place that is reached either way.
-            handler.post { state = state.copy(running = false, computing = false) }
+            handler.post { state = state.copy(running = false, computing = false, until = null) }
         }, "SoundMeshCalibrate").start()
     }
 
@@ -287,7 +288,13 @@ class CalibrateActivity : ComponentActivity() {
                 if (verifying && !samePath) (StoredOutputLead(filesDir, subject).read() ?: 0L) * 1_000L else 0L,
             onAnalysing = { handler.post { state = state.copy(computing = true) } },
             keepsRecording = keepsRecordings(filesDir),
-            calledOff = { stopping }
+            calledOff = { stopping },
+            // From the runner's clock onto the screen's: the countdown ticks on elapsedRealtime,
+            // as the room round's does.
+            onPlanned = { ends ->
+                val until = SystemClock.elapsedRealtime() + (ends - System.nanoTime()) / 1_000_000L
+                handler.post { state = state.copy(until = until) }
+            }
         ).run()
         // Written before anything is stored, so a refused run still leaves its evidence behind.
         File(RunStore(filesDir).prepareRun(caseId), ARTIFACT).writeText(run.json)

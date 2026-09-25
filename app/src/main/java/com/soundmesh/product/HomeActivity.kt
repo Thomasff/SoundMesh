@@ -131,6 +131,12 @@ class HomeActivity : ComponentActivity() {
     private var holdingPlaying by mutableStateOf(false)
 
     /**
+     * What is still to be put to somebody who pressed 进入播放, the one on screen first; empty
+     * while nothing is being asked. Worked out once, at the press - see [beforePlaying].
+     */
+    private var asking by mutableStateOf(emptyList<BeforePlaying>())
+
+    /**
      * Which role [takeUpTheRoom] last acted on, so that a resume can tell itself from a change.
      *
      * Not a state field: nothing draws it. It exists because that method is called from both, and
@@ -490,6 +496,7 @@ class HomeActivity : ComponentActivity() {
                             HomeScreen(state, actions, showDetails, steppedBack, holdingPlaying) {
                                 stepBack(route)
                             }
+                            asking.firstOrNull()?.let { AskBeforePlaying(it) }
                         }
                     }
                 }
@@ -561,9 +568,14 @@ class HomeActivity : ComponentActivity() {
         backToPlaying = { steppedBack = false },
         // The same stand-in a source pick already uses: nothing is playing, and the person is on
         // the playing stage anyway. See routeOf's `holding`.
+        // Unless there is something to ask first - a host only, since only a host's press starts
+        // a room. Each question is answered before the next is put, and the last 继续 goes on.
         enterPlaying = {
-            steppedBack = false
-            holdingPlaying = true
+            asking = if (state.role != Role.HOST) emptyList() else beforePlaying(
+                ownLeadMissing = state.selfCalibrated == null,
+                peers = state.standing.map { PeerCarrying(it.peerId, it.name, it.carrying) }
+            )
+            if (asking.isEmpty()) goOnToPlaying()
         },
         showPairCode = { showingCode = true },
         setCodeNetwork = { by ->
@@ -955,6 +967,41 @@ class HomeActivity : ComponentActivity() {
             HomeRoute.READY -> actions.pickRole(Role.NONE)
             HomeRoute.WELCOME -> Unit
         }
+    }
+
+    /** Onto the playing stage with nothing playing - what 进入播放 does once nothing is asked. */
+    private fun goOnToPlaying() {
+        steppedBack = false
+        holdingPlaying = true
+    }
+
+    /**
+     * The first of [asking]. 去校准 drops the rest: whoever went to fix one thing comes back to the
+     * board and presses 进入播放 again, which asks afresh about whatever is still wrong then.
+     */
+    @Composable
+    private fun AskBeforePlaying(ask: BeforePlaying) {
+        AskBeforeGoing(
+            text = when (ask) {
+                BeforePlaying.OwnLead -> stringResource(R.string.before_play_own_lead)
+                is BeforePlaying.Uncalibrated -> stringResource(R.string.before_play_uncalibrated, ask.name)
+            },
+            cancel = stringResource(R.string.before_play_cancel),
+            fix = stringResource(R.string.before_play_calibrate),
+            goOn = stringResource(R.string.before_play_go),
+            onCancel = { asking = emptyList() },
+            onFix = {
+                asking = emptyList()
+                when (ask) {
+                    BeforePlaying.OwnLead -> actions.goto(ReadyGoto.SELF_CALIBRATE, null)
+                    is BeforePlaying.Uncalibrated -> actions.calibratePeer(ask.peerId)
+                }
+            },
+            onGoOn = {
+                asking = asking.drop(1)
+                if (asking.isEmpty()) goOnToPlaying()
+            }
+        )
     }
 
     /** Which network somebody said the code is for, or null if nobody has. See [HostPairingCode]. */

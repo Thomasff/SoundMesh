@@ -147,6 +147,11 @@ data class PeerCalibrateState(
     val unheard: Map<String, String> = emptyMap(),
     /** Why the last sound check never got as far as a chirp, or null. */
     val checkFailed: String? = null,
+    /**
+     * Whether the last sound check heard every device it was judging, and no volume has moved
+     * since. A volume moved after a pass is a level nobody checked.
+     */
+    val checkPassed: Boolean = false,
     /** Whether a pair round has been served on this visit, which lights 完成 on the pair screen. */
     val pairDone: Boolean = false
 )
@@ -237,7 +242,7 @@ class PeerCalibrateActions(
  * decides a run has hung picks the phone up, which is the one thing the step cannot survive.
  */
 @Composable
-private fun HoldStill(until: Long, text: Int, style: TextStyle) {
+internal fun HoldStill(until: Long, text: Int, style: TextStyle) {
     var left by remember(until) {
         mutableIntStateOf(secondsLeft(SystemClock.elapsedRealtime(), until))
     }
@@ -668,7 +673,12 @@ private fun SoundCheckButton(state: PeerCalibrateState, actions: PeerCalibrateAc
             enabled = !state.running && !state.alone,
             onClick = actions.soundCheck
         )
-        Note(stringResource(R.string.sound_check_hint), waiting = state.checking)
+        // A pass is said on the same line, after its colon: there is nothing on the rows to say it.
+        val hint = stringResource(R.string.sound_check_hint)
+        Note(
+            if (state.checkPassed) hint + stringResource(R.string.sound_check_passed) else hint,
+            waiting = state.checking
+        )
         state.checkFailed?.let { Note(it, Tone.WRONG) }
     }
 }
@@ -811,7 +821,14 @@ private fun PairBody(
     if (state.role == CalibrationRole.HOST) VolumeGate(state, tooQuiet, actions)
     Column(modifier = Modifier.padding(top = 12.dp)) {
         Framed {
-            Note(stringResource(R.string.pair_calibrate_quiet))
+            // Where the two phones go, in bold, and the whole sentence sweeping all the time: it is
+            // the one thing on this screen somebody has to do before pressing, and it was being
+            // read past. Asked for 2026-09-25.
+            LeadNote(
+                stringResource(R.string.pair_calibrate_quiet_lead),
+                stringResource(R.string.pair_calibrate_quiet),
+                waiting = true
+            )
             Column(
                 modifier = Modifier.padding(top = 7.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp)

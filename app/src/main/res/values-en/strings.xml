@@ -62,6 +62,11 @@
     <string name="roster_quiet">Nothing heard for a while; the screen is probably off</string>
     <string name="pair_calibrate_aimed_gone">That phone was there a moment ago and cannot be reached now.</string>
     <string name="ready_go">Go to playback</string>
+    <string name="before_play_own_lead">This phone\'s output delay has not been measured. Playing now will be out of sync and sound worse. Go on anyway?</string>
+    <string name="before_play_uncalibrated">%1$s has not been calibrated, or its calibration failed. It may be out of sync and sound worse. Go on anyway?</string>
+    <string name="before_play_cancel">Cancel</string>
+    <string name="before_play_calibrate">Calibrate</string>
+    <string name="before_play_go">Continue</string>
     <string name="ready_back_to_play">Back to playback</string>
     <string name="ready_goto_song">Change song</string>
     <string name="ready_goto_self">Measure</string>
@@ -120,6 +125,7 @@
     <string name="calibrate_title">Output lead</string>
     <string name="calibrate_have">Calibrated</string>
     <string name="calibrate_have_not">Not measured yet</string>
+    <string name="calibrate_once">Measure once, and you never need to do this again</string>
     <string name="calibrate_value">%1$.1f ms</string>
     <string name="calibrate_again">Measure again</string>
     <string name="calibrate_quiet">Leave the phone on a table untouched and keep the room quiet, about a minute and a half.</string>
@@ -153,7 +159,8 @@
     <string name="pair_calibrate_title">Syncing two phones</string>
     <string name="pair_calibrate_no_pairing">This phone has not scanned the other one\'s code. Go back and scan it once.</string>
     <string name="pair_calibrate_no_role">Go back and say whether this phone is the host or a sink.</string>
-    <string name="pair_calibrate_quiet">Put the two phones within arm\'s reach of each other, with nothing in between. About a minute, and keep it quiet</string>
+    <string name="pair_calibrate_quiet_lead">Put the two phones within arm\'s reach of each other</string>
+    <string name="pair_calibrate_quiet">, with nothing in between. About a minute, and keep it quiet</string>
     <string name="pair_calibrate_start">Start sync</string>
     <string name="pair_calibrate_verify">Check what has already been measured</string>
     <string name="pair_calibrate_result">Result</string>
@@ -194,6 +201,7 @@
     <string name="room_calibrate_done">Done</string>
     <string name="sound_check">Sound check</string>
     <string name="sound_check_hint">Checks the sound is good enough</string>
+    <string name="sound_check_passed">: passed, good enough to start</string>
     <string name="sound_check_unheard">This device sounded too quiet. Turn it up, or check nothing is in the way</string>
     <string name="room_calibrate_again">Redo step %1$d</string>
     <string name="room_calibrate_step2_again_note">If the phones moved, the listening position from step 1 is out of date as well. Redo both.</string>
@@ -456,9 +464,9 @@
     <string name="about_github">Open on GitHub</string>
     <string name="perm_title">Permissions needed</string>
     <string name="perm_mic">Microphone</string>
-    <string name="perm_mic_why">The phone has to hear itself to measure how far behind it is</string>
+    <string name="perm_mic_why">Used for recording while calibrating, and at no other time</string>
     <string name="perm_notify">Notifications</string>
-    <string name="perm_notify_why">Playing in sync needs a notification, or the system stops it</string>
+    <string name="perm_notify_why">Shows what is going on, and keeps the system from stopping it</string>
     <string name="perm_camera">Camera</string>
     <string name="perm_camera_why">Only to scan the other phone\'s pairing code; no photos are kept</string>
     <string name="perm_background">Background running</string>

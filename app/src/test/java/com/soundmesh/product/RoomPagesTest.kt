@@ -64,4 +64,17 @@ class RoomPagesTest {
             unheardLines(check, listOf("host", "one", "two", "three", "four"), { it.name }, "quiet")
         )
     }
+
+    /** A pass is exactly a check with nothing to say against any device it was judging. */
+    @Test
+    fun `a sound check passes only when it heard every device it judged`() {
+        val check = SoundCheck(
+            tookPart = listOf("one", "two", "host"),
+            heard = setOf("one", "two", "host"),
+            excuses = mapOf("three" to RoomExcuse.ASLEEP)
+        )
+        assertTrue(heardEvery(check, listOf("host", "one", "two")))
+        assertFalse(heardEvery(check, listOf("host", "one", "three")))
+        assertFalse(heardEvery(check.copy(heard = setOf("one", "host")), listOf("host", "one", "two")))
+    }
 }

@@ -51,6 +51,15 @@ class ReadyChecklistTest {
         assertFalse(items.none { it.mark == Mark.BLOCK })
     }
 
+    // The status board is not where a song is picked: that is the playing page. Seen 2026-09-25
+    // on a new phone picking 当主机 - 还没选歌 above 进入播放, on every phone that had never
+    // played anything, and on none that had, because those remember their last song.
+    @Test
+    fun `the status board says nothing about a song not picked yet`() {
+        val items = readyList(readyHost.copy(songName = null))
+        assertFalse(boardProblems(items).any { it.line == R.string.ready_song_missing })
+    }
+
     // Capturing another app is a source too - a host that is capturing has something to play
     // even with no file picked, and blocking it would make the capture feature unreachable.
     @Test
