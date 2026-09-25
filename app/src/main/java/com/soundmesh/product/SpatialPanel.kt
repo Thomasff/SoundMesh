@@ -115,7 +115,9 @@ fun MeasuredRoom(
     state: RoomState,
     actions: RoomMapActions,
     blockedPeerNames: List<String> = emptyList(),
-    ripple: Float? = null
+    ripple: Float? = null,
+    /** False where the screen draws [FitOffer] itself, above the drawing - the calibration does. */
+    offerFit: Boolean = true
 ) {
     RoomMap(state, actions, blockedPeerNames, ripple)
     // Standing, not conditional on the arrangement, and that is the decision rather than an
@@ -149,7 +151,7 @@ fun MeasuredRoom(
     if (sourceSpotOf(state, actions) != null) SourceReadout(state)
     ListenerDistances(state, actions)
     MeasuredDistances(state)
-    FitOffer(state, actions)
+    if (offerFit) FitOffer(state, actions)
 }
 
 /**
@@ -398,7 +400,7 @@ private val LENGTH_BADGE_TEXT = 9.sp
  * those lengths are what it acts on.
  */
 @Composable
-private fun FitOffer(state: RoomState, actions: RoomMapActions) {
+internal fun FitOffer(state: RoomState, actions: RoomMapActions) {
     if (state.fitted) {
         Note(stringResource(R.string.room_fit_done))
         return

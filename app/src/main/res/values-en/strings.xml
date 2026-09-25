@@ -158,6 +158,7 @@
     <string name="pair_calibrate_verify">Check what has already been measured</string>
     <string name="pair_calibrate_result">Result</string>
     <string name="pair_calibrate_room_drawing">Measured layout</string>
+    <string name="room_drawing_drag">Drag the icons to roughly where they stand, then tap Fit to measurement</string>
     <string name="pair_calibrate_room_drawing_hint">The same drawing as the playback screen: dragging is you saying where this phone stands, and Fit to measurement moves the drawing onto the shape that was measured. The two always agree.</string>
     <string name="pair_calibrate_waiting">Connecting: waiting for the other phone.</string>
     <!-- The host told one named handset itself, so nobody has to go and press anything. -->
@@ -172,8 +173,7 @@
     <string name="room_volume_now">Current volume</string>
     <string name="room_volume_name_join">", "</string>
     <string name="room_volume_too_quiet_row">%1$d%% · too low</string>
-    <string name="room_volume_too_quiet_one">%1$s is too low. Go to that phone and take its media volume past %2$d%%.</string>
-    <string name="room_volume_too_quiet_some">%1$s are too low. Go to those phones and take their media volume past %2$d%%.</string>
+    <string name="room_volume_too_quiet">%1$s too quiet. Keep the volume above %2$d%%</string>
     <string name="room_volume_gate_shut">%1$d below %2$d%%, cannot measure</string>
     <string name="room_calibrate_step">Step %1$d of 2</string>
     <string name="room_calibrate_line">%1$d.</string>

@@ -161,6 +161,7 @@
     <string name="pair_calibrate_verify">验证已经测过的结果</string>
     <string name="pair_calibrate_result">结果</string>
     <string name="pair_calibrate_room_drawing">量到的摆位</string>
+    <string name="room_drawing_drag">请拖动图标到大致位置，并点击吸附</string>
     <string name="pair_calibrate_room_drawing_hint">和播放界面是同一张图：拖动就是你在说本机站在哪儿，按「按测量摆正」把图挪到量出来的形状上。两边永远一致。</string>
     <string name="pair_calibrate_waiting">连接中：在等另一台连过来。</string>
     <!-- The host told one named handset itself, so nobody has to go and press anything. -->
@@ -175,8 +176,7 @@
     <string name="room_volume_now">当前音量</string>
     <string name="room_volume_name_join">、</string>
     <string name="room_volume_too_quiet_row">%1$d%% · 太小</string>
-    <string name="room_volume_too_quiet_one">%1$s 太小了，到那台手机上把媒体音量调过 %2$d%%。</string>
-    <string name="room_volume_too_quiet_some">%1$s 太小了，到那几台手机上把媒体音量调过 %2$d%%。</string>
+    <string name="room_volume_too_quiet">%1$s 太小了，请确保声音大于%2$d%%</string>
     <string name="room_volume_gate_shut">有 %1$d 台音量低于 %2$d%%，量不了</string>
     <string name="room_calibrate_step">第 %1$d 步 / 共 2 步</string>
     <string name="room_calibrate_line">%1$d.</string>

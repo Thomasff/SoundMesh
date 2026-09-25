@@ -693,7 +693,13 @@ class PeerCalibrateRoomTest {
         )
         assertTrue(
             "the seconds of arithmetic after the chirps stop look like a hang",
-            screen.contains("modifier = Modifier.sweeping(LocalContentColor.current)")
+            screen.contains("modifier = Modifier.sweeping(quiet)") && screen.contains("color = quiet")
+        )
+        // Inside a box the content colour is onSurface, which is what the band lights to: a sweep
+        // from it drew nothing, and this test used to pin exactly that line. 2026-09-25.
+        assertFalse(
+            "a sweep from the colour it lights to is invisible",
+            screen.contains("sweeping(LocalContentColor.current)")
         )
     }
 

@@ -196,7 +196,7 @@ private fun VolumeGate(
     if (tooQuiet.isNotEmpty()) {
         Note(
             say(
-                if (tooQuiet.size == 1) Phrases.room_volume_too_quiet_one else Phrases.room_volume_too_quiet_some,
+                Phrases.room_volume_too_quiet,
                 tooQuiet.joinToString(say(Phrases.room_volume_name_join)),
                 QUIET_FLOOR_PERCENT
             ),

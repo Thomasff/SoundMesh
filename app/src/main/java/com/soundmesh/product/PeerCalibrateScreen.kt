@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -242,12 +241,20 @@ private fun HoldStill(until: Long, text: Int, style: TextStyle) {
     // The count is its own sign of life while it moves. What follows it is not: the recording has
     // stopped, the room may talk again, and the arithmetic takes several seconds with nothing on
     // screen changing at all - so that half sweeps and the count does not. See [Modifier.sweeping].
+    //
+    // In the quiet colour rather than the box's own. The band lights text up to onSurface, and
+    // onSurface is what text inside a box is drawn in, so a sweep from that colour to itself drew
+    // nothing at all - reported 2026-09-25 as a computing line with no light on it.
     if (left > 0) Text(stringResource(text, left), style = style)
-    else Text(
-        stringResource(R.string.calibrate_computing),
-        modifier = Modifier.sweeping(LocalContentColor.current),
-        style = style
-    )
+    else {
+        val quiet = MaterialTheme.colorScheme.onSurfaceVariant
+        Text(
+            stringResource(R.string.calibrate_computing),
+            modifier = Modifier.sweeping(quiet),
+            style = style,
+            color = quiet
+        )
+    }
 }
 
 private const val TICK_MILLIS = 500L
@@ -320,11 +327,16 @@ fun PeerCalibrateScreen(state: PeerCalibrateState, job: PeerJob, actions: PeerCa
             // finished - and while one is running the thing worth reading is the countdown.
             // Not on the volume page, which is the upper half of the old single screen and no more.
             if (!paged || state.page != 1) state.room?.let { room ->
-                Label(R.string.pair_calibrate_room_drawing)
-                Note(stringResource(R.string.pair_calibrate_room_drawing_hint))
+                val map = RoomMapActions(actions.moveIcon, actions.fitRoom, null)
+                // What to do with it and the button that does it, above the drawing rather than
+                // under its lengths: here the fit is the point of looking, not an afterthought.
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Note(stringResource(R.string.room_drawing_drag))
+                    FitOffer(room, map)
+                }
                 // No offer to go and measure the listener: this screen is where that round is run,
                 // and the button for it is a few lines above.
-                MeasuredRoom(room, RoomMapActions(actions.moveIcon, actions.fitRoom, null))
+                MeasuredRoom(room, map, offerFit = false)
             }
             // The pair job keeps its result here, at the end of a screen whose whole body is two
             // buttons - the words land a finger's width under the button that was pressed. The room
@@ -608,8 +620,7 @@ private fun VolumeGate(
     if (tooQuiet.isNotEmpty()) {
         Note(
             stringResource(
-                if (tooQuiet.size == 1) R.string.room_volume_too_quiet_one
-                else R.string.room_volume_too_quiet_some,
+                R.string.room_volume_too_quiet,
                 tooQuiet.joinToString(stringResource(R.string.room_volume_name_join)),
                 QUIET_FLOOR_PERCENT
             ),
