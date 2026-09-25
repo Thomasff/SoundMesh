@@ -58,7 +58,9 @@ import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.SpatialField
 import com.soundmesh.core.SpatialMode
 import com.soundmesh.core.SplitAxis
+import com.soundmesh.product.AskBeforeGoing
 import com.soundmesh.product.BadgeEdges
+import com.soundmesh.product.BeforePlaying
 import com.soundmesh.product.BoxTitle
 import com.soundmesh.product.ChoiceCard
 import com.soundmesh.product.EffectKind
@@ -66,6 +68,8 @@ import com.soundmesh.product.FilledChip
 import com.soundmesh.product.Framed
 import com.soundmesh.product.Ghost
 import com.soundmesh.product.Knob
+import com.soundmesh.product.PeerCarrying
+import com.soundmesh.product.beforePlaying
 import com.soundmesh.product.Label
 import com.soundmesh.product.Line
 import com.soundmesh.product.LineName
@@ -164,6 +168,8 @@ internal fun SoundMeshWindow(
     var settingsOpen by remember { mutableStateOf(false) }
     // Which measuring page is up, and on whom - the handset's calibration screen. Null while none is.
     var measuring by remember { mutableStateOf<Pair<MeasureJob, String?>?>(null) }
+    // What is still to be put to whoever pressed 进入播放, the one on screen first - see beforePlaying.
+    var asking by remember { mutableStateOf(emptyList<BeforePlaying>()) }
     val pick = remember { HostPick() }
     val scope = rememberCoroutineScope()
 
@@ -226,9 +232,18 @@ internal fun SoundMeshWindow(
             Stage.WELCOME -> Unit
         }
     }
-    val enterPlaying: () -> Unit = {
+    val goOnToPlaying = {
         steppedBack = false
         holding = true
+    }
+    // Unless there is something to ask first - the handset host's 进入播放. Only about the devices:
+    // a computer plays nothing on a second output of its own, so it has no lead to have measured.
+    val enterPlaying: () -> Unit = {
+        asking = if (role != Role.HOST) emptyList() else beforePlaying(
+            ownLeadMissing = false,
+            peers = hostStatus?.phones.orEmpty().map { PeerCarrying(it.peerId, it.name, it.carrying) }
+        )
+        if (asking.isEmpty()) goOnToPlaying()
     }
 
     val edge = if (edgeOnScreen) null else look.colour()
@@ -305,6 +320,27 @@ internal fun SoundMeshWindow(
         }
         // Last, so it is over the page, which scrolls. A computer's window is square-cornered.
         if (edge != null) BadgeEdges(edge, glow, round = 0f, keepHandsetWavelength = true)
+        // 去校准 drops the rest, as on the handset: back on the board, 进入播放 asks afresh.
+        asking.firstOrNull()?.let { ask ->
+            AskBeforeGoing(
+                text = when (ask) {
+                    BeforePlaying.OwnLead -> say(Phrases.before_play_own_lead)
+                    is BeforePlaying.Uncalibrated -> say(Phrases.before_play_uncalibrated, ask.name)
+                },
+                cancel = say(Phrases.before_play_cancel),
+                fix = say(Phrases.before_play_calibrate),
+                goOn = say(Phrases.before_play_go),
+                onCancel = { asking = emptyList() },
+                onFix = {
+                    asking = emptyList()
+                    if (ask is BeforePlaying.Uncalibrated) measuring = MeasureJob.PAIR to ask.peerId
+                },
+                onGoOn = {
+                    asking = asking.drop(1)
+                    if (asking.isEmpty()) goOnToPlaying()
+                }
+            )
+        }
     }
 }
 

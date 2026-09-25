@@ -31,6 +31,7 @@ import com.soundmesh.product.BoxTitle
 import com.soundmesh.product.Framed
 import com.soundmesh.product.Ghost
 import com.soundmesh.product.Label
+import com.soundmesh.product.LeadNote
 import com.soundmesh.product.Note
 import com.soundmesh.product.QUIET_FLOOR_PERCENT
 import com.soundmesh.product.RoomCheck
@@ -45,6 +46,7 @@ import com.soundmesh.product.VolumeRow
 import com.soundmesh.product.badgeColour
 import com.soundmesh.product.delayLines
 import com.soundmesh.product.fitOffer
+import com.soundmesh.product.heardEvery
 import com.soundmesh.product.listenerLines
 import com.soundmesh.product.measuredLines
 import com.soundmesh.product.roundCanStart
@@ -113,7 +115,10 @@ internal fun MeasurePane(
             // Judged on every row in a room; in a pair, on the two devices it is between.
             val judged = if (job == MeasureJob.ROOM) rows.map { it.peerId } else listOfNotNull(status.selfId, aimedAt)
             VolumeGate(host, status, rows, tooQuiet, sessions, measure.soundCheck.takeIf { mine }, judged)
-            SoundCheckButton(status, measure, mine) { scope.launch(sessions) { host.soundCheck(aimedAt) } }
+            // Not once a volume has moved since: that level is one nobody checked.
+            val passed = mine && !measure.checking && !measure.checkTouched &&
+                measure.soundCheck?.let { heardEvery(it, judged) } == true
+            SoundCheckButton(status, measure, mine, passed) { scope.launch(sessions) { host.soundCheck(aimedAt) } }
         }
         if (volumePage) return@Page
         if (measure.running && !measure.checking) {
@@ -148,7 +153,8 @@ internal fun MeasurePane(
                         }
                     }
                     MeasureJob.PAIR -> {
-                        Note(say(Phrases.pair_calibrate_quiet))
+                        // Bold where the two go, and sweeping all the time - the handset's pair screen.
+                        LeadNote(say(Phrases.pair_calibrate_quiet_lead), say(Phrases.pair_calibrate_quiet), waiting = true)
                         Column(Modifier.padding(top = 7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                             Solid(say(Phrases.pair_calibrate_start), enabled = canStart && aimedAt != null) {
                                 aimedAt?.let { peerId -> scope.launch(sessions) { host.measurePair(peerId) } }
@@ -182,10 +188,12 @@ internal fun MeasurePane(
  * something runs or nobody has joined to be heard; the line under it sweeps while the check runs.
  */
 @Composable
-private fun SoundCheckButton(status: HostStatus, measure: MeasureStatus, mine: Boolean, check: () -> Unit) {
+private fun SoundCheckButton(status: HostStatus, measure: MeasureStatus, mine: Boolean, passed: Boolean, check: () -> Unit) {
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Ghost(say(Phrases.sound_check), enabled = status.open && !measure.running && status.phones.isNotEmpty(), onClick = check)
-        Note(say(Phrases.sound_check_hint), waiting = measure.checking && mine)
+        // A pass is said on the same line, after its colon, as on the handset.
+        val hint = say(Phrases.sound_check_hint)
+        Note(if (passed) hint + say(Phrases.sound_check_passed) else hint, waiting = measure.checking && mine)
         if (mine) measure.checkFailed?.let { Note(describe(it), Tone.WRONG) }
     }
 }

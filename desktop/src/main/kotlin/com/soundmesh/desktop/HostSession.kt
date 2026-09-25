@@ -134,6 +134,11 @@ data class MeasureStatus(
     val soundCheck: SoundCheck? = null,
     /** Why the last sound check never reached a chirp, or null. */
     val checkFailed: RoundLine? = null,
+    /**
+     * A volume has moved since [soundCheck] was taken. Its words against the rows still stand for
+     * the devices nobody touched, but a pass is no longer something it can say.
+     */
+    val checkTouched: Boolean = false,
     /** A pair has been served with [aimedAt], which is what 完成 on its page waits for. */
     val pairServed: Boolean = false
 )
@@ -640,7 +645,7 @@ class HostSession(
     private fun forgetCheckOf(peerId: String) = noteMeasure {
         it.copy(soundCheck = it.soundCheck?.let { check ->
             check.copy(heard = check.heard + peerId, excuses = check.excuses - peerId)
-        })
+        }, checkTouched = it.soundCheck != null)
     }
 
     /**
@@ -711,6 +716,7 @@ class HostSession(
                     checking = check,
                     soundCheck = if (check) null else it.soundCheck,
                     checkFailed = null,
+                    checkTouched = !check && it.checkTouched,
                     pairServed = if (check) it.pairServed && it.aimedAt == aimedAt else false
                 )
             }
