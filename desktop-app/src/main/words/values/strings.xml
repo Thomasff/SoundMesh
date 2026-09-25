@@ -54,7 +54,6 @@
 
     <string name="pc_room_count">房间里 %1$d 台</string>
     <string name="pc_self_host">本机（主机）</string>
-    <string name="pc_no_phones">还没有手机连上。手机选「当从机」就会自己连过来。</string>
     <string name="pc_not_receiving">没在收音频，可能掉线了</string>
 
     <string name="pc_song_of">第 %1$d/%2$d 首：%3$s</string>
@@ -79,7 +78,6 @@
     <string name="pc_percent_now">%1$d%%（现在 %2$d%%）</string>
 
     <string name="pc_no_network">本机现在没连局域网，手机和别的电脑都连不到它。先连上 WiFi 或网线。</string>
-    <string name="pc_networks_hint">房间里的设备都要连接此网。</string>
 
     <string name="pc_code_title">给手机扫的码</string>
     <string name="pc_code_nowhere">本机现在没有局域网地址，手机扫不到。</string>

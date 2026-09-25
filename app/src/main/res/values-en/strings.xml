@@ -53,7 +53,7 @@
     <string name="roster_self">This phone</string>
     <string name="roster_role_host">Host</string>
     <string name="roster_role_sink">Sink</string>
-    <string name="roster_nobody">Nothing has connected yet. A phone that picks Be a sink finds this one by itself; if it never does, have it scan the code above.</string>
+    <string name="roster_nobody">No other device has connected yet. Pick Be a sink on another device and it connects by itself.</string>
     <string name="roster_calibrated">Calibrated</string>
     <string name="roster_approximate">Roughly calibrated</string>
     <string name="roster_uncalibrated">Not calibrated</string>

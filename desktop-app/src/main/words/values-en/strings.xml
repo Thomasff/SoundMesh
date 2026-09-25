@@ -49,7 +49,6 @@
 
     <string name="pc_room_count">%1$d in the room</string>
     <string name="pc_self_host">This computer (host)</string>
-    <string name="pc_no_phones">No phone has connected yet. A phone that picks Be a sink connects by itself.</string>
     <string name="pc_not_receiving">Not receiving audio; it may have dropped</string>
 
     <string name="pc_song_of">Song %1$d of %2$d: %3$s</string>
@@ -74,7 +73,6 @@
     <string name="pc_percent_now">%1$d%% (now %2$d%%)</string>
 
     <string name="pc_no_network">This computer is not on a local network, so no phone or computer can reach it. Join a WiFi network or plug in a cable first.</string>
-    <string name="pc_networks_hint">Every device in the room has to be on this network.</string>
 
     <string name="pc_code_title">Code for phones to scan</string>
     <string name="pc_code_nowhere">This computer has no local network address, so there is nothing for a phone to scan.</string>

@@ -53,7 +53,7 @@
     <string name="roster_self">本机</string>
     <string name="roster_role_host">主机</string>
     <string name="roster_role_sink">从机</string>
-    <string name="roster_nobody">还没有手机连上。别的手机选「当从机」就会自己连过来；一直连不上就让它扫上面那个码。</string>
+    <string name="roster_nobody">还没有连接其他设备，在其他设备上选择「当从机」即可自动连接。</string>
     <string name="roster_calibrated">已校准</string>
     <string name="roster_approximate">大致校准</string>
     <string name="roster_uncalibrated">未校准</string>

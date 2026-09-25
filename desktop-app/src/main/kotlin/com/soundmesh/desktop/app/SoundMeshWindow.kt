@@ -642,7 +642,7 @@ private fun Roster(status: HostStatus, onCalibrate: (String) -> Unit) {
         status.selfId?.let { Badge(it, status.selfPlace) }
         LineName(say(Phrases.pc_self_host))
     }
-    if (status.phones.isEmpty()) Note(say(Phrases.pc_no_phones))
+    if (status.phones.isEmpty()) Note(say(Phrases.roster_nobody))
     for (phone in status.phones) {
         val quiet = phone.quiet || phone.stopped
         Line {
@@ -1146,7 +1146,6 @@ private fun Networks() {
             Tag(own.address)
         }
     }
-    Note(say(Phrases.pc_networks_hint))
 }
 
 private const val NETWORKS_POLL_MILLIS = 3_000L
