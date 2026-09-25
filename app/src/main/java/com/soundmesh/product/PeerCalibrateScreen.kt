@@ -30,7 +30,6 @@ import androidx.compose.ui.unit.dp
 import android.os.SystemClock
 import kotlinx.coroutines.delay
 import com.soundmesh.core.CalibrationRole
-import com.soundmesh.core.RoomExcuse
 import com.soundmesh.probe.R
 
 /**
@@ -164,25 +163,6 @@ internal fun roomForwardOpen(
     2 -> stepOneDone
     else -> stepTwoDone
 }
-
-/**
- * What a sound check says against each of [judged]: its own reason where it gave one, [notHeard]
- * where this host did not hear it - including one told that never came, which made no sound - and
- * nothing where it was heard.
- */
-internal fun unheardLines(
-    check: SoundCheck,
-    judged: List<String>,
-    excuse: (RoomExcuse) -> String,
-    notHeard: String
-): Map<String, String> = judged.mapNotNull { peerId ->
-    val said = check.excuses[peerId]
-    when {
-        said != null -> peerId to excuse(said)
-        peerId !in check.heard -> peerId to notHeard
-        else -> null
-    }
-}.toMap()
 
 /** Whether 上一步 can be pressed: never on the first page, and never away from a round that runs. */
 internal fun roomBackOpen(page: Int, running: Boolean): Boolean = !running && page > 1

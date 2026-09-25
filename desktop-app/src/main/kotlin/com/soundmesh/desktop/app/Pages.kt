@@ -58,6 +58,8 @@ internal fun Page(
     onSettings: (() -> Unit)? = null,
     spacing: Dp = 6.dp,
     pinned: @Composable ColumnScope.() -> Unit = {},
+    /** Held under the scrolling part, where the eye ends - the handset calibration's 上一步 / 下一步. */
+    bottom: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
@@ -70,6 +72,7 @@ internal fun Page(
             verticalArrangement = Arrangement.spacedBy(spacing),
             content = content
         )
+        bottom?.let { Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) { it() } }
     }
 }
 

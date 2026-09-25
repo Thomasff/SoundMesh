@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.soundmesh.core.PeerBadge
+import com.soundmesh.core.RoomExcuse
 import com.soundmesh.desktop.HostSession
 import com.soundmesh.desktop.HostStatus
 import com.soundmesh.desktop.MeasureJob
@@ -31,17 +31,18 @@ import com.soundmesh.product.BoxTitle
 import com.soundmesh.product.Framed
 import com.soundmesh.product.Ghost
 import com.soundmesh.product.Label
-import com.soundmesh.product.Line
-import com.soundmesh.product.LineName
 import com.soundmesh.product.Note
 import com.soundmesh.product.QUIET_FLOOR_PERCENT
 import com.soundmesh.product.RoomCheck
 import com.soundmesh.product.RoomState
+import com.soundmesh.product.RoundLine
+import com.soundmesh.product.SoundCheck
 import com.soundmesh.product.Solid
 import com.soundmesh.product.Tag
 import com.soundmesh.product.Tone
 import com.soundmesh.product.VolumeLine
 import com.soundmesh.product.VolumeRow
+import com.soundmesh.product.badgeColour
 import com.soundmesh.product.delayLines
 import com.soundmesh.product.fitOffer
 import com.soundmesh.product.listenerLines
@@ -49,6 +50,7 @@ import com.soundmesh.product.measuredLines
 import com.soundmesh.product.roundCanStart
 import com.soundmesh.product.sweeping
 import com.soundmesh.product.tooQuietFor
+import com.soundmesh.product.unheardLines
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -80,17 +82,43 @@ internal fun MeasurePane(
     // device, is somebody else's. A round that is running is shown whichever it is, with the stop
     // that ends it: the window can be opened on another device while one runs.
     val mine = measure.job == job && (job == MeasureJob.ROOM || measure.aimedAt == aimedAt)
+    // The room a page at a time, as on the handset: the volume first, then the one step, which
+    // here is the handset's last. Opened on a round already running, it opens on the step.
+    var page by remember { mutableStateOf(if (job == MeasureJob.ROOM && measure.running && !measure.checking) 2 else 1) }
+    val volumePage = job == MeasureJob.ROOM && page == 1
     // What is being measured is the page's name, as the handset's calibration screen is named.
     Page(
         if (job == MeasureJob.ROOM) say(Phrases.goto_room)
         else say(Phrases.pc_pair_title, aimedAt?.let { name(status, it) } ?: ""),
-        onBack
+        onBack,
+        bottom = {
+            when {
+                // Only the volume asks anything of 下一步; 试音 is there to use or not.
+                volumePage -> Solid(say(Phrases.room_calibrate_next), enabled = !measure.running && tooQuiet.isEmpty()) { page = 2 }
+                job == MeasureJob.ROOM -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Ghost(say(Phrases.room_calibrate_prev), enabled = !measure.running, modifier = Modifier.weight(1f)) { page = 1 }
+                    Solid(
+                        say(Phrases.room_calibrate_done),
+                        enabled = !measure.running && mine && measure.roomMeasured,
+                        modifier = Modifier.weight(1f),
+                        onClick = onBack
+                    )
+                }
+                else -> Solid(say(Phrases.room_calibrate_done), enabled = !measure.running && mine && measure.pairServed, onClick = onBack)
+            }
+        }
     ) {
-        if (job == MeasureJob.ROOM) Note(say(Phrases.room_calibrate_intro))
-        VolumeGate(host, status, rows, tooQuiet, sessions)
-        if (measure.running) {
+        if (volumePage) Note(say(Phrases.room_calibrate_intro))
+        if (volumePage || job == MeasureJob.PAIR) {
+            // Judged on every row in a room; in a pair, on the two devices it is between.
+            val judged = if (job == MeasureJob.ROOM) rows.map { it.peerId } else listOfNotNull(status.selfId, aimedAt)
+            VolumeGate(host, status, rows, tooQuiet, sessions, measure.soundCheck.takeIf { mine }, judged)
+            SoundCheckButton(status, measure, mine) { scope.launch(sessions) { host.soundCheck(aimedAt) } }
+        }
+        if (volumePage) return@Page
+        if (measure.running && !measure.checking) {
             Running(measure)
-        } else if (mine) {
+        } else if (mine && !measure.checking) {
             RoundResult(status, measure, job, tooQuiet) { scope.launch(sessions) { host.measureRoom() } }
         }
         if (mine) measure.microphone?.let { Note(describeHere(it, measure.microphoneDetail), Tone.WRONG) }
@@ -131,17 +159,34 @@ internal fun MeasurePane(
                 }
             }
         }
-        if (measure.running) {
+        // No stop for a sound check: one chirp each, over in seconds.
+        if (measure.running && !measure.checking) {
             StopControl(measure, measure.job ?: job) { scope.launch(sessions) { host.callOffMeasuring() } }
         }
         // Under everything rather than above it, as on the handset: it exists only once a round
-        // has finished, and while one runs the thing worth reading is the count.
+        // has finished, and while one runs the thing worth reading is the count. What to do with it
+        // and the button that does it go above the drawing, as they do there.
         if (job == MeasureJob.ROOM && mine && measure.roomMeasured) {
-            Label(say(Phrases.pair_calibrate_room_drawing))
-            Note(say(Phrases.pair_calibrate_room_drawing_hint))
+            Column(Modifier.padding(top = 12.dp)) {
+                Note(say(Phrases.room_drawing_drag))
+                FitButton(host, status.room, sessions)
+            }
             HostDrawing(host, status.room, sessions)
-            MeasuredLines(host, status.room, details, sessions)
+            MeasuredLines(host, status.room, details, sessions, offerFit = false)
         }
+    }
+}
+
+/**
+ * 试音 under the rows - the handset's SoundCheckButton. Optional, outlined, and grey only while
+ * something runs or nobody has joined to be heard; the line under it sweeps while the check runs.
+ */
+@Composable
+private fun SoundCheckButton(status: HostStatus, measure: MeasureStatus, mine: Boolean, check: () -> Unit) {
+    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Ghost(say(Phrases.sound_check), enabled = status.open && !measure.running && status.phones.isNotEmpty(), onClick = check)
+        Note(say(Phrases.sound_check_hint), waiting = measure.checking && mine)
+        if (mine) measure.checkFailed?.let { Note(describe(it), Tone.WRONG) }
     }
 }
 
@@ -168,7 +213,11 @@ private fun VolumeGate(
     status: HostStatus,
     rows: List<VolumeRow>,
     tooQuiet: List<String>,
-    sessions: CoroutineDispatcher
+    sessions: CoroutineDispatcher,
+    /** The last sound check of this page's job, or null. */
+    check: SoundCheck?,
+    /** The devices [check] is judged on. */
+    judged: List<String>
 ) {
     if (rows.isEmpty()) return
     val scope = rememberCoroutineScope()
@@ -182,15 +231,23 @@ private fun VolumeGate(
     ) { scope.launch(sessions) { host.setRoomVolume(it) } }
     Label(say(Phrases.room_volume_now))
     val places = status.phones.associate { it.peerId to it.place } + (status.selfId to status.selfPlace)
-    for ((index, row) in rows.withIndex()) {
+    val excuses = RoomExcuse.entries.associateWith { describe(it) }
+    val notHeard = say(Phrases.sound_check_unheard)
+    val unheard = check?.let { unheardLines(it, judged, { excuse -> excuses.getValue(excuse) }, notHeard) }.orEmpty()
+    // Each its own slider, the playing page's row: this machine's own sound, or one device's. In
+    // the error colour while under the floor, which is what the 太小 tag on the read-only row said.
+    for (row in rows) {
         val quiet = row.percent < QUIET_FLOOR_PERCENT
-        Line(first = index == 0) {
-            Badge(row.peerId, places[row.peerId])
-            LineName(row.name, quiet = quiet)
-            Tag(
-                say(if (quiet) Phrases.room_volume_too_quiet_row else Phrases.room_volume_level, row.percent),
-                if (quiet) Tone.WRONG else Tone.GOOD
-            )
+        VolumeLine(
+            name = row.name,
+            percent = row.percent,
+            colour = if (quiet) MaterialTheme.colorScheme.error
+            else badgeColour(places[row.peerId], MaterialTheme.colorScheme.onSurfaceVariant),
+            complaint = unheard[row.peerId]
+        ) { percent ->
+            scope.launch(sessions) {
+                if (row.peerId == status.selfId) host.setOwnVolume(percent) else host.setDeviceVolume(row.peerId, percent)
+            }
         }
     }
     if (tooQuiet.isNotEmpty()) {
@@ -247,8 +304,13 @@ private fun HoldStill(untilNanos: Long) {
         }
     }
     val style = MaterialTheme.typography.bodyMedium
+    // In the quiet colour rather than the box's own, as on the handset: the band lights text up to
+    // onSurface, which is what text in a box is drawn in, so a sweep from that colour drew nothing.
     if (left > 0) Text(say(Phrases.room_calibrate_left, left), style = style)
-    else Text(say(Phrases.calibrate_computing), Modifier.sweeping(LocalContentColor.current), style = style)
+    else {
+        val quiet = MaterialTheme.colorScheme.onSurfaceVariant
+        Text(say(Phrases.calibrate_computing), Modifier.sweeping(quiet), style = style, color = quiet)
+    }
 }
 
 /** Whole seconds still to wait, rounded up and never below zero - the handset's secondsLeft. */
@@ -315,7 +377,14 @@ private fun describeHere(problem: MicrophoneProblem, detail: String?): String =
  * move the drawing onto them, and whether the near devices are being held back.
  */
 @Composable
-internal fun MeasuredLines(host: HostSession, room: RoomState, details: Boolean, sessions: CoroutineDispatcher) {
+internal fun MeasuredLines(
+    host: HostSession,
+    room: RoomState,
+    details: Boolean,
+    sessions: CoroutineDispatcher,
+    /** False where the page draws [FitButton] itself, above the drawing - the measuring page does. */
+    offerFit: Boolean = true
+) {
     val scope = rememberCoroutineScope()
     Note(say(Phrases.room_place_evenly))
     // Said and never acted on: a measurement can say how far apart two icons are, not which is
@@ -339,11 +408,7 @@ internal fun MeasuredLines(host: HostSession, room: RoomState, details: Boolean,
         Label(say(Phrases.room_measured))
         Readings(measured.map { (names, metres) -> listOf(names.first, names.second) to "%.2f".format(metres) }, room.colours)
     }
-    if (room.fitted) {
-        Note(say(Phrases.room_fit_done), Tone.GOOD)
-    } else if (fitOffer(room) != null) {
-        Solid(say(Phrases.room_fit)) { scope.launch(sessions) { host.fitRoom() } }
-    }
+    if (offerFit) FitButton(host, room, sessions)
     val delays = delayLines(room.icons, room.metresPerUnit)
     if (delays.isNotEmpty()) {
         Ghost(say(if (room.delayCompensation) Phrases.room_delay_on else Phrases.room_delay_off)) {
@@ -353,6 +418,17 @@ internal fun MeasuredLines(host: HostSession, room: RoomState, details: Boolean,
             Label(say(Phrases.room_arrival_delay))
             Readings(delays.map { (peerId, millis) -> listOf(peerId) to "%.1f".format(millis) }, room.colours)
         }
+    }
+}
+
+/** The drawing moved onto the measurement, or the word that it has been - the handset's FitOffer. */
+@Composable
+private fun FitButton(host: HostSession, room: RoomState, sessions: CoroutineDispatcher) {
+    val scope = rememberCoroutineScope()
+    if (room.fitted) {
+        Note(say(Phrases.room_fit_done), Tone.GOOD)
+    } else if (fitOffer(room) != null) {
+        Solid(say(Phrases.room_fit), modifier = Modifier.padding(top = 8.dp)) { scope.launch(sessions) { host.fitRoom() } }
     }
 }
 

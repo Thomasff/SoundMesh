@@ -73,6 +73,25 @@ fun heardSlots(arrivals: List<ChirpArrival?>, ownSlot: Int): Set<Int> {
 }
 
 /**
+ * What a sound check says against each of [judged]: its own reason where it gave one, [notHeard]
+ * where this host did not hear it - including one told that never came, which made no sound - and
+ * nothing where it was heard.
+ */
+fun unheardLines(
+    check: SoundCheck,
+    judged: List<String>,
+    excuse: (RoomExcuse) -> String,
+    notHeard: String
+): Map<String, String> = judged.mapNotNull { peerId ->
+    val said = check.excuses[peerId]
+    when {
+        said != null -> peerId to excuse(said)
+        peerId !in check.heard -> peerId to notHeard
+        else -> null
+    }
+}.toMap()
+
+/**
  * Where the host stands for a round, which is what decides where each distance it is an end of is
  * filed. It changes nothing about the measurement.
  */

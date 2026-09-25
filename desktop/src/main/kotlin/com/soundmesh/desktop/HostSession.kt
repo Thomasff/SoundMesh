@@ -32,6 +32,8 @@ import com.soundmesh.product.RoomState
 import com.soundmesh.product.RoundDials
 import com.soundmesh.product.RoundLine
 import com.soundmesh.product.RoundPorts
+import com.soundmesh.product.RoundResult
+import com.soundmesh.product.SoundCheck
 import com.soundmesh.product.SourceSpot
 import com.soundmesh.product.SpatialRoom
 import com.soundmesh.product.StoredRoomDrawing
@@ -125,7 +127,15 @@ data class MeasureStatus(
     val microphone: MicrophoneProblem? = null,
     val microphoneDetail: String? = null,
     /** The last room round finished with an answer, which is when measuring again is offered beside it. */
-    val roomMeasured: Boolean = false
+    val roomMeasured: Boolean = false,
+    /** The run is a sound check: one chirp each, nothing kept, no stop. */
+    val checking: Boolean = false,
+    /** What the last sound check heard, until a volume it was judged at changes. */
+    val soundCheck: SoundCheck? = null,
+    /** Why the last sound check never reached a chirp, or null. */
+    val checkFailed: RoundLine? = null,
+    /** A pair has been served with [aimedAt], which is what 完成 on its page waits for. */
+    val pairServed: Boolean = false
 )
 
 data class HostStatus(
@@ -609,16 +619,36 @@ class HostSession(
         asked.clear()
         volume.set(percent)
         commandServer?.send(RoomOrder(RoomCommand.SET_VOLUME, percent))
+        // A sound check says what was heard at the old level, which is no longer anybody's.
+        noteMeasure { it.copy(soundCheck = null) }
     }
 
     /** One device on its own, for the one standing next to a wall. Answers whether the line to it was there. */
     fun setDeviceVolume(peerId: String, percent: Int): Boolean = synchronized(lock) {
         asked[peerId] = percent
+        forgetCheckOf(peerId)
         commandServer?.sendTo(peerId, RoomOrder(RoomCommand.SET_VOLUME, percent)) == true
     }
 
     /** This machine's own sound on its own. */
-    fun setOwnVolume(percent: Int) = synchronized(lock) { volume.set(percent) }
+    fun setOwnVolume(percent: Int) = synchronized(lock) {
+        volume.set(percent)
+        selfId?.let(::forgetCheckOf)
+    }
+
+    /** Takes the last sound check's word off one device whose volume has just moved. */
+    private fun forgetCheckOf(peerId: String) = noteMeasure {
+        it.copy(soundCheck = it.soundCheck?.let { check ->
+            check.copy(heard = check.heard + peerId, excuses = check.excuses - peerId)
+        })
+    }
+
+    /**
+     * 试音: every device standing by chirps once, or [aimedAt] alone with this machine, and the
+     * ones this machine did not hear are named - the handset host's sound check. Files nothing.
+     */
+    fun soundCheck(aimedAt: String?) =
+        startMeasuring(if (aimedAt == null) MeasureJob.ROOM else MeasureJob.PAIR, aimedAt, check = true)
 
     /** Every device back to where it was before the room touched it, this machine included. */
     fun restoreVolume() = synchronized(lock) {
@@ -654,7 +684,7 @@ class HostSession(
      * The microphone is asked first, as the desktop sink asks it: a round that cannot record is
      * one where every device is told to chirp for a host that will hear none of it.
      */
-    private fun startMeasuring(job: MeasureJob, aimedAt: String?) {
+    private fun startMeasuring(job: MeasureJob, aimedAt: String?, check: Boolean = false) {
         val command: RoomCommandServer
         val self: String
         synchronized(lock) {
@@ -676,17 +706,22 @@ class HostSession(
                     untilLocalNanos = null,
                     microphone = null,
                     microphoneDetail = null,
-                    roomMeasured = false
+                    // A sound check measures nothing, so it takes away no answer a round left.
+                    roomMeasured = check && it.roomMeasured,
+                    checking = check,
+                    soundCheck = if (check) null else it.soundCheck,
+                    checkFailed = null,
+                    pairServed = if (check) it.pairServed && it.aimedAt == aimedAt else false
                 )
             }
         }
-        Thread({ measureOn(job, aimedAt, command, self) }, "host-measure").apply {
+        Thread({ measureOn(job, aimedAt, command, self, check) }, "host-measure").apply {
             isDaemon = true
             start()
         }
     }
 
-    private fun measureOn(job: MeasureJob, aimedAt: String?, command: RoomCommandServer, self: String) {
+    private fun measureOn(job: MeasureJob, aimedAt: String?, command: RoomCommandServer, self: String, check: Boolean) {
         try {
             microphoneProblem()?.let { (trouble, detail) ->
                 noteMeasure { it.copy(line = null, microphone = trouble, microphoneDetail = detail) }
@@ -747,16 +782,28 @@ class HostSession(
             // Called off while the microphone was being asked or the music stopped: nothing has
             // been said to the room yet, so there is nothing to take back.
             if (callingOff) return
+            if (check) {
+                val heard = round.soundCheck(aimedAt)
+                // The round's own lines were about gathering a room nobody asked to measure; the
+                // answer is on the rows. A check that never chirped keeps the line saying why.
+                noteMeasure {
+                    it.copy(soundCheck = heard, checkFailed = if (heard == null) it.line else null, line = null, heard = emptyList())
+                }
+                return
+            }
             when (job) {
                 MeasureJob.ROOM -> if (round.room()) noteMeasure { it.copy(roomMeasured = true) }
-                MeasureJob.PAIR -> round.pair(aimedAt)
+                MeasureJob.PAIR -> if (round.pair(aimedAt) == RoundResult.SERVED) noteMeasure { it.copy(pairServed = true) }
             }
         } catch (e: Throwable) {
-            noteMeasure { it.copy(line = RoundLine.Failed(e.message ?: e.toString())) }
+            noteMeasure {
+                val failed = RoundLine.Failed(e.message ?: e.toString())
+                if (check) it.copy(checkFailed = failed, line = null) else it.copy(line = failed)
+            }
         } finally {
             roundInFlight = null
             takeBackSpatialPort()
-            noteMeasure { it.copy(running = false, underWay = false, untilLocalNanos = null) }
+            noteMeasure { it.copy(running = false, underWay = false, untilLocalNanos = null, checking = false) }
             synchronized(lock) { rereadDistances() }
         }
     }
