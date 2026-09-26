@@ -255,7 +255,8 @@
     <string name="volume_hint">Captured playback goes out on the alarm channel, whose volume is separate from media. The volume keys set it while this page is open, or find the alarm volume under Settings → Sound.</string>
     <string name="room_volume_title">All phones</string>
     <string name="room_volume_level">%1$d%%</string>
-    <string name="room_volume_capturing_hint">This phone is capturing another app, so its own copy goes out on the alarm channel; media is turned down to 0, or you would hear it twice. Restoring puts both back.</string>
+    <string name="room_volume_capturing_hint">This phone is capturing another app. To avoid hearing it twice, it is playing on the alarm channel for now, and the alarm volume is put back afterwards.</string>
+    <string name="capture_media_twice">Turn media volume down to 1 or lower, or you will hear everything twice</string>
     <string name="room_volume_row_missed">%1$s volume has not reached %2$d%%</string>
     <string name="room_volume_row_silent">%1$s took the command but has never reported its own volume back, so the number beside it is old.</string>
     <string name="room_volume_restore">Restore volumes</string>

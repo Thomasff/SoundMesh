@@ -56,6 +56,7 @@ fun PlayingScreen(
             .padding(horizontal = 20.dp)
             .padding(bottom = 28.dp)
     ) {
+        if (hearsCaptureTwice(state)) Note(stringResource(R.string.capture_media_twice), Tone.WRONG)
         if (state.role == Role.HOST) {
             SourcePicker(state, actions)
             if (state.checking) Note(stringResource(R.string.song_checking))
@@ -123,6 +124,14 @@ private fun SourcePicker(state: HomeState, actions: HomeActions) {
  * chose while it was last a host, and naming that is naming a song nobody is playing.
  */
 internal fun namesOwnSource(state: HomeState): Boolean = state.role == Role.HOST
+
+/**
+ * Whether this handset hears what it captures twice: once from the app itself on media, once from
+ * the room a second later. Only a capturing host - everybody else plays on media, and telling them
+ * to turn it down would be telling them to go quiet. One step is let through as well as zero.
+ */
+internal fun hearsCaptureTwice(state: HomeState): Boolean =
+    state.role == Role.HOST && state.capturing && (state.mediaIndex ?: 0) > 1
 
 /**
  * What is playing, and where in the room's queue it is. A sink says only what its host says is

@@ -76,6 +76,7 @@
     <string name="pc_this_computer">本机</string>
     <string name="pc_no_volume_yet">还没报音量</string>
     <string name="pc_percent_now">%1$d%%（现在 %2$d%%）</string>
+    <string name="pc_volume_times_system">电脑音量为当前设置音量*电脑本身音量，若声音不够大，请调整电脑本身音量</string>
 
     <string name="pc_no_network">本机现在没连局域网，手机和别的电脑都连不到它。先连上 WiFi 或网线。</string>
 

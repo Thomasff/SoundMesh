@@ -211,6 +211,8 @@ class HomeActivity : ComponentActivity() {
     /** Reads the output a capturing host is heard on. It cannot set it - see AccessibilityVolume. */
     private val hostOutputVolume by lazy { HostOutputVolume(getSystemService(AudioManager::class.java)) }
 
+    private val audio by lazy { getSystemService(AudioManager::class.java) }
+
     /**
      * This handset's own volume, and the only thing in the app that sets it.
      *
@@ -288,6 +290,9 @@ class HomeActivity : ComponentActivity() {
     private val refresh = object : Runnable {
         override fun run() {
             readSession()
+            // Every tick rather than with the health below: this is read so a line can go away
+            // while somebody is turning media down, and four seconds late looks like it did not.
+            state = state.copy(mediaIndex = if (state.capturing) audio.getStreamVolume(AudioManager.STREAM_MUSIC) else null)
             // Charge and heat move on the scale of minutes, so they are read every few seconds
             // rather than five times a second alongside the counters.
             if (ticks++ % HEALTH_EVERY_TICKS == 0) {

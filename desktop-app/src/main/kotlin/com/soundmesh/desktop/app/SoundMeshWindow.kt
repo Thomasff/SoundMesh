@@ -637,6 +637,9 @@ private fun SinkPlaying(status: SinkStatus, details: Boolean) {
         LineName(say(Phrases.pc_my_number, PeerBadge.numberOf(status.selfId)))
     }
     if (status.volumePercent != SoftwareVolume.FULL) Note(say(Phrases.pc_volume_set, status.volumePercent))
+    // Always, not only once the host has turned this one down: a computer sink that is too quiet
+    // at full is the case this is for, and the fix is outside SoundMesh.
+    Note(say(Phrases.pc_volume_times_system))
     Text(describe(status), style = MaterialTheme.typography.bodyMedium)
     status.hostName?.let { name ->
         Note(status.hostAddress?.let { say(Phrases.pc_following_at, name, it) } ?: say(Phrases.pc_following, name))
@@ -1071,6 +1074,7 @@ private fun Volumes(host: HostSession, status: HostStatus, sessions: CoroutineDi
         // fifteen coarse steps. The row itself draws what the device says, as on the handset.
         phone.askedPercent?.takeIf { it != reported }?.let { Note(say(Phrases.pc_percent_now, it, reported)) }
     }
+    Note(say(Phrases.pc_volume_times_system))
 }
 
 /**

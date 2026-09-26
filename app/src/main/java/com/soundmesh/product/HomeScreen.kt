@@ -243,6 +243,12 @@ data class HomeState(
      */
     val hostOutputVolume: OutputVolume? = null,
     /**
+     * This handset's media volume, in the system's own steps, on a host that is capturing. The app
+     * being captured is heard on it live while the room plays the same thing a second later, so
+     * above the bottom step the person hears it twice. Null everywhere else.
+     */
+    val mediaIndex: Int? = null,
+    /**
      * Where the room's volume slider sits, or null where there is no room to set one for.
      *
      * Follows this handset's own volume until somebody drags it, which is what makes the slider
