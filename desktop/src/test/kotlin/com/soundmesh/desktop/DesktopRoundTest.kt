@@ -30,7 +30,7 @@ class DesktopRoundTest {
         speaker.submit(chunk(RoundChunks.CHIRP_SEQUENCE_BASE, at))
         speaker.submit(chunk(RoundChunks.CHIRP_SEQUENCE_BASE + 1, at + RoundChunks.CHUNK_NANOS + 777))
 
-        val expected = (at - offset) * 48000 / 1_000_000_000L
+        val expected = fake.output.frameAtLocalNanos(at - offset)
         val first = fake.output.scheduled[0].first
         assertTrue("landed on $first for $expected", kotlin.math.abs(first - expected) <= 1)
         assertEquals(first + frames, fake.output.scheduled[1].first)

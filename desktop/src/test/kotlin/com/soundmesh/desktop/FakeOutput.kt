@@ -17,7 +17,10 @@ internal class FakeOutput(private val sampleRate: Int = 48000) : FrameOutput {
         drops++
     }
 
-    override fun frameAtLocalNanos(localNanos: Long): Long = localNanos * sampleRate / 1_000_000_000L
+    // Whole seconds and the remainder apart: nanoTime here counts from boot, and the plain product
+    // overflows a Long once a machine has been up 53 hours, which failed every test through here.
+    override fun frameAtLocalNanos(localNanos: Long): Long =
+        localNanos / 1_000_000_000L * sampleRate + localNanos % 1_000_000_000L * sampleRate / 1_000_000_000L
 
     override fun schedule(samples: ShortArray, channels: Int, atFrame: Long): Boolean {
         if (atFrame < firstSchedulableFrame) return false
