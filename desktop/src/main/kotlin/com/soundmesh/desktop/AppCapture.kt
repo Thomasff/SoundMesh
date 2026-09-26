@@ -19,7 +19,7 @@ interface CaptureHandle : AutoCloseable {
  *
  * The desktop's counterpart of the handset capturing another app's playback. Capturing the
  * endpoint's mix instead would take this program's own output back in with it - the room's copy,
- * a second and a half late, fed back into the room - and it would take every notification with it.
+ * a second late, fed back into the room - and it would take every notification with it.
  *
  * Asked for at the stream's rate and channels in 32-bit float, and handed on as the 16-bit frames a
  * chunk carries after [gain] is applied. Float because of what [gain] is for: the capture hears

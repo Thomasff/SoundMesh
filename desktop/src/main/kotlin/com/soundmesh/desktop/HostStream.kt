@@ -2,8 +2,10 @@ package com.soundmesh.desktop
 
 import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.ChunkCodec
+import com.soundmesh.core.LeadMeter
 import com.soundmesh.core.TonePcmSource
 import com.soundmesh.probe.sync.ChunkServer
+import com.soundmesh.probe.sync.EventLog
 
 /**
  * The audio half of a desktop host: hands chunks to whatever sinks have connected, on the timeline
@@ -54,9 +56,15 @@ class HostStream(
      */
     private val chunkServer: ChunkServer = ChunkServer(port),
     /** What this machine does to a chunk before playing it itself: its own part of the room. */
-    private val localShape: (AudioChunk) -> AudioChunk = { it }
+    private val localShape: (AudioChunk) -> AudioChunk = { it },
+    /** Where [slack]'s lines go, or null for nowhere. */
+    private val events: EventLog? = null
 ) {
     private val localPlayout = localOutput?.let { ChunkPlayout(it) { 0L } }
+
+    // How much of the lead is left as each chunk goes out: what a slow source took of it before
+    // the network had its turn. A sink's own reading less this one is the network's share.
+    private val slack = LeadMeter("host-slack")
 
     fun start() = chunkServer.start()
 
@@ -139,6 +147,8 @@ class HostStream(
             val playAt = anchor + sequence * CHUNK_NANOS
             val chunk = AudioChunk(sequence, playAt, pcm)
             chunkServer.broadcast(chunk)
+            val sentAt = System.nanoTime()
+            slack.record(playAt - sentAt, sentAt)?.let { events?.write(it) }
             // After the broadcast, so a slow local output cannot hold up the wire. The sinks are
             // across a room and this one is in the same process; whichever of them is behind, the
             // instant in the chunk is already fixed and neither is waiting on the other for it.
@@ -168,8 +178,13 @@ class HostStream(
          * It is what a sink has to absorb the network, its own clock estimate and its buffer in, so
          * the two hosts having different ones would make a sink behave differently depending on
          * which machine it joined - the one difference nobody would look for.
+         *
+         * A second, down from the second and a half both hosts inherited from the test harness.
+         * The 09-26 trials (docs/feasibility-results/short-capture-lead.md) never saw a sink use
+         * more than about half a second of it - a handset's screen off, the computer's WiFi
+         * stalling - so a second keeps twice that. Three rounds in one home: a floor, not a proof.
          */
-        const val DEFAULT_LEAD_NANOS = 1_500_000_000L
+        const val DEFAULT_LEAD_NANOS = 1_000_000_000L
 
         /** One chunk of 16-bit stereo, which is what silence is sent as. */
         const val CHUNK_BYTES = ChunkCodec.FRAMES_PER_CHUNK * 4

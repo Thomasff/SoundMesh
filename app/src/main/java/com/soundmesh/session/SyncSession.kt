@@ -69,10 +69,10 @@ interface SyncSession {
      * Starts playing from [micros] into whatever is playing now.
      *
      * Returns as soon as it is asked for rather than once it is heard. Everything in flight is
-     * thrown away - three seconds of decoded audio and 1.5 s of chunks already handed to the room
+     * thrown away - three seconds of decoded audio and a second of chunks already handed to the room
      * - so the room goes quiet for about the length of the lead and then plays the new place.
      * Silence rather than the old place: a room that carried on playing where it was for a second
-     * and a half after somebody dragged a slider is a room that looks broken.
+     * after somebody dragged a slider is a room that looks broken.
      *
      * Declared on both roles rather than defaulted, for the reason [onNetworkChanged] gives.
      */

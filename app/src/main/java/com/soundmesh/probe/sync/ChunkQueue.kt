@@ -83,7 +83,7 @@ internal class ChunkQueue(
      * Throws away everything decoded but not yet handed over.
      *
      * The deeper half of what a seek has to get rid of: three seconds here against the host's own
-     * 1.5 s of lead. Without it a listener dragging a slider would wait four and a half seconds to
+     * second of lead. Without it a listener dragging a slider would wait four seconds to
      * hear the new place and hear the old one throughout.
      */
     fun discard() = ready.clear()

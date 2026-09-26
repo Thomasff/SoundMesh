@@ -53,17 +53,17 @@ class HostReportTest {
         SessionReadout.counters(report).first { it.label == label }.value
 
     /**
-     * The end of a song is a second and a half after the source stops answering, not at it.
+     * The end of a song is a second after the source stops answering, not at it.
      *
-     * This is the whole content of the function: a chunk is stamped 1.5 s into its own future and
+     * This is the whole content of the function: a chunk is stamped a second into its own future and
      * every handset in the room is holding its copy of that instant. Ending at the moment the
-     * source ran dry would take the last second and a half off the end of every song, everywhere
+     * source ran dry would take the last second off the end of every song, everywhere
      * at once, and would leave every counter in the report saying the audio was fine.
      */
     @Test
     fun aSongThatRanOutStillHasItsLeadLeftToPlay() {
         val now = 5_000_000_000L
-        val lastDue = now + 1_500_000_000L
+        val lastDue = now + 1_000_000_000L
         assertTrue(endOfAudioNanos(lastDue, now) > lastDue)
     }
 
@@ -83,7 +83,7 @@ class HostReportTest {
     /**
      * The one mark a source that fell behind leaves anywhere.
      *
-     * A host reads a chunk 1.5 s before it is heard and the scheduler holds three seconds more,
+     * A host reads a chunk a second before it is heard and the scheduler holds three seconds more,
      * so a decoder that stumbled and caught up again changes no other number in the run - not the
      * timeline, not the trims, not what anybody heard. Without this the only visible version of
      * that fault is the one that never recovers.
@@ -97,12 +97,12 @@ class HostReportTest {
     /**
      * A slider drawn where the source has read to runs a lead ahead of the music.
      *
-     * 1.5 s ahead of a song, all the time, on every handset. It reads as the app being slightly
+     * A second ahead of a song, all the time, on every handset. It reads as the app being slightly
      * out of step with itself, and there is nothing on the screen that would say why.
      */
     @Test
     fun theSliderShowsWhereTheRoomIsAndNotWhereTheDecoderIs() {
-        assertEquals(8_500_000L, heardMicros(10_000_000L, 300_000_000L, 1_500_000L))
+        assertEquals(9_000_000L, heardMicros(10_000_000L, 300_000_000L, 1_000_000L))
     }
 
     /**

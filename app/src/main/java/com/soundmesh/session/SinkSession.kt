@@ -6,11 +6,13 @@ import com.soundmesh.core.ClockEstimate
 import com.soundmesh.core.ClockHealth
 import com.soundmesh.core.ClockOffsetEstimator
 import com.soundmesh.core.DriftController
+import com.soundmesh.core.LeadMeter
 import com.soundmesh.core.PlaybackScheduler
 import com.soundmesh.core.SessionState
 import com.soundmesh.probe.sync.ChunkClient
 import com.soundmesh.probe.sync.Playhead
 import com.soundmesh.probe.sync.ClockSyncClient
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.SpatialFieldClient
 import com.soundmesh.probe.sync.StoredApproximateCalibration
 import com.soundmesh.probe.sync.StoredCalibration
@@ -91,7 +93,9 @@ class SinkSession(
      * that stops writing silence into a room nobody is in.
      */
     private val onHostGone: () -> Unit = {},
-    private val flags: SessionFlags = SessionFlags()
+    private val flags: SessionFlags = SessionFlags(),
+    /** Where [slack]'s lines go, or null for nowhere. */
+    private val events: EventLog? = null
 ) : SyncSession {
     private val estimator = ClockOffsetEstimator(CLOCK_WINDOW, CLOCK_BEST)
 
@@ -355,7 +359,7 @@ class SinkSession(
      * starting thread took the whole process down with it.
      *
      * Every connection after the first is section 11.2's dropped link. What keeps that inaudible is
-     * not this loop but the lead time: chunks are handed over about a second and a half before they
+     * not this loop but the lead time: chunks are handed over about a second before they
      * are due, so an outage shorter than the buffer already in the scheduler is played straight
      * through and only the counters know it happened. This loop's job is to be finished dialling
      * before that buffer runs out.
@@ -479,7 +483,7 @@ class SinkSession(
      * Nothing is sent to say so, and nothing needs to be: the sequence is the stream's own
      * position counter and a stream position cannot go backwards for any other reason. What it
      * buys over a field of its own is that an older build on the other end still plays - it hears
-     * a second and a half of where the song used to be, which is the behaviour this replaced,
+     * a second of where the song used to be, which is the behaviour this replaced,
      * rather than a header it cannot parse.
      *
      * The rule lives here rather than in [PlaybackScheduler] because that class is also the
@@ -487,6 +491,9 @@ class SinkSession(
      * resumes below it again. There it would fire on every calibration run in the archive.
      */
     private var lastSequence = Int.MIN_VALUE
+
+    // How long before its instant each chunk got here, on the host's timeline - see [LeadMeter].
+    private val slack = LeadMeter("sink-slack")
 
     private fun receive(chunk: AudioChunk) {
         val arrivedAt = System.nanoTime()
@@ -500,6 +507,10 @@ class SinkSession(
             Log.i(LOG_TAG, "the host jumped; $thrown queued chunks were thrown away")
         }
         lastSequence = chunk.sequence
+        // Nothing before the clock has answered: there is no host time here yet to measure against.
+        runCatching { chunk.playAtHostNanos - hostNanosNow() }.getOrNull()
+            ?.let { slack.record(it, arrivedAt) }
+            ?.let { events?.write(it) }
         if (flags.state().mayEmit) scheduler.submit(chunk)
     }
 

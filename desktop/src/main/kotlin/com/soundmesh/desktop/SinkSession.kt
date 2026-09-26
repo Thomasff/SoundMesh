@@ -13,6 +13,7 @@ import com.soundmesh.core.RoomOrder
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.sync.COMMAND_PORT
 import com.soundmesh.probe.sync.ClockPacket
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.PairedHost
 import com.soundmesh.probe.sync.RoomCommandClient
@@ -585,7 +586,8 @@ class SinkSession(
                 // Named, so a handset host can tell this machine coming back from a second machine arriving.
                 val sink = SinkStream(
                     host, GainOutput(it.output, volume), chunkPort, clockPort, HostIdentity(identityDirectory).current(),
-                    spatialPort, alignmentOffsetNanos = alignmentMicros * 1_000L
+                    spatialPort, alignmentOffsetNanos = alignmentMicros * 1_000L,
+                    events = EventLog(identityDirectory)
                 )
                 stream = sink
                 try {

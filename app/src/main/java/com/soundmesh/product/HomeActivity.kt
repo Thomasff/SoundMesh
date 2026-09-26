@@ -1533,7 +1533,7 @@ class HomeActivity : ComponentActivity() {
      *
      * Changing mode changes which stream this handset plays on, and both directions need it. Into
      * the capturing mode: the app being captured is heard on media live while the room plays the
-     * same thing a second and a half later, so media is silenced - and until this existed that
+     * same thing a second later, so media is silenced - and until this existed that
      * only happened on the next drag of the slider, which is a listener being told to go and
      * touch something to finish a switch they already made. Out of it: the stream about to be
      * played on is the one that was silenced, so leaving without this is a phone at zero.

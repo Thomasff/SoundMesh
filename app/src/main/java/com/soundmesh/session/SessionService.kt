@@ -549,7 +549,8 @@ class SessionService : Service() {
             onHostGone = { stopSession() },
             // This handset's own name, not the host's. The same identity a peer files this phone's
             // calibration under, so an icon dragged in one session means the same phone in the next.
-            spatialId = HostIdentity(filesDir).current()
+            spatialId = HostIdentity(filesDir).current(),
+            events = EventLog(filesDir)
         )
     }
 

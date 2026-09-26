@@ -42,6 +42,9 @@ internal interface CapturedFeed : Feed {
 
     /** Chunks made up with silence, for the diagnostics. */
     fun padded(): Int
+
+    /** How far behind the capture the stream runs - see [CaptureFeed.backlogNanos]. */
+    fun backlogNanos(): Long
 }
 
 /**
@@ -64,6 +67,9 @@ internal class AppFeed(
 
     // The fewest: a program with nothing playing makes up every chunk, and says nothing about the rest.
     override fun padded(): Int = feeds.minOf { it.paddedChunks }
+
+    // The most: the stream waits on every program's feed, so the one holding most is what it runs behind.
+    override fun backlogNanos(): Long = feeds.maxOf { it.backlogNanos() }
 
     /**
      * Opens every capture before turning anything down, so a program that cannot be captured - an
@@ -128,6 +134,8 @@ internal class EverythingFeed(
     private var watcher: Thread? = null
 
     override fun padded(): Int = feed.paddedChunks
+
+    override fun backlogNanos(): Long = feed.backlogNanos()
 
     override fun prepare(): HostProblem? = try {
         val opened = openCapture(CaptureTarget(ownPid, exclude = true)) { bytes, length -> feed.push(bytes, length) }

@@ -2,10 +2,12 @@ package com.soundmesh.desktop
 
 import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.ClockOffsetEstimator
+import com.soundmesh.core.LeadMeter
 import com.soundmesh.core.SpatialField
 import com.soundmesh.probe.sync.ChunkClient
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncClient
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.SpatialFieldClient
 
 /**
@@ -31,7 +33,9 @@ class SinkStream(
      * This machine's constant for the pair, subtracted from host time as a handset sink subtracts
      * its own: measured if it has been, a room round's approximation if not, zero if neither.
      */
-    val alignmentOffsetNanos: Long = 0L
+    val alignmentOffsetNanos: Long = 0L,
+    /** Where [slack]'s lines go, or null for nowhere. */
+    private val events: EventLog? = null
 ) {
     private val estimator = ClockOffsetEstimator(CLOCK_WINDOW, CLOCK_BEST)
     private val clockClient = ClockSyncClient(hostAddress, clockPort, estimator)
@@ -42,9 +46,19 @@ class SinkStream(
     // Only a named sink can be on a handset host's drawing, so only a named one has a room to play.
     private val spatial = peerId?.let { SinkSpatial(it) }
 
+    // How long before its instant each chunk got here, as the handset sink measures it - see [LeadMeter].
+    private val slack = LeadMeter("sink-slack")
+
     private val chunkClient = ChunkClient(hostAddress, chunkPort, peerId) { chunk ->
         arrived++
-        if (clockClient.currentEstimate() == null) chunksBeforeTheClockAnswered++ else playout.play(spatial?.shaped(chunk) ?: chunk)
+        val estimate = clockClient.currentEstimate()
+        if (estimate == null) chunksBeforeTheClockAnswered++ else {
+            // The playout's own conversion, host instant to this machine's clock.
+            val arrivedAt = System.nanoTime()
+            slack.record(chunk.playAtHostNanos - estimate.offsetNanos + alignmentOffsetNanos - arrivedAt, arrivedAt)
+                ?.let { events?.write(it) }
+            playout.play(spatial?.shaped(chunk) ?: chunk)
+        }
     }
 
     @Volatile private var clockThread: Thread? = null

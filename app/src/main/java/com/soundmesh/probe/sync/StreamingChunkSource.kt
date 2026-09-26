@@ -43,7 +43,7 @@ private data class Jump(val songIndex: Int, val micros: Long)
  * - some two hundred and fifty times more time than the work needs. What the queue is really for
  * is the bursts: a codec that pauses to reconfigure, or a phone that is briefly busy elsewhere.
  * Three seconds of them are absorbed here before anything reaches the timeline, and the host's
- * own 1.5 s lead absorbs more after that.
+ * own one second lead absorbs more after that.
  *
  * The waiting itself is [ChunkQueue], split off by what can be looked at away from a handset:
  * what is left here is codec and can only be watched on a phone, while how long to wait, when to
@@ -99,7 +99,7 @@ class StreamingChunkSource private constructor(
      * Returns as soon as it is asked for, not once it is heard: the decoder has to finish the pass
      * it is in, and what was already handed to the room is somebody else's to throw away. Emptying
      * the queue here is the deeper half of that - three seconds of decoded audio against the
-     * host's 1.5 s of lead.
+     * host's second of lead.
      */
     fun seekTo(micros: Long) {
         jumpRequest.set(Jump(songIndex, maxOf(0L, micros)))

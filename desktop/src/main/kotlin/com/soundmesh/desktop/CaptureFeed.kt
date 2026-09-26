@@ -38,6 +38,9 @@ class CaptureFeed(
     var droppedBytes = 0L
         private set
 
+    /** What is held and not yet handed over, as time: how much older than the capture the stream runs. */
+    fun backlogNanos(): Long = synchronized(lock) { size / FRAME_BYTES * 1_000_000_000L / SAMPLE_RATE }
+
     /** Called on the capture's thread with interleaved 16-bit frames. */
     fun push(bytes: ByteArray, length: Int) = synchronized(lock) {
         var from = 0
@@ -107,6 +110,7 @@ class CaptureFeed(
 
     companion object {
         private const val FRAME_BYTES = 4
+        private const val SAMPLE_RATE = 48_000L
 
         /**
          * Long enough to cover the gap between two packets - the engine delivers every ten

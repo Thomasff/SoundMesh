@@ -743,7 +743,7 @@ private fun TransportRow(state: HomeState, actions: HomeActions) {
  * asked for on release rather than as it moves, because each one empties every queue in the room
  * and a drag across a five minute song would ask for a hundred of them.
  *
- * **It goes quiet for about a second and a half after a jump.** That is the lead every chunk is
+ * **It goes quiet for about a second after a jump.** That is the lead every chunk is
  * stamped with; the alternative was carrying on playing the old place for the same length of time,
  * which sounds like the app ignoring the drag. The buttons cost the same silence for the same
  * reason - they are the same jump.
@@ -801,7 +801,7 @@ private fun PlayheadPanel(playhead: Playhead, seek: (Long) -> Unit) {
  * A Material slider cannot tell the caller whether the finger moved: a touch on the track is a
  * whole gesture, reported exactly as a drag is, and it lands the value wherever the finger was.
  * That is right for a control somebody is aiming at and wrong for one somebody is listening past -
- * every jump empties every queue in the room and costs about a second and a half of silence, so a
+ * every jump empties every queue in the room and costs about a second of silence, so a
  * sleeve across the screen was buying the loudest thing the screen can do.
  *
  * The rule is that a gesture has to have gone somewhere. [MIN_DRAG] is a fraction of the track

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Everything here reads as arithmetic and is anything but: each of these answers is given to a
  * thread that is holding up the room while it waits. The counter in particular has no other
  * witness - a decoder that stumbles and catches up changes no other number in a run, because the
- * host reads a chunk 1.5 s before it is heard and the scheduler holds three seconds more.
+ * host reads a chunk a second before it is heard and the scheduler holds three seconds more.
  */
 class ChunkQueueTest {
     private val pollMillis = 5L
@@ -199,8 +199,8 @@ class ChunkQueueTest {
      * A seek throws away three seconds of a song nobody is going to hear now.
      *
      * The queue is the deeper half of what is in flight - three seconds of decoded audio against
-     * the host's own 1.5 s of lead - so without this a listener dragging a slider would wait four
-     * and a half seconds to hear the new place, and hear the old one for all of it.
+     * the host's own second of lead - so without this a listener dragging a slider would wait four
+     * seconds to hear the new place, and hear the old one for all of it.
      */
     @Test
     fun discardingThrowsAwayWhatWasDecodedAhead() {

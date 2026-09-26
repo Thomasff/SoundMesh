@@ -728,7 +728,7 @@ private fun carryingTone(carrying: Carried): Tone = when (carrying) {
 /**
  * Where in the song the room is and 上一首 / 暂停 / 下一首 - the handset host's playhead and
  * transport row, in its order and with its drawn buttons. Every one of them lands a lead later in
- * the room: the queued audio is thrown away and the new place starts a second and a half on.
+ * the room: the queued audio is thrown away and the new place starts a second on.
  */
 @Composable
 private fun PlayControls(host: HostSession, playhead: Playhead, paused: Boolean, sessions: CoroutineDispatcher) {

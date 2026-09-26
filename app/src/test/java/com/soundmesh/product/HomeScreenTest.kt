@@ -72,7 +72,7 @@ class HomeScreenTest {
     /**
      * The gesture a listener did not mean to make. A Material slider reports a touch on the track
      * exactly as it reports a drag, and the touch lands the value wherever the finger was - so a
-     * sleeve across the screen used to buy a real jump and a second and a half of silence in every
+     * sleeve across the screen used to buy a real jump and a second of silence in every
      * handset in the room. What separates the two is whether the finger went anywhere.
      */
     @Test

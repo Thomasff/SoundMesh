@@ -84,7 +84,7 @@ internal fun hostReportFields(
         // do it to all of them at once, and only this says so.
         ",\"unnamedSinks\":$unnamedSinks" +
         // The renderer waiting on a source that decodes while it plays. Nothing else says it: the
-        // 1.5 s lead and the scheduler's three seconds absorb a burst completely, so a decoder
+        // one second lead and the scheduler's three seconds absorb a burst completely, so a decoder
         // that fell behind and caught up again leaves no other mark anywhere in a run.
         ",\"lateChunks\":$lateChunks" +
         // Songs in a folder that would not play. A folder plays on without them and sounds exactly
@@ -97,9 +97,9 @@ internal fun hostReportFields(
  * A function of its values rather than a method on the session, so that it can be tested at all -
  * the same reason, and the same shape, as hostReportFields above.
  *
- * The number that matters is that this is **not** now. Every chunk is stamped 1.5 s into its own
+ * The number that matters is that this is **not** now. Every chunk is stamped a second into its own
  * future and the sinks are holding their copies of those same instants, so a session that ended
- * the renderer the moment its source ran dry would cut a second and a half off the end of every
+ * the renderer the moment its source ran dry would cut a second off the end of every
  * song, on every handset at once, and would sound exactly like somebody pressing stop early.
  * Nothing downstream would report it: the chunks were generated, broadcast and scheduled, and the
  * counters would say so.
@@ -121,7 +121,7 @@ internal const val NOTHING_PLAYED = Long.MIN_VALUE
  *
  * Every chunk is stamped a lead into its own future, so what is being heard now was read from the
  * source that long ago. Drawn at the source's own position instead, a slider sits a lead ahead of
- * the music - and for the first 1.5 s of every song it would be showing a place the song has not
+ * the music - and for the first second of every song it would be showing a place the song has not
  * reached, which is where the clamp comes in rather than as tidiness.
  */
 internal fun heardMicros(sourceMicros: Long, durationMicros: Long, leadMicros: Long): Long =
@@ -475,7 +475,7 @@ class HostSession(
      * Stops taking audio from the source, or starts again, without taking the session down.
      *
      * Three things happen on the way in and only one on the way out, and the asymmetry is the
-     * whole design. Going in, everything in flight is wrong - a second and a half of it in every
+     * whole design. Going in, everything in flight is wrong - a second of it in every
      * handset in the room - so it is thrown away exactly the way [seekTo] throws it away, and the
      * source is asked to reopen at the place the room had actually reached. Coming out, nothing is
      * thrown away at all: the timeline never stopped, the sequence never went backwards, and every
@@ -489,13 +489,13 @@ class HostSession(
      * - see SyncRenderer's completedAcquiringNanos for what that costs. Broadcasting silence keeps
      * the cadence, the drift loop and the clock exactly as they were.
      *
-     * **It costs a lead of silence to come back**, the same second and a half every jump costs and
+     * **It costs a lead of silence to come back**, the same second every jump costs and
      * for the same reason: what is in flight when play is pressed was stamped before it. Pressing
      * pause is what had to be instant, because a room that keeps playing after the button is a
      * room that looks broken; a room that takes a moment to start looks like a room starting.
      *
      * Asked for where the room is rather than where the source has decoded to. Those differ by the
-     * lead, and pausing at the second one would silently skip a second and a half of the song.
+     * lead, and pausing at the second one would silently skip a second of the song.
      *
      * One thing to know before reading a report off a run that used this: silence is broadcast
      * chunk for chunk, so `generated` counts a pause. It has been read as a duration - a folder
@@ -527,9 +527,9 @@ class HostSession(
     /**
      * Where the room is in the song, which is behind where the source has read to by the lead.
      *
-     * Every chunk is stamped 1.5 s into its own future, so what is being heard now was read from
-     * the source 1.5 s ago. A slider drawn at the source's own position would sit a second and a
-     * half ahead of the music and look like it was running fast.
+     * Every chunk is stamped a second into its own future, so what is being heard now was read from
+     * the source a second ago. A slider drawn at the source's own position would sit a second
+     * ahead of the music and look like it was running fast.
      */
     override fun playhead(): Playhead? {
         val source = sourcePlayhead() ?: return null
@@ -658,7 +658,7 @@ class HostSession(
     /**
      * The song ran out: play what is already scheduled, then end.
      *
-     * Every chunk is stamped 1.5 s into its own future and the sinks are holding their copies of
+     * Every chunk is stamped a second into its own future and the sinks are holding their copies of
      * those same instants, so ending the renderer here and now would cut off audio that has
      * already been handed out. Cutting it off is precisely what the stop button does, and a song
      * reaching its last bar should not sound like somebody pressed stop.
@@ -693,15 +693,20 @@ class HostSession(
         /** Where [announcedSong] sits for a source that has no list to be at a place in. */
         const val FIXED_SOURCE = -2
 
-        /** playAtHostNanos = generation instant + this lead. The harness's own value. */
-        const val LEAD_NANOS = 1_500_000_000L
+        /**
+         * playAtHostNanos = generation instant + this lead.
+         *
+         * A second, down from the harness's second and a half; the computer host's
+         * HostStream.DEFAULT_LEAD_NANOS says why, and the two have to stay equal.
+         */
+        const val LEAD_NANOS = 1_000_000_000L
 
         /**
          * How far ahead a new spatial rule is stamped to take effect.
          *
          * Long enough that every handset has been told before the instant arrives, and short
          * enough that a slider still feels attached to the sound. It is not [LEAD_NANOS]: chunks
-         * are stamped a second and a half out but shaped at release, a few tens of milliseconds
+         * are stamped a second out but shaped at release, a few tens of milliseconds
          * before they are heard, so this only has to cover one control message and the output
          * depth under it - single digit milliseconds on a link the clock sync is converging on.
          *

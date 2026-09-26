@@ -14,7 +14,7 @@ enum class NudgeOutcome { PUSHED, NOT_SILENCED, WOULD_NOT_MOVE }
  * sound returns. Plugging in a cable does it too, which is the same thing by another route - both
  * make the handset re-evaluate where audio is going. Leaving media on one was also found to stop
  * it happening at all, and is not what this does: that costs the host's own speaker playing the
- * song a second and a half ahead of the room, all the time, to avoid something that happens rarely.
+ * song a second ahead of the room, all the time, to avoid something that happens rarely.
  *
  * **What it is not is a diagnosis.** Why a stream sitting at zero should ever hand the capture
  * exact zeros while the player is still running is not settled - 09-20 established only that the

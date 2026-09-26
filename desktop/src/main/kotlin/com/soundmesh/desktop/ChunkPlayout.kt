@@ -29,7 +29,7 @@ interface FrameOutput {
 
     /**
      * Forgets everything scheduled that has not started to play. What a host jumping - a new
-     * song, a seek, a pause - asks of every sink: the next second and a half already queued is
+     * song, a seek, a pause - asks of every sink: the next second already queued is
      * the old place, and the handsets throw theirs away too (PlaybackScheduler.clear).
      */
     fun dropScheduled() {}

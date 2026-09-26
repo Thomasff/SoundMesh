@@ -109,7 +109,7 @@ class HandsetVolume(private val streams: StreamVolumes, directory: File) {
      * Sets the stream this handset plays on to [percent], and answers what it is now.
      *
      * A capturing host also has its media stream silenced, because the app being captured is
-     * heard on it live while the room plays the same thing a second and a half later - so a
+     * heard on it live while the room plays the same thing a second later - so a
      * capturing host with media up hears everything twice. What was there first is kept, and
      * [restore] is the way back.
      */

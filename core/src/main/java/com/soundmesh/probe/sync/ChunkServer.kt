@@ -192,12 +192,12 @@ class ChunkServer(private val port: Int) {
 
     private companion object {
         /**
-         * The buffer lead, in chunks: 1.5 seconds at 20 ms each.
+         * The buffer lead, in chunks: one second at 20 ms each.
          *
          * Not a tuning knob. A chunk older than the lead it was handed with is past its own play
          * instant, so a queue deeper than this holds only chunks the far end would discard.
          */
-        const val OUTBOX_CAPACITY_CHUNKS = 75
+        const val OUTBOX_CAPACITY_CHUNKS = 50
 
         /** How often a sender wakes to notice the session ended. Short next to a person's patience. */
         const val POLL_MILLIS = 200L

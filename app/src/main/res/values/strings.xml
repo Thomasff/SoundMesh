@@ -118,7 +118,7 @@
     <string name="song_checking">正在检查这首歌</string>
     <string name="song_capture">采集本机正在放的音乐</string>
     <string name="song_capturing">采集本机正在放的声音</string>
-    <string name="song_capture_hint">把本机的媒体音量调到 0，再用你自己的音乐 App 播放。采到的声音会晚约 1.5 秒和另一台一起放出来；音量不调到 0，你会听到一前一后两遍。本机自己的声音走闹钟通道，响度用下面那条调。</string>
+    <string name="song_capture_hint">把本机的媒体音量调到 0，再用你自己的音乐 App 播放。采到的声音会晚约 1 秒和另一台一起放出来；音量不调到 0，你会听到一前一后两遍。本机自己的声音走闹钟通道，响度用下面那条调。</string>
     <string name="capture_no_permission">没有录音权限就采不了本机的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
     <string name="capture_declined">没有拿到采集授权，或者授权已经被收回了。</string>
     <string name="song_unnamed">未命名</string>

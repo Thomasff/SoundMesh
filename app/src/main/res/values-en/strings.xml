@@ -115,7 +115,7 @@
     <string name="song_checking">Checking this song</string>
     <string name="song_capture">Capture what this phone is playing</string>
     <string name="song_capturing">Capturing what this phone is playing</string>
-    <string name="song_capture_hint">Turn this phone\'s media volume down to 0, then play from your own music app. What is captured comes out about 1.5 s later, together with the other phones; leave media up and you will hear it twice. This phone\'s own copy goes out on the alarm channel, and the slider below sets how loud.</string>
+    <string name="song_capture_hint">Turn this phone\'s media volume down to 0, then play from your own music app. What is captured comes out about 1 s later, together with the other phones; leave media up and you will hear it twice. This phone\'s own copy goes out on the alarm channel, and the slider below sets how loud.</string>
     <string name="capture_no_permission">Without the microphone permission this phone cannot capture its own audio. Turn it on for this app in the system settings.</string>
     <string name="capture_declined">The capture was not granted, or the grant has been taken back.</string>
     <string name="song_unnamed">Unnamed</string>

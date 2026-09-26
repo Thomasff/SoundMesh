@@ -1,6 +1,7 @@
 package com.soundmesh.desktop
 
 import com.soundmesh.core.ChunkCodec
+import com.soundmesh.core.LeadMeter
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.PairingCodeCodec
 import com.soundmesh.core.RoomCommand
@@ -13,6 +14,7 @@ import com.soundmesh.probe.sync.Carried
 import com.soundmesh.probe.sync.ChunkServer
 import com.soundmesh.probe.sync.ClockPacket
 import com.soundmesh.probe.sync.ClockSyncServer
+import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
 import com.soundmesh.probe.sync.RoundRecorder
@@ -1104,10 +1106,14 @@ class HostSession(
                 }
                 // Which song the room was last told of, so it is told once per song.
                 var announced: String? = null
+                val events = EventLog(identityDirectory)
+                // How much older than the capture each chunk goes out, on top of the lead - see [CaptureFeed].
+                val backlog = LeadMeter("capture-backlog")
                 val hostStream = HostStream(
                     ports.chunk,
                     { _, _ ->
                         val pcm = feed.nextChunk()
+                        if (feed is CapturedFeed) backlog.record(feed.backlogNanos(), System.nanoTime())?.let { events.write(it) }
                         val name = feed.name()
                         if (name != null && name != announced) {
                             announced = name
@@ -1118,7 +1124,8 @@ class HostSession(
                     },
                     localOutput = speakers?.output?.let { GainOutput(it, volume) },
                     chunkServer = chunks,
-                    localShape = { chunk -> here?.shaped(chunk) ?: chunk }
+                    localShape = { chunk -> here?.shaped(chunk) ?: chunk },
+                    events = events
                 )
                 if (current()) {
                     streamSinceNanos = System.nanoTime()
@@ -1130,7 +1137,7 @@ class HostSession(
                 if (lastPlayAt != null && playing && current()) {
                     // Every chunk is stamped a lead into its own future, so the song is over only
                     // once the last one has been heard - the handset host's endOfSong. Stopping at
-                    // the last send would cut the final second and a half off every song.
+                    // the last send would cut the final second off every song.
                     val over = lastPlayAt + HostStream.CHUNK_NANOS
                     while (playing && current() && System.nanoTime() - over < 0) Thread.sleep(END_POLL_MILLIS)
                     if (playing && current()) endOfSong(mine)

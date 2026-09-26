@@ -554,7 +554,9 @@ class HostSessionTest {
 
             assertEquals(RoomOrder(RoomCommand.STOP), heard.poll(10, TimeUnit.SECONDS))
             val tookMillis = (System.nanoTime() - pressed) / 1_000_000
-            assertTrue("stopped after $tookMillis ms, before the last chunk was heard", tookMillis >= 1_650)
+            // The lead and the song's 200 ms, less 50 for the clock the test reads.
+            val heardMillis = HostStream.DEFAULT_LEAD_NANOS / 1_000_000 + 150
+            assertTrue("stopped after $tookMillis ms, before the last chunk was heard", tookMillis >= heardMillis)
             val status = host.status()
             assertFalse(status.playing)
             assertTrue(status.ended)
