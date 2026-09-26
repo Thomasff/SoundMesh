@@ -40,7 +40,9 @@ jobs:
 
       # One command, because the exit code is the whole verdict - a compile error, a failing
       # test and a missing resource all leave here non-zero and all turn the run red.
-      - run: ./gradlew test assembleDebug --no-daemon
+      # The handset and what it shares, named: a bare test would take in the Windows modules too,
+      # which need JDK 25 and a Windows audio stack this Linux runner has neither of.
+      - run: ./gradlew :core:test :app:test :app:assembleDebug --no-daemon
 
       # Which test, when it is a test. Uploaded only on failure, because on a green run nobody
       # opens it and it is the slowest step here.
