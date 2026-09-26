@@ -5,12 +5,13 @@
   <img src="asset/github/readme-header-light.png" width="520" alt="SoundMesh">
 </picture>
 
-**Turn a few Android phones into one set of tightly synchronised speakers**
+**Turn a few Android phones and Windows computers into one set of tightly synchronised speakers**
 
 Synchronised playback across devices on one local network, aligned to within about 0.5 ms.
 No server, no cloud, nothing leaves the network.
 
 ![platform](https://img.shields.io/badge/platform-Android%2010%2B-3DDC84)
+![platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4)
 ![minSdk](https://img.shields.io/badge/minSdk-29-informational)
 ![licence](https://img.shields.io/badge/licence-GPL--3.0-blue)
 
@@ -30,8 +31,9 @@ No server, no cloud, nothing leaves the network.
 
 ## Overview
 
-Several Android devices join one local network. One of them is the host: it picks the music, decodes
-it and hands out the time, and the rest join by themselves and play in step.
+Several Android devices or Windows computers join one local network. One of them is the host: it
+supplies the audio, decodes it and hands out the time, and the rest join by themselves and play in
+step. Playback runs about 1 s behind, which suits music.
 
 Most approaches synchronise over the network alone, which cannot synchronise the delay in the
 hardware, so a purely network-based approach usually leaves more than tens of milliseconds between
@@ -51,8 +53,8 @@ a source placed by hand.
   tight sync is what the spatial effects run on.
 - **Not only local files** — it can capture whatever this phone is playing, online music apps
   included, and hand that out instead.
-- **Nothing to set up** — one WiFi network or a hotspot is enough; no computer, server or other
-  controller.
+- **Nothing to set up** — one WiFi network or a hotspot is enough; computers and phones work on
+  their own or together, with no server or other controller.
 
 ## Where it is useful
 
@@ -68,25 +70,26 @@ a source placed by hand.
 <p align="center">
   <img src="asset/github/playing-layout-en.jpg" width="300" alt="The playing screen: what is playing, and the room layout with each phone drawn where it was measured">
   &nbsp;&nbsp;
-  <img src="asset/github/playing-effects-en.jpg" width="300" alt="The lower half of the same screen: measured spacing between each pair, the effects, and a volume slider per phone">
+  <img src="asset/github/playing-effects-en.jpg" width="300" alt="Measured spacing between each pair, the effects, and a volume slider for each device">
 </p>
 
-<p align="center"><sub>One screen: where the phones are, and what to do with that.</sub></p>
+<p align="center"><sub>The playing screen</sub></p>
 
 ## What it needs
 
 | Item | Requirement |
 | --- | --- |
-| Devices | Two or more, Android 10+ (`minSdk 29`) |
-| Network | The same WiFi; or one of them runs a hotspot as the host and the rest join it |
-| Permissions | Microphone (calibration only), notifications, running in the background |
+| Devices | Two or more, Android 10+ (`minSdk 29`) or Windows 10+, in any mix |
+| Network | The same WiFi; or one Android device runs a hotspot and the rest join it |
+| Permissions | Android: microphone (calibration only), notifications, running in the background<br>Windows: microphone (calibration only, at 48 kHz), with "Let desktop apps access your microphone" turned on in Settings |
 | Server | None |
 
 ## Quick start
 
-1. Install the same build on every device (see [Build](#build)).
+1. Install the same build on every device: the package on Android, `SoundMesh.exe` on a computer
+   (see [Build](#build)).
 2. Put them on one network. One picks "Be the host", the rest "Be a sink". A sink finds the host by
-   itself, or by scanning its code.
+   itself, or by scanning its code; a computer cannot scan, and takes the host's IP instead.
 3. Run the **position and timing calibration** once, from the host. It wants a quiet room and takes
    a few tens of seconds.
 4. Pick a source and play.
@@ -95,9 +98,9 @@ a source placed by hand.
 
 | Source | What it is |
 | --- | --- |
-| Song | One audio file on this phone |
+| Song | One audio file on this device (several at once on a computer) |
 | Folder | Plays a whole folder, with previous and next |
-| This phone's audio | Captures what this phone is playing and hands it to every device |
+| This device's audio | Captures what this device is playing and hands it to every device; a computer can capture chosen programs only |
 
 What capture cannot do is under [Known limits](#known-limits).
 
@@ -114,7 +117,7 @@ This is what the measured positions are for.
 
 ## How the sync works
 
-An Android device's audio output has a lag of its own, and it differs from model to model. Matching
+A device's audio output has a lag of its own, and it differs from device to device. Matching
 clocks over the network aligns the clocks and not the instant sound actually leaves the speaker, so
 SoundMesh measures that instant instead:
 
@@ -123,25 +126,32 @@ SoundMesh measures that instant instead:
 - **Position and time** — the devices sound in turn and record one another; the flight time of the
   sound between each pair gives the clock offset and the distance between them at once.
 
-Once calibrated, devices are aligned to within about **0.5 ms**. One millisecond is about 34 cm of
-air.
+Each pair of devices needs calibrating only once, in one direction. Once calibrated, devices are
+aligned to within about **0.5 ms**; one millisecond is about 34 cm of air. Each time, you can choose
+where the devices stand for calibration, for a better result.
 
 Devices that have not been calibrated are much further apart than that. **The calibration cannot be
 skipped** if this accuracy is what you are after.
 
 ## Known limits
 
-- Every device has to be an Android device (in hotspot mode the host is the access point).
-  **iOS is not supported.**
-- Tested on a small number of models so far. Reports are welcome.
-- Capture takes everything this phone plays rather than one chosen app, so anything else that makes
-  a sound is handed out too.
-- In capture mode this phone's own media volume is set to 0, and the delay end to end is about 1.5 s.
+- Android and Windows only. **iOS, macOS and Linux are not supported.** Tested on a small number
+  of models so far; reports are welcome.
+- **Playback runs about 1 s behind, so it is generally not suited to watching videos or films.**
+  In capture mode an Android device's media volume is set to 0, and on a computer the captured
+  programs are turned almost all the way down (and back up afterwards).
+- A computer cannot run a hotspot; in hotspot mode an Android device runs it, and a computer that
+  joins can still be the host.
+- On some Android devices capture takes everything the phone plays rather than one chosen app, so
+  anything else that makes a sound is handed out too.
+- Capturing programs on a computer needs Windows 10 21H2 or later.
 - Audio is 16-bit PCM stereo only, 8–96 kHz.
 - Calibration wants a reasonably quiet room and a clear line between the devices.
 - Not on any app store; the package is one you build yourself.
 
 ## Build
+
+The Android package needs JDK 17 already installed:
 
 ```bash
 git clone https://github.com/Thomasff/SoundMesh.git
@@ -150,6 +160,15 @@ cd SoundMesh
 ```
 
 On Windows, `gradlew.bat assembleDebug`. The package lands in `app/build/outputs/apk/debug/`.
+
+The computer app needs JDK 17 and JDK 25 already installed:
+
+```bash
+./gradlew :desktop-app:createDistributable
+```
+
+It lands in `desktop-app/build/compose/binaries/main/app/SoundMesh/` with its own Java runtime; run
+`SoundMesh.exe` there.
 
 To run the unit tests:
 
@@ -170,8 +189,8 @@ flowchart TD
 ```
 
 Each connection carries two things: a command channel that stays up for as long as the room does
-(role, volume, transport, who is present) and the audio stream. Audio blocks go out some seconds
-early, each carrying the instant on the host's clock at which it is to sound; a sink converts that
+(role, volume, transport, who is present) and the audio stream. Audio blocks go out about a
+second early, each carrying the instant on the host's clock at which it is to sound; a sink converts that
 instant to its own clock, and the output lead from the calibration is one of the terms in that
 conversion.
 

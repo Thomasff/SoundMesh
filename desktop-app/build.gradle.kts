@@ -142,7 +142,8 @@ compose.desktop {
         javaHome = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }.get().metadata.installationPath.asFile.absolutePath
         nativeDistributions {
             packageName = "SoundMesh"
-            packageVersion = "1.0.0"
+            // The exe's file version, from the same tag as the about block's.
+            packageVersion = released ?: "1.0.0"
             modules("java.instrument", "jdk.unsupported")
             // The exe's own icon, what Explorer and a pinned taskbar button show before a window
             // exists. Made by tools/windows-icons.ps1, as are the windows' own in resources/icon.

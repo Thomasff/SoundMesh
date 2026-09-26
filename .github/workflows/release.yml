@@ -85,3 +85,35 @@ jobs:
             app/build/outputs/apk/release/*.apk \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
+
+  # The computer's package: the folder createDistributable makes, runtime included, zipped. On a
+  # Windows runner because jpackage only packages for the system it runs on. After the release job
+  # so there is a release to attach to, and apart from it so the signing key never reaches here.
+  # Not signed: Windows asks once before the first run.
+  desktop:
+    needs: release
+    runs-on: windows-latest
+    env:
+      SOUNDMESH_VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+      # 25 for :desktop's toolchain, 17 last so Gradle itself runs on 17 as everywhere else.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            17
+          cache: gradle
+
+      # Gradle does not look where setup-java installs, so it is told which variable holds 25.
+      - name: Build
+        run: ./gradlew.bat :desktop-app:createDistributable --no-daemon "-Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = "SoundMesh-$env:GITHUB_REF_NAME-windows-x64.zip"
+          Compress-Archive -Path desktop-app/build/compose/binaries/main/app/SoundMesh -DestinationPath $zip
+          gh release upload "$env:GITHUB_REF_NAME" $zip
