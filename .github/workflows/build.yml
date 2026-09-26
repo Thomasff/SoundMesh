@@ -59,3 +59,27 @@ jobs:
         with:
           name: soundmesh-debug
           path: app/build/outputs/apk/debug/*.apk
+
+  # The computer's modules, on the one system they run on. Apart from the job above so a red
+  # cross says which half broke.
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      # 25 for :desktop's toolchain, 17 last so Gradle itself runs on 17 as everywhere else.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            17
+          cache: gradle
+
+      # Gradle does not look where setup-java installs, so it is told which variable holds 25.
+      - run: ./gradlew.bat :desktop:test :desktop-app:compileKotlin --no-daemon "-Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64"
+
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: desktop-test-reports
+          path: desktop/build/reports/tests/
