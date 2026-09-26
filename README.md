@@ -86,8 +86,10 @@ a source placed by hand.
 
 ## Quick start
 
-1. Install the same build on every device: the package on Android, `SoundMesh.exe` on a computer
-   (see [Build](#build)).
+1. On Android, download the apk from Releases and install it; on a computer, download
+   `SoundMesh-<version>-windows-x64.zip`, unzip it and run the `SoundMesh.exe` inside. The computer
+   version has no digital signature: if the first run says "Windows protected your PC", click
+   "More info" → "Run anyway".
 2. Put them on one network. One picks "Be the host", the rest "Be a sink". A sink finds the host by
    itself, or by scanning its code; a computer cannot scan, and takes the host's IP instead.
 3. Run the **position and timing calibration** once, from the host. It wants a quiet room and takes
@@ -147,7 +149,8 @@ skipped** if this accuracy is what you are after.
 - Capturing programs on a computer needs Windows 10 21H2 or later.
 - Audio is 16-bit PCM stereo only, 8–96 kHz.
 - Calibration wants a reasonably quiet room and a clear line between the devices.
-- Not on any app store; the package is one you build yourself.
+- Not on any app store. The packages can be downloaded from Releases or built yourself; the
+  computer version is not code-signed.
 
 ## Build
 

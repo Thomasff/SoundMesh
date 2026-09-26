@@ -37,7 +37,7 @@ class MediaFoundationTest {
     }
 
     /**
-     * An MP3 that Windows' own encoder wrote (see docs/feasibility-results/data/2026-09-23-media-foundation):
+     * An MP3 that Windows' own encoder wrote:
      * two seconds of 440 Hz, 44.1 kHz mono. It keeps its rate and channels - the resampling is
      * core's - and its pitch. The encoder pads the start by some tens of milliseconds, which both
      * ends of a room receive as the same bytes, so the length is only bounded.

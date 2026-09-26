@@ -21,8 +21,7 @@ import kotlin.math.sqrt
  * Everything after them is new, and **this one makes a sound**: three chirps, each scheduled for
  * a stated tick, while an independent sampler reads the engine's clock.
  *
- * With a path argument it also writes the probe's CSV, so the archived analyzer at
- * docs/feasibility-results/data/2026-09-21-windows-audio-clock/probe/analyze.cjs reads this run
+ * With a path argument it also writes the probe's CSV, so the archived analyzer reads this run
  * and the eight arms of experiment four off one ruler.
  *
  *   ./gradlew :desktop:run --args="[seconds] [out.csv]"

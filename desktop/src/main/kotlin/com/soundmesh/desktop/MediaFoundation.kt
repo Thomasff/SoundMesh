@@ -17,7 +17,7 @@ internal class DecodedAudio(val pcm: ByteArray, val sampleRate: Int, val channel
 /**
  * The decoders Windows ships, reached through Media Foundation's source reader by hand.
  *
- * Checked against a throwaway probe on 2026-09-23 (docs/feasibility-results/data/2026-09-23-media-foundation):
+ * Checked against a throwaway probe on 2026-09-23:
  * a WAV read through here came out byte for byte what javax.sound reads, a 44.1 kHz mono MP3 that
  * Windows' own encoder wrote came out still 44.1 kHz mono at the pitch it was written at, and a
  * five minute MP3 took 0.57 s - which is why a song is decoded whole rather than streamed.

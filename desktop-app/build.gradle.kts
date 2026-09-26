@@ -139,7 +139,12 @@ compose.desktop {
         jvmArgs += listOf("--enable-native-access=ALL-UNNAMED")
         // Without this, run/package fork on whatever JDK Gradle itself is running on (JAVA_HOME,
         // here 17), not on the jvmToolchain(25) above - so pull the same toolchain JDK explicitly.
-        javaHome = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }.get().metadata.installationPath.asFile.absolutePath
+        // Looked for rather than required: this runs while the build is configured, and a machine
+        // with only 17 - the handset release job, anybody building just the APK - has to get past
+        // it. Without 25, compiling :desktop is what fails, and only when something asks for it.
+        runCatching {
+            javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }.get().metadata.installationPath.asFile.absolutePath
+        }.getOrNull()?.let { javaHome = it }
         nativeDistributions {
             packageName = "SoundMesh"
             // The exe's file version, from the same tag as the about block's.

@@ -180,7 +180,7 @@ class HostStream(
          * which machine it joined - the one difference nobody would look for.
          *
          * A second, down from the second and a half both hosts inherited from the test harness.
-         * The 09-26 trials (docs/feasibility-results/short-capture-lead.md) never saw a sink use
+         * The 09-26 trials never saw a sink use
          * more than about half a second of it - a handset's screen off, the computer's WiFi
          * stalling - so a second keeps twice that. Three rounds in one home: a floor, not a proof.
          */

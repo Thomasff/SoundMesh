@@ -11,8 +11,7 @@ import java.lang.invoke.MethodHandle
 /**
  * WASAPI, and the COM around it, called by hand through the foreign function API.
  *
- * A port of the probe at docs/feasibility-results/data/2026-09-21-jvm-wasapi/probe/Wasapi.java,
- * which is where the vtable orders below were established and checked against numbers the C#
+ * A port of an earlier standalone probe, which is where the vtable orders below were established and checked against numbers the C#
  * probe had already measured on this machine. Nothing here is new; what is new is that it lives
  * in the build instead of beside an experiment.
  *
