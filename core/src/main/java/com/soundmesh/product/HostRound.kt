@@ -45,8 +45,9 @@ enum class RoundResult {
 }
 
 /**
- * What a sound check heard. [tookPart] is every device the schedule named, host last; [heard] the
- * ones this host's recording carries; [excuses] who said why they would not take part.
+ * What a sound check heard. [tookPart] is every device the schedule named, host last - empty when
+ * everybody told said why not, and no schedule went out; [heard] the ones this host's recording
+ * carries; [excuses] who said why they would not take part.
  *
  * A device on the room's line that is in none of these was told and never came - it made no sound,
  * so it was not heard either, which is what the screen says about it.
@@ -75,7 +76,8 @@ fun heardSlots(arrivals: List<ChirpArrival?>, ownSlot: Int): Set<Int> {
 /**
  * What a sound check says against each of [judged]: its own reason where it gave one, [notHeard]
  * where this host did not hear it - including one told that never came, which made no sound - and
- * nothing where it was heard.
+ * nothing where it was heard. A check nobody took part in listened to nothing, so it says only the
+ * reasons: this host did not fail to hear anybody, it never chirped.
  */
 fun unheardLines(
     check: SoundCheck,
@@ -86,7 +88,7 @@ fun unheardLines(
     val said = check.excuses[peerId]
     when {
         said != null -> peerId to excuse(said)
-        peerId !in check.heard -> peerId to notHeard
+        check.tookPart.isNotEmpty() && peerId !in check.heard -> peerId to notHeard
         else -> null
     }
 }.toMap()
@@ -218,6 +220,9 @@ class HostRound(
      */
     @Volatile private var planServer: CalibrationPlanServer? = null
 
+    /** Why the handset a pair was aimed at will not measure, once it has said. */
+    @Volatile private var aimedExcuse: RoomExcuse? = null
+
     /**
      * The schedule this round is running, set the moment its case is known and read everywhere
      * afterwards - including by the report, so a run says which arm it was on rather than what the
@@ -271,6 +276,18 @@ class HostRound(
             // at 21:38, and there was no way afterwards to tell whether the stop button had been
             // pressed at all. These two lines make the next occurrence answerable.
             log("the calibration servers are up: clock ${dials.clock}, result ${dials.result}, plan ${dials.plan}")
+            // The named handset may answer the order with why it will not measure, and then it
+            // never asks: said against it as the room says it, and the wait ends on it. Listened
+            // for before it is told, since the reason can come back before the order returns.
+            aimedAt?.let { peerId ->
+                commands.forgetExcuses()
+                commands.listenForExcuses { from, excuse ->
+                    if (from != peerId) return@listenForExcuses
+                    events.write("pair-excuse $from ${excuse.name}")
+                    report.heard(from, RoundLine.Excused(excuse))
+                    aimedExcuse = excuse
+                }
+            }
             // After the three servers are up and not before, which is the whole of the ordering
             // problem this replaces: the handset being told goes straight for the plan port, and
             // a sink that got there first found nothing listening and gave up.
@@ -287,6 +304,7 @@ class HostRound(
             return serveOneSink(aimedAt, planServer, resultServer).also { events.write("pair-round $it") }
         } finally {
             this.planServer = null
+            if (aimedAt != null) commands.listenForExcuses(null)
             planServer.stop()
             resultServer.stop()
             clockServer?.stop()
@@ -423,7 +441,12 @@ class HostRound(
      * The sinks run an ordinary room round and cannot tell the difference; what keeps them from
      * filing anything is the answer they get, which offers no constant.
      */
-    fun soundCheck(aimedAt: String? = null): SoundCheck? = gathered(aimedAt, oneChirp = true) { gathering ->
+    fun soundCheck(aimedAt: String? = null): SoundCheck? = gathered(
+        aimedAt,
+        oneChirp = true,
+        // Nobody chirped, so nobody took part and nobody was not heard: the reasons are all it has.
+        nobodyCame = { SoundCheck(emptyList(), emptySet(), it) }
+    ) { gathering ->
         val plan = gathering.plan
         // Waited for, so every sink ends its round on an answer rather than a refused socket. The
         // count it is told is true of this round, since it is shown on that sink's screen; the
@@ -458,9 +481,15 @@ class HostRound(
     /**
      * The half of a room round that [room] and [soundCheck] share: tell the room, gather it, hand
      * out one schedule and chirp in this host's own slot. [measure] is what is made of it, on the
-     * servers still open; null when no plan went out or the round was called off.
+     * servers still open; null when no plan went out or the round was called off. [nobodyCame] is
+     * the answer instead when everybody told said why not, given who said what.
      */
-    private fun <T> gathered(aimedAt: String?, oneChirp: Boolean, measure: (Gathering) -> T): T? {
+    private fun <T> gathered(
+        aimedAt: String?,
+        oneChirp: Boolean,
+        nobodyCame: (Map<String, RoomExcuse>) -> T? = { null },
+        measure: (Gathering) -> T
+    ): T? {
         val clockServer = if (servesClock) ClockSyncServer(dials.clock) else null
         val roomServer = RoomResultServer(dials.room)
         val planServer = CalibrationPlanServer(dials.plan)
@@ -580,6 +609,16 @@ class HostRound(
                     slotIds = slots
                 )
             } ?: run {
+                // Everybody told said why not, so there was nobody to wait for. Their reasons are
+                // the answer and are already on their rows; said once more each, because a row's
+                // answer is what replaces the line about waiting, and that line may have been
+                // written after the reasons arrived.
+                if (planServer.failureCode == CalibrationPlanServer.NOBODY_COMING) {
+                    events.write("room-nobody-coming: all $told told said why not")
+                    val said = synchronized(excuses) { LinkedHashMap(excuses) }
+                    for ((peerId, excuse) in said) report.heard(peerId, RoundLine.Excused(excuse))
+                    return nobodyCame(said)
+                }
                 report.say(
                     // Or called off before the gathering began: the press closed the plan socket
                     // first, and the gathering then found none - PLAN_UNBOUND, which is the button
@@ -646,7 +685,7 @@ class HostRound(
         // Which handset this round is with. Set on the accept, because that is the only
         // moment it is known, and every file this run writes is named with it.
         var servedSink: String? = null
-        val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS) { request ->
+        val plan = planServer.awaitRequest(PLAN_WAIT_MILLIS, nobodyComing = { aimedExcuse != null }) { request ->
             // The case names a directory RunStore will create, and it arrived over a socket.
             // Only the two this handset runs are honoured; anything else ends the run here
             // rather than at the run store.
@@ -677,6 +716,13 @@ class HostRound(
             // The stop button called this off, so what came back is the button working rather than
             // anything having gone wrong. It has already put its own sentence on the screen.
             calledOff() -> RoundResult.FAILED
+            // The named handset said why not. Said again against it, on the room's terms: its row's
+            // answer replaces the line about waiting, which may have been written after it came.
+            planServer.failureCode == CalibrationPlanServer.NOBODY_COMING -> {
+                val excuse = aimedExcuse
+                if (aimedAt != null && excuse != null) report.heard(aimedAt, RoundLine.Excused(excuse))
+                RoundResult.NOBODY_ASKED
+            }
             planServer.failureCode == CalibrationPlanServer.TIMEOUT -> {
                 report.say(RoundLine.Failed(CalibrationPlanServer.TIMEOUT))
                 RoundResult.NOBODY_ASKED

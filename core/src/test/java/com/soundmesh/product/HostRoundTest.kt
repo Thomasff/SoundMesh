@@ -210,6 +210,10 @@ class HostRoundTest {
 
         override fun sendTo(peerId: String, order: RoomOrder): Boolean {
             said.add(order.command)
+            excuses[peerId]?.let { excuse ->
+                listener?.invoke(peerId, excuse)
+                return true
+            }
             if (order.command == RoomCommand.MEASURE_PAIR) sink(if (peerId == one) oneDir else twoDir, peerId, room = false)
             if (order.command == RoomCommand.MEASURE_ROOM) sink(if (peerId == one) oneDir else twoDir, peerId, room = true)
             return true
@@ -324,6 +328,58 @@ class HostRoundTest {
         assertEquals(RoundLine.Excused(RoomExcuse.NO_MICROPHONE), report.perDevice[two])
         assertEquals(listOf(one, hostId), report.measured)
         near(2.0, StoredSeparation(hostDir, one).read(), "the separation to one")
+    }
+
+    /**
+     * Run on a thread of its own and given [seconds] to finish, so that a round still waiting out
+     * PLAN_WAIT_MILLIS fails the test rather than holding it for five minutes.
+     */
+    private fun <T> within(seconds: Long, what: String, body: () -> T): T {
+        var answer: Result<T>? = null
+        val runner = thread(isDaemon = true) { answer = runCatching(body) }
+        runner.join(seconds * 1000)
+        assertFalse("$what was still waiting after $seconds s", runner.isAlive)
+        return answer!!.getOrThrow()
+    }
+
+    /** Everybody told said why not, so nobody is coming: the round ends at once with their reasons. */
+    @Test
+    fun aRoomWhereEverybodyToldSaidWhyNotEndsAtOnce() {
+        val report = Heard()
+        val line = Line(excuses = mapOf(one to RoomExcuse.MIC_MUTED, two to RoomExcuse.NO_MICROPHONE))
+        val measured = within(10, "the room") { round(line, HostPlace.LISTENING, report).room() }
+
+        assertFalse(measured)
+        assertEquals(RoundLine.Excused(RoomExcuse.MIC_MUTED), report.perDevice[one])
+        assertEquals(RoundLine.Excused(RoomExcuse.NO_MICROPHONE), report.perDevice[two])
+        assertTrue("a failure was said over the reasons: ${report.lines}", report.lines.none { it is RoundLine.Failed })
+        assertFalse(report.underWay)
+    }
+
+    /** The check's answer is the reasons, against each row, and nothing is said as not heard. */
+    @Test
+    fun aSoundCheckWhereEverybodySaidWhyNotAnswersWithTheirReasons() {
+        val line = Line(excuses = mapOf(one to RoomExcuse.MIC_MUTED, two to RoomExcuse.ASLEEP))
+        val check = within(10, "the sound check") { round(line, HostPlace.PLAYING, Heard()).soundCheck() }
+
+        assertNotNull("a check everybody refused answered nothing", check)
+        assertEquals(mapOf(one to RoomExcuse.MIC_MUTED, two to RoomExcuse.ASLEEP), check!!.excuses)
+        assertEquals(emptyList<String>(), check.tookPart)
+        assertEquals(
+            mapOf(one to "MIC_MUTED", two to "ASLEEP"),
+            unheardLines(check, listOf(hostId, one, two), { it.name }, "not heard")
+        )
+    }
+
+    @Test
+    fun aPairWhoseDeviceSaidWhyNotEndsAtOnceAndSaysItAgainstThatDevice() {
+        val report = Heard()
+        val line = Line(excuses = mapOf(one to RoomExcuse.MIC_MUTED))
+        val result = within(10, "the pair") { round(line, HostPlace.PLAYING, report).pair(one) }
+
+        assertEquals(RoundResult.NOBODY_ASKED, result)
+        assertEquals(RoundLine.Excused(RoomExcuse.MIC_MUTED), report.perDevice[one])
+        assertTrue("a failure was said over the reason: ${report.lines}", report.lines.none { it is RoundLine.Failed })
     }
 
     @Test

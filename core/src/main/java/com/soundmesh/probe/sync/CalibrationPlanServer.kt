@@ -47,9 +47,14 @@ class CalibrationPlanServer(private val port: Int) {
      * an ask this server could not read at all, because the two mean different things to whoever
      * reads the failure: one is a handset this host declines to serve, the other is a build that
      * does not speak this version.
+     *
+     * [nobodyComing] is asked every [LOOK_MILLIS] while nobody has, and true ends the wait as
+     * [NOBODY_COMING]: the handset this was for said it will not ask, and the rest of the five
+     * minutes would be spent on a socket nobody is going to open.
      */
     fun awaitRequest(
         timeoutMillis: Int,
+        nobodyComing: () -> Boolean = { false },
         planFor: (CalibrationRequest) -> CalibrationPlan
     ): CalibrationPlan? {
         val bound = server ?: run {
@@ -57,8 +62,7 @@ class CalibrationPlanServer(private val port: Int) {
             return null
         }
         return runCatching {
-            bound.soTimeout = timeoutMillis
-            bound.accept().use { socket ->
+            acceptWhileSomebodyMightCome(bound, timeoutMillis, nobodyComing).use { socket ->
                 socket.soTimeout = timeoutMillis
                 // The sink writes what it wants and half-closes to mark the request complete.
                 val asked = String(socket.getInputStream().readBytes(), Charsets.UTF_8).trim()
@@ -78,6 +82,7 @@ class CalibrationPlanServer(private val port: Int) {
             }
         }.onFailure {
             failureCode = when (it) {
+                is NobodyComing -> NOBODY_COMING
                 is SocketTimeoutException -> TIMEOUT
                 is GarbledRequest -> "PLAN_GARBLED"
                 is IllegalArgumentException -> "PLAN_REFUSED"
@@ -131,6 +136,10 @@ class CalibrationPlanServer(private val port: Int) {
         // room over the standing line knows how many it told, so it can say when they are all
         // here. False every time falls back to the silence, which is what a caller that cannot
         // count its room should do.
+        //
+        // Asked with 0 as well, every LOOK_MILLIS while nobody has arrived: a room whose every
+        // handset said why not is complete with nobody in it, and that ends as NOBODY_COMING
+        // rather than five minutes later as a timeout.
         enough: (Int) -> Boolean = { false },
         planFor: (List<CalibrationRequest>) -> CalibrationPlan
     ): CalibrationPlan? {
@@ -147,14 +156,18 @@ class CalibrationPlanServer(private val port: Int) {
         val waiting = ArrayList<Pair<Socket, CalibrationRequest>>()
         var closesAt = Long.MAX_VALUE
         return runCatching {
+            // The first wait runs from the call, not from each time the room empties out again.
+            val firstWaitEndsAt = System.nanoTime() + firstWaitMillis * 1_000_000L
             while (true) {
-                val budget = if (waiting.isEmpty()) firstWaitMillis else {
-                    val left = (closesAt - System.nanoTime()) / 1_000_000
-                    minOf(settleMillis.toLong(), left).coerceAtLeast(1L).toInt()
-                }
-                bound.soTimeout = budget
                 val socket = try {
-                    bound.accept()
+                    if (waiting.isEmpty()) {
+                        val left = ((firstWaitEndsAt - System.nanoTime()) / 1_000_000).coerceAtLeast(1L).toInt()
+                        acceptWhileSomebodyMightCome(bound, left) { runCatching { enough(0) }.getOrDefault(false) }
+                    } else {
+                        val left = (closesAt - System.nanoTime()) / 1_000_000
+                        bound.soTimeout = minOf(settleMillis.toLong(), left).coerceAtLeast(1L).toInt()
+                        bound.accept()
+                    }
                 } catch (quiet: SocketTimeoutException) {
                     // Nobody else is coming. With an empty room that is the failure the pair path
                     // reports; with a room behind us it is how gathering ends.
@@ -214,6 +227,7 @@ class CalibrationPlanServer(private val port: Int) {
         }.onFailure {
             failureCode = when {
                 calledOff -> CALLED_OFF
+                it is NobodyComing -> NOBODY_COMING
                 it is SocketTimeoutException -> TIMEOUT
                 it is IllegalArgumentException -> "PLAN_REFUSED"
                 else -> "PLAN_UNREADABLE"
@@ -249,10 +263,53 @@ class CalibrationPlanServer(private val port: Int) {
         server = null
     }
 
+    /**
+     * Accepts the next ask within [timeoutMillis], looking every [LOOK_MILLIS] at whether anybody
+     * is still coming at all.
+     *
+     * In slices because accept() cannot be woken by anything but a connection or a closed socket,
+     * and closing it is the stop button's - see [callOffRoom]. Throws [SocketTimeoutException] when
+     * the time runs out and [NobodyComing] when [nobodyComing] says so first.
+     */
+    private fun acceptWhileSomebodyMightCome(
+        bound: ServerSocket,
+        timeoutMillis: Int,
+        nobodyComing: () -> Boolean
+    ): Socket {
+        val endsAt = System.nanoTime() + timeoutMillis * 1_000_000L
+        while (true) {
+            val left = (endsAt - System.nanoTime()) / 1_000_000
+            bound.soTimeout = minOf(LOOK_MILLIS.toLong(), left).coerceAtLeast(1L).toInt()
+            try {
+                return bound.accept()
+            } catch (quiet: SocketTimeoutException) {
+                if (nobodyComing()) throw NobodyComing()
+                if (System.nanoTime() >= endsAt) throw quiet
+            }
+        }
+    }
+
     /** An ask this server could not read, as opposed to one the host declined to serve. */
     private class GarbledRequest(cause: Throwable) : RuntimeException(cause)
 
+    /** Everybody this wait was for has said they are not coming. */
+    private class NobodyComing : RuntimeException()
+
     companion object {
+        /**
+         * Everybody told said why they will not ask, so the wait ended with nobody in it.
+         *
+         * Not a failure of the round: the reasons are the answer, and each was already said
+         * against its own device as it arrived.
+         */
+        const val NOBODY_COMING = "PLAN_NOBODY_COMING"
+
+        /**
+         * How often a wait with nobody in it looks at whether anybody is still coming. Short
+         * against the five minutes it replaces; long against a loop that would only spin.
+         */
+        const val LOOK_MILLIS = 250
+
         /**
          * Nobody asked inside the wait.
          *
