@@ -31,9 +31,10 @@ No server, no cloud, nothing leaves the network.
 
 ## Overview
 
-Several Android devices or Windows computers join one local network. One of them is the host: it
-supplies the audio, decodes it and hands out the time, and the rest join by themselves and play in
-step. Playback runs about 1 s behind, which suits music.
+Several Android devices or Windows computers join one local network. One of them is the host and
+supplies the audio - **online or local music** - and the rest join by themselves and play in step.
+Besides music it can play podcasts or any other sound. **Playback runs about 1 s behind**, so it does
+not suit anything where picture and sound have to line up, such as games or video.
 
 Most approaches synchronise over the network alone, which cannot synchronise the delay in the
 hardware, so a purely network-based approach usually leaves more than tens of milliseconds between
@@ -142,6 +143,7 @@ skipped** if this accuracy is what you are after.
 - **Playback runs about 1 s behind, so it is generally not suited to watching videos or films.**
   In capture mode an Android device's media volume is set to 0, and on a computer the captured
   programs are turned almost all the way down (and back up afterwards).
+- On some phones the system's power saving can occasionally cut the sound for a very short moment.
 - A computer cannot run a hotspot; in hotspot mode an Android device runs it, and a computer that
   joins can still be the host.
 - On some Android devices capture takes everything the phone plays rather than one chosen app, so
