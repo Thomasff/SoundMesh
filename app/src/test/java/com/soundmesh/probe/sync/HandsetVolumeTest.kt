@@ -215,6 +215,28 @@ class HandsetVolumeTest {
         assertEquals(27, now.percent)
     }
 
+    /**
+     * The heard-twice line's button silences media alone, and leaving the capture still puts it
+     * back to where it was before this app, not to where somebody turned it up to in between.
+     */
+    @Test
+    fun silencingMediaByHandIsPutBackLikeAnyOtherTouch() {
+        val fake = streams(mediaAt = 8, alarmAt = 11)
+        val volume = HandsetVolume(fake, temporaryDir())
+        volume.moveTo(capturing = true, percent = null)
+        // Somebody turns media back up with the keys while capturing.
+        fake.levels[media] = 6
+
+        volume.silenceMedia()
+
+        assertEquals(0, fake.levels[media])
+        assertEquals("the alarm stream was moved by silencing media", 11, fake.levels[alarm])
+
+        volume.moveTo(capturing = false, percent = null)
+
+        assertEquals("media was not put back when the capture ended", 8, fake.levels[media])
+    }
+
     /** And afterwards there is a way back, which is the whole of what may be touched for. */
     @Test
     fun putsEveryStreamItTouchedBackWhereItFoundIt() {

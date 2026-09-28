@@ -252,7 +252,9 @@ class CalibrateActivity : ComponentActivity() {
         Thread({
             runCatching { measure(verifying) }.onFailure {
                 Log.e(LOG_TAG, "the calibration did not finish", it)
-                show(getString(R.string.calibrate_failed, it.javaClass.simpleName))
+                // The same sentence as a refusal: what went wrong is in the log above, and a class
+                // name on screen is English on every language and tells nobody what to do.
+                show(getString(R.string.calibrate_refused))
             }
             running = false
             // Cleared beside running, not instead of it: a run that threw on its way to the
@@ -314,7 +316,9 @@ class CalibrateActivity : ComponentActivity() {
             // Before the refusal below it, because a run that was stopped is refused too and the
             // reason it was refused is not news to the person who stopped it.
             stopping -> getString(R.string.calibrate_stopping)
-            micros == null -> getString(R.string.calibrate_refused, run.result.refusal ?: "")
+            // The reason itself is English and for whoever reads output-lead.json, where it is
+            // kept; on screen it is only what to do about it.
+            micros == null -> getString(R.string.calibrate_refused)
             samePath -> getString(
                 R.string.calibrate_repeatability,
                 micros / 1000.0,

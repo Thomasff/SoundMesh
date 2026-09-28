@@ -51,7 +51,12 @@ fun main() = application {
     // windows already open, and the state alone would not outlive a restart.
     val prefs = remember { WindowPrefs(File(identityDirectory(), "window.properties")) }
     var theme by remember { mutableStateOf(themeChoiceOf(prefs.read("theme"))) }
-    var details by remember { mutableStateOf(prefs.read("details") == "on") }
+    // Off on every start, as on the handset since 2026-09-28: written back rather than only held,
+    // because the two sessions above read the file for whether to keep a recording.
+    var details by remember {
+        prefs.write("details", "off")
+        mutableStateOf(false)
+    }
     var language by remember { mutableStateOf(languageChoiceOf(prefs.read("language"))) }
     // 设置's 边缘光. Not written to the file: every start draws the light round the window, and
     // round the whole screen only for as long as somebody asked this time.

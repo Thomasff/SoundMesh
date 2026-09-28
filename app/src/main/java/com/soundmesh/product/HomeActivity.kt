@@ -136,6 +136,9 @@ class HomeActivity : ComponentActivity() {
      */
     private var asking by mutableStateOf(emptyList<BeforePlaying>())
 
+    /** Whether [CaptureHowTo] is up: set as a capture starts, unless somebody asked not to be told. */
+    private var showingCaptureHowTo by mutableStateOf(false)
+
     /**
      * Which role [takeUpTheRoom] last acted on, so that a resume can tell itself from a change.
      *
@@ -410,6 +413,11 @@ class HomeActivity : ComponentActivity() {
                 state.copy(capturing = true, problem = null, hostOutputVolume = hostOutputVolume.read())
                     .also { handler.post { followTheMode() } }
                     .also { handler.post(::aimVolumeKeys) }
+                    .also {
+                        if (Preferences(filesDir).read(CAPTURE_HOW_TO_KEY) != "off") {
+                            handler.post { showingCaptureHowTo = true }
+                        }
+                    }
             }
         }
         startService(
@@ -430,6 +438,11 @@ class HomeActivity : ComponentActivity() {
         val prefs = Preferences(filesDir)
         themeChoice = themeChoiceOf(prefs.read("theme"))
         language = languageChoiceOf(prefs.read(LANGUAGE_KEY))
+        // Off on every fresh open, since 2026-09-28: it is a switch for one evening of
+        // troubleshooting, not a way to use the app. Only a fresh open - a screen rebuilt for a
+        // rotation or a change of language keeps what was chosen minutes ago. Written rather than
+        // only held, because wantsDetails reads the file for what it keeps.
+        if (savedInstanceState == null) prefs.write("details", "off")
         showDetails = prefs.read("details") == "on"
         // Asked once, on the very first launch this screen is ever created for - a fresh install
         // or a fresh onCreate after the process was killed both read null the same way, which is
@@ -502,6 +515,12 @@ class HomeActivity : ComponentActivity() {
                                 stepBack(route)
                             }
                             asking.firstOrNull()?.let { AskBeforePlaying(it) }
+                            if (showingCaptureHowTo) {
+                                CaptureHowTo { quiet ->
+                                    showingCaptureHowTo = false
+                                    if (quiet) Preferences(filesDir).write(CAPTURE_HOW_TO_KEY, "off")
+                                }
+                            }
                         }
                     }
                 }
@@ -548,6 +567,7 @@ class HomeActivity : ComponentActivity() {
         setRoomVolume = ::setRoomVolume,
         setHandsetVolume = ::setHandsetVolume,
         restoreVolume = ::restoreVolume,
+        silenceMedia = ::silenceMedia,
         allowBackground = ::askToRunInBackground,
         pairCalibrate = {
             startActivity(
@@ -1555,6 +1575,20 @@ class HomeActivity : ComponentActivity() {
     }
 
     /**
+     * Media back to zero, from the button under the line that says this host hears it twice.
+     *
+     * The line goes when media is read back at zero, not when the button is pressed: read here
+     * rather than left to the next tick so it goes at once, and a stream that refused the set
+     * leaves the line and the button standing - which is what is true.
+     */
+    private fun silenceMedia() {
+        handsetVolume.silenceMedia()
+        val index = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        events.write("media silenced from the heard-twice line: now $index")
+        state = state.copy(volumeChanged = handsetVolume.changed(), mediaIndex = index)
+    }
+
+    /**
      * What each handset in the room actually landed on, this one first.
      *
      * This handset's own row is read from its streams here and now; everybody else's is what they
@@ -1757,6 +1791,8 @@ class HomeActivity : ComponentActivity() {
         /** As many of an id as every screen in this app has always printed. */
         private const val SHORT_NAME_CHARACTERS = 4
         private const val AUDIO_MIME = "audio/*"
+        /** [Preferences] key, "off" once somebody ticked 不再提示 on [CaptureHowTo]. */
+        private const val CAPTURE_HOW_TO_KEY = "capture_how_to"
 
         /** Every key [PermissionsScreen] draws a row for - see [refreshPermissionsState]. */
         private val PERMISSIONS_SCREEN_KEYS = listOf(

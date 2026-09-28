@@ -6,14 +6,16 @@ package com.soundmesh.product
  * A percentage rather than an index because handsets do not agree on how many steps a stream has -
  * fifteen on one of these, sixteen on the next - see `indexFor`.
  *
- * Thirty is not a measured threshold and does not pretend to be one. What it is is the line below
+ * Fifty is not a measured threshold and does not pretend to be one. What it is is the line below
  * which a round measures the room's noise floor instead of the room: every handset has to be heard
  * by every other one, and a phone at one step of fifteen is not heard across a room by anything.
  * It was ten until 2026-09-25, when the listener raised it after a friend's room: ten let through
- * levels nobody would measure a room at. The number people actually play at is theirs to choose -
- * this only refuses the settings that cannot work.
+ * levels nobody would measure a room at. Thirty until 2026-09-28, when a handset's own output-lead
+ * run was refused for scattered repeats at a level that was allowed but low, and the listener set
+ * every gate - that screen's, the room round's, the computer's - to fifty. The number people
+ * actually play at is theirs to choose - this only refuses the settings that cannot work.
  */
-const val QUIET_FLOOR_PERCENT = 30
+const val QUIET_FLOOR_PERCENT = 50
 
 /**
  * Which handsets are too quiet for a round, by name, in the order they are drawn.

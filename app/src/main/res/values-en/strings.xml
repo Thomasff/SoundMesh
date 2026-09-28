@@ -140,13 +140,12 @@
     <string name="calibrate_retest">Measuring again will not be more accurate, unless something interfered last time.</string>
     <string name="calibrate_repeatability">Repeatability run finished (diagnostic, nothing stored): median %1$.3f ms, spread %2$.3f ms, readable pairs %3$d.</string>
     <string name="calibrate_verified">Verified: %1$.3f ms left after the correction. The closer to zero, the better the stored number.</string>
-    <string name="calibrate_refused">This one does not count and was not stored: %1$s</string>
-    <string name="calibrate_failed">The calibration did not finish: %1$s</string>
+    <string name="calibrate_refused">This measurement failed. Put the phone on a table, do not touch it while it runs, keep the room quiet, and try turning the volume up</string>
     <string name="calibrate_no_permission">Without the microphone permission there is nothing to measure with: the phone has to hear itself. Turn it on for this app in the system settings.</string>
     <!-- The volume gate on the output-lead screen. Two outputs, because the run chirps on each. -->
     <string name="calibrate_volume_hint">Drag the slider below to set the volume of both outputs</string>
     <string name="calibrate_volume">Volume</string>
-    <string name="calibrate_volume_advice">Best above 40%</string>
+    <string name="calibrate_volume_advice">Best above 50%</string>
     <string name="calibrate_volume_both">All</string>
     <string name="calibrate_volume_media">Media</string>
     <string name="calibrate_volume_alarm">Alarm</string>
@@ -257,6 +256,10 @@
     <string name="room_volume_level">%1$d%%</string>
     <string name="room_volume_capturing_hint">This phone is capturing another app. To avoid hearing it twice, it is playing on the alarm channel for now, and the alarm volume is put back afterwards.</string>
     <string name="capture_media_twice">Turn media volume down to 1 or lower, or you will hear everything twice</string>
+    <string name="capture_media_fix">Fix it</string>
+    <string name="capture_how_to">How it works: start playing in the other app first, then come back here and tap “Play”. Keep media volume at 0 throughout, or you will hear everything twice</string>
+    <string name="capture_how_to_quiet">Don\'t show again</string>
+    <string name="capture_how_to_done">Got it</string>
     <string name="room_volume_row_missed">%1$s volume has not reached %2$d%%</string>
     <string name="room_volume_row_silent">%1$s took the command but has never reported its own volume back, so the number beside it is old.</string>
     <string name="room_volume_restore">Restore volumes</string>

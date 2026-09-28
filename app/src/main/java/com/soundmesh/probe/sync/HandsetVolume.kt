@@ -155,6 +155,14 @@ class HandsetVolume(private val streams: StreamVolumes, directory: File) {
             reading(stream)
         }
 
+    /**
+     * Silences media alone, for a capturing host somebody turned back up and wants quiet again.
+     *
+     * Through [write] like everything else, so leaving the capturing mode puts media back to where
+     * it was before this app first touched it rather than leaving the phone at zero.
+     */
+    fun silenceMedia() = write(AudioManager.STREAM_MUSIC, 0)
+
     private fun putMediaBack() {
         val was = before.taken()[MEDIA] ?: return
         streams.set(AudioManager.STREAM_MUSIC, was)

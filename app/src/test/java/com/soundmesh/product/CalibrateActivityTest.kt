@@ -1,6 +1,7 @@
 package com.soundmesh.product
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -82,6 +83,8 @@ class CalibrateActivityTest {
             "the start button is live on a handset nothing can hear",
             screen.contains("enabled = tooQuiet.isEmpty(),")
         )
+        // The label says 50% and is not drawn from the floor, so the two are pinned together here.
+        assertEquals(50, QUIET_FLOOR_PERCENT)
         // The quieter of the two, because that is the one that decides whether the run works.
         assertTrue(
             "the slider is drawn from an output that may not be the one holding the run back",

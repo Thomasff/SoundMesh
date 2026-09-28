@@ -320,6 +320,8 @@ class HomeActions(
     /** One handset on its own, for the one standing next to a wall. */
     val setHandsetVolume: (String, Int) -> Unit,
     val restoreVolume: () -> Unit,
+    /** Media back to zero on a capturing host, from the line that says it is heard twice. */
+    val silenceMedia: () -> Unit,
     /** Opens the one system dialog that can grant it. The vendor switches it cannot. */
     val allowBackground: () -> Unit,
     /** The gear in the top bar. */

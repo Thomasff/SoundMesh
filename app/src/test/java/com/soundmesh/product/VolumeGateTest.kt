@@ -28,7 +28,7 @@ class VolumeGateTest {
     fun `a room that is all loud enough stops nobody`() {
         assertEquals(
             emptyList<String>(),
-            tooQuietFor(listOf(row("Magic6", 60), row("X10", 30)))
+            tooQuietFor(listOf(row("Magic6", 60), row("X10", 50)))
         )
     }
 

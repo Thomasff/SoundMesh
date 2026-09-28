@@ -180,9 +180,8 @@ fun CalibrateScreen(state: CalibrateState, actions: CalibrateActions) {
  * to itself, and below some setting the chirps do not come back above the room - which produces a
  * refusal at best and a number about the noise floor at worst.
  *
- * No level is chosen for anybody. How loud is loud enough is a thing only somebody standing in
- * the room knows, so the number on the label is advice; what the gate refuses is the settings
- * that cannot work in any room.
+ * The advice on the label and the level the gate refuses below are one number here, fifty, and
+ * the label has to be changed by hand if [QUIET_FLOOR_PERCENT] ever is.
  */
 @Composable
 private fun VolumeGate(state: CalibrateState, tooQuiet: List<String>, actions: CalibrateActions) {

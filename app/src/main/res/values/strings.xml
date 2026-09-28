@@ -144,13 +144,12 @@
     <string name="calibrate_retest">重测不会更准，除非之前测量时被干扰。</string>
     <string name="calibrate_repeatability">重复性测量完成（诊断用，什么都没记下）：中位数 %1$.3f ms，极差 %2$.3f ms，%3$d 对可读。</string>
     <string name="calibrate_verified">验证完成：补偿之后还剩 %1$.3f ms。越接近零，说明记下的数越准。</string>
-    <string name="calibrate_refused">这次不算数，没有记下来：%1$s</string>
-    <string name="calibrate_failed">校准没跑完：%1$s</string>
+    <string name="calibrate_refused">本次测量失败，请确保手机放在桌子上，过程中不要触碰，环境安静，可尝试提高手机音量</string>
     <string name="calibrate_no_permission">没有录音权限就没法测，手机得听见自己的声音。可以在系统设置里给这个 app 打开麦克风权限。</string>
     <!-- The volume gate on the output-lead screen. Two outputs, because the run chirps on each. -->
     <string name="calibrate_volume_hint">拖动下面的音量条来调整双通道音量</string>
     <string name="calibrate_volume">本机音量</string>
-    <string name="calibrate_volume_advice">建议调到 40% 以上</string>
+    <string name="calibrate_volume_advice">建议调到 50% 以上</string>
     <string name="calibrate_volume_both">全部</string>
     <string name="calibrate_volume_media">媒体</string>
     <string name="calibrate_volume_alarm">闹钟</string>
@@ -263,6 +262,10 @@
     <string name="room_volume_level">%1$d%%</string>
     <string name="room_volume_capturing_hint">本机在采集别的应用，为了避免产生二重声音，目前正通过闹钟通道播放，结束后会还原闹钟音量。</string>
     <string name="capture_media_twice">建议把媒体音量调整至≤1，否则会产生二重声音，影响体验</string>
+    <string name="capture_media_fix">一键修复</string>
+    <string name="capture_how_to">操作流程：先在其他应用开始播放，然后回到本应用，点击“开始播放”即可。注意，过程中要保持媒体音量为0，否则会听见二重声音</string>
+    <string name="capture_how_to_quiet">不再提示</string>
+    <string name="capture_how_to_done">知道了</string>
     <string name="room_volume_row_missed">%1$s 音量未到 %2$d%%</string>
     <string name="room_volume_row_silent">%1$s 收到了命令，但一直没把自己的音量报回来——它旁边这个数字是旧的。</string>
     <string name="room_volume_restore">一键还原音量</string>
