@@ -117,7 +117,7 @@
     <string name="pc_round_slow_link">网络太慢，没法对齐：和主机一来一回要 %1$.0f ms，超过 %2$.0f 就对不准了。</string>
     <string name="pc_mic_no_device">本机没有麦克风，测不了。主机那边会显示「没有麦克风」。</string>
     <string name="pc_mic_denied">麦克风被 Windows 挡住了：设置 → 隐私和安全性 → 麦克风，打开「让桌面应用访问麦克风」。</string>
-    <string name="pc_mic_not_48k">麦克风的采样率是 %1$s，测量要 48 kHz：在「声音设置」里把麦克风改成 48000 Hz。</string>
+    <string name="pc_mic_not_48k">麦克风的采样率是 %1$s，测量要 44.1 kHz 或 48 kHz：在「声音设置」里把麦克风改成 48000 Hz。</string>
     <string name="pc_mic_other">麦克风打不开：%1$s</string>
 
     <string name="pc_room_step">量设备之间的距离</string>

@@ -2,6 +2,7 @@ package com.soundmesh.desktop
 
 import com.soundmesh.core.AudioChunk
 import com.soundmesh.core.ChirpGenerator
+import com.soundmesh.core.Resampler
 import com.soundmesh.probe.RunStore
 import com.soundmesh.probe.WavFileWriter
 import com.soundmesh.probe.sync.RoundChunks
@@ -108,6 +109,10 @@ class FrameRoundSpeaker(
  *
  * [startedAtHostNanos] is read once capture has started, and it is a search hint only, exactly as
  * on the handset: the arrivals are pinned to samples by correlation.
+ *
+ * A microphone at 44.1 kHz is recorded as it is and saved at 48 kHz, see [atChirpRate]. A handset
+ * has no such step: it asks AudioRecord for 48 kHz and Android is expected to convert underneath -
+ * expected, not seen, since no handset here records at 44.1.
  */
 class WasapiRoundRecorder(
     private val runStore: RunStore,
@@ -128,7 +133,7 @@ class WasapiRoundRecorder(
         val capture = runCatching { openCapture(true) }.getOrNull()?.also { openedRaw = true }
             ?: openCapture(false).also { openedRaw = false }
         capture.use {
-            check(it.format.sampleRate == ChirpGenerator.SAMPLE_RATE) {
+            check(MicrophoneCheck.recordsAt(it.format.sampleRate)) {
                 "the microphone runs at ${it.format.sampleRate} Hz and the chirp is ${ChirpGenerator.SAMPLE_RATE} Hz"
             }
             it.start()
@@ -136,7 +141,8 @@ class WasapiRoundRecorder(
             val deadline = System.nanoTime() + seconds * 1_000_000_000L
             while (System.nanoTime() < deadline && !stopped()) Thread.sleep(POLL_MILLIS)
             it.stop()
-            writeMono(File(runStore.prepareRun(caseId), "calibration.wav"), it.take().mono)
+            val mono = atChirpRate(it.take().mono, it.format.sampleRate)
+            writeMono(File(runStore.prepareRun(caseId), "calibration.wav"), mono)
         }
         // The reference must be the very samples that were played, as the handset saves it.
         writeMono(File(runStore.prepareRun(caseId), "chirp.wav"), ChirpGenerator.generateMono())
@@ -165,7 +171,32 @@ class WasapiRoundRecorder(
 }
 
 /**
+ * [mono] recorded at [sampleRate], at the chirp's rate: the same array when it already is, so every
+ * recording made at 48 kHz stays sample for sample what it was.
+ *
+ * After the round rather than on the way in, because the analysis only ever counts samples from the
+ * first one, and [Resampler]'s filter is centred - the first sample stays the first instant and
+ * nothing moves but by its twenty-nanosecond phase rounding.
+ */
+fun atChirpRate(mono: ShortArray, sampleRate: Int): ShortArray {
+    if (sampleRate == ChirpGenerator.SAMPLE_RATE) return mono
+    val bytes = ByteArray(mono.size * 2)
+    for (index in mono.indices) {
+        bytes[index * 2] = (mono[index].toInt() and 0xFF).toByte()
+        bytes[index * 2 + 1] = (mono[index].toInt() shr 8).toByte()
+    }
+    // Stereo is what the converter hands back; both channels are the one microphone.
+    val stereo = Resampler.toStereo(bytes, sampleRate, 1, ChirpGenerator.SAMPLE_RATE)
+    return ShortArray(stereo.size / 4) {
+        ((stereo[it * 4].toInt() and 0xFF) or (stereo[it * 4 + 1].toInt() shl 8)).toShort()
+    }
+}
+
+/**
  * Why this machine cannot record a round, in the ways that have a fix a person can make.
+ *
+ * NOT_48K is a rate a round does not record at, see [MicrophoneCheck.recordsAt]; it is named from
+ * before 44.1 kHz was taken too.
  *
  * MUTED is a microphone that opens and hears nothing: the endpoint muted (a laptop's F4), its
  * level at zero, or silenced somewhere nothing reports - see [MicrophoneCheck.silenced].
@@ -196,7 +227,7 @@ object MicrophoneCheck {
             }
         }
         capture.use {
-            if (it.format.sampleRate != ChirpGenerator.SAMPLE_RATE) {
+            if (!recordsAt(it.format.sampleRate)) {
                 return MicrophoneProblem.NOT_48K to "${it.format.sampleRate} Hz"
             }
             // Listened to only when the endpoint's own word does not already settle it, so a muted
@@ -210,6 +241,13 @@ object MicrophoneCheck {
         }
         return null
     }
+
+    /**
+     * Whether a round can record through a microphone at [sampleRate]: the chirp's own rate, or
+     * 44.1 kHz put at it after the round by [atChirpRate]. Only 44.1 was replayed against the archive
+     * (2026-09-28, see MicrophoneRateTest), so no other rate is taken on the strength of it.
+     */
+    fun recordsAt(sampleRate: Int): Boolean = sampleRate == ChirpGenerator.SAMPLE_RATE || sampleRate == 44_100
 
     /**
      * Whether a microphone that opened is one a round would hear nothing through.

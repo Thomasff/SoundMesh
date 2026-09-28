@@ -112,7 +112,7 @@
     <string name="pc_round_slow_link">This network is too slow to align on: a round trip to the host takes %1$.0f ms, and past %2$.0f nothing lines up.</string>
     <string name="pc_mic_no_device">This computer has no microphone, so it cannot measure. The host will say \"no microphone\".</string>
     <string name="pc_mic_denied">Windows is keeping the microphone from this app: Settings → Privacy &amp; security → Microphone, and turn on \"Let desktop apps access your microphone\".</string>
-    <string name="pc_mic_not_48k">The microphone runs at %1$s and measuring needs 48 kHz: set it to 48000 Hz in Sound settings.</string>
+    <string name="pc_mic_not_48k">The microphone runs at %1$s and measuring needs 44.1 or 48 kHz: set it to 48000 Hz in Sound settings.</string>
     <string name="pc_mic_other">The microphone would not open: %1$s</string>
 
     <string name="pc_room_step">Measure the distances between the devices</string>
