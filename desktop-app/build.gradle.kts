@@ -149,8 +149,9 @@ compose.desktop {
         }.getOrNull()?.let { javaHome = it }
         nativeDistributions {
             packageName = "SoundMesh"
-            // The exe's file version, from the same tag as the about block's.
-            packageVersion = released ?: "1.0.0"
+            // The exe's file version, from the same tag as the about block's, and the same 0.1.0
+            // without one: a local MSI at 1.0.0 would count every 0.x release as a downgrade.
+            packageVersion = released ?: "0.1.0"
             modules("java.instrument", "jdk.unsupported")
             // The installer, beside the zipped folder createDistributable makes. packageMsi builds
             // it; the release workflow publishes both.
