@@ -166,6 +166,8 @@ internal fun SoundMeshWindow(
     var steppedBack by remember { mutableStateOf(false) }
     var holding by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    // The last pick of host was refused for a host already on the network - see HostProblem.AnotherHost.
+    var hostTaken by remember { mutableStateOf(false) }
     // Which measuring page is up, and on whom - the handset's calibration screen. Null while none is.
     var measuring by remember { mutableStateOf<Pair<MeasureJob, String?>?>(null) }
     // What is still to be put to whoever pressed 进入播放, the one on screen first - see beforePlaying.
@@ -211,12 +213,22 @@ internal fun SoundMeshWindow(
         role = wanted
         holding = false
         steppedBack = false
+        hostTaken = false
         scope.launch(sessions) {
             when (wanted) {
                 Role.HOST -> { sink.stop(); host.open() }
                 Role.SINK -> { host.close(); sink.start() }
                 null -> { host.close(); sink.stop() }
             }
+        }
+    }
+    // The session gave the role back because the network already has a host: back to the role
+    // picker with that said, as the handset's refuseToBeTheSecondHost does. Held here, since the
+    // host's status is not read once no role is picked.
+    LaunchedEffect(hostStatus?.problem) {
+        if (hostStatus?.problem is HostProblem.AnotherHost) {
+            pickRole(null)
+            hostTaken = true
         }
     }
     val stage = stageOf(role, running, steppedBack, holding)
@@ -289,6 +301,7 @@ internal fun SoundMeshWindow(
                 Page(title, back, openSettings, pinned = pinned) {
                     when (stage) {
                         Stage.WELCOME -> {
+                            if (hostTaken) Note(say(Phrases.role_host_taken), Tone.WRONG)
                             RolePicker(onHost = { pickRole(Role.HOST) }, onSink = { pickRole(Role.SINK) })
                             Networks()
                         }
@@ -1308,6 +1321,7 @@ private fun describe(problem: HostProblem): String = when (problem) {
     is HostProblem.AdvertiseFailed -> say(Phrases.pc_advertise, problem.detail)
     is HostProblem.PlayFailed -> say(Phrases.pc_play_failed, problem.detail)
     is HostProblem.CaptureFailed -> say(Phrases.pc_capture_failed, problem.app, problem.detail)
+    is HostProblem.AnotherHost -> say(Phrases.role_host_taken)
 }
 
 @Composable

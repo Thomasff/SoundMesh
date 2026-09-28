@@ -4,6 +4,7 @@ import com.soundmesh.core.ChunkCodec
 import com.soundmesh.core.LeadMeter
 import com.soundmesh.core.PairingCode
 import com.soundmesh.core.PairingCodeCodec
+import com.soundmesh.core.PeerAdvertisement
 import com.soundmesh.core.RoomCommand
 import com.soundmesh.core.RoomExcuse
 import com.soundmesh.core.RoomOrder
@@ -17,6 +18,7 @@ import com.soundmesh.probe.sync.ClockSyncServer
 import com.soundmesh.probe.sync.EventLog
 import com.soundmesh.probe.sync.HostIdentity
 import com.soundmesh.probe.sync.RoomCommandServer
+import com.soundmesh.probe.sync.RoomCommands
 import com.soundmesh.probe.sync.RoundRecorder
 import com.soundmesh.probe.sync.RoundSpeaker
 import com.soundmesh.probe.sync.SpatialFieldServer
@@ -70,7 +72,31 @@ sealed interface HostProblem {
     data class AdvertiseFailed(val detail: String) : HostProblem
     data class PlayFailed(val detail: String) : HostProblem
     data class CaptureFailed(val app: String, val detail: String) : HostProblem
+    /** The network already had a host at [address] when this one was chosen - see [HostSession.open]. */
+    data class AnotherHost(val address: String) : HostProblem
 }
+
+/**
+ * The address of a host on this network that is not [myId], or null - the handset's
+ * `HostSearch.anotherHost`, asked the same way of the same records.
+ *
+ * Filtered by id because this host's own record is already out when it asks, and has to be: two
+ * people choosing host within the same few seconds can only see each other if both are. And only
+ * a host whose command port answers: the record of one that has just stopped goes on being answered
+ * for seconds, and standing down for it would leave a room with no host at all - see
+ * [RoomCommands.stillServing], which the handset asks for the same reason.
+ *
+ * Null is "not found", never "there is none": a network that does not carry multicast answers as an
+ * empty one does. Not asked of the gateway, as the handset also does for a host serving its own
+ * hotspot - not built for the computer yet (2026-09-28).
+ */
+fun anotherHostOnTheNetwork(myId: String): String? =
+    PeerAdvertisement.otherThan(PeerDiscovery.discover(HOST_CHECK_WINDOW_MILLIS).hosts, myId)
+        ?.hostAddress
+        ?.takeIf { RoomCommands.stillServing(it) }
+
+/** How long [anotherHostOnTheNetwork] listens: the handset's `HostSearch.WINDOW_MILLIS`. */
+private const val HOST_CHECK_WINDOW_MILLIS = 5_000
 
 /** One device standing by on the host's command port, as the roster shows it. */
 data class RoomPhone(
@@ -244,7 +270,13 @@ class HostSession(
     /** What a round's schedule is; a test shortens it here. */
     private val timingFor: (String?) -> ArmSchedule = ::defaultTimingFor,
     /** Whether a round's recording stays once read, which the window ties to its details switch. */
-    private val keepsRecordings: () -> Boolean = { false }
+    private val keepsRecordings: () -> Boolean = { false },
+    /**
+     * The address of a host on the network other than the one with this id, or null. A parameter
+     * so a test can say there is one without anybody hosting - the real one listens for five
+     * seconds. See [anotherHostOnTheNetwork].
+     */
+    private val anotherHost: (myId: String) -> String? = ::anotherHostOnTheNetwork
 ) {
     private val lock = Any()
     private val turnDown = AppTurnDown(identityDirectory, mixer)
@@ -331,6 +363,30 @@ class HostSession(
         synchronized(lock) {
             if (commandServer === command) record = advertised else runCatching { advertised.close() }
         }
+        refuseToBeTheSecondHost(command, hostId)
+    }
+
+    /**
+     * Gives the role back if the network already has a host - the handset's refuseToBeTheSecondHost,
+     * which until 2026-09-28 was the only one: two computers both hosted, and a handset that had
+     * been host for minutes shared the network with a computer that never looked.
+     *
+     * After the record is out, for the reason [anotherHostOnTheNetwork] filters by id. On the
+     * sessions' thread and so holding it for the five seconds the search listens: a click in that
+     * time waits rather than racing a close against it. Not once a device stands by, as on the
+     * handset: this host has a room by then, and the one that took the role just now gives way.
+     * Two chosen within the same few seconds both see each other and both stand down, and whoever
+     * chooses again is the one that stays.
+     */
+    private fun refuseToBeTheSecondHost(command: RoomCommandServer, hostId: String) {
+        val other = runCatching { anotherHost(hostId) }.getOrNull() ?: return
+        synchronized(lock) {
+            if (commandServer !== command || playing) return
+            if (command.standingPeerIds().isNotEmpty()) return
+        }
+        EventLog(identityDirectory).write("stepping down as host: $other is already one")
+        close()
+        synchronized(lock) { problem = HostProblem.AnotherHost(other) }
     }
 
     /** [open]'s part under the lock: this session's ports and id, or null when there is nothing to advertise. */

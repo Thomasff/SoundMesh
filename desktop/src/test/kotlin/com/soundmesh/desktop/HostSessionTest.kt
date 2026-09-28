@@ -520,7 +520,7 @@ class HostSessionTest {
                 registering.countDown()
                 release.await(5, TimeUnit.SECONDS)
                 AutoCloseable { }
-            })
+            }, anotherHost = { null })
         val opening = Thread { host.open() }.apply { start() }
         try {
             assertTrue(registering.await(5, TimeUnit.SECONDS))
@@ -529,6 +529,76 @@ class HostSessionTest {
         } finally {
             release.countDown()
             opening.join()
+            host.close()
+        }
+    }
+
+    /**
+     * A second host is refused where it is chosen, as the handset refuses it: two hosts is two
+     * timelines over one room, and every device silently belongs to whichever it found first. Until
+     * 2026-09-28 only the handset asked, so two computers both hosted and a handset that had been
+     * host for minutes shared the network with a computer that never looked.
+     */
+    @Test
+    fun aHostStandsDownWhenTheNetworkAlreadyHasOne() {
+        val ports = ports()
+        val host = HostSession(folder.root, ports, advertise = true, retellMillis = 50L,
+            advertiser = { _, _, _ -> AutoCloseable { } }, anotherHost = { "192.168.1.4" })
+        try {
+            host.open()
+            val status = host.status()
+            assertFalse(status.open)
+            assertEquals(HostProblem.AnotherHost("192.168.1.4"), status.problem)
+            ServerSocket(ports.command).close()
+            ServerSocket(ports.chunk).close()
+        } finally {
+            host.close()
+        }
+    }
+
+    /** Asked with its own id: its record is already out by then, and answers its own search. */
+    @Test
+    fun aHostThatFindsNobodyElseStaysTheHost() {
+        var askedFor: String? = null
+        val host = HostSession(folder.root, ports(), advertise = true, retellMillis = 50L,
+            advertiser = { _, _, _ -> AutoCloseable { } }, anotherHost = { askedFor = it; null })
+        try {
+            host.open()
+            val status = host.status()
+            assertTrue(status.open)
+            assertNull(status.problem)
+            assertEquals(status.selfId, askedFor)
+        } finally {
+            host.close()
+        }
+    }
+
+    /**
+     * Not once a device stands by, as on the handset: by then this host has a room, and the one
+     * that took the role just now is the one to give way.
+     */
+    @Test
+    fun aHostWithADeviceAlreadyStandingByDoesNotStandDown() {
+        val ports = ports()
+        val heard = ArrayBlockingQueue<RoomOrder>(16)
+        var phone: RoomCommandClient? = null
+        lateinit var host: HostSession
+        host = HostSession(folder.root, ports, advertise = true, retellMillis = 50L,
+            advertiser = { _, _, _ -> AutoCloseable { } },
+            anotherHost = {
+                phone = standBy(ports.command, heard)
+                val deadline = System.nanoTime() + 5_000_000_000L
+                while (host.status().phones.isEmpty() && System.nanoTime() < deadline) Thread.sleep(20)
+                "192.168.1.4"
+            })
+        try {
+            host.open()
+            val status = host.status()
+            assertTrue(status.phones.isNotEmpty())
+            assertTrue(status.open)
+            assertNull(status.problem)
+        } finally {
+            phone?.close()
             host.close()
         }
     }
