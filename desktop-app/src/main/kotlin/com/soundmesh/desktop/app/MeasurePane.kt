@@ -58,7 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The measuring page - the handset host's calibration screen, in its two jobs: 位置同步校准 for
+ * The measuring page - the handset host's calibration screen, in its two jobs: 时间位置校准 for
  * the whole room, or one device's pair from its roster row. [onBack] leaves it, and calls off a
  * round that is still running.
  *

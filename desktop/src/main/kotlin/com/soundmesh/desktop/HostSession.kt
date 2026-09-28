@@ -721,7 +721,7 @@ class HostSession(
         commandServer?.send(RoomCommand.RESTORE_VOLUME)
     }
 
-    /** 位置同步校准: every device standing by measured in one window, this machine among them. */
+    /** 时间位置校准: every device standing by measured in one window, this machine among them. */
     fun measureRoom() = startMeasuring(MeasureJob.ROOM, null)
 
     /** One device's constant, measured against this machine - the handset host's per-row calibrate. */

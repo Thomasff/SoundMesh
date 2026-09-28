@@ -2,6 +2,8 @@ package com.soundmesh.product
 
 import com.soundmesh.probe.sync.Carried
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BeforePlayingTest {
@@ -23,14 +25,14 @@ class BeforePlayingTest {
         assertEquals(listOf(BeforePlaying.NobodyJoined), beforePlaying(ownLeadMissing = false, peers = emptyList()))
     }
 
+    /** Every uncalibrated handset in one question: one room round fixes them all. */
     @Test
-    fun theOwnLeadIsAskedFirstAndThenEachUncalibratedPeerInTurn() {
+    fun theOwnLeadIsAskedFirstAndThenEveryUncalibratedPeerAtOnce() {
         val peers = listOf(peer("a", Carried.NOTHING), peer("b", Carried.SOMETHING), peer("c", Carried.NOTHING))
         assertEquals(
             listOf(
                 BeforePlaying.OwnLead,
-                BeforePlaying.Uncalibrated("a", "name-a"),
-                BeforePlaying.Uncalibrated("c", "name-c")
+                BeforePlaying.Uncalibrated(listOf("name-a", "name-c"))
             ),
             beforePlaying(ownLeadMissing = true, peers = peers)
         )
@@ -49,8 +51,33 @@ class BeforePlayingTest {
             peer("d", Carried.NOTHING)
         )
         assertEquals(
-            listOf(BeforePlaying.Uncalibrated("d", "name-d")),
+            listOf(BeforePlaying.Uncalibrated(listOf("name-d"))),
             beforePlaying(ownLeadMissing = false, peers = peers)
         )
+    }
+
+    @Test
+    fun theRoomRoundIsDueWhileAnyDeviceCarriesNothing() {
+        assertTrue(roomRoundDue(listOf(Carried.APPROXIMATE, Carried.NOTHING)))
+        assertFalse(roomRoundDue(listOf(Carried.APPROXIMATE, Carried.SOMETHING, Carried.UNSAID)))
+        assertFalse(roomRoundDue(emptyList()))
+    }
+
+    /** Done means somebody joined and nobody is due - an empty room has measured nothing. */
+    @Test
+    fun theRoomRoundReadsAsDoneOnlyWithSomebodyJoinedAndNobodyDue() {
+        assertTrue(roomRoundDone(listOf(Carried.APPROXIMATE, Carried.SOMETHING)))
+        assertFalse(roomRoundDone(listOf(Carried.APPROXIMATE, Carried.NOTHING)))
+        assertFalse(roomRoundDone(emptyList()))
+    }
+
+    /** A handset already paired is going back to be measured again, and needs no telling. */
+    @Test
+    fun theFineCalibrationNoteIsSaidUnlessTheDeviceIsAlreadyPairedOrSomebodyTicked() {
+        assertTrue(saysFineCalibrationFirst(Carried.APPROXIMATE, ticked = false))
+        assertTrue(saysFineCalibrationFirst(Carried.NOTHING, ticked = false))
+        assertTrue(saysFineCalibrationFirst(Carried.UNSAID, ticked = false))
+        assertFalse(saysFineCalibrationFirst(Carried.SOMETHING, ticked = false))
+        assertFalse(saysFineCalibrationFirst(Carried.APPROXIMATE, ticked = true))
     }
 }

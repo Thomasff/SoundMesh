@@ -2,33 +2,22 @@ package com.soundmesh.product
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.soundmesh.probe.BuildConfig
 import com.soundmesh.probe.R
 
@@ -146,42 +135,17 @@ internal fun namesOwnSource(state: HomeState): Boolean = state.role == Role.HOST
 
 /**
  * How capturing is used, put up each time capture consent has been given, until somebody ticks
- * 不再提示. Drawn as [AskBeforeGoing] is - the same card, padding and type - with one answer.
- *
- * Tapping outside counts as the button, tick and all: the tick is what somebody chose, and a dialog
- * that forgot it because of where they tapped would be back the next time as if it had not been.
+ * 不再提示. A note with one answer - see [SayUntilTicked].
  */
 @Composable
 internal fun CaptureHowTo(onDone: (quietFromNowOn: Boolean) -> Unit) {
-    var quiet by remember { mutableStateOf(false) }
-    Dialog(onDismissRequest = { onDone(quiet) }) {
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
-            Column(
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
-                Text(
-                    stringResource(R.string.capture_how_to),
-                    style = MaterialTheme.typography.bodyMedium,
-                    lineHeight = 21.sp
-                )
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { quiet = !quiet },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = quiet, onCheckedChange = { quiet = it })
-                        Text(
-                            stringResource(R.string.capture_how_to_quiet),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Solid(stringResource(R.string.capture_how_to_done), onClick = { onDone(quiet) })
-                }
-            }
-        }
-    }
+    SayUntilTicked(
+        text = stringResource(R.string.capture_how_to),
+        quietLabel = stringResource(R.string.capture_how_to_quiet),
+        cancel = null,
+        goOn = stringResource(R.string.capture_how_to_done),
+        onGoOn = onDone
+    )
 }
 
 /**

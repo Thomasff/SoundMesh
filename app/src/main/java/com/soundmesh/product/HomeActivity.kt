@@ -49,6 +49,7 @@ import com.soundmesh.session.CAPTURING_HOST_STREAM
 import com.soundmesh.probe.sync.FolderSongs
 import com.soundmesh.probe.sync.StreamingChunkSource
 import com.soundmesh.probe.sync.CaptureSilence
+import com.soundmesh.probe.sync.Carried
 import com.soundmesh.probe.sync.HandsetVolume
 import com.soundmesh.probe.sync.HostBeacon
 import com.soundmesh.probe.sync.HostIdentity
@@ -135,6 +136,15 @@ class HomeActivity : ComponentActivity() {
      * while nothing is being asked. Worked out once, at the press - see [beforePlaying].
      */
     private var asking by mutableStateOf(emptyList<BeforePlaying>())
+
+    /**
+     * Whether the last 继续 of [asking] goes on to the playing stage. False when the question was put
+     * on picking host rather than on 进入播放: there it is said early, and going on means staying.
+     */
+    private var askingGoesOn by mutableStateOf(true)
+
+    /** The handset whose line was pressed while the fine calibration note is up; null while it is not. */
+    private var askingFine by mutableStateOf<String?>(null)
 
     /** Whether [CaptureHowTo] is up: set as a capture starts, unless somebody asked not to be told. */
     private var showingCaptureHowTo by mutableStateOf(false)
@@ -515,6 +525,16 @@ class HomeActivity : ComponentActivity() {
                                 stepBack(route)
                             }
                             asking.firstOrNull()?.let { AskBeforePlaying(it) }
+                            askingFine?.let { peerId ->
+                                SayUntilTicked(
+                                    text = stringResource(R.string.fine_calibration_note),
+                                    quietLabel = stringResource(R.string.capture_how_to_quiet),
+                                    cancel = stringResource(R.string.before_play_cancel),
+                                    goOn = stringResource(R.string.before_play_go),
+                                    onCancel = { quiet -> answerFine(quiet, open = null) },
+                                    onGoOn = { quiet -> answerFine(quiet, open = peerId) }
+                                )
+                            }
                             if (showingCaptureHowTo) {
                                 CaptureHowTo { quiet ->
                                     showingCaptureHowTo = false
@@ -542,6 +562,13 @@ class HomeActivity : ComponentActivity() {
             state = state.copy(role = role, problem = null)
             readPairing()
             takeUpTheRoom()
+            // Said as the role is picked, not only at 进入播放: the output lead is measured on this
+            // handset alone, and somebody who is about to set a room up is standing at it now. On
+            // the pick and nowhere else - a resume is not somebody choosing to be the host.
+            if (role == Role.HOST && state.selfCalibrated == null) {
+                askingGoesOn = false
+                asking = listOf(BeforePlaying.OwnLead)
+            }
         },
         chooseSong = { chooseSong.launch(arrayOf(AUDIO_MIME)) },
         chooseFolder = { chooseFolder.launch(null) },
@@ -575,19 +602,12 @@ class HomeActivity : ComponentActivity() {
                     .putExtra("role", state.role.takeIf { it != Role.NONE }?.name)
             )
         },
+        // What pressing a device's line does: the note on fine calibration first, unless that
+        // handset has been through it or somebody ticked 不再提示 - see saysFineCalibrationFirst.
         calibratePeer = { peerId ->
-            // Opens the screen and starts nothing. It used to carry `auto`, which meant a chip on
-            // a roster line began a minute of chirps in a room nobody had been asked to quieten -
-            // and the instructions for that minute were on the screen it had already started
-            // behind. `serve_many` is gone with it: a round is between this host and the handset
-            // whose line was pressed, and waiting afterwards for a second one to volunteer was a
-            // queue nothing on screen described.
-            startActivity(
-                Intent(this, PeerCalibrateActivity::class.java)
-                    .putExtra("role", CalibrationRole.HOST.name)
-                    .putExtra(PEER_JOB_EXTRA, PeerJob.PAIR.name)
-                    .putExtra(PeerCalibrateActivity.AIMED_AT_EXTRA, peerId)
-            )
+            val carrying = state.standing.firstOrNull { it.peerId == peerId }?.carrying ?: Carried.UNSAID
+            val ticked = Preferences(filesDir).read(FINE_CALIBRATION_NOTE_KEY) == "off"
+            if (saysFineCalibrationFirst(carrying, ticked)) askingFine = peerId else openFineCalibration(peerId)
         },
         openSettings = { showingSettings = true },
         backToPlaying = { steppedBack = false },
@@ -596,6 +616,7 @@ class HomeActivity : ComponentActivity() {
         // Unless there is something to ask first - a host only, since only a host's press starts
         // a room. Each question is answered before the next is put, and the last 继续 goes on.
         enterPlaying = {
+            askingGoesOn = true
             asking = if (state.role != Role.HOST) emptyList() else beforePlaying(
                 ownLeadMissing = state.selfCalibrated == null,
                 peers = state.standing.map { PeerCarrying(it.peerId, it.name, it.carrying) }
@@ -994,6 +1015,30 @@ class HomeActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The pair screen aimed at one handset. Opens the screen and starts nothing. It used to carry
+     * `auto`, which meant a chip on a roster line began a minute of chirps in a room nobody had been
+     * asked to quieten - and the instructions for that minute were on the screen it had already
+     * started behind. `serve_many` is gone with it: a round is between this host and the handset
+     * whose line was pressed, and waiting afterwards for a second one to volunteer was a queue
+     * nothing on screen described.
+     */
+    private fun openFineCalibration(peerId: String) {
+        startActivity(
+            Intent(this, PeerCalibrateActivity::class.java)
+                .putExtra("role", CalibrationRole.HOST.name)
+                .putExtra(PEER_JOB_EXTRA, PeerJob.PAIR.name)
+                .putExtra(PeerCalibrateActivity.AIMED_AT_EXTRA, peerId)
+        )
+    }
+
+    /** The fine calibration note answered: the tick kept whichever way, then [open] if going on. */
+    private fun answerFine(quiet: Boolean, open: String?) {
+        askingFine = null
+        if (quiet) Preferences(filesDir).write(FINE_CALIBRATION_NOTE_KEY, "off")
+        open?.let(::openFineCalibration)
+    }
+
     /** Onto the playing stage with nothing playing - what 进入播放 does once nothing is asked. */
     private fun goOnToPlaying() {
         steppedBack = false
@@ -1002,7 +1047,8 @@ class HomeActivity : ComponentActivity() {
 
     /**
      * The first of [asking]. 去校准 drops the rest: whoever went to fix one thing comes back to the
-     * board and presses 进入播放 again, which asks afresh about whatever is still wrong then.
+     * board and presses 进入播放 again, which asks afresh about whatever is still wrong then. For the
+     * uncalibrated handsets it goes to the room round, which lines up every one of them at once.
      */
     @Composable
     private fun AskBeforePlaying(ask: BeforePlaying) {
@@ -1010,7 +1056,10 @@ class HomeActivity : ComponentActivity() {
             text = when (ask) {
                 BeforePlaying.NobodyJoined -> stringResource(R.string.before_play_nobody)
                 BeforePlaying.OwnLead -> stringResource(R.string.before_play_own_lead)
-                is BeforePlaying.Uncalibrated -> stringResource(R.string.before_play_uncalibrated, ask.name)
+                is BeforePlaying.Uncalibrated -> stringResource(
+                    R.string.before_play_uncalibrated,
+                    ask.names.joinToString(stringResource(R.string.room_volume_name_join))
+                )
             },
             cancel = stringResource(R.string.before_play_cancel),
             // Nothing to go and calibrate when nobody has joined: that is fixed on the other phones.
@@ -1022,12 +1071,12 @@ class HomeActivity : ComponentActivity() {
                 when (ask) {
                     BeforePlaying.NobodyJoined -> Unit
                     BeforePlaying.OwnLead -> actions.goto(ReadyGoto.SELF_CALIBRATE, null)
-                    is BeforePlaying.Uncalibrated -> actions.calibratePeer(ask.peerId)
+                    is BeforePlaying.Uncalibrated -> actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.ROOM)
                 }
             },
             onGoOn = {
                 asking = asking.drop(1)
-                if (asking.isEmpty()) goOnToPlaying()
+                if (asking.isEmpty() && askingGoesOn) goOnToPlaying()
             }
         )
     }
@@ -1793,6 +1842,8 @@ class HomeActivity : ComponentActivity() {
         private const val AUDIO_MIME = "audio/*"
         /** [Preferences] key, "off" once somebody ticked 不再提示 on [CaptureHowTo]. */
         private const val CAPTURE_HOW_TO_KEY = "capture_how_to"
+        /** [Preferences] key, "off" once somebody ticked 不再提示 on the fine calibration note. */
+        private const val FINE_CALIBRATION_NOTE_KEY = "fine_calibration_note"
 
         /** Every key [PermissionsScreen] draws a row for - see [refreshPermissionsState]. */
         private val PERMISSIONS_SCREEN_KEYS = listOf(

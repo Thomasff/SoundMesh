@@ -55,14 +55,15 @@
     <string name="roster_role_sink">从机</string>
     <string name="roster_nobody">还没有连接其他设备，在其他设备上选择「当从机」即可自动连接。</string>
     <string name="roster_calibrated">已校准</string>
-    <string name="roster_approximate">大致校准</string>
+    <string name="roster_approximate">已大致校准</string>
     <string name="roster_uncalibrated">未校准</string>
     <string name="roster_unsaid">没说校准情况</string>
-    <string name="roster_calibrate">点此校准</string>
+    <string name="roster_tap_hint">点击设备可单独校准</string>
+    <string name="fine_calibration_note">精校可使误差更小，但是需要花更多时间。每台手机只需要精校一次。</string>
     <string name="roster_quiet">有一阵子没通信了，可能是息屏了</string>
     <string name="pair_calibrate_aimed_gone">那台手机刚才还在，现在连不上了。</string>
     <string name="ready_go">进入播放</string>
-    <!-- Asked on 进入播放, one at a time. See BeforePlaying. -->
+    <!-- Asked on 进入播放, one kind at a time. See BeforePlaying. -->
     <string name="before_play_nobody">暂时未连接其他设备，请在其他设备上选择「当从机」，并确保它们在同一个网络内。如果自动连接失败，请用从机扫描主机的二维码</string>
     <string name="before_play_own_lead">还未校准本机输出延迟，开始播放会导致声音不同步，影响体验，是否继续？</string>
     <string name="before_play_uncalibrated">%1$s未校准过或校准失败，声音可能不同步，影响体验，是否继续？</string>
@@ -81,8 +82,9 @@
     <string name="goto_self_hint">只有同步播放本机正在放的声音才需要此信息。</string>
     <string name="goto_self_done">已校准：早 %1$s ms</string>
     <string name="goto_pair_one">和某一台对时</string>
-    <string name="goto_room">位置同步校准</string>
+    <string name="goto_room">时间位置校准</string>
     <string name="goto_room_hint">测每台手机的相对位置，并校准它们的时间。</string>
+    <string name="goto_room_done">已测量，若移动了手机位置，可重新校准</string>
     <string name="goto_room_go">开始校准</string>
     <string name="goto_self_go">开始测</string>
     <string name="goto_self_again">重新测一遍</string>
@@ -135,6 +137,7 @@
     <string name="calibrate_again">重新测一遍</string>
     <string name="calibrate_quiet">把手机放在桌上别碰，房间保持安静，大约一分半。</string>
     <string name="calibrate_start">开始测量</string>
+    <string name="calibrate_restart">重新测量</string>
     <string name="calibrate_measuring">请尽量保持安静</string>
     <string name="calibrate_measuring_long">大约一分半，手机放着别碰。</string>
     <string name="calibrate_fresh">本次测量结果</string>

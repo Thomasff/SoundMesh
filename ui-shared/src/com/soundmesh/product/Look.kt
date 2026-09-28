@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -34,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -122,9 +124,11 @@ fun Label(title: String, trailing: String? = null, onTrailing: (() -> Unit)? = n
  *
  * The hairline is on top rather than underneath, so a list ends where its last row does instead of
  * with a rule pointing at the next label.
+ *
+ * With [onClick] the whole row is the tap, name and all: a device's line opens that device.
  */
 @Composable
-fun Line(first: Boolean = false, content: @Composable RowScope.() -> Unit) {
+fun Line(first: Boolean = false, onClick: (() -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         if (!first) {
             Box(
@@ -135,7 +139,9 @@ fun Line(first: Boolean = false, content: @Composable RowScope.() -> Unit) {
             )
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
+            modifier = Modifier.fillMaxWidth()
+                .then(if (onClick == null) Modifier else Modifier.clickable(onClick = onClick))
+                .padding(vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             content = content
@@ -288,8 +294,8 @@ fun FilledChip(text: String, onClick: () -> Unit) {
 /**
  * A box with an edge round it, for the things on a screen that are not a list.
  *
- * [strong] is the one this project is for. On the status screen exactly two things are drawn
- * strongly - the calibration box and the way onto the playing stage - because a screen where
+ * [strong] is the one this project is for. On the status screen the calibration box is drawn
+ * strongly while it is the next step and steps back once it has been done, because a screen where
  * everything is emphasised has nothing emphasised, and the thing people were skipping past is the
  * calibration.
  */
@@ -533,6 +539,58 @@ fun AskBeforeGoing(
                         Solid(fix, modifier = Modifier.weight(1f), onClick = onFix)
                     }
                     Ghost(goOn, modifier = Modifier.weight(1f), onClick = onGoOn)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Something said on the way somewhere, each time, until somebody ticks [quietLabel].
+ *
+ * With no [cancel] it has one answer and is a note, not a question: tapping outside counts as
+ * [goOn]. With [cancel] it is a question - back out or go on, the way [AskBeforeGoing] puts it - and
+ * tapping outside is backing out. Either way the tick goes with whichever answer was given: the
+ * tick is what somebody chose, and a dialog that forgot it because of where they tapped would be
+ * back the next time as if it had not been.
+ */
+@Composable
+fun SayUntilTicked(
+    text: String,
+    quietLabel: String,
+    cancel: String?,
+    goOn: String,
+    onCancel: (quietFromNowOn: Boolean) -> Unit = {},
+    onGoOn: (quietFromNowOn: Boolean) -> Unit
+) {
+    var quiet by remember { mutableStateOf(false) }
+    Dialog(onDismissRequest = { if (cancel == null) onGoOn(quiet) else onCancel(quiet) }) {
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+            Column(
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                Text(text, style = MaterialTheme.typography.bodyMedium, lineHeight = 21.sp)
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { quiet = !quiet },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = quiet, onCheckedChange = { quiet = it })
+                        Text(
+                            quietLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (cancel == null) {
+                        Solid(goOn, onClick = { onGoOn(quiet) })
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Ghost(cancel, modifier = Modifier.weight(1f), onClick = { onCancel(quiet) })
+                            Solid(goOn, modifier = Modifier.weight(1f), onClick = { onGoOn(quiet) })
+                        }
+                    }
                 }
             }
         }

@@ -23,9 +23,10 @@ import com.soundmesh.probe.sync.LocalAddress
  * Everything that is wrong says so on the line it is about, and says it once. Nothing here refuses
  * to let anybody through: the board reports, the playing stage decides what it can start.
  *
- * Exactly two things here are drawn solid: the calibration box and the way onto the playing stage.
- * A screen where everything is emphasised has nothing emphasised, and what people were skipping
- * past is the calibration.
+ * Exactly one button here is solid, and it is the next step: the room round while any handset
+ * carries nothing, 进入播放 once none does. Both used to be solid at once, and a new room also had a
+ * filled chip on every handset's line, so somebody setting up for the first time met four things
+ * that each looked like the thing to do. See [roomRoundDue].
  */
 @Composable
 fun ReadyScreen(state: HomeState, actions: HomeActions) {
@@ -53,14 +54,22 @@ fun ReadyScreen(state: HomeState, actions: HomeActions) {
     // Said here as well, because a file can be chosen from this screen too - off the song line
     // above - and whatever went wrong with that pick has to land where the pick was made.
     state.problem?.let { Note(stringResource(it), Tone.WRONG) }
-    if (!state.running) {
+    // Host only. A sink is put on the playing stage by the room itself: the host's PLAY starts its
+    // session, and a sink arriving while the room plays is told again - see announceSession. What
+    // this button gave a sink was the playing stage with nothing on it.
+    if (!state.running && state.role == Role.HOST) {
+        val due = roomRoundDue(state.standing.map { it.carrying })
         Column(modifier = Modifier.padding(top = 16.dp)) {
             // It goes to the playing stage and starts nothing. Whether a song has been picked used
             // to decide whether this button worked at all, which put the one screen that can pick
             // a song behind the one condition that needs picking one - and a room streaming another
             // app, or a sink, never needs a file at all. What is still wrong is on its own line
             // above; none of it is a reason to refuse somebody the controls.
-            Solid(stringResource(R.string.ready_go), onClick = actions.enterPlaying)
+            if (due) {
+                Ghost(stringResource(R.string.ready_go), onClick = actions.enterPlaying)
+            } else {
+                Solid(stringResource(R.string.ready_go), onClick = actions.enterPlaying)
+            }
         }
     }
     Ghost(stringResource(R.string.role_change)) { actions.pickRole(Role.NONE) }
@@ -157,28 +166,39 @@ private fun ScanLine(state: HomeState, actions: HomeActions) {
             stringResource(if (state.onStandby) R.string.ready_paired else R.string.ready_paired_none),
             quiet = !state.onStandby
         )
-        Chip(stringResource(R.string.pair_scan), actions.scan)
+        // Filled: on a sink's board it is the one thing there is to do.
+        FilledChip(stringResource(R.string.pair_scan), actions.scan)
     }
 }
 
 /**
- * The one this whole project is for, and it is drawn as such.
+ * The one this whole project is for, and it is drawn as such - while it is the next step.
  *
  * It used to be the third of four text buttons under a heading that read "量一量（做过一次就不用
  * 再做了）" - which reads as a nice-to-have somebody has already done. The pair calibration is not
- * here any more either: it moved onto each handset's own row, where the handset it is about is.
+ * here any more either: it is each handset's own line, where the handset it is about is.
+ *
+ * Once every handset is at least roughly lined up the box says it has been measured and steps back,
+ * so the solid button on the screen is 进入播放. Read off the roster, see [roomRoundDone]: a handset
+ * that joins uncalibrated afterwards brings the box forward again.
  */
 @Composable
 private fun CalibrateSection(state: HomeState, actions: HomeActions) {
     // Drawn on the host alone - see the call site.
     Label(R.string.calibrate_section)
+    val carrying = state.standing.map { it.carrying }
+    val due = roomRoundDue(carrying)
+    val done = roomRoundDone(carrying)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Framed(strong = true) {
-            BoxTitle(stringResource(R.string.goto_room), strong = true)
-            Note(stringResource(R.string.goto_room_hint))
+        Framed(strong = due) {
+            BoxTitle(stringResource(R.string.goto_room), strong = due)
+            Note(stringResource(if (done) R.string.goto_room_done else R.string.goto_room_hint))
             Column(modifier = Modifier.padding(top = 7.dp)) {
-                Solid(stringResource(R.string.goto_room_go)) {
-                    actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.ROOM)
+                val go = { actions.goto(ReadyGoto.PAIR_CALIBRATE, PeerJob.ROOM) }
+                if (due) {
+                    Solid(stringResource(R.string.goto_room_go), onClick = go)
+                } else {
+                    Ghost(stringResource(R.string.goto_room_go), onClick = go)
                 }
             }
         }

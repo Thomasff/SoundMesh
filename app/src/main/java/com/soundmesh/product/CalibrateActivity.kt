@@ -246,7 +246,7 @@ class CalibrateActivity : ComponentActivity() {
         stopping = false
         // No sentence saying a run has started: the screen says so, and the message line here is
         // kept for the runs that come to nothing.
-        state = state.copy(running = true, message = null, offered = null, computing = false, until = null)
+        state = state.copy(running = true, message = null, offered = null, computing = false, until = null, measured = false)
         // Guarded here rather than inside: an uncaught throw on any thread takes the whole process
         // with it, and a calibration that vanishes tells whoever ran it nothing at all.
         Thread({
@@ -329,7 +329,8 @@ class CalibrateActivity : ComponentActivity() {
             else -> null
         }
         offeredSubject = subject
-        handler.post { state = state.copy(message = note, offered = landing.offer) }
+        val workedHere = worked(landing, stopping)
+        handler.post { state = state.copy(message = note, offered = landing.offer, measured = workedHere) }
     }
 
     /**

@@ -119,7 +119,8 @@ fun main() = application {
                 },
                 look = look,
                 onLook = { look = it },
-                edgeOnScreen = edgeOnScreen
+                edgeOnScreen = edgeOnScreen,
+                prefs = prefs
             )
         }
     }

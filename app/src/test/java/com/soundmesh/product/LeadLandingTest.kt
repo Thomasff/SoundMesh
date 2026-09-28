@@ -1,7 +1,9 @@
 package com.soundmesh.product
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -45,5 +47,23 @@ class LeadLandingTest {
     @Test
     fun `a refused run leaves both alone`() {
         assertEquals(LeadLanding(null, null), landingFor(null, 124_229L, keeps = true))
+    }
+
+    /** Stored or put to the person, either is a run that worked; stopped or refused is not. */
+    @Test
+    fun `a run worked when it stored or offered something and was not stopped`() {
+        assertTrue(worked(LeadLanding(store = 124_229L, offer = null), stopped = false))
+        assertTrue(worked(LeadLanding(store = null, offer = 121_600L), stopped = false))
+        assertFalse(worked(LeadLanding(null, null), stopped = false))
+        assertFalse(worked(LeadLanding(store = 124_229L, offer = null), stopped = true))
+    }
+
+    /** 完成 waits for 替代 or 取消: until one is pressed there is still a decision on the screen. */
+    @Test
+    fun `done is offered once a run worked and nothing is left to decide`() {
+        assertTrue(showsDone(CalibrateState(measured = true)))
+        assertFalse(showsDone(CalibrateState(measured = true, offered = 121_600L)))
+        assertFalse(showsDone(CalibrateState(measured = true, running = true)))
+        assertFalse(showsDone(CalibrateState(measured = false)))
     }
 }

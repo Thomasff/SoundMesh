@@ -64,7 +64,6 @@ import com.soundmesh.product.BeforePlaying
 import com.soundmesh.product.BoxTitle
 import com.soundmesh.product.ChoiceCard
 import com.soundmesh.product.EffectKind
-import com.soundmesh.product.FilledChip
 import com.soundmesh.product.Framed
 import com.soundmesh.product.Ghost
 import com.soundmesh.product.Knob
@@ -76,6 +75,7 @@ import com.soundmesh.product.LineName
 import com.soundmesh.product.Note
 import com.soundmesh.product.RoomState
 import com.soundmesh.product.RoundLine
+import com.soundmesh.product.SayUntilTicked
 import com.soundmesh.product.Segment
 import com.soundmesh.product.Segmented
 import com.soundmesh.product.Solid
@@ -90,6 +90,9 @@ import com.soundmesh.product.rememberEdgeGlow
 import com.soundmesh.product.RoomReading
 import com.soundmesh.product.roomReadings
 import com.soundmesh.product.ruleOf
+import com.soundmesh.product.roomRoundDone
+import com.soundmesh.product.roomRoundDue
+import com.soundmesh.product.saysFineCalibrationFirst
 import com.soundmesh.desktop.AudioSession
 import com.soundmesh.desktop.AudioSessions
 import com.soundmesh.desktop.HostPort
@@ -160,7 +163,9 @@ internal fun SoundMeshWindow(
     look: EdgeLook?,
     onLook: (EdgeLook?) -> Unit,
     /** 设置's 整个屏幕: the light is round the screen, so none is drawn here. */
-    edgeOnScreen: Boolean
+    edgeOnScreen: Boolean,
+    /** Where 不再提示 on the fine calibration note is kept: the caller's copy, the one every write goes to. */
+    prefs: WindowPrefs
 ) {
     var role by remember { mutableStateOf<Role?>(null) }
     var steppedBack by remember { mutableStateOf(false) }
@@ -172,6 +177,8 @@ internal fun SoundMeshWindow(
     var measuring by remember { mutableStateOf<Pair<MeasureJob, String?>?>(null) }
     // What is still to be put to whoever pressed 进入播放, the one on screen first - see beforePlaying.
     var asking by remember { mutableStateOf(emptyList<BeforePlaying>()) }
+    // The device whose line was pressed while the fine calibration note is up - see saysFineCalibrationFirst.
+    var askingFine by remember { mutableStateOf<String?>(null) }
     val pick = remember { HostPick() }
     val scope = rememberCoroutineScope()
 
@@ -307,13 +314,28 @@ internal fun SoundMeshWindow(
                         }
                         Stage.READY -> {
                             when (role) {
-                                Role.HOST -> hostStatus?.let { HostReady(host, it, sessions) { job, aimedAt -> measuring = job to aimedAt } }
+                                Role.HOST -> hostStatus?.let { status ->
+                                    HostReady(
+                                        host, status, sessions,
+                                        onCalibratePeer = { peerId ->
+                                            val carrying = status.phones.firstOrNull { it.peerId == peerId }?.carrying ?: Carried.UNSAID
+                                            val ticked = prefs.read(FINE_CALIBRATION_NOTE_KEY) == "off"
+                                            if (saysFineCalibrationFirst(carrying, ticked)) askingFine = peerId
+                                            else measuring = MeasureJob.PAIR to peerId
+                                        }
+                                    ) { job, aimedAt -> measuring = job to aimedAt }
+                                }
                                 Role.SINK -> sinkStatus?.let { SinkReady(sink, it, sessions) }
                                 null -> Unit
                             }
-                            if (!running) {
+                            // Host only, as on the handset: a sink is put on the playing page by the
+                            // room, the host's PLAY - told again to one that arrives while it plays.
+                            if (!running && role == Role.HOST) {
+                                // The one solid button is the next step - the handset's ReadyScreen.
+                                val due = roomRoundDue(hostStatus?.phones.orEmpty().map { it.carrying })
                                 Column(Modifier.padding(top = 16.dp)) {
-                                    Solid(say(Phrases.ready_go), onClick = enterPlaying)
+                                    if (due) Ghost(say(Phrases.ready_go), onClick = enterPlaying)
+                                    else Solid(say(Phrases.ready_go), onClick = enterPlaying)
                                 }
                             }
                             Ghost(say(Phrases.role_change)) { pickRole(null) }
@@ -333,13 +355,32 @@ internal fun SoundMeshWindow(
         }
         // Last, so it is over the page, which scrolls. A computer's window is square-cornered.
         if (edge != null) BadgeEdges(edge, glow, round = 0f, keepHandsetWavelength = true)
-        // 去校准 drops the rest, as on the handset: back on the board, 进入播放 asks afresh.
+        askingFine?.let { peerId ->
+            SayUntilTicked(
+                text = say(Phrases.fine_calibration_note),
+                quietLabel = say(Phrases.capture_how_to_quiet),
+                cancel = say(Phrases.before_play_cancel),
+                goOn = say(Phrases.before_play_go),
+                onCancel = { quiet ->
+                    askingFine = null
+                    if (quiet) prefs.write(FINE_CALIBRATION_NOTE_KEY, "off")
+                },
+                onGoOn = { quiet ->
+                    askingFine = null
+                    if (quiet) prefs.write(FINE_CALIBRATION_NOTE_KEY, "off")
+                    measuring = MeasureJob.PAIR to peerId
+                }
+            )
+        }
+        // 去校准 drops the rest, as on the handset: back on the board, 进入播放 asks afresh. For the
+        // uncalibrated devices it is the room round, which lines them all up at once.
         asking.firstOrNull()?.let { ask ->
             AskBeforeGoing(
                 text = when (ask) {
                     BeforePlaying.NobodyJoined -> say(Phrases.before_play_nobody)
                     BeforePlaying.OwnLead -> say(Phrases.before_play_own_lead)
-                    is BeforePlaying.Uncalibrated -> say(Phrases.before_play_uncalibrated, ask.name)
+                    is BeforePlaying.Uncalibrated ->
+                        say(Phrases.before_play_uncalibrated, ask.names.joinToString(say(Phrases.room_volume_name_join)))
                 },
                 cancel = say(Phrases.before_play_cancel),
                 fix = if (ask == BeforePlaying.NobodyJoined) null else say(Phrases.before_play_calibrate),
@@ -347,7 +388,7 @@ internal fun SoundMeshWindow(
                 onCancel = { asking = emptyList() },
                 onFix = {
                     asking = emptyList()
-                    if (ask is BeforePlaying.Uncalibrated) measuring = MeasureJob.PAIR to ask.peerId
+                    if (ask is BeforePlaying.Uncalibrated) measuring = MeasureJob.ROOM to null
                 },
                 onGoOn = {
                     asking = asking.drop(1)
@@ -401,6 +442,8 @@ private fun HostReady(
     host: HostSession,
     status: HostStatus,
     sessions: CoroutineDispatcher,
+    /** A device's line pressed - the fine calibration note, or straight to its pair round. */
+    onCalibratePeer: (String) -> Unit,
     onMeasure: (MeasureJob, String?) -> Unit
 ) {
     Note(say(Phrases.pc_phones_follow))
@@ -409,15 +452,20 @@ private fun HostReady(
     val join = say(Phrases.room_volume_name_join)
     if (addresses.isNotEmpty()) Note(say(Phrases.pc_type_this, addresses.joinToString(join) { it.address }))
     PairCode(host, status.open, addresses, sessions)
-    Roster(status) { peerId -> onMeasure(MeasureJob.PAIR, peerId) }
-    // The handset's 位置同步校准, which opens the measuring page rather than starting anything: a
-    // minute of chirps is asked for there, with the room's volumes in view.
+    Roster(status, onCalibratePeer)
+    // The handset's 时间位置校准, which opens the measuring page rather than starting anything: a
+    // minute of chirps is asked for there, with the room's volumes in view. Forward and solid while
+    // it is the next step, stepped back once every device is at least roughly lined up - the
+    // handset's CalibrateSection.
     Label(say(Phrases.calibrate_section))
-    Framed(strong = true) {
-        BoxTitle(say(Phrases.goto_room), strong = true)
-        Note(say(Phrases.goto_room_hint))
+    val carrying = status.phones.map { it.carrying }
+    val due = roomRoundDue(carrying)
+    Framed(strong = due) {
+        BoxTitle(say(Phrases.goto_room), strong = due)
+        Note(say(if (roomRoundDone(carrying)) Phrases.goto_room_done else Phrases.goto_room_hint))
         Column(Modifier.padding(top = 7.dp)) {
-            Solid(say(Phrases.goto_room_go), enabled = status.open) { onMeasure(MeasureJob.ROOM, null) }
+            if (due) Solid(say(Phrases.goto_room_go), enabled = status.open) { onMeasure(MeasureJob.ROOM, null) }
+            else Ghost(say(Phrases.goto_room_go), enabled = status.open) { onMeasure(MeasureJob.ROOM, null) }
         }
     }
 }
@@ -687,6 +735,9 @@ private val DIAL_WIDTH = 132.dp
 /**
  * Every device in the room, one line each, this machine first - the handset host's roster. The
  * badge is on every line here because this window has no drawing of the room to find a colour in.
+ *
+ * A device's line is status only, and the whole line is the way into its own fine calibration - the
+ * handset's StandingLine, for the same reason: a column of 点此校准 read as errands every one.
  */
 @Composable
 private fun Roster(status: HostStatus, onCalibrate: (String) -> Unit) {
@@ -698,23 +749,10 @@ private fun Roster(status: HostStatus, onCalibrate: (String) -> Unit) {
     if (status.phones.isEmpty()) Note(say(Phrases.roster_nobody))
     for (phone in status.phones) {
         val quiet = phone.quiet || phone.stopped
-        Line {
+        Line(onClick = { onCalibrate(phone.peerId) }) {
             Badge(phone.peerId, phone.place, hollow = quiet)
             LineName(phone.name, quiet = quiet)
-            // The handset host's roster line: how it is lined up, and the one errand that fixes
-            // it. Settled lines carry no chip, and the word itself is the way to measure again.
-            Tag(
-                say(carryingWord(phone.carrying)),
-                carryingTone(phone.carrying),
-                onClick = if (phone.carrying == Carried.SOMETHING) {
-                    { onCalibrate(phone.peerId) }
-                } else {
-                    null
-                }
-            )
-            if (phone.carrying != Carried.SOMETHING) {
-                FilledChip(say(Phrases.roster_calibrate)) { onCalibrate(phone.peerId) }
-            }
+            Tag(say(carryingWord(phone.carrying)), carryingTone(phone.carrying))
         }
         // Quiet first: a quiet one may still be taking the audio, and "not taking it" would be false.
         val notes = listOfNotNull(
@@ -730,6 +768,10 @@ private fun Roster(status: HostStatus, onCalibrate: (String) -> Unit) {
                 for (note in notes) Note(note, Tone.WATCH)
             }
         }
+    }
+    // The only word that the lines can be pressed, as on the handset.
+    if (status.phones.isNotEmpty()) {
+        Column(Modifier.padding(top = 6.dp)) { Note(say(Phrases.roster_tap_hint)) }
     }
 }
 
@@ -1425,3 +1467,6 @@ internal fun describe(problem: MicrophoneProblem, detail: String?): String = whe
 }
 
 private const val POLL_MILLIS = 500L
+
+/** [WindowPrefs] key, "off" once somebody ticked 不再提示 on the fine calibration note - the handset's key. */
+private const val FINE_CALIBRATION_NOTE_KEY = "fine_calibration_note"

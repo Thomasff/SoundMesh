@@ -58,13 +58,14 @@
     <string name="roster_approximate">Roughly calibrated</string>
     <string name="roster_uncalibrated">Not calibrated</string>
     <string name="roster_unsaid">Has not said</string>
-    <string name="roster_calibrate">Calibrate</string>
+    <string name="roster_tap_hint">Select a device to calibrate it on its own.</string>
+    <string name="fine_calibration_note">Fine calibration makes the error smaller but takes longer. Each phone only needs it once.</string>
     <string name="roster_quiet">Nothing heard for a while; the screen is probably off</string>
     <string name="pair_calibrate_aimed_gone">That phone was there a moment ago and cannot be reached now.</string>
     <string name="ready_go">Go to playback</string>
     <string name="before_play_nobody">No other device is connected yet. On the other devices, choose Be a sink, and make sure they are on the same network. If they do not connect by themselves, scan the host\'s QR code from each sink.</string>
     <string name="before_play_own_lead">This phone\'s output delay has not been measured. Playing now will be out of sync and sound worse. Go on anyway?</string>
-    <string name="before_play_uncalibrated">%1$s has not been calibrated, or its calibration failed. It may be out of sync and sound worse. Go on anyway?</string>
+    <string name="before_play_uncalibrated">Not calibrated, or calibration failed: %1$s. Playback may be out of sync and sound worse. Go on anyway?</string>
     <string name="before_play_cancel">Cancel</string>
     <string name="before_play_calibrate">Calibrate</string>
     <string name="before_play_go">Continue</string>
@@ -80,8 +81,9 @@
     <string name="goto_self_hint">Only needed when the room plays what this phone is playing.</string>
     <string name="goto_self_done">Calibrated: %1$s ms early</string>
     <string name="goto_pair_one">Sync with one phone</string>
-    <string name="goto_room">Position and clock calibration</string>
+    <string name="goto_room">Clock and position calibration</string>
     <string name="goto_room_hint">Measures where each phone is and syncs their clocks.</string>
+    <string name="goto_room_done">Measured. If a phone has moved, you can calibrate again.</string>
     <string name="goto_room_go">Start</string>
     <string name="goto_self_go">Measure</string>
     <string name="goto_self_again">Measure again</string>
@@ -96,7 +98,7 @@
 
     <string name="role_pick">What is this phone?</string>
     <string name="role_host">Be the host</string>
-    <string name="role_host_taken">A network may only have one host. To move it, make that phone a sink first.</string>
+    <string name="role_host_taken">A network may only have one host. To move it, make the current host a sink first.</string>
     <string name="role_host_hint">The source: other devices play in sync with this one</string>
     <string name="role_sink">Be a sink</string>
     <string name="role_sink_hint">Plays the host\'s sound in sync</string>
@@ -131,6 +133,7 @@
     <string name="calibrate_again">Measure again</string>
     <string name="calibrate_quiet">Leave the phone on a table untouched and keep the room quiet, about a minute and a half.</string>
     <string name="calibrate_start">Start</string>
+    <string name="calibrate_restart">Measure again</string>
     <string name="calibrate_measuring">Keep as quiet as you can</string>
     <string name="calibrate_measuring_long">About a minute and a half. Leave the phone alone.</string>
     <string name="calibrate_fresh">This measurement</string>

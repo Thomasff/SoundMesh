@@ -57,7 +57,12 @@ data class CalibrateState(
      * echoed from what the slider asked for: `setStreamVolume` has been seen on this project's
      * own handsets to take a value, throw nothing and move nothing. See [tooQuietFor].
      */
-    val volumes: List<VolumeRow> = emptyList()
+    val volumes: List<VolumeRow> = emptyList(),
+    /**
+     * Whether a run on this visit to the screen worked - see [worked]. Cleared as the next one
+     * starts, so a run that fails afterwards leaves the screen as it was before any 完成.
+     */
+    val measured: Boolean = false
 )
 
 class CalibrateActions(
@@ -72,6 +77,20 @@ class CalibrateActions(
     val keep: () -> Unit,
     val back: () -> Unit
 )
+
+/**
+ * Whether a finished run worked: it stored its answer, or put it to the person against the stored
+ * one. A refusal lands nothing, and a run somebody stopped is not one that worked whatever it read.
+ */
+internal fun worked(landing: LeadLanding, stopped: Boolean): Boolean =
+    !stopped && (landing.store != null || landing.offer != null)
+
+/**
+ * Whether the screen ends in 完成: a run worked and there is nothing left on it to decide. Not while
+ * 替代 / 取消 is up - 完成 beside them would be a third answer to a two-answer question.
+ */
+internal fun showsDone(state: CalibrateState): Boolean =
+    state.measured && state.offered == null && !state.running
 
 /** What a finished measurement leaves behind: what to store now, and what to put to the person. */
 data class LeadLanding(val store: Long?, val offer: Long?)
@@ -136,11 +155,22 @@ fun CalibrateScreen(state: CalibrateState, actions: CalibrateActions) {
                         modifier = Modifier.padding(top = 7.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        Solid(
-                            stringResource(R.string.calibrate_start),
-                            enabled = tooQuiet.isEmpty(),
-                            onClick = actions.calibrate
-                        )
+                        // Solid only on a handset that has never been measured. Once it carries a
+                        // number, measuring again is something somebody may do, not the thing the
+                        // screen is asking for.
+                        if (state.stored == null) {
+                            Solid(
+                                stringResource(R.string.calibrate_start),
+                                enabled = tooQuiet.isEmpty(),
+                                onClick = actions.calibrate
+                            )
+                        } else {
+                            Ghost(
+                                stringResource(R.string.calibrate_restart),
+                                enabled = tooQuiet.isEmpty(),
+                                onClick = actions.calibrate
+                            )
+                        }
                         // Why the button above it is grey, said under the button rather than only
                         // beside the rows further up the screen.
                         if (tooQuiet.isNotEmpty()) {
@@ -169,6 +199,13 @@ fun CalibrateScreen(state: CalibrateState, actions: CalibrateActions) {
         Note(stringResource(R.string.calibrate_retest))
         // Only ever a refusal or a failure - see [CalibrateState.message].
         state.message?.let { Note(it, Tone.WATCH) }
+        // Last on the screen, where a person who has just watched a run work is looking next, and
+        // the solid one: going back is now the thing to do. Back is what the arrow at the top does.
+        if (showsDone(state)) {
+            Column(modifier = Modifier.padding(top = 16.dp)) {
+                Solid(stringResource(R.string.perm_done), onClick = actions.back)
+            }
+        }
     }
 }
 
