@@ -1,0 +1,92 @@
+name: Bug report (English)
+description: Crashes, playback out of sync, sound problems and other bugs
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! The details below help us find the cause faster. Fields marked * are required.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Open Settings → About and copy the first line.
+      placeholder: Version 0.3.0 · build 3aca2ae
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where it happened
+      options:
+        - Phone
+        - Computer (Windows)
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device model and OS version
+      placeholder: Pixel 8, Android 14 or Dell XPS 13, Windows 11
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: This device's role
+      options:
+        - Host
+        - Sink
+        - No role picked yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: room
+    attributes:
+      label: Other devices in the room
+      description: How many, which models, and which one is the host.
+      placeholder: "3 devices: Pixel 8 (host), Galaxy Tab S9, a Windows laptop"
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - All on the same router's WiFi
+        - One phone runs a hotspot and the others join it
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Write down what you did, step by step.
+      placeholder: |
+        1. Phone A is the host
+        2. Phone B scans the host's code
+        3. Tap "Go to playback"
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+      placeholder: |
+        Expected: both play together
+        Actual: B is about half a second late
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots or recordings
+      description: For sync or calibration problems, turn on Settings → Show diagnostic detail before taking the screenshot.

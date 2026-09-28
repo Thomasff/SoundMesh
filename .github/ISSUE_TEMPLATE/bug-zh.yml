@@ -1,0 +1,92 @@
+name: 问题反馈（中文）
+description: 应用出错、不同步、声音异常等问题
+title: "[问题] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 感谢反馈！下面的信息能帮我们更快找到原因，带 * 的为必填。
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 打开「设置」→「关于」，抄第一行。
+      placeholder: 版本 0.3.0 · 构建 3aca2ae
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 出问题的是
+      options:
+        - 手机
+        - 电脑（Windows）
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 设备型号和系统版本
+      placeholder: 小米 13，Android 14 或 联想拯救者y7000p，Windows 11
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: 这台设备的角色
+      options:
+        - 主机
+        - 从机
+        - 还没选角色
+    validations:
+      required: true
+
+  - type: textarea
+    id: room
+    attributes:
+      label: 房间里的其他设备
+      description: 一共几台，各是什么型号，哪台是主机。
+      placeholder: 3 台：小米 13（主机）、荣耀 V9 平板、Windows 电脑
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: 网络
+      options:
+        - 连着同一个路由器的 WiFi
+        - 某台手机开了热点，其他设备连它
+        - 其他（请在下面说明）
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 问题是怎么出现的
+      description: 一步步写下你做了什么。
+      placeholder: |
+        1. 手机 A 当主机
+        2. 手机 B 扫码加入
+        3. 点「进入播放」
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: 期望的结果和实际的结果
+      placeholder: |
+        期望：两台同时出声
+        实际：B 慢了大约半秒
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: 截图或录屏
+      description: 和同步、校准有关的问题，先打开「设置」→「显示诊断细节」再截图，会更有帮助。
