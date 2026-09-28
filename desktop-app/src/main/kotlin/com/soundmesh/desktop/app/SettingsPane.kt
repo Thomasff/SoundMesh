@@ -23,6 +23,8 @@ import com.soundmesh.product.LineName
 import com.soundmesh.product.Note
 import com.soundmesh.product.Segment
 import com.soundmesh.product.Segmented
+import com.soundmesh.product.UpdateWords
+import com.soundmesh.product.VersionLine
 import com.soundmesh.product.linkColour
 
 /**
@@ -74,10 +76,20 @@ internal fun SettingsPane(
         Note(say(Phrases.settings_details_hint))
 
         Label(say(Phrases.about_title))
-        // Always shown: the build mark is how two installs of one version are told apart.
-        Line(first = true) {
-            LineName(say(Phrases.about_version, About.VERSION, About.BUILD_MARK), quiet = true)
-        }
+        // Always shown: the build mark is how two installs of one version are told apart. 检查更新
+        // at its end, as on the handset.
+        VersionLine(
+            say(Phrases.about_version, About.VERSION, About.BUILD_MARK),
+            About.VERSION,
+            About.REPO_URL,
+            UpdateWords(
+                check = say(Phrases.update_check),
+                checking = say(Phrases.update_checking),
+                upToDate = say(Phrases.update_latest),
+                download = say(Phrases.update_download),
+                failed = say(Phrases.update_failed)
+            )
+        )
         // An unset fact is an empty string and its row does not exist, as on the handset.
         About.AUTHOR.ifEmpty { null }?.let { AboutRow(say(Phrases.about_author)) { Link(it, About.AUTHOR_URL.ifEmpty { null }, showGitHub = true) } }
         About.REPO_URL.ifEmpty { null }?.let { url ->

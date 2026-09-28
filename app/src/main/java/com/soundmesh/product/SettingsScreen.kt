@@ -26,8 +26,8 @@ import com.soundmesh.probe.BuildConfig
 import com.soundmesh.probe.R
 
 /**
- * The screen behind the gear in the top bar: theme, language, the diagnostic-details switch, the
- * way back to a refused permission, this handset's own output lead, and an about block.
+ * The screen behind the gear in the top bar: theme, language, the way back to a refused
+ * permission, this handset's own output lead, the diagnostic-details switch, and an about block.
  *
  * Drawn out of [Look.kt] like every other screen since 2026-09-15. It was the last one still made
  * of Material cards - a heading in title type over sixteen points of padding, six of them stacked -
@@ -107,21 +107,8 @@ fun SettingsScreen(
             modifier = Modifier.padding(top = 2.dp)
         )
 
-        Label(R.string.settings_diagnostics)
-        Line(first = true) {
-            LineName(stringResource(R.string.settings_details))
-            Switch(
-                checked = showDetails,
-                onCheckedChange = { on ->
-                    prefs.write("details", if (on) "on" else "off")
-                    onDetailsChanged(on)
-                }
-            )
-        }
-        Note(stringResource(R.string.settings_details_hint))
-
-        // Between the diagnostics switch and the calibration, because it belongs with neither: it
-        // is the one block here that undoes a decision made before this screen was ever reachable.
+        // Before the calibration, because it belongs with neither that nor the language above it:
+        // it is the one block here that undoes a decision made before this screen was ever reachable.
         Label(R.string.settings_permissions)
         Line(first = true) {
             LineName(stringResource(R.string.perm_title))
@@ -154,16 +141,37 @@ fun SettingsScreen(
         }
         Note(stringResource(R.string.goto_self_hint))
 
+        // Under the calibration and not above it: nobody but a person troubleshooting a room needs
+        // this switch, and the rows before it are the ones anybody setting up comes here for.
+        Label(R.string.settings_diagnostics)
+        Line(first = true) {
+            LineName(stringResource(R.string.settings_details))
+            Switch(
+                checked = showDetails,
+                onCheckedChange = { on ->
+                    prefs.write("details", if (on) "on" else "off")
+                    onDetailsChanged(on)
+                }
+            )
+        }
+        Note(stringResource(R.string.settings_details_hint))
+
         Label(R.string.about_title)
         // Always present, and not behind the details switch above: the build mark is the
         // only way to tell two installs of the same version apart without a cable, and this
-        // project has burned a whole A/B round on not having it visible.
-        Line(first = true) {
-            LineName(
-                stringResource(R.string.about_version, BuildConfig.VERSION_NAME, BuildConfig.BUILD_MARK),
-                quiet = true
+        // project has burned a whole A/B round on not having it visible. 检查更新 at its end.
+        VersionLine(
+            stringResource(R.string.about_version, BuildConfig.VERSION_NAME, BuildConfig.BUILD_MARK),
+            BuildConfig.VERSION_NAME,
+            BuildConfig.REPO_URL,
+            UpdateWords(
+                check = stringResource(R.string.update_check),
+                checking = stringResource(R.string.update_checking),
+                upToDate = stringResource(R.string.update_latest),
+                download = stringResource(R.string.update_download),
+                failed = stringResource(R.string.update_failed)
             )
-        }
+        )
         // A fact left unset in gradle.properties reaches BuildConfig as an empty string, and
         // configured() turns that into null - null here means the row does not exist, not a
         // placeholder, which is why there is no release-page row. See configured() in

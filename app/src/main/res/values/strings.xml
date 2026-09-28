@@ -473,6 +473,11 @@
     <string name="settings_self_calibrate">校准本机输出延迟</string>
     <string name="about_title">关于</string>
     <string name="about_version">版本 %1$s · 构建 %2$s</string>
+    <string name="update_check">检查更新</string>
+    <string name="update_checking">检查中…</string>
+    <string name="update_latest">已是最新版本</string>
+    <string name="update_download">下载 %1$s</string>
+    <string name="update_failed">检查失败，请检查网络</string>
     <string name="about_author">作者</string>
     <string name="about_repo">项目仓库</string>
     <string name="about_licence">许可</string>
@@ -493,7 +498,7 @@
     <string name="perm_done">完成</string>
     <string name="settings_permissions">权限</string>
     <string name="settings_permissions_open">查看</string>
-    <string name="settings_permissions_hint">第一次打开时拒绝过的，可以在这里补上。已经拒绝过两次的，这里会带你去系统设置。</string>
+    <string name="settings_permissions_hint">查看并修改未允许的权限</string>
     <string name="standby_lock_title">%1$s · 正在同步播放</string>
     <string name="standby_lock_title_down">%1$s · 没连上，正在重拨</string>
     <string name="standby_lock_text">音量 %1$d%%</string>

@@ -467,6 +467,11 @@
     <string name="settings_self_calibrate">Calibrate this phone\'s output lead</string>
     <string name="about_title">About</string>
     <string name="about_version">Version %1$s · build %2$s</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_latest">Up to date</string>
+    <string name="update_download">Download %1$s</string>
+    <string name="update_failed">Could not check. Check the network.</string>
     <string name="about_author">Author</string>
     <string name="about_repo">Repository</string>
     <string name="about_licence">Licence</string>
@@ -487,7 +492,7 @@
     <string name="perm_done">Done</string>
     <string name="settings_permissions">Permissions</string>
     <string name="settings_permissions_open">Open</string>
-    <string name="settings_permissions_hint">Anything refused on the first launch can be granted here. Anything refused twice is handed to the system settings.</string>
+    <string name="settings_permissions_hint">See and change the permissions not yet allowed.</string>
     <string name="standby_lock_title">%1$s · playing in sync</string>
     <string name="standby_lock_title_down">%1$s · no connection, redialling</string>
     <string name="standby_lock_text">Volume %1$d%%</string>
