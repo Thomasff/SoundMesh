@@ -86,10 +86,11 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes
 
-  # The computer's package: the folder createDistributable makes, runtime included, zipped. On a
-  # Windows runner because jpackage only packages for the system it runs on. After the release job
-  # so there is a release to attach to, and apart from it so the signing key never reaches here.
-  # Not signed: Windows asks once before the first run.
+  # The computer's packages: the folder createDistributable makes, runtime included, zipped; and an
+  # MSI installer made from the same build. On a Windows runner because jpackage only packages for
+  # the system it runs on. After the release job so there is a release to attach to, and apart from
+  # it so the signing key never reaches here. Neither is signed: Windows asks once before the first
+  # run.
   desktop:
     needs: release
     runs-on: windows-latest
@@ -108,7 +109,7 @@ jobs:
 
       # Gradle does not look where setup-java installs, so it is told which variable holds 25.
       - name: Build
-        run: ./gradlew.bat :desktop-app:createDistributable --no-daemon "-Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64"
+        run: ./gradlew.bat :desktop-app:createDistributable :desktop-app:packageMsi --no-daemon "-Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64"
 
       - name: Publish
         env:
@@ -116,4 +117,7 @@ jobs:
         run: |
           $zip = "SoundMesh-$env:GITHUB_REF_NAME-windows-x64.zip"
           Compress-Archive -Path desktop-app/build/compose/binaries/main/app/SoundMesh -DestinationPath $zip
-          gh release upload "$env:GITHUB_REF_NAME" $zip
+          # packageMsi names its file after the bare version; renamed to match the zip beside it.
+          $msi = "SoundMesh-$env:GITHUB_REF_NAME-windows-x64.msi"
+          Copy-Item (Get-ChildItem desktop-app/build/compose/binaries/main/msi/*.msi | Select-Object -First 1).FullName $msi
+          gh release upload "$env:GITHUB_REF_NAME" $zip $msi

@@ -1,3 +1,5 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
 // The window over the desktop sessions, and nothing else.
 //
 // A module of its own rather than a source set in :desktop, because the two cannot share a
@@ -150,10 +152,21 @@ compose.desktop {
             // The exe's file version, from the same tag as the about block's.
             packageVersion = released ?: "1.0.0"
             modules("java.instrument", "jdk.unsupported")
+            // The installer, beside the zipped folder createDistributable makes. packageMsi builds
+            // it; the release workflow publishes both.
+            targetFormats(TargetFormat.Msi)
             // The exe's own icon, what Explorer and a pinned taskbar button show before a window
             // exists. Made by tools/windows-icons.ps1, as are the windows' own in resources/icon.
             windows {
                 iconFile.set(rootProject.file("asset/windows/SoundMesh.ico"))
+                // Never to change: it is how Windows knows a new MSI is the same program and
+                // replaces the old install rather than adding a second one beside it.
+                upgradeUuid = "d3db8c31-d17f-4588-9587-acc610e13f18"
+                menuGroup = "SoundMesh"
+                shortcut = true
+                // Per user: installs without asking for administrator rights, into the user's own
+                // AppData, the same place the settings already live.
+                perUserInstall = true
             }
         }
     }
