@@ -152,6 +152,9 @@ compose.desktop {
             // The exe's file version, from the same tag as the about block's, and the same 0.1.0
             // without one: a local MSI at 1.0.0 would count every 0.x release as a downgrade.
             packageVersion = released ?: "0.1.0"
+            // The publisher Windows lists the install under, and the registry key the MSI keeps
+            // its install folder in. Unset, both read 未知.
+            vendor = project.findProperty("soundmesh.author")?.toString()
             modules("java.instrument", "jdk.unsupported")
             // The installer, beside the zipped folder createDistributable makes. packageMsi builds
             // it; the release workflow publishes both.
@@ -165,9 +168,23 @@ compose.desktop {
                 upgradeUuid = "d3db8c31-d17f-4588-9587-acc610e13f18"
                 menuGroup = "SoundMesh"
                 shortcut = true
-                // Per user: installs without asking for administrator rights, into the user's own
-                // AppData, the same place the settings already live.
+                // Per user: installs without asking for administrator rights. Under AppData\Local
+                // like the default, but never the default's AppData\Local\SoundMesh: that is
+                // identityDirectory(), where the settings and the calibrations live, and jpackage's
+                // MSI deletes its whole install folder on uninstall, whatever else is in it - v0.3.0
+                // installed there, and uninstalling it took every setting with it (2026-09-28). One
+                // folder deep: Programs/SoundMesh, where per-user installs usually go, fails in WiX's
+                // light.exe with exit code 204.
                 perUserInstall = true
+                // No choosing the folder, because an upgrade does not keep the choice. jpackage keeps
+                // the folder under a registry key named for the version, so the next version finds
+                // nothing there and installs to the default instead. A folder off the system drive
+                // also sets off one error per file on the next upgrade (about 200 of them), since
+                // Windows keeps the rollback copies in that drive's Config.Msi, which a per-user
+                // install may not touch. And the uninstall deletes whatever folder was chosen,
+                // everything in it included. Tried 2026-09-28.
+                dirChooser = false
+                installationPath = "SoundMesh App"
             }
         }
     }
