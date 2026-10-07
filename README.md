@@ -47,6 +47,8 @@ The acoustic calibration also measures the approximate distance between devices,
 with the tight sync carries the spatial effects: stereo assignment, a source that circles the room,
 a source placed by hand.
 
+https://github.com/user-attachments/assets/04253cf9-76f2-42af-b60d-33178e2b14ed
+
 ## Features
 
 - **Tight sync** — about 0.5 ms between devices once calibrated.
