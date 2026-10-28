@@ -1153,6 +1153,7 @@ class HomeActivity : ComponentActivity() {
             approximate = RoomCommands.approximate(),
             calledHere = handsetName(this),
             onStandby = StandbyService.ACTIVE?.connected == true,
+            otherVersionAnswered = StandbyService.ACTIVE?.otherVersionAnswered == true,
             // Only while a capture is actually running. Silence from a source that is not open
             // is not a reading, and a stale one on screen is worse than none.
             captureSilentSeconds =

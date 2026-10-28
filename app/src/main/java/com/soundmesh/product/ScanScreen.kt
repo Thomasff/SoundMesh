@@ -23,7 +23,7 @@ import com.soundmesh.probe.R
 /**
  * What the scanner is doing, and how each of those reads.
  *
- * Five states rather than a line of text, because four of them are about the camera rather than
+ * Six states rather than a line of text, because four of them are about the camera rather than
  * about a code: a scanner nobody granted the camera to, one the system would not open, one aimed
  * at somebody's takeaway menu and one that simply has not found anything yet all look identical
  * from a metre away, and they are four different things to walk over and fix.
@@ -31,6 +31,7 @@ import com.soundmesh.probe.R
 enum class ScanSay(val text: Int, val tone: Tone) {
     LOOKING(R.string.scan_looking, Tone.QUIET),
     NOT_OURS(R.string.scan_not_ours, Tone.WATCH),
+    OTHER_VERSION(R.string.scan_other_version, Tone.WATCH),
     SCANNED(R.string.scan_done, Tone.GOOD),
     NO_PERMISSION(R.string.scan_no_permission, Tone.WRONG),
     NO_CAMERA(R.string.scan_no_camera, Tone.WRONG)
@@ -48,7 +49,7 @@ enum class ScanSay(val text: Int, val tone: Tone) {
  * at all, and an empty black rectangle reads as one that is working.
  */
 internal fun previewShown(say: ScanSay): Boolean =
-    say == ScanSay.LOOKING || say == ScanSay.NOT_OURS
+    say == ScanSay.LOOKING || say == ScanSay.NOT_OURS || say == ScanSay.OTHER_VERSION
 
 /**
  * The scanner, which is the one screen in this app somebody holds in their hand and aims.

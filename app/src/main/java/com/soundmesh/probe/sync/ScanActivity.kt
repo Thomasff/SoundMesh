@@ -174,7 +174,7 @@ class ScanActivity : ComponentActivity() {
             // cannot see anything" are different problems with the same silence.
             val code = runCatching { PairingCodeCodec.decode(text) }.getOrNull()
             if (code == null) {
-                say(ScanSay.NOT_OURS)
+                say(if (PairingCodeCodec.isOtherVersion(text)) ScanSay.OTHER_VERSION else ScanSay.NOT_OURS)
                 return
             }
             if (!scanned.compareAndSet(false, true)) return

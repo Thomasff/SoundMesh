@@ -31,6 +31,18 @@ class PairingCodeCodecTest {
         assertThrows(IllegalArgumentException::class.java) { PairingCodeCodec.decode(stale) }
     }
 
+    /**
+     * The scanner says which of the two refusals it was: a stranger's QR code and a host on
+     * another version are different things to walk over and fix.
+     */
+    @Test
+    fun tellsACodeFromAnotherVersionFromAStrangersCode() {
+        assertEquals(true, PairingCodeCodec.isOtherVersion("${PairingCodeCodec.MAGIC} 2 0123456789abcdef 192.168.43.1 45124"))
+        assertEquals(false, PairingCodeCodec.isOtherVersion(PairingCodeCodec.encode(code)))
+        assertEquals(false, PairingCodeCodec.isOtherVersion("https://example.com"))
+        assertEquals(false, PairingCodeCodec.isOtherVersion(""))
+    }
+
     @Test
     fun refusesSomethingThatIsNotAPairingCodeAtAll() {
         assertThrows(IllegalArgumentException::class.java) { PairingCodeCodec.decode("https://example.com") }

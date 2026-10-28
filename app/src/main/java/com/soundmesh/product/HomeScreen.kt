@@ -157,6 +157,8 @@ data class HomeState(
      */
     val calledHere: String = "",
     val onStandby: Boolean = false,
+    /** A sink's last look heard a host on another version - see StandbyService.otherVersionAnswered. */
+    val otherVersionAnswered: Boolean = false,
     /**
      * Whether this handset lets this app keep running once nobody is looking at it.
      *
@@ -656,6 +658,15 @@ internal fun StandbyLine(state: HomeState, actions: HomeActions) {
                 color = MaterialTheme.colorScheme.error
             )
         }
+        // Beside the line above rather than one of its answers: that one needs a host this handset
+        // is paired with, and a host on another version is exactly the one it never stores.
+        if (!state.onStandby && state.otherVersionAnswered) {
+            Text(
+                stringResource(R.string.join_other_version),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
     }
     if (warnsAboutBackground(state)) {
         Text(
@@ -829,6 +840,12 @@ private fun clockOf(micros: Long): String {
     return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 }
 
+/** Why a start was refused, in words where there are some and by its code where there are not. */
+@Composable
+internal fun failureWords(failure: String): String =
+    StateWording.failure(failure)?.let { stringResource(it) }
+        ?: stringResource(R.string.state_failed, failure)
+
 /**
  * What the room is doing, and the counters behind it.
  *
@@ -845,9 +862,7 @@ internal fun StatePanel(state: HomeState) {
     Line(first = true) {
         Text(
             if (!state.running && state.failure != null) {
-                StateWording.failure(state.failure)
-                    ?.let { stringResource(it) }
-                    ?: stringResource(R.string.state_failed, state.failure)
+                failureWords(state.failure)
             } else {
                 stringResource(StateWording.of(state.sessionState))
             },

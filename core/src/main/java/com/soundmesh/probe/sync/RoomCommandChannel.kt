@@ -14,8 +14,8 @@ import java.net.Socket
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
-/** Next after the room's 45127. One socket per standing-by handset, and nothing on it per second. */
-const val COMMAND_PORT = 45128
+/** Next after the room's 28127. One socket per standing-by handset, and nothing on it per second. */
+const val COMMAND_PORT = 28128
 
 /**
  * How long [RoomCommands.stillServing] waits for the far end to answer.

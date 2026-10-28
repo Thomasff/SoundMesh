@@ -175,7 +175,7 @@ function authorisedPairRunner(order = []) {
     if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
     // A host already listening on the chunk port, so a capture run passes the readiness gate
     // instead of sitting out its consent timeout. Tests about the gate itself supply their own.
-    if (call.args.includes('/proc/net/tcp')) return { exitCode: 0, stdout: '   0: 012BA8C0:B044 00000000:0000 0A', stderr: '' };
+    if (call.args.includes('/proc/net/tcp')) return { exitCode: 0, stdout: '   0: 012BA8C0:6DDC 00000000:0000 0A', stderr: '' };
     return { exitCode: 0, stdout: '', stderr: '' };
   };
 }
@@ -800,7 +800,7 @@ test('a capture run holds the sink back until the host is listening', async () =
     if (call.args.includes('/proc/net/tcp')) {
       probes += 1;
       // Not listening until the third look, the way a dialog waits on a person.
-      return { exitCode: 0, stdout: probes < 3 ? '' : '   0: 012BA8C0:B044 00000000:0000 0A', stderr: '' };
+      return { exitCode: 0, stdout: probes < 3 ? '' : '   0: 012BA8C0:6DDC 00000000:0000 0A', stderr: '' };
     }
     if (call.args.includes('dumpsys')) return { exitCode: 0, stdout: 'mWakefulness=Awake', stderr: '' };
     return { exitCode: 0, stdout: '', stderr: '' };
@@ -830,7 +830,7 @@ test('the readiness gate sees a listener in tcp6, where an unbound ServerSocket 
   // listener as absent - and a ServerSocket given no address binds the IPv6 wildcard.
   const tcp6 = [
     '  sl  local_address                         remote_address                        st',
-    '   0: 00000000000000000000000000000000:B044 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 10162 0 1234 1'
+    '   0: 00000000000000000000000000000000:6DDC 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 10162 0 1234 1'
   ].join('\n');
   let seen = false;
   await awaitHostListening({
@@ -844,16 +844,16 @@ test('the readiness gate sees a listener in tcp6, where an unbound ServerSocket 
   // The IPv4 table still has to work: the same run reads both.
   await awaitHostListening({
     serial: HOST_SERIAL,
-    runAdbHost: async () => ({ exitCode: 0, stdout: '   3: 012BA8C0:B044 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10162 0 99 1', stderr: '' }),
+    runAdbHost: async () => ({ exitCode: 0, stdout: '   3: 012BA8C0:6DDC 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10162 0 99 1', stderr: '' }),
     timeoutMs: 5000,
     pollMs: 10
   });
 
-  // A listener on a neighbouring port is not this one. 45123 is the clock port, bound first.
+  // A listener on a neighbouring port is not this one. 28123 is the clock port, bound first.
   await assert.rejects(
     () => awaitHostListening({
       serial: HOST_SERIAL,
-      runAdbHost: async () => ({ exitCode: 0, stdout: '   3: 012BA8C0:B043 00000000:0000 0A', stderr: '' }),
+      runAdbHost: async () => ({ exitCode: 0, stdout: '   3: 012BA8C0:6DDB 00000000:0000 0A', stderr: '' }),
       timeoutMs: 100,
       pollMs: 10
     }),

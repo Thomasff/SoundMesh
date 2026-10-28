@@ -874,7 +874,7 @@ class HostSession(
 
     /**
      * Hands the spatial port to the round's plan server, which dials the same number: a handset
-     * sink asks for its plan on RoundPorts.PLAN, and that is SinkStream.SPATIAL_PORT, 45126. The
+     * sink asks for its plan on RoundPorts.PLAN, and that is SinkStream.SPATIAL_PORT, 28126. The
      * handset host never meets this - its spatial server lives only while a session plays, and a
      * round cannot run beside one - while this machine holds its for as long as it is the host.
      * Nothing is playing by now, so nobody is on it.

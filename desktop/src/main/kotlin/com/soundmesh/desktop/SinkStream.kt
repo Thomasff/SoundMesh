@@ -151,7 +151,7 @@ class SinkStream(
 
     companion object {
         /** The handsets' spatial channel (SyncActivity.SPATIAL_PORT), which lives in the app module. */
-        const val SPATIAL_PORT = 45126
+        const val SPATIAL_PORT = 28126
 
         /**
          * The cadence and window the handset sink settled on, named here for the same reason it is

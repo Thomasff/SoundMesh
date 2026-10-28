@@ -390,7 +390,10 @@ class StandbyService : Service() {
             // Written down whichever way it went, and the failures are the half worth keeping:
             // "nothing answered" and "something answered on an older build" send somebody to two
             // completely different places, and from this screen both are simply no host.
-            found.onSuccess { events.write("standby looked for a host: ${it.why}") }
+            found.onSuccess {
+                events.write("standby looked for a host: ${it.why}")
+                otherVersionAnswered = it.otherVersion
+            }
         }, "SoundMeshHostSearch").start()
     }
 
@@ -884,6 +887,16 @@ class StandbyService : Service() {
 
     /** True while there is a socket to the host actually open, which is what standing by means. */
     val connected: Boolean get() = line?.connected == true
+
+    /**
+     * Whether the last look heard a SoundMesh build on another protocol version.
+     *
+     * Replaced by every look rather than latched, so updating that phone clears it at the next one.
+     * See [HostSearch.Found.otherVersion].
+     */
+    @Volatile
+    var otherVersionAnswered = false
+        private set
 }
 
 /**

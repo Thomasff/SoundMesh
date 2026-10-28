@@ -310,7 +310,7 @@ class HostSession(
     )
 
     // Null when this session has no name of its own: an unbound port rather than an idle one, so a
-    // build without the feature is not listening on 45126 either.
+    // build without the feature is not listening on 28126 either.
     // Started from the colours the standing channel already handed this room, so that pressing
     // play does not recolour handsets somebody has been looking at through a calibration.
     private val spatialServer =

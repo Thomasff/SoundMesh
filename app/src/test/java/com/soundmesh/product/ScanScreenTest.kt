@@ -27,6 +27,12 @@ class ScanScreenTest {
         assertTrue(previewShown(ScanSay.NOT_OURS))
     }
 
+    /** The camera is still bound: the next code it sees may be the host once it is updated. */
+    @Test
+    fun `a code from another version leaves the picture up`() {
+        assertTrue(previewShown(ScanSay.OTHER_VERSION))
+    }
+
     /**
      * A scan unbinds the camera, and the three refusals never bound one. In all four there is
      * nothing behind the preview, and a preview with nothing behind it looks exactly like one

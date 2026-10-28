@@ -17,7 +17,7 @@ object ClockPacket {
      * fail in the only way that costs a session to diagnose: both ends working perfectly and
      * neither hearing the other.
      */
-    const val DEFAULT_PORT = 45123
+    const val DEFAULT_PORT = 28123
 
     fun encodeRequest(seq: Int, t1: Long): ByteArray {
         val packet = ByteArray(BYTES)

@@ -279,11 +279,12 @@
     <string name="pair_none">还没配对</string>
     <string name="pair_scan">扫描主机的码</string>
     <string name="pair_scan_hint">扫到之后按返回键回来</string>
-    <!-- The scanner. ScanSay is the five things it can be doing; see ScanScreen.kt. -->
+    <!-- The scanner. ScanSay is the six things it can be doing; see ScanScreen.kt. -->
     <string name="scan_title">扫主机的码</string>
     <string name="scan_hint">把本机对准主机屏幕上的那个码，对准就会自动扫到。</string>
     <string name="scan_looking">正在找码</string>
     <string name="scan_not_ours">看到一个码，但不是这个应用的</string>
+    <string name="scan_other_version">扫到了主机的码，但版本对不上，两边要装同一版。</string>
     <string name="scan_done">扫到了，已经记住这台主机</string>
     <string name="scan_no_permission">没有相机权限。去设置里打开，再回到这一页。</string>
     <string name="scan_no_camera">打不开相机</string>
@@ -292,6 +293,7 @@
     <string name="standby_sink">已连接，主机开始播放后，本机将自动播放</string>
     <string name="join_no_wifi">本机没连 WiFi。连上和主机同一个 WiFi，或者连主机开的热点。</string>
     <string name="join_other_network">本机和主机不在同一个网：主机是 %1$s，本机是 %2$s。有的路由器会把 2.4G 和 5G 分成两个网，访客网络也是另一个网。</string>
+    <string name="join_other_version">找到了主机，但版本对不上，两边要装同一版。</string>
     <string name="join_cannot_reach">和主机在同一个网，但连不上。可能是主机那台没开着这个应用，也可能是这个网不让设备之间互相通信（校园网、公司网、公共热点常这样）。最稳的办法是让主机开热点，本机连它的热点。</string>
     <string name="standby_sink_alone">还没连上主机，正在同一个网络里自动找。找不到就扫一下主机屏幕上的码——部分网络无法让设备自动发现对方。</string>
     <string name="pair_with">已配对 %1$s @ %2$s:%3$d</string>
@@ -433,7 +435,7 @@
          inside a circle the size of a handset icon. -->
     <string name="room_listener_word">你</string>
     <string name="room_disagrees">测距说 %1$s 比 %2$s 远，你画的正相反——这两个图标是不是拖反了？</string>
-    <string name="failure_port_in_use">起不来：对时和播放用的是同一个端口，多半是对时那边还开着。到「对时」那页按停止，等几秒再试一次。</string>
+    <string name="failure_port_in_use">起不来：网络端口被占用了。如果「对时」那页还开着，先去那页按停止；不是的话，重启手机后再试。</string>
     <string name="now_playing">正在放：%1$s</string>
     <string name="welcome_what">把几台设备变成一套音箱</string>
     <string name="welcome_self">本机 · %1$s</string>

@@ -58,7 +58,8 @@ object HostSearch {
             return Found(
                 null,
                 if (others.isEmpty() && outcome.hosts.isNotEmpty()) ONLY_ITS_OWN_RECORD
-                else wordFor(outcome, mine) + unresolvedNote(outcome.unresolved)
+                else wordFor(outcome, mine) + unresolvedNote(outcome.unresolved),
+                otherVersion = outcome.otherVersions > 0
             )
         }
         // Why its own record is there to be filtered at all: giving the role back is a request to
@@ -123,7 +124,11 @@ object HostSearch {
             }
         }
         val host = what.host
-            ?: return Found(null, wordFor(what.verdict, stored) + unresolvedNote(outcome.unresolved))
+            ?: return Found(
+                null,
+                wordFor(what.verdict, stored) + unresolvedNote(outcome.unresolved),
+                otherVersion = outcome.otherVersions > 0
+            )
         if (paired.read() != stored) return Found(null, SCANNED_MEANWHILE)
         paired.write(host)
         return Found(host, wordFor(what.verdict, host))
@@ -204,8 +209,12 @@ object HostSearch {
      * The sentence is for the timeline rather than for a screen. Nothing found and nothing
      * compatible send somebody to two different places - a network that carries no multicast
      * against a handset on an older build - and from the screen both are simply "没找到".
+     *
+     * [otherVersion] is the half of that the screen does say, since 2026-10-28: a look that came to
+     * nothing while a SoundMesh build on another protocol version answered. The ports moved that
+     * day, so for a while every room with one phone not yet updated is this case exactly.
      */
-    data class Found(val host: PairingCode?, val why: String)
+    data class Found(val host: PairingCode?, val why: String, val otherVersion: Boolean = false)
 
     /**
      * Why one look came to nothing, in enough detail to act on.

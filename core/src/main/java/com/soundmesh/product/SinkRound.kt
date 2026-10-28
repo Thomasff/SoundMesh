@@ -109,13 +109,13 @@ object RoundPorts {
     const val CLOCK = ClockPacket.DEFAULT_PORT
 
     /** Where the host takes delivery of the sink's own reading of the run. */
-    const val RESULT = 45125
+    const val RESULT = 28125
 
-    /** Next after the result's 45125. */
-    const val PLAN = 45126
+    /** Next after the result's 28125. */
+    const val PLAN = 28126
 
-    /** Next after the plan's 45126, and held only while a room is being measured. */
-    const val ROOM = 45127
+    /** Next after the plan's 28126, and held only while a room is being measured. */
+    const val ROOM = 28127
 }
 
 /**

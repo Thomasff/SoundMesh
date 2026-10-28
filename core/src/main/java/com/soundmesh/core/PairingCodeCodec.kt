@@ -37,4 +37,16 @@ object PairingCodeCodec {
         require(port != null && port in 1..65535) { "unreadable port: ${fields[4]}" }
         return PairingCode(hostId = fields[2], address = fields[3], chunkPort = port)
     }
+
+    /**
+     * Whether [text] is one of our codes from a build on another protocol version.
+     *
+     * Only the first two fields are read, because the rest is the other version's to define. The
+     * scanner asks this after [decode] has refused, to say "same version on both" rather than
+     * "not this app's code" to somebody holding a phone up to a SoundMesh host.
+     */
+    fun isOtherVersion(text: String): Boolean {
+        val fields = text.trim().split(" ")
+        return fields.size >= 2 && fields[0] == MAGIC && fields[1] != PeerAdvertisement.PROTOCOL_VERSION
+    }
 }

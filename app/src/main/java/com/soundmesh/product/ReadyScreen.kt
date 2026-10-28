@@ -169,6 +169,10 @@ private fun ScanLine(state: HomeState, actions: HomeActions) {
         // Filled: on a sink's board it is the one thing there is to do.
         FilledChip(stringResource(R.string.pair_scan), actions.scan)
     }
+    // The same sentence the playing stage's standby line adds, for the same look - see StandbyLine.
+    if (!state.onStandby && state.otherVersionAnswered) {
+        Note(stringResource(R.string.join_other_version), Tone.WRONG)
+    }
 }
 
 /**

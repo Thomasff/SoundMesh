@@ -1552,7 +1552,7 @@ class SyncActivity : Activity() {
         const val RESULT_PORT = com.soundmesh.product.RoundPorts.RESULT
 
         /** Where the host publishes the spatial rule the room is playing under. */
-        const val SPATIAL_PORT = 45126
+        const val SPATIAL_PORT = 28126
 
         /**
          * How long the host waits for that delivery.

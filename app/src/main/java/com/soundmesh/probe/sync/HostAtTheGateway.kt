@@ -132,7 +132,7 @@ object HostAtTheGateway {
     @Volatile private var accepting: Thread? = null
 
     /** Its own port rather than a word on an existing channel, so no handshake anywhere changes. */
-    const val PORT = 45129
+    const val PORT = 28129
 
     private const val ASK_TIMEOUT_MILLIS = 900
     private const val JOIN_TIMEOUT_MILLIS = 500L

@@ -69,6 +69,38 @@ class PeerAdvertisementTest {
         assertEquals(0, outcome.compatible)
     }
 
+    /**
+     * A host from before the ports moved below the ephemeral range. It listens where this build
+     * no longer dials, so joining it would connect the record and nothing behind it.
+     */
+    @Test
+    fun refusesAHostOnThePortsBeforeTheMove() {
+        val outcome = PeerAdvertisement.choose(listOf(peer("X10", version = "2")))
+
+        assertEquals(DiscoveryFailure.NO_COMPATIBLE_VERSION, outcome.failure)
+    }
+
+    /**
+     * Counted even beside a host that can be joined, and even when the failure is something else:
+     * a sink's own stale record answering next to an old host leaves [DiscoveryOutcome.failure]
+     * saying nothing about versions, and that old host is still the one somebody has to update.
+     */
+    @Test
+    fun countsTheHostsOnAnotherVersion() {
+        val outcome = PeerAdvertisement.choose(
+            listOf(peer("Old", version = "2", address = "192.168.43.9"), peer("X10"))
+        )
+
+        assertEquals(1, outcome.otherVersions)
+        assertEquals(0, PeerAdvertisement.choose(listOf(peer("X10"))).otherVersions)
+    }
+
+    /** No version at all is not a SoundMesh build to tell anybody to update. */
+    @Test
+    fun doesNotCountARecordWithNoVersionAsAnotherVersion() {
+        assertEquals(0, PeerAdvertisement.choose(listOf(peer("X10", version = null))).otherVersions)
+    }
+
     /** A service with no version attribute at all is not a SoundMesh host this build knows. */
     @Test
     fun refusesAHostThatAdvertisesNoVersion() {

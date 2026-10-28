@@ -17,8 +17,13 @@ object ChunkCodec {
      * states: the two ends are two platforms now, and a second copy of this number fails in the
      * one way that costs a session to diagnose - both ends working perfectly and neither hearing
      * the other.
+     *
+     * Below 32768, like every port of ours, because Android hands out 32768-60999 to outgoing
+     * connections and one of those once held 45124 for minutes - see
+     * PeerAdvertisement.PROTOCOL_VERSION. Windows' default range starts at 49152, but a machine
+     * can be set otherwise: the one this was moved on gives out 1024-15000, so 2812x clears both.
      */
-    const val DEFAULT_PORT = 45124
+    const val DEFAULT_PORT = 28124
 
     /**
      * Frames in one chunk, which is the other thing the two ends agree on without saying so.

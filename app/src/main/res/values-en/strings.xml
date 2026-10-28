@@ -273,11 +273,12 @@
     <string name="pair_none">Not paired</string>
     <string name="pair_scan">Scan the host\'s code</string>
     <string name="pair_scan_hint">Press back when it has scanned</string>
-    <!-- The scanner. ScanSay is the five things it can be doing; see ScanScreen.kt. -->
+    <!-- The scanner. ScanSay is the six things it can be doing; see ScanScreen.kt. -->
     <string name="scan_title">Scan the host\'s code</string>
     <string name="scan_hint">Point this phone at the code on the host\'s screen; it scans by itself.</string>
     <string name="scan_looking">Looking for a code</string>
     <string name="scan_not_ours">That is a code, but not this app\'s</string>
+    <string name="scan_other_version">That is the host\'s code, but the versions do not match. Both sides need the same version.</string>
     <string name="scan_done">Scanned. This host is stored.</string>
     <string name="scan_no_permission">No camera permission. Turn it on in the settings and come back to this page.</string>
     <string name="scan_no_camera">The camera will not open</string>
@@ -286,6 +287,7 @@
     <string name="standby_sink">Connected. This device plays by itself once the host starts playing.</string>
     <string name="join_no_wifi">This phone is not on WiFi. Join the same network as the host, or the hotspot the host is running.</string>
     <string name="join_other_network">This phone and the host are on different networks: the host is on %1$s, this phone on %2$s. Some routers split 2.4G and 5G into two networks, and a guest network is another one again.</string>
+    <string name="join_other_version">Found a host, but the versions do not match. Both sides need the same version.</string>
     <string name="join_cannot_reach">Same network as the host, but no connection. Either the host does not have this app open, or the network does not let devices talk to each other, which campus, office and public networks often do not. The surest way round it is a hotspot on the host with this phone joining it.</string>
     <string name="standby_sink_alone">No host yet; looking for one on this network. If nothing turns up, scan the code on the host\'s screen. Some networks do not let devices find each other on their own.</string>
     <string name="pair_with">Paired with %1$s @ %2$s:%3$d</string>
@@ -427,7 +429,7 @@
          inside a circle the size of a handset icon. -->
     <string name="room_listener_word">You</string>
     <string name="room_disagrees">The measurement says %1$s is further away than %2$s, and your drawing says the opposite. Are those two icons the wrong way round?</string>
-    <string name="failure_port_in_use">Will not start: the sync and the playback use the same port, and the sync is probably still open. Press stop on the sync page, wait a few seconds, and try again.</string>
+    <string name="failure_port_in_use">Will not start: a network port is taken. If the sync page is still open, press stop there first; otherwise restart the phone and try again.</string>
     <string name="now_playing">Playing: %1$s</string>
     <string name="welcome_what">Turn a few devices into one set of speakers</string>
     <string name="welcome_self">This phone · %1$s</string>

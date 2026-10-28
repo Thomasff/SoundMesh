@@ -39,7 +39,15 @@ data class DiscoveryOutcome(
      * nothing having answered. Said apart because the two are found in different places: a network
      * that carries no multicast, against a resolve stuck inside the handset that is looking.
      */
-    val unresolved: Int = 0
+    val unresolved: Int = 0,
+    /**
+     * How many answered as a SoundMesh build speaking another protocol version.
+     *
+     * Apart from [failure] because that names why nothing was joined, and this is a fact about the
+     * room whether or not something was: the one answer worth putting on a screen is "that phone
+     * needs the same version", and it is just as true beside this handset's own stale record.
+     */
+    val otherVersions: Int = 0
 ) {
     /** How many of [seen] this build could actually talk to. */
     val compatible: Int get() = hosts.size
@@ -83,8 +91,13 @@ object PeerAdvertisement {
      * 1 to 2: the record gained [ID_KEY]. An older host is not mis-read by a newer sink so much as
      * unfileable by it - it answers with no name to keep a calibration under, and the newer sink
      * would have to invent one.
+     *
+     * 2 to 3: every port moved from 4512x to 2812x, below the ephemeral range Linux hands out from
+     * 32768. An outgoing connection of some other app had taken 45124 as its own end and sat on it
+     * in FIN_WAIT1, and no host could bind until it went (2026-10-28). An older build is not
+     * listening where this one dials, so it is refused here rather than connected to and silent.
      */
-    const val PROTOCOL_VERSION = "2"
+    const val PROTOCOL_VERSION = "3"
 
     fun attributes(hostId: String): Map<String, String> =
         mapOf(VERSION_KEY to PROTOCOL_VERSION, ID_KEY to hostId)
@@ -148,7 +161,11 @@ object PeerAdvertisement {
             peer = if (failure == null) compatible.single() else null,
             failure = failure,
             seen = candidates.size,
-            hosts = compatible
+            hosts = compatible,
+            otherVersions = candidates.count {
+                val version = it.attributes[VERSION_KEY]
+                version != null && version != PROTOCOL_VERSION
+            }
         )
     }
 }

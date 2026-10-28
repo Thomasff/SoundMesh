@@ -72,6 +72,12 @@ fun PlayingScreen(
         }
         NowPlaying(state)
         PlayControls(state, actions, canPlay = canPlay(state))
+        // Under the button that was pressed, and whether or not details are on. It used to live
+        // only in StatePanel, which is behind that setting, so a refused start was the button
+        // greying for a moment and nothing else - reported 2026-10-28 with the port taken.
+        if (!state.running && state.failure != null) {
+            Note(failureWords(state.failure), Tone.WRONG)
+        }
         state.room?.let {
             Label(R.string.room_title)
             SpatialPanel(
