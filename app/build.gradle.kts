@@ -54,7 +54,7 @@ android {
         // arrives here as an empty string, and every screen treats empty as "do not render this
         // at all" - a QR code that scans to nothing is worse than no QR code. The release page is
         // the one still unset.
-        for (name in listOf("AUTHOR", "AUTHOR_URL", "REPO_URL", "LICENCE", "RELEASE_URL")) {
+        for (name in listOf("AUTHOR", "AUTHOR_URL", "REPO_URL", "LICENCE", "RELEASE_URL", "FEEDBACK_EMAIL")) {
             val property = "soundmesh." + name.lowercase().split("_")
                 .mapIndexed { i, part -> if (i == 0) part else part.replaceFirstChar { it.uppercase() } }
                 .joinToString("")

@@ -478,6 +478,9 @@
     <string name="about_repo">Repository</string>
     <string name="about_licence">Licence</string>
     <string name="about_github">Open on GitHub</string>
+    <string name="about_feedback">Feedback</string>
+    <string name="feedback_subject">SoundMesh feedback</string>
+    <string name="feedback_no_mail_app">No mail app found; please write to the address above</string>
     <string name="perm_title">Permissions needed</string>
     <string name="perm_mic">Microphone</string>
     <string name="perm_mic_why">Recording is used only while calibrating or playing this phone\'s own sound, and at no other time</string>

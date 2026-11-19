@@ -484,6 +484,9 @@
     <string name="about_repo">项目仓库</string>
     <string name="about_licence">许可</string>
     <string name="about_github">在 GitHub 上打开</string>
+    <string name="about_feedback">反馈与建议</string>
+    <string name="feedback_subject">SoundMesh 反馈</string>
+    <string name="feedback_no_mail_app">没有找到邮件 App，请手动发到上面的地址</string>
     <string name="perm_title">需要的权限</string>
     <string name="perm_mic">麦克风</string>
     <string name="perm_mic_why">只有校准、播放本机声音时需要使用录音功能，其余时间不会使用</string>

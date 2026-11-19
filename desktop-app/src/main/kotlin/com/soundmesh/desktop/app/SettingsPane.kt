@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.soundmesh.product.FeedbackLine
 import com.soundmesh.product.Label
 import com.soundmesh.product.Line
 import com.soundmesh.product.LineName
@@ -90,6 +91,16 @@ internal fun SettingsPane(
                 failed = say(Phrases.update_failed)
             )
         )
+        About.FEEDBACK_EMAIL.ifEmpty { null }?.let { email ->
+            FeedbackLine(
+                say(Phrases.about_feedback),
+                email,
+                say(Phrases.feedback_subject),
+                "SoundMesh ${About.VERSION} (${About.BUILD_MARK}) · " +
+                    "${System.getProperty("os.name")} ${System.getProperty("os.version")}",
+                say(Phrases.feedback_no_mail_app)
+            )
+        }
         // An unset fact is an empty string and its row does not exist, as on the handset.
         About.AUTHOR.ifEmpty { null }?.let { AboutRow(say(Phrases.about_author)) { Link(it, About.AUTHOR_URL.ifEmpty { null }, showGitHub = true) } }
         About.REPO_URL.ifEmpty { null }?.let { url ->

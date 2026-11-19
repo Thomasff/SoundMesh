@@ -1,5 +1,6 @@
 package com.soundmesh.product
 
+import android.os.Build
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -172,6 +173,16 @@ fun SettingsScreen(
                 failed = stringResource(R.string.update_failed)
             )
         )
+        configured(BuildConfig.FEEDBACK_EMAIL)?.let { email ->
+            FeedbackLine(
+                stringResource(R.string.about_feedback),
+                email,
+                stringResource(R.string.feedback_subject),
+                "SoundMesh ${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_MARK}) · " +
+                    "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}",
+                stringResource(R.string.feedback_no_mail_app)
+            )
+        }
         // A fact left unset in gradle.properties reaches BuildConfig as an empty string, and
         // configured() turns that into null - null here means the row does not exist, not a
         // placeholder, which is why there is no release-page row. See configured() in

@@ -44,7 +44,8 @@ val aboutFacts = tasks.register("aboutFacts") {
         "AUTHOR" to (project.findProperty("soundmesh.author") ?: ""),
         "AUTHOR_URL" to (project.findProperty("soundmesh.authorUrl") ?: ""),
         "REPO_URL" to (project.findProperty("soundmesh.repoUrl") ?: ""),
-        "LICENCE" to (project.findProperty("soundmesh.licence") ?: "")
+        "LICENCE" to (project.findProperty("soundmesh.licence") ?: ""),
+        "FEEDBACK_EMAIL" to (project.findProperty("soundmesh.feedbackEmail") ?: "")
     ).mapValues { it.value.toString() }
     val out = layout.buildDirectory.dir("generated/about")
     inputs.properties(facts)
