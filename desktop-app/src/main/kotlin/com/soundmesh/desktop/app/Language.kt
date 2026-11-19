@@ -19,17 +19,19 @@ internal class Phrase(val zh: String, val en: String) {
 /**
  * The handset's LanguageChoice. An explicit choice wins in both directions, as there.
  *
- * [SYSTEM] follows the handset's resource rule rather than guessing better: its default strings
- * are the Chinese ones and only an English system is given English, so a French Windows gets
- * Chinese here as a French phone does.
+ * [SYSTEM] follows the handset's rule: a Chinese system gets Chinese and any other gets English, so
+ * a French Windows gets English here as a French phone does.
  */
 internal enum class LanguageChoice { SYSTEM, CHINESE, ENGLISH }
 
 internal fun languageChoiceOf(stored: String?): LanguageChoice =
     LanguageChoice.entries.firstOrNull { it.name == stored } ?: LanguageChoice.SYSTEM
 
+/** The handset's systemTag: only a Chinese system is not given English. */
+internal fun englishFor(systemLanguage: String): Boolean = systemLanguage != "zh"
+
 internal fun LanguageChoice.english(): Boolean = when (this) {
-    LanguageChoice.SYSTEM -> Locale.getDefault().language == "en"
+    LanguageChoice.SYSTEM -> englishFor(Locale.getDefault().language)
     LanguageChoice.CHINESE -> false
     LanguageChoice.ENGLISH -> true
 }

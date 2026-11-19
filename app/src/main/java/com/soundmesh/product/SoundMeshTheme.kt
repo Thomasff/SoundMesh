@@ -36,8 +36,9 @@ internal fun darkWanted(choice: ThemeChoice, systemIsDark: Boolean): Boolean = w
  * wrapper every screen in the app goes through, and what it does is the same shape: a choice
  * somebody made in settings, applied to the whole composition rather than to any screen.
  *
- * It defaults to [LanguageChoice.SYSTEM], which changes nothing - every component has already put
- * the stored choice on in `attachBaseContext` by the time this runs. Only [HomeActivity] passes
+ * It defaults to null, which changes nothing - every component has already put the stored choice
+ * on in `attachBaseContext` by the time this runs. Not [LanguageChoice.SYSTEM]: that gives English
+ * on a phone in neither language, and would undo a Chinese picked by hand there. Only [HomeActivity] passes
  * it, because that is the one screen where the choice can change while the screen is up: settings
  * is a place inside it, so answering that tap by restarting the activity would throw somebody out
  * of the screen they tapped on.
@@ -45,7 +46,7 @@ internal fun darkWanted(choice: ThemeChoice, systemIsDark: Boolean): Boolean = w
 @Composable
 fun SoundMeshTheme(
     choice: ThemeChoice,
-    language: LanguageChoice = LanguageChoice.SYSTEM,
+    language: LanguageChoice? = null,
     content: @Composable () -> Unit
 ) {
     val dark = darkWanted(choice, isSystemInDarkTheme())

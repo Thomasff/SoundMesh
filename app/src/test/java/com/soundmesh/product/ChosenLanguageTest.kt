@@ -44,14 +44,14 @@ class ChosenLanguageTest {
     }
 
     /**
-     * An explicit choice wins over the phone, and "system" leaves the phone alone.
+     * An explicit choice wins over the phone, and "system" leaves a Chinese phone alone.
      *
      * The second half is the one worth a test. Pinning the system's locale at start-up would look
      * identical on the day it was written and be wrong the first time somebody changed their
      * phone's language with this app still in the background.
      */
     @Test
-    fun followingTheSystemPinsNothing() {
+    fun followingTheSystemPinsNothingOnAChinesePhone() {
         val language = source("src/main/java/com/soundmesh/product/Language.kt")
         assertEquals(
             "the choices are no longer system, Chinese and English",
@@ -60,11 +60,41 @@ class ChosenLanguageTest {
         )
         assertEquals("following the system is no longer a locale of nothing", null, LanguageChoice.SYSTEM.tag)
         assertTrue(
-            "a choice of nothing still builds a context, pinning today's system locale",
-            language.contains("val tag = choice.tag ?: return this")
+            "a choice of nothing on a Chinese phone builds a context, pinning today's system locale",
+            language.contains("val tag = choice.tag ?: systemTag(systemLanguage()) ?: return this")
         )
         assertEquals("an unreadable or absent choice is no longer the system's", LanguageChoice.SYSTEM, languageChoiceOf(null))
         assertEquals("a stored choice is not read back", LanguageChoice.ENGLISH, languageChoiceOf("ENGLISH"))
+    }
+
+    /**
+     * A phone in a language the app has no strings for is given English, not the default Chinese.
+     *
+     * Left to the resource rule, a French or Japanese phone falls through to `values/`, which is the
+     * Chinese one - and the app is shared in English to people whose phones are in neither.
+     */
+    @Test
+    fun aPhoneInAnyOtherLanguageIsGivenEnglish() {
+        assertEquals("a Chinese phone is no longer left alone", null, systemTag("zh"))
+        for (other in listOf("en", "fr", "de", "ja", "es", "ko")) {
+            assertEquals("a phone in $other is not given English", "en", systemTag(other))
+        }
+    }
+
+    /**
+     * The screens that do not pass a language leave alone the one they were attached in.
+     *
+     * Their wrapper used to default to "system", which meant the same thing while "system" changed
+     * nothing. Now that it gives English on a French phone, the same default would undo a Chinese
+     * that somebody on that phone had picked by hand.
+     */
+    @Test
+    fun aScreenThatPassesNoLanguageKeepsTheOneItWasAttachedIn() {
+        assertTrue(
+            "the theme wrapper's default is no longer nothing",
+            source("src/main/java/com/soundmesh/product/SoundMeshTheme.kt")
+                .contains("language: LanguageChoice? = null,")
+        )
     }
 
     /**
